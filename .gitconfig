@@ -1,0 +1,5 @@
+[user]
+	email = sardonyx0827@gmail.com
+	name = sardonyx0827
+[alias]
+    ls = log --graph --date-order -C -M --pretty=format:\"<%h> %ad [%an] %Cgreen%Creset %s\" --all --date=short
