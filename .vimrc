@@ -34,8 +34,8 @@ call plug#begin(expand('~/.vim/plugged'))
 "*****************************************************************************
 "" Plug install packages
 "*****************************************************************************
-Plug 'scrooloose/nerdtree'
-Plug 'jistr/vim-nerdtree-tabs'
+"Plug 'scrooloose/nerdtree'
+"Plug 'jistr/vim-nerdtree-tabs'
 Plug 'tpope/vim-commentary'
 Plug 'tpope/vim-fugitive'
 Plug 'vim-airline/vim-airline'
@@ -50,7 +50,7 @@ Plug 'Yggdroot/indentLine'
 Plug 'editor-bootstrap/vim-bootstrap-updater'
 Plug 'tpope/vim-rhubarb' " required by fugitive to :Gbrowse
 Plug 'tomasiser/vim-code-dark'
-
+Plug 'rust-lang/rust.vim'
 
 if isdirectory('/usr/local/opt/fzf')
   Plug '/usr/local/opt/fzf' | Plug 'junegunn/fzf.vim'
@@ -163,7 +163,8 @@ set smartcase
 set fileformats=unix,dos,mac
 
 if exists('$SHELL')
-    set shell=$SHELL
+    "set shell=$SHELL
+    set shell=/bin/fish
 else
     set shell=/bin/sh
 endif
@@ -272,22 +273,6 @@ cnoreabbrev W w
 cnoreabbrev Q q
 cnoreabbrev Qall qall
 
-"" NERDTree configuration
-" do chdir when change root
-let g:NERDTreeChDirMode=2
-" show ignore
-let g:NERDTreeIgnore=['\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
-" dir tree sorting
-let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
-" enable show bookmarks
-let g:NERDTreeShowBookmarks=1
-let g:nerdtree_tabs_focus_on_files=1
-let g:NERDTreeMapOpenInTabSilent = '<RightMouse>'
-let g:NERDTreeWinSize = 30
-set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite
-nnoremap <silent> <F2> :NERDTreeFind<CR>
-nnoremap <silent> <F3> :NERDTreeToggle<CR>
-
 " grep.vim
 nnoremap <silent> <leader>f :Rgrep<CR>
 let Grep_Default_Options = '-IR'
@@ -297,16 +282,35 @@ let Grep_Skip_Dirs = '.git node_modules'
 " terminal emulation
 nnoremap <silent> <leader>sh :terminal<CR>
 
+" netrw
+let g:netrw_liststyle=3
+let g:netrw_keepdir = 0
+
+""" NERDTree configuration
+"" do chdir when change root
+"let g:NERDTreeChDirMode=2
+"" show ignore
+"let g:NERDTreeIgnore=['\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
+"" dir tree sorting
+"let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
+"" enable show bookmarks
+"let g:NERDTreeShowBookmarks=1
+"let g:nerdtree_tabs_focus_on_files=1
+"let g:NERDTreeMapOpenInTabSilent = '<RightMouse>'
+"let g:NERDTreeWinSize = 30
+"set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite
+"nnoremap <silent> <F2> :NERDTreeFind<CR>
+"nnoremap <silent> <F3> :NERDTreeToggle<CR>
 " show .hidden files
-let NERDTreeShowHidden = 1
-
-nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
-
-" show nerdtree default
-let g:nerdtree_tabs_open_on_console_startup=1
-
-" close a nerdtree tabs when closed a file
-autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTree") && b:NERDTree.isTabTree()) | q | endif
+"let NERDTreeShowHidden = 1
+"
+"nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
+"
+"" show nerdtree default
+"let g:nerdtree_tabs_open_on_console_startup=1
+"
+"" close a nerdtree tabs when closed a file
+"autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTree") && b:NERDTree.isTabTree()) | q | endif
 
 "*****************************************************************************
 "" Commands
