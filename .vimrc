@@ -686,3 +686,10 @@ else
   let g:airline_symbols.readonly = ''
   let g:airline_symbols.linenr = ''
 endif
+
+" feature
+" use w3m
+function! s:www(word) abort
+  execute('term ++close ++shell w3m google.com/search\?q="'. a:word . '"')
+endfunction
+command! -nargs=1 WWW call s:www(<f-args>)
