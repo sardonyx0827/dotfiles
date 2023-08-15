@@ -51,6 +51,7 @@ Plug 'editor-bootstrap/vim-bootstrap-updater'
 Plug 'tpope/vim-rhubarb' " required by fugitive to :Gbrowse
 Plug 'tomasiser/vim-code-dark'
 Plug 'rust-lang/rust.vim'
+Plug 'skanehira/preview-markdown.vim'
 
 if isdirectory('/usr/local/opt/fzf')
   Plug '/usr/local/opt/fzf' | Plug 'junegunn/fzf.vim'
@@ -687,7 +688,9 @@ else
   let g:airline_symbols.linenr = ''
 endif
 
-" feature
+"*****************************************************************************
+"" features
+"*****************************************************************************
 " use w3m
 function! s:www(...) abort
   if a:0 == ""
@@ -697,3 +700,15 @@ function! s:www(...) abort
   endif
 endfunction
 command! -nargs=? WWW call s:www(<f-args>)
+
+" check argument size
+function! s:GetBufByte()
+  let byte = line2byte(line('$') + 1)
+  if byte == -1
+    return 0
+  else
+    return byte - 1
+  endif
+endfunction
+" open without args, call netrw
+autocmd VimEnter * nested if @% == '' && s:GetBufByte() == 0 | Explore | endif
