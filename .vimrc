@@ -701,14 +701,14 @@ function! s:www(...) abort
 endfunction
 command! -nargs=? WWW call s:www(<f-args>)
 
-" check argument size
-function! s:GetBufByte()
-  let byte = line2byte(line('$') + 1)
-  if byte == -1
-    return 0
-  else
-    return byte - 1
-  endif
-endfunction
-" open without args, call netrw
-autocmd VimEnter * nested if @% == '' && s:GetBufByte() == 0 | Explore | endif
+"" check argument size
+"function! s:GetBufByte()
+"  let byte = line2byte(line('$') + 1)
+"  if byte == -1
+"    return 0
+"  else
+"    return byte - 1
+"  endif
+"endfunction
+"" open without args, call netrw
+"autocmd VimEnter * nested if @% == '' && s:GetBufByte() == 0 | Explore | endif
