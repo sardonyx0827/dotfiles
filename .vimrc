@@ -34,8 +34,8 @@ call plug#begin(expand('~/.vim/plugged'))
 "*****************************************************************************
 "" Plug install packages
 "*****************************************************************************
-"Plug 'scrooloose/nerdtree'
-"Plug 'jistr/vim-nerdtree-tabs'
+Plug 'preservim/nerdtree'
+Plug 'jistr/vim-nerdtree-tabs'
 Plug 'tpope/vim-commentary'
 Plug 'tpope/vim-fugitive'
 Plug 'vim-airline/vim-airline'
@@ -287,31 +287,31 @@ nnoremap <silent> <leader>sh :terminal<CR>
 let g:netrw_liststyle=3
 let g:netrw_keepdir = 0
 
-""" NERDTree configuration
-"" do chdir when change root
-"let g:NERDTreeChDirMode=2
-"" show ignore
-"let g:NERDTreeIgnore=['\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
-"" dir tree sorting
-"let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
-"" enable show bookmarks
-"let g:NERDTreeShowBookmarks=1
-"let g:nerdtree_tabs_focus_on_files=1
-"let g:NERDTreeMapOpenInTabSilent = '<RightMouse>'
-"let g:NERDTreeWinSize = 30
-"set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite
-"nnoremap <silent> <F2> :NERDTreeFind<CR>
-"nnoremap <silent> <F3> :NERDTreeToggle<CR>
+" NERDTree configuration
+" do chdir when change root
+let g:NERDTreeChDirMode=2
+" show ignore
+let g:NERDTreeIgnore=['\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
+" dir tree sorting
+let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
+" enable show bookmarks
+let g:NERDTreeShowBookmarks=1
+let g:nerdtree_tabs_focus_on_files=1
+let g:NERDTreeMapOpenInTabSilent = '<RightMouse>'
+let g:NERDTreeWinSize = 30
+set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite
+nnoremap <silent> <F2> :NERDTreeFind<CR>
+nnoremap <silent> <F3> :NERDTreeToggle<CR>
 " show .hidden files
-"let NERDTreeShowHidden = 1
-"
-"nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
-"
-"" show nerdtree default
-"let g:nerdtree_tabs_open_on_console_startup=1
-"
-"" close a nerdtree tabs when closed a file
-"autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTree") && b:NERDTree.isTabTree()) | q | endif
+let NERDTreeShowHidden = 1
+
+nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
+
+" show nerdtree default
+let g:nerdtree_tabs_open_on_console_startup=1
+
+" close a nerdtree tabs when closed a file
+autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTree") && b:NERDTree.isTabTree()) | q | endif
 
 "*****************************************************************************
 "" Commands
@@ -701,14 +701,5 @@ function! s:www(...) abort
 endfunction
 command! -nargs=? WWW call s:www(<f-args>)
 
-"" check argument size
-"function! s:GetBufByte()
-"  let byte = line2byte(line('$') + 1)
-"  if byte == -1
-"    return 0
-"  else
-"    return byte - 1
-"  endif
-"endfunction
-"" open without args, call netrw
-"autocmd VimEnter * nested if @% == '' && s:GetBufByte() == 0 | Explore | endif
+" when I opend new tab, lcd to current dir
+autocmd BufEnter * lcd %:p:h
