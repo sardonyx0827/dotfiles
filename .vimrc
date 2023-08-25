@@ -703,3 +703,5 @@ command! -nargs=? WWW call s:www(<f-args>)
 
 " when I opend new tab, lcd to current dir
 autocmd BufEnter * lcd %:p:h
+
+set pastetoggle=<F9>
