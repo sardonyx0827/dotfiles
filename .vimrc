@@ -176,6 +176,11 @@ let g:session_autoload = "no"
 let g:session_autosave = "no"
 let g:session_command_aliases = 1
 
+" change current dir when open any tabs
+set autochdir
+" no indent on/off when paste text from clipboard
+set pastetoggle=<F9>
+
 "*****************************************************************************
 "" Visual Settings
 "*****************************************************************************
@@ -701,8 +706,3 @@ function! s:www(...) abort
 endfunction
 command! -nargs=? WWW call s:www(<f-args>)
 
-" when I opend new tab, lcd to current dir
-" autocmd BufEnter * lcd %:p:h
-set autochdir
-
-set pastetoggle=<F9>
