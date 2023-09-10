@@ -265,6 +265,13 @@ let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyze
 "   "diagnostic.enable": false
 " }
 
+" set Colorscheme (clear)
+highlight Normal ctermbg=none
+highlight NonText ctermbg=none
+highlight LineNr ctermbg=none
+highlight Folded ctermbg=none
+highlight EndOfBuffer ctermbg=none
+
 "*****************************************************************************
 "" Abbreviations
 "*****************************************************************************
