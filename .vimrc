@@ -1,5 +1,3 @@
-" vim-bootstrap 2021-02-25 10:25:45
-
 "*****************************************************************************
 "" Vim-Plug core
 "*****************************************************************************
@@ -12,7 +10,8 @@ endif
 
 let g:vim_bootstrap_langs = "c,go,html,javascript,php,python,typescript"
 let g:vim_bootstrap_editor = "vim"				" nvim or vim
-let g:vim_bootstrap_theme = "codedark"
+" let g:vim_bootstrap_theme = "codedark"
+let g:vim_bootstrap_theme = "onedark"
 let g:vim_bootstrap_frams = ""
 
 if !filereadable(vimplug_exists)
@@ -49,7 +48,7 @@ Plug 'dense-analysis/ale'
 Plug 'Yggdroot/indentLine'
 Plug 'editor-bootstrap/vim-bootstrap-updater'
 Plug 'tpope/vim-rhubarb' " required by fugitive to :Gbrowse
-Plug 'tomasiser/vim-code-dark'
+Plug 'joshdick/onedark.vim'
 Plug 'rust-lang/rust.vim'
 Plug 'skanehira/preview-markdown.vim'
 
@@ -76,16 +75,13 @@ Plug 'honza/vim-snippets'
 "*****************************************************************************
 "" Custom bundles
 "*****************************************************************************
-
 " c
 Plug 'vim-scripts/c.vim', {'for': ['c', 'cpp']}
 Plug 'ludwig/split-manpage.vim'
 
-
 " go
 "" Go Lang Bundle
 Plug 'fatih/vim-go', {'do': ':GoInstallBinaries'}
-
 
 " html
 "" HTML Bundle
@@ -94,32 +90,29 @@ Plug 'gko/vim-coloresque'
 Plug 'tpope/vim-haml'
 Plug 'mattn/emmet-vim'
 
-
 " javascript
 "" Javascript Bundle
 Plug 'jelera/vim-javascript-syntax'
-
 
 " php
 "" PHP Bundle
 Plug 'phpactor/phpactor', {'for': 'php', 'do': 'composer install --no-dev -o'}
 Plug 'stephpy/vim-php-cs-fixer'
 
-
 " python
 "" Python Bundle
 Plug 'davidhalter/jedi-vim'
 Plug 'raimon49/requirements.txt.vim', {'for': 'requirements'}
 
-
 " typescript
 Plug 'leafgarland/typescript-vim'
 Plug 'HerringtonDarkholme/yats.vim'
 
+" lsp
+Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
 "*****************************************************************************
 "*****************************************************************************
-
 "" Include user's extra bundle
 if filereadable(expand("~/.vimrc.local.bundles"))
   source ~/.vimrc.local.bundles
@@ -129,7 +122,6 @@ call plug#end()
 
 " Required:
 filetype plugin indent on
-
 
 "*****************************************************************************
 "" Basic Setup
@@ -189,7 +181,8 @@ set ruler
 set number
 
 let no_buffers_menu=1
-colorscheme codedark
+colorscheme onedark
+
 
 
 set mousemodel=popup
@@ -222,17 +215,14 @@ else
   
 endif
 
-
 if &term =~ '256color'
   set t_ut=
 endif
-
 
 "" Disable the blinking cursor.
 set gcr=a:blinkon0
 
 set scrolloff=3
-
 
 "" Status bar
 set laststatus=2
@@ -263,6 +253,17 @@ let g:airline#extensions#ale#enabled = 1
 let g:airline#extensions#tabline#enabled = 1
 let g:airline#extensions#tagbar#enabled = 1
 let g:airline_skip_empty_sections = 1
+
+" lsp
+" 最初に開いたファイルのタイプがtsxでなくtsで認識されてしまう問題への解決策
+autocmd BufNewFile,BufRead *.tsx let b:tsx_ext_found = 1
+autocmd BufNewFile,BufRead *.tsx set filetype=typescript.tsx
+let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyzer', 'coc-react-refactor', 'coc-xml', 'coc-yaml', 'coc-translator', 'coc-sh', 'coc-lua', 'coc-json', 'coc-jedi', 'coc-css', 'coc-prettier', 'coc-fzf-preview', 'coc-lists' ]
+" MEMO :CocConfig
+" {
+"   "languageserver": {},
+"   "diagnostic.enable": false
+" }
 
 "*****************************************************************************
 "" Abbreviations
@@ -696,13 +697,3 @@ endif
 "*****************************************************************************
 "" features
 "*****************************************************************************
-" use w3m
-function! s:www(...) abort
-  if a:0 == ""
-    execute('term ++close ++shell w3m google.com')
-  else
-    execute('term ++close ++shell w3m google.com/search\?q="'. a:0 . '"')
-  endif
-endfunction
-command! -nargs=? WWW call s:www(<f-args>)
-
