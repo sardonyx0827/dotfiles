@@ -1,16 +1,19 @@
 "*****************************************************************************
 "" Vim-Plug core
 "*****************************************************************************
-let vimplug_exists=expand('~/.vim/autoload/plug.vim')
+if has('nvim')
+  let vimplug_exists=expand('~/.config/nvim/autoload/plug.vim')
+else
+  let vimplug_exists=expand('~/.vim/autoload/plug.vim')
+endif
 if has('win32')&&!has('win64')
   let curl_exists=expand('C:\Windows\Sysnative\curl.exe')
 else
   let curl_exists=expand('curl')
 endif
 
-let g:vim_bootstrap_langs = "c,go,html,javascript,php,python,typescript"
+let g:vim_bootstrap_langs = "c,elixir,go,haskell,html,javascript,lisp,lua,perl,php,python,ruby,rust,typescript"
 let g:vim_bootstrap_editor = "vim"				" nvim or vim
-" let g:vim_bootstrap_theme = "codedark"
 let g:vim_bootstrap_theme = "onedark"
 let g:vim_bootstrap_frams = ""
 
@@ -60,7 +63,7 @@ else
 endif
 let g:make = 'gmake'
 if exists('make')
-        let g:make = 'make'
+  let g:make = 'make'
 endif
 Plug 'Shougo/vimproc.vim', {'do': g:make}
 
@@ -79,10 +82,19 @@ Plug 'honza/vim-snippets'
 Plug 'vim-scripts/c.vim', {'for': ['c', 'cpp']}
 Plug 'ludwig/split-manpage.vim'
 
+" elixir
+Plug 'elixir-lang/vim-elixir'
+Plug 'carlosgaldino/elixir-snippets'
+
 " go
 "" Go Lang Bundle
 Plug 'fatih/vim-go', {'do': ':GoInstallBinaries'}
 
+" haskell
+"" Haskell Bundle
+Plug 'eagletmt/neco-ghc'
+Plug 'dag/vim2hs'
+Plug 'pbrisbin/vim-syntax-shakespeare'
 " html
 "" HTML Bundle
 Plug 'hail2u/vim-css3-syntax'
@@ -94,6 +106,20 @@ Plug 'mattn/emmet-vim'
 "" Javascript Bundle
 Plug 'jelera/vim-javascript-syntax'
 
+" lisp
+"" Lisp Bundle
+Plug 'vim-scripts/slimv.vim'
+
+" lua
+"" Lua Bundle
+Plug 'xolox/vim-lua-ftplugin'
+Plug 'xolox/vim-lua-inspect'
+
+" perl
+"" Perl Bundle
+Plug 'vim-perl/vim-perl'
+Plug 'c9s/perlomni.vim'
+
 " php
 "" PHP Bundle
 Plug 'phpactor/phpactor', {'for': 'php', 'do': 'composer install --no-dev -o'}
@@ -104,6 +130,32 @@ Plug 'stephpy/vim-php-cs-fixer'
 Plug 'davidhalter/jedi-vim'
 Plug 'raimon49/requirements.txt.vim', {'for': 'requirements'}
 
+" ruby
+Plug 'tpope/vim-rails'
+Plug 'tpope/vim-rake'
+Plug 'tpope/vim-projectionist'
+Plug 'thoughtbot/vim-rspec'
+Plug 'ecomba/vim-ruby-refactoring', {'tag': 'main'}
+
+" rust
+" Vim racer
+Plug 'racer-rust/vim-racer'
+
+" Rust.vim
+Plug 'rust-lang/rust.vim'
+
+" Async.vim
+Plug 'prabirshrestha/async.vim'
+
+" Vim lsp
+Plug 'prabirshrestha/vim-lsp'
+
+" Asyncomplete.vim
+Plug 'prabirshrestha/asyncomplete.vim'
+
+" Asyncomplete lsp.vim
+Plug 'prabirshrestha/asyncomplete-lsp.vim'
+
 " typescript
 Plug 'leafgarland/typescript-vim'
 Plug 'HerringtonDarkholme/yats.vim'
@@ -111,11 +163,21 @@ Plug 'HerringtonDarkholme/yats.vim'
 " lsp
 Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
+" vuejs
+Plug 'posva/vim-vue'
+Plug 'leafOfTree/vim-vue-plugin'
+
 "*****************************************************************************
 "*****************************************************************************
 "" Include user's extra bundle
-if filereadable(expand("~/.vimrc.local.bundles"))
-  source ~/.vimrc.local.bundles
+if has('nvim')
+  if filereadable(expand("~/.config/nvim/local_bundles.vim"))
+    source ~/.config/nvim/local_bundles.vim
+  endif
+else
+  if filereadable(expand("~/.vimrc.local.bundles"))
+    source ~/.vimrc.local.bundles
+  endif
 endif
 
 call plug#end()
@@ -156,14 +218,17 @@ set smartcase
 set fileformats=unix,dos,mac
 
 if exists('$SHELL')
-    "set shell=$SHELL
-    set shell=/bin/fish
+    set shell=$SHELL
 else
     set shell=/bin/sh
 endif
 
 " session management
-let g:session_directory = "~/.vim/session"
+if has('nvim')
+  let g:session_directory = "~/.config/nvim/session"
+else
+  let g:session_directory = "~/.vim/session"
+endif
 let g:session_autoload = "no"
 let g:session_autosave = "no"
 let g:session_command_aliases = 1
@@ -183,8 +248,13 @@ set number
 let no_buffers_menu=1
 colorscheme onedark
 
+if has('nvim')
+  " Better command line completion 
+  set wildmenu
 
-
+  " mouse support
+  set mouse=a
+endif
 set mousemodel=popup
 set t_Co=256
 set guioptions=egmrti
@@ -203,26 +273,17 @@ else
   let g:indentLine_concealcursor = 0
   let g:indentLine_char = '┆'
   let g:indentLine_faster = 1
-
-  
-  if $COLORTERM == 'gnome-terminal'
-    set term=gnome-256color
-  else
-    if $TERM == 'xterm'
-      set term=xterm-256color
-    endif
-  endif
-  
-endif
-
-if &term =~ '256color'
-  set t_ut=
 endif
 
 "" Disable the blinking cursor.
 set gcr=a:blinkon0
 
-set scrolloff=3
+if has('nvim')
+  au TermEnter * setlocal scrolloff=0
+  au TermLeave * setlocal scrolloff=3
+else
+  set scrolloff=3
+endif
 
 "" Status bar
 set laststatus=2
@@ -259,7 +320,7 @@ let g:airline_skip_empty_sections = 1
 autocmd BufNewFile,BufRead *.tsx let b:tsx_ext_found = 1
 autocmd BufNewFile,BufRead *.tsx set filetype=typescript.tsx
 let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyzer', 'coc-react-refactor', 'coc-xml', 'coc-yaml', 'coc-translator', 'coc-sh', 'coc-lua', 'coc-json', 'coc-jedi', 'coc-diagnostic', 'coc-css', 'coc-prettier', 'coc-fzf-preview', 'coc-lists' ]
-" MEMO :CocConfig
+" MEMO :CocConfig (kill prettier)
 " {
 "   "languageserver": {},
 "   "diagnostic.enable": false
@@ -294,7 +355,51 @@ let Grep_Skip_Files = '*.log *.db'
 let Grep_Skip_Dirs = '.git node_modules'
 
 " terminal emulation
-nnoremap <silent> <leader>sh :terminal<CR>
+if has('nvim')
+  " vimと同じ操作感でTerminalを操作する
+  " インサートモードで開始
+  autocmd TermOpen * :startinsert
+  " 行番号を表示しない
+  autocmd TermOpen * setlocal norelativenumber
+  autocmd TermOpen * setlocal nonumber
+  nnoremap <silent> <leader>sh <cmd>sp new<CR><cmd>terminal<CR>
+
+  " Vim like terminal keymaps
+  function! s:TermEnter(_)
+    if getbufvar(bufnr(), 'term_insert', 0)
+      startinsert
+      call setbufvar(bufnr(), 'term_insert', 0)
+    endif
+  endfunction
+
+  function! <SID>TermExec(cmd)
+    let b:term_insert = 1
+    execute a:cmd
+  endfunction
+
+  augroup Term
+    autocmd CmdlineLeave,WinEnter,BufWinEnter * call timer_start(0, function('s:TermEnter'), {})
+  augroup end
+
+  tnoremap <silent> <C-W>.      <C-W>
+  tnoremap <silent> <C-W><C-.>  <C-W>
+  tnoremap <silent> <C-W><C-\>  <C-\>
+  tnoremap <silent> <C-W>N      <C-\><C-N>
+  tnoremap <silent> <C-W>:      <C-\><C-N>:call <SID>TermExec('call feedkeys(":")')<CR>
+  tnoremap <silent> <C-W><C-W>  <cmd>call <SID>TermExec('wincmd w')<CR>
+  tnoremap <silent> <C-W>h      <cmd>call <SID>TermExec('wincmd h')<CR>
+  tnoremap <silent> <C-W>j      <cmd>call <SID>TermExec('wincmd j')<CR>
+  tnoremap <silent> <C-W>k      <cmd>call <SID>TermExec('wincmd k')<CR>
+  tnoremap <silent> <C-W>l      <cmd>call <SID>TermExec('wincmd l')<CR>
+  tnoremap <silent> <C-W><C-H>  <cmd>call <SID>TermExec('wincmd h')<CR>
+  tnoremap <silent> <C-W><C-J>  <cmd>call <SID>TermExec('wincmd j')<CR>
+  tnoremap <silent> <C-W><C-K>  <cmd>call <SID>TermExec('wincmd k')<CR>
+  tnoremap <silent> <C-W><C-L>  <cmd>call <SID>TermExec('wincmd l')<CR>
+  tnoremap <silent> <C-W>gt     <cmd>call <SID>TermExec('tabn')<CR>
+  tnoremap <silent> <C-W>gT     <cmd>call <SID>TermExec('tabp')<CR>
+else
+  nnoremap <silent> <leader>sh :terminal<CR>
+endif
 
 " netrw
 let g:netrw_liststyle=3
@@ -304,7 +409,7 @@ let g:netrw_keepdir = 0
 " do chdir when change root
 let g:NERDTreeChDirMode=2
 " show ignore
-let g:NERDTreeIgnore=['\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
+let g:NERDTreeIgnore=['node_modules','\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
 " dir tree sorting
 let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
 " enable show bookmarks
@@ -312,7 +417,7 @@ let g:NERDTreeShowBookmarks=1
 let g:nerdtree_tabs_focus_on_files=1
 let g:NERDTreeMapOpenInTabSilent = '<RightMouse>'
 let g:NERDTreeWinSize = 30
-set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite
+set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite,*node_modules/
 nnoremap <silent> <F2> :NERDTreeFind<CR>
 nnoremap <silent> <F3> :NERDTreeToggle<CR>
 " show .hidden files
@@ -323,8 +428,10 @@ nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
 " show nerdtree default
 let g:nerdtree_tabs_open_on_console_startup=1
 
-" close a nerdtree tabs when closed a file
-autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTree") && b:NERDTree.isTabTree()) | q | endif
+if has('vim')
+  " close a nerdtree tabs when closed a file
+  autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTree") && b:NERDTree.isTabTree()) | q | endif
+endif
 
 "*****************************************************************************
 "" Commands
@@ -506,7 +613,6 @@ nnoremap <Leader>o :.Gbrowse<CR>
 autocmd FileType c setlocal tabstop=4 shiftwidth=4 expandtab
 autocmd FileType cpp setlocal tabstop=4 shiftwidth=4 expandtab
 
-
 " go
 " vim-go
 " run :GoBuild or :GoTestCompile based on the go file
@@ -575,6 +681,12 @@ augroup END
     \"go": ['golint', 'go vet'], })
 
 
+" haskell
+let g:haskell_conceal_wide = 1
+let g:haskell_multiline_strings = 1
+let g:necoghc_enable_detailed_browse = 1
+autocmd Filetype haskell setlocal omnifunc=necoghc#omnifunc
+
 " html
 " for html files, 2 spaces
 autocmd Filetype html setlocal ts=2 sw=2 expandtab
@@ -588,6 +700,15 @@ augroup vimrc-javascript
   autocmd!
   autocmd FileType javascript setl tabstop=2|setl shiftwidth=2|setl expandtab softtabstop=2
 augroup END
+
+
+" lisp
+
+
+" lua
+
+
+" perl
 
 
 " php
@@ -648,17 +769,73 @@ let g:airline#extensions#virtualenv#enabled = 1
 let python_highlight_all = 1
 
 
+" ruby
+let g:rubycomplete_buffer_loading = 1
+let g:rubycomplete_classes_in_global = 1
+let g:rubycomplete_rails = 1
+
+augroup vimrc-ruby
+  autocmd!
+  autocmd BufNewFile,BufRead *.rb,*.rbw,*.gemspec setlocal filetype=ruby
+  autocmd FileType ruby set tabstop=2|set shiftwidth=2|set expandtab softtabstop=2
+augroup END
+
+let g:tagbar_type_ruby = {
+    \ 'kinds' : [
+        \ 'm:modules',
+        \ 'c:classes',
+        \ 'd:describes',
+        \ 'C:contexts',
+        \ 'f:methods',
+        \ 'F:singleton methods'
+    \ ]
+\ }
+
+" RSpec.vim mappings
+map <Leader>t :call RunCurrentSpecFile()<CR>
+map <Leader>s :call RunNearestSpec()<CR>
+map <Leader>l :call RunLastSpec()<CR>
+map <Leader>a :call RunAllSpecs()<CR>
+
+" For ruby refactory
+if has('nvim')
+  runtime! macros/matchit.vim
+else
+  packadd! matchit
+endif
+
+" Ruby refactory
+nnoremap <leader>rap  :RAddParameter<cr>
+nnoremap <leader>rcpc :RConvertPostConditional<cr>
+nnoremap <leader>rel  :RExtractLet<cr>
+vnoremap <leader>rec  :RExtractConstant<cr>
+vnoremap <leader>relv :RExtractLocalVariable<cr>
+nnoremap <leader>rit  :RInlineTemp<cr>
+vnoremap <leader>rrlv :RRenameLocalVariable<cr>
+vnoremap <leader>rriv :RRenameInstanceVariable<cr>
+vnoremap <leader>rem  :RExtractMethod<cr>
+
+" rust
+" Vim racer
+au FileType rust nmap gd <Plug>(rust-def)
+au FileType rust nmap gs <Plug>(rust-def-split)
+au FileType rust nmap gx <Plug>(rust-def-vertical)
+au FileType rust nmap <leader>gd <Plug>(rust-doc)
 " typescript
 let g:yats_host_keyword = 1
-
-
 
 "*****************************************************************************
 "*****************************************************************************
 
 "" Include user's local vim config
-if filereadable(expand("~/.vimrc.local"))
-  source ~/.vimrc.local
+if has('nvim')
+  if filereadable(expand("~/.config/nvim/local_init.vim"))
+    source ~/.config/nvim/local_init.vim
+  endif
+else
+  if filereadable(expand("~/.vimrc.local"))
+    source ~/.vimrc.local
+  endif
 endif
 
 "*****************************************************************************
