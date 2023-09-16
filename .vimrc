@@ -13,7 +13,7 @@ else
 endif
 
 let g:vim_bootstrap_langs = "c,elixir,go,haskell,html,javascript,lisp,lua,perl,php,python,ruby,rust,typescript"
-let g:vim_bootstrap_editor = "vim"				" nvim or vim
+let g:vim_bootstrap_editor = "vim" " nvim or vim
 let g:vim_bootstrap_theme = "onedark"
 let g:vim_bootstrap_frams = ""
 
@@ -30,8 +30,12 @@ if !filereadable(vimplug_exists)
   autocmd VimEnter * PlugInstall
 endif
 
-" Required:
-call plug#begin(expand('~/.vim/plugged'))
+" required plugins
+if has('nvim')
+  call plug#begin(expand('~/.config/nvim/plugged'))
+else
+  call plug#begin(expand('~/.vim/plugged'))
+endif
 
 "*****************************************************************************
 "" Plug install packages
@@ -160,7 +164,7 @@ Plug 'prabirshrestha/asyncomplete-lsp.vim'
 Plug 'leafgarland/typescript-vim'
 Plug 'HerringtonDarkholme/yats.vim'
 
-" lsp
+" coc
 Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
 " vuejs
@@ -169,15 +173,15 @@ Plug 'leafOfTree/vim-vue-plugin'
 
 "*****************************************************************************
 "*****************************************************************************
-"" Include user's extra bundle
+" Include user's extra bundle
 if has('nvim')
   if filereadable(expand("~/.config/nvim/local_bundles.vim"))
     source ~/.config/nvim/local_bundles.vim
   endif
 else
-  if filereadable(expand("~/.vimrc.local.bundles"))
-    source ~/.vimrc.local.bundles
-  endif
+ if filereadable(expand("~/.vimrc.local.bundles"))
+   source ~/.vimrc.local.bundles
+ endif
 endif
 
 call plug#end()
@@ -270,7 +274,7 @@ else
 
   " IndentLine
   let g:indentLine_enabled = 1
-  let g:indentLine_concealcursor = 0
+  "let g:indentLine_concealcursor = 0
   let g:indentLine_char = '┆'
   let g:indentLine_faster = 1
 endif
@@ -315,7 +319,7 @@ let g:airline#extensions#tabline#enabled = 1
 let g:airline#extensions#tagbar#enabled = 1
 let g:airline_skip_empty_sections = 1
 
-" lsp
+" coc-vim
 " 最初に開いたファイルのタイプがtsxでなくtsで認識されてしまう問題への解決策
 autocmd BufNewFile,BufRead *.tsx let b:tsx_ext_found = 1
 autocmd BufNewFile,BufRead *.tsx set filetype=typescript.tsx
@@ -326,13 +330,30 @@ let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyze
 "   "diagnostic.enable": false
 " }
 
+" Apply the most preferred quickfix action to fix diagnostic on the current line
+nmap <leader>qf  <Plug>(coc-fix-current)
+"enter押下で候補を確定させる(改行させない)
+inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
+
+" cocList shortcut
+nnoremap <silent> <leader>cl <cmd>CocList<CR>
+
+" vim
 " set Colorscheme (clear)
 highlight Normal ctermbg=none
 highlight NonText ctermbg=none
-highlight LineNr ctermbg=none
+highlight Terminal ctermbg=none
 highlight Folded ctermbg=none
+highlight LineNr ctermbg=none
 highlight EndOfBuffer ctermbg=none
 
+" set color on tail space
+set lcs=trail:_
+"set lcs=tab:>.
+set list
+highlight SpecialKey cterm=NONE ctermfg=1 guifg=#ff0000
+highlight DoubleByteCharSpace cterm=underline ctermfg=1 guifg=#ff0000
+au BufRead,BufNew * match DoubleByteCharSpace /　/
 "*****************************************************************************
 "" Abbreviations
 "*****************************************************************************
@@ -356,15 +377,15 @@ let Grep_Skip_Dirs = '.git node_modules'
 
 " terminal emulation
 if has('nvim')
-  " vimと同じ操作感でTerminalを操作する
-  " インサートモードで開始
+  " Terminal Setting likes Vim
+  " start with Insert-Mode
   autocmd TermOpen * :startinsert
-  " 行番号を表示しない
+  " no line number
   autocmd TermOpen * setlocal norelativenumber
   autocmd TermOpen * setlocal nonumber
   nnoremap <silent> <leader>sh <cmd>sp new<CR><cmd>terminal<CR>
 
-  " Vim like terminal keymaps
+  " exec terminal keymaps
   function! s:TermEnter(_)
     if getbufvar(bufnr(), 'term_insert', 0)
       startinsert
@@ -381,25 +402,27 @@ if has('nvim')
     autocmd CmdlineLeave,WinEnter,BufWinEnter * call timer_start(0, function('s:TermEnter'), {})
   augroup end
 
-  tnoremap <silent> <C-W>.      <C-W>
-  tnoremap <silent> <C-W><C-.>  <C-W>
-  tnoremap <silent> <C-W><C-\>  <C-\>
+  " Terminal-Normal Mode
   tnoremap <silent> <C-W>N      <C-\><C-N>
+  " Commands
   tnoremap <silent> <C-W>:      <C-\><C-N>:call <SID>TermExec('call feedkeys(":")')<CR>
+  " Move Window
   tnoremap <silent> <C-W><C-W>  <cmd>call <SID>TermExec('wincmd w')<CR>
   tnoremap <silent> <C-W>h      <cmd>call <SID>TermExec('wincmd h')<CR>
   tnoremap <silent> <C-W>j      <cmd>call <SID>TermExec('wincmd j')<CR>
   tnoremap <silent> <C-W>k      <cmd>call <SID>TermExec('wincmd k')<CR>
   tnoremap <silent> <C-W>l      <cmd>call <SID>TermExec('wincmd l')<CR>
-  tnoremap <silent> <C-W><C-H>  <cmd>call <SID>TermExec('wincmd h')<CR>
-  tnoremap <silent> <C-W><C-J>  <cmd>call <SID>TermExec('wincmd j')<CR>
-  tnoremap <silent> <C-W><C-K>  <cmd>call <SID>TermExec('wincmd k')<CR>
-  tnoremap <silent> <C-W><C-L>  <cmd>call <SID>TermExec('wincmd l')<CR>
+  " Replace Window
+  tnoremap <silent> <C-W>H  <cmd>call <SID>TermExec('wincmd H')<CR>
+  tnoremap <silent> <C-W>J  <cmd>call <SID>TermExec('wincmd J')<CR>
+  tnoremap <silent> <C-W>K  <cmd>call <SID>TermExec('wincmd K')<CR>
+  tnoremap <silent> <C-W>L  <cmd>call <SID>TermExec('wincmd L')<CR>
+  " Move Tab
   tnoremap <silent> <C-W>gt     <cmd>call <SID>TermExec('tabn')<CR>
   tnoremap <silent> <C-W>gT     <cmd>call <SID>TermExec('tabp')<CR>
 else
   nnoremap <silent> <leader>sh :terminal<CR>
-endif
+ endif
 
 " netrw
 let g:netrw_liststyle=3
@@ -415,7 +438,6 @@ let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
 " enable show bookmarks
 let g:NERDTreeShowBookmarks=1
 let g:nerdtree_tabs_focus_on_files=1
-let g:NERDTreeMapOpenInTabSilent = '<RightMouse>'
 let g:NERDTreeWinSize = 30
 set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite,*node_modules/
 nnoremap <silent> <F2> :NERDTreeFind<CR>
@@ -427,11 +449,6 @@ nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
 
 " show nerdtree default
 let g:nerdtree_tabs_open_on_console_startup=1
-
-if has('vim')
-  " close a nerdtree tabs when closed a file
-  autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTree") && b:NERDTree.isTabTree()) | q | endif
-endif
 
 "*****************************************************************************
 "" Commands
@@ -704,12 +721,9 @@ augroup END
 
 " lisp
 
-
 " lua
 
-
 " perl
-
 
 " php
 " Phpactor plugin
@@ -820,7 +834,6 @@ vnoremap <leader>rem  :RExtractMethod<cr>
 au FileType rust nmap gd <Plug>(rust-def)
 au FileType rust nmap gs <Plug>(rust-def-split)
 au FileType rust nmap gx <Plug>(rust-def-vertical)
-au FileType rust nmap <leader>gd <Plug>(rust-doc)
 " typescript
 let g:yats_host_keyword = 1
 
@@ -881,6 +894,3 @@ endif
 "*****************************************************************************
 "" features
 "*****************************************************************************
-" coc
-"enter押下で候補を確定させる(改行させない)
-inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
