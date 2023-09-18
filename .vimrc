@@ -253,7 +253,7 @@ let no_buffers_menu=1
 colorscheme onedark
 
 if has('nvim')
-  " Better command line completion 
+  " Better command line completion
   set wildmenu
 
   " mouse support
@@ -347,13 +347,12 @@ highlight Folded ctermbg=none
 highlight LineNr ctermbg=none
 highlight EndOfBuffer ctermbg=none
 
-" set color on tail space
-set lcs=trail:_
-"set lcs=tab:>.
-set list
-highlight SpecialKey cterm=NONE ctermfg=1 guifg=#ff0000
-highlight DoubleByteCharSpace cterm=underline ctermfg=1 guifg=#ff0000
-au BufRead,BufNew * match DoubleByteCharSpace /　/
+
+" " set color on tail space
+" set lcs=trail:_
+" set list
+" highlight SpecialKey cterm=NONE ctermfg=1 guifg=red ctermbg=1 guibg=red
+
 "*****************************************************************************
 "" Abbreviations
 "*****************************************************************************
@@ -413,10 +412,10 @@ if has('nvim')
   tnoremap <silent> <C-W>k      <cmd>call <SID>TermExec('wincmd k')<CR>
   tnoremap <silent> <C-W>l      <cmd>call <SID>TermExec('wincmd l')<CR>
   " Replace Window
-  tnoremap <silent> <C-W>H  <cmd>call <SID>TermExec('wincmd H')<CR>
-  tnoremap <silent> <C-W>J  <cmd>call <SID>TermExec('wincmd J')<CR>
-  tnoremap <silent> <C-W>K  <cmd>call <SID>TermExec('wincmd K')<CR>
-  tnoremap <silent> <C-W>L  <cmd>call <SID>TermExec('wincmd L')<CR>
+  tnoremap <silent> <C-W>H      <cmd>call <SID>TermExec('wincmd H')<CR>
+  tnoremap <silent> <C-W>J      <cmd>call <SID>TermExec('wincmd J')<CR>
+  tnoremap <silent> <C-W>K      <cmd>call <SID>TermExec('wincmd K')<CR>
+  tnoremap <silent> <C-W>L      <cmd>call <SID>TermExec('wincmd L')<CR>
   " Move Tab
   tnoremap <silent> <C-W>gt     <cmd>call <SID>TermExec('tabn')<CR>
   tnoremap <silent> <C-W>gT     <cmd>call <SID>TermExec('tabp')<CR>
