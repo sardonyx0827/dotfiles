@@ -330,14 +330,6 @@ let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyze
 "   "diagnostic.enable": false
 " }
 
-" Apply the most preferred quickfix action to fix diagnostic on the current line
-nmap <leader>qf  <Plug>(coc-fix-current)
-"enter押下で候補を確定させる(改行させない)
-inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
-
-" cocList shortcut
-nnoremap <silent> <leader>cl <cmd>CocList<CR>
-
 " vim
 " set Colorscheme (clear)
 highlight Normal ctermbg=none
@@ -347,11 +339,12 @@ highlight Folded ctermbg=none
 highlight LineNr ctermbg=none
 highlight EndOfBuffer ctermbg=none
 
-
 " " set color on tail space
-" set lcs=trail:_
-" set list
-" highlight SpecialKey cterm=NONE ctermfg=1 guifg=red ctermbg=1 guibg=red
+highlight ExtraWhitespace ctermbg=red guibg=red
+au ColorScheme * highlight ExtraWhitespace guibg=red
+au BufEnter * match ExtraWhitespace /\s\+$/
+au InsertEnter * match ExtraWhitespace /\s\+\%#\@<!$/
+au InsertLeave * match ExtraWhiteSpace /\s\+$/
 
 "*****************************************************************************
 "" Abbreviations
@@ -505,14 +498,14 @@ noremap <Leader>h :<C-u>split<CR>
 noremap <Leader>v :<C-u>vsplit<CR>
 
 "" Git
-noremap <Leader>ga :Gwrite<CR>
-noremap <Leader>gc :Gcommit<CR>
+noremap <Leader>ga  :Gwrite<CR>
+noremap <Leader>gc  :Git commit<CR>
 noremap <Leader>gsh :Gpush<CR>
 noremap <Leader>gll :Gpull<CR>
-noremap <Leader>gs :Gstatus<CR>
-noremap <Leader>gb :Gblame<CR>
-noremap <Leader>gd :Gvdiff<CR>
-noremap <Leader>gr :Gremove<CR>
+noremap <Leader>gs  :Git status<CR>
+noremap <Leader>gb  :Git blame<CR>
+noremap <Leader>gd  :Gvdiff<CR>
+noremap <Leader>gr  :Gremove<CR>
 
 " session management
 nnoremap <leader>so :OpenSession<Space>
@@ -620,6 +613,14 @@ vnoremap K :m '<-2<CR>gv=gv
 
 "" Open current line on GitHub
 nnoremap <Leader>o :.Gbrowse<CR>
+
+" Apply the most preferred quickfix action to fix diagnostic on the current line
+nmap <leader>qf  <Plug>(coc-fix-current)
+"enter押下で候補を確定させる(改行させない)
+inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
+
+" cocList shortcut
+nnoremap <silent> <leader>cl <cmd>CocList<CR>
 
 "*****************************************************************************
 "" Custom configs
