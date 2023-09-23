@@ -13,7 +13,7 @@ else
 endif
 
 let g:vim_bootstrap_langs = "c,elixir,go,haskell,html,javascript,lisp,lua,perl,php,python,ruby,rust,typescript"
-let g:vim_bootstrap_editor = "vim" " nvim or vim
+let g:vim_bootstrap_editor = "vim"
 let g:vim_bootstrap_theme = "onedark"
 let g:vim_bootstrap_frams = ""
 
@@ -54,7 +54,7 @@ Plug 'majutsushi/tagbar'
 Plug 'dense-analysis/ale'
 Plug 'Yggdroot/indentLine'
 Plug 'editor-bootstrap/vim-bootstrap-updater'
-Plug 'tpope/vim-rhubarb' " required by fugitive to :Gbrowse
+Plug 'tpope/vim-rhubarb'
 Plug 'joshdick/onedark.vim'
 Plug 'rust-lang/rust.vim'
 Plug 'skanehira/preview-markdown.vim'
@@ -82,6 +82,9 @@ Plug 'honza/vim-snippets'
 "*****************************************************************************
 "" Custom bundles
 "*****************************************************************************
+" coc
+Plug 'neoclide/coc.nvim', {'branch': 'release'}
+
 " c
 Plug 'vim-scripts/c.vim', {'for': ['c', 'cpp']}
 Plug 'ludwig/split-manpage.vim'
@@ -99,6 +102,7 @@ Plug 'fatih/vim-go', {'do': ':GoInstallBinaries'}
 Plug 'eagletmt/neco-ghc'
 Plug 'dag/vim2hs'
 Plug 'pbrisbin/vim-syntax-shakespeare'
+
 " html
 "" HTML Bundle
 Plug 'hail2u/vim-css3-syntax'
@@ -163,9 +167,6 @@ Plug 'prabirshrestha/asyncomplete-lsp.vim'
 " typescript
 Plug 'leafgarland/typescript-vim'
 Plug 'HerringtonDarkholme/yats.vim'
-
-" coc
-Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
 " vuejs
 Plug 'posva/vim-vue'
@@ -241,6 +242,17 @@ let g:session_command_aliases = 1
 set autochdir
 " no indent on/off when paste text from clipboard
 set pastetoggle=<F9>
+
+" coc-vim
+" set file type for tsx when file is opend first time
+autocmd BufNewFile,BufRead *.tsx let b:tsx_ext_found = 1
+autocmd BufNewFile,BufRead *.tsx set filetype=typescript.tsx
+let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyzer', 'coc-react-refactor', 'coc-xml', 'coc-yaml', 'coc-translator', 'coc-sh', 'coc-lua', 'coc-json', 'coc-jedi', 'coc-diagnostic', 'coc-css', 'coc-prettier', 'coc-fzf-preview', 'coc-lists' ]
+" MEMO :CocConfig (kill prettier)
+" {
+"   "languageserver": {},
+"   "diagnostic.enable": false
+" }
 
 "*****************************************************************************
 "" Visual Settings
@@ -319,16 +331,40 @@ let g:airline#extensions#tabline#enabled = 1
 let g:airline#extensions#tagbar#enabled = 1
 let g:airline_skip_empty_sections = 1
 
-" coc-vim
-" 最初に開いたファイルのタイプがtsxでなくtsで認識されてしまう問題への解決策
-autocmd BufNewFile,BufRead *.tsx let b:tsx_ext_found = 1
-autocmd BufNewFile,BufRead *.tsx set filetype=typescript.tsx
-let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyzer', 'coc-react-refactor', 'coc-xml', 'coc-yaml', 'coc-translator', 'coc-sh', 'coc-lua', 'coc-json', 'coc-jedi', 'coc-diagnostic', 'coc-css', 'coc-prettier', 'coc-fzf-preview', 'coc-lists' ]
-" MEMO :CocConfig (kill prettier)
-" {
-"   "languageserver": {},
-"   "diagnostic.enable": false
-" }
+if !exists('g:airline_symbols')
+  let g:airline_symbols = {}
+endif
+
+if !exists('g:airline_powerline_fonts')
+  let g:airline#extensions#tabline#left_sep = ' '
+  let g:airline#extensions#tabline#left_alt_sep = '|'
+  let g:airline_left_sep          = '▶'
+  let g:airline_left_alt_sep      = '»'
+  let g:airline_right_sep         = '◀'
+  let g:airline_right_alt_sep     = '«'
+  let g:airline#extensions#branch#prefix     = '⤴' "➔, ➥, ⎇
+  let g:airline#extensions#readonly#symbol   = '⊘'
+  let g:airline#extensions#linecolumn#prefix = '¶'
+  let g:airline#extensions#paste#symbol      = 'ρ'
+  let g:airline_symbols.linenr    = '␊'
+  let g:airline_symbols.branch    = '⎇'
+  let g:airline_symbols.paste     = 'ρ'
+  let g:airline_symbols.paste     = 'Þ'
+  let g:airline_symbols.paste     = '∥'
+  let g:airline_symbols.whitespace = 'Ξ'
+else
+  let g:airline#extensions#tabline#left_sep = ''
+  let g:airline#extensions#tabline#left_alt_sep = ''
+
+  " powerline symbols
+  let g:airline_left_sep = ''
+  let g:airline_left_alt_sep = ''
+  let g:airline_right_sep = ''
+  let g:airline_right_alt_sep = ''
+  let g:airline_symbols.branch = ''
+  let g:airline_symbols.readonly = ''
+  let g:airline_symbols.linenr = ''
+endif
 
 " vim
 " set Colorscheme (clear)
@@ -367,6 +403,35 @@ let Grep_Default_Options = '-IR'
 let Grep_Skip_Files = '*.log *.db'
 let Grep_Skip_Dirs = '.git node_modules'
 
+" netrw
+let g:netrw_liststyle=3
+let g:netrw_keepdir = 0
+
+" NERDTree configuration
+" do chdir when change root
+let g:NERDTreeChDirMode=2
+" show ignore
+let g:NERDTreeIgnore=['node_modules','\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
+" dir tree sorting
+let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
+" enable show bookmarks
+let g:NERDTreeShowBookmarks=1
+let g:nerdtree_tabs_focus_on_files=1
+let g:NERDTreeWinSize = 30
+set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite,*node_modules/
+nnoremap <silent> <F2> :NERDTreeFind<CR>
+nnoremap <silent> <F3> :NERDTreeToggle<CR>
+" show .hidden files
+let NERDTreeShowHidden = 1
+
+nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
+
+" show nerdtree default
+let g:nerdtree_tabs_open_on_console_startup=1
+
+"*****************************************************************************
+"" Terminal
+"*****************************************************************************
 " terminal emulation
 if has('nvim')
   " Terminal Setting likes Vim
@@ -376,6 +441,10 @@ if has('nvim')
   autocmd TermOpen * setlocal norelativenumber
   autocmd TermOpen * setlocal nonumber
   nnoremap <silent> <leader>sh <cmd>sp new<CR><cmd>terminal<CR>
+  " close terminal
+  "autocmd TermClose * if !v:event.status | exe 'bdelete! '..expand('<abuf>') | endif
+  autocmd TermClose * exe 'close!'
+
 
   " exec terminal keymaps
   function! s:TermEnter(_)
@@ -415,32 +484,6 @@ if has('nvim')
 else
   nnoremap <silent> <leader>sh :terminal<CR>
  endif
-
-" netrw
-let g:netrw_liststyle=3
-let g:netrw_keepdir = 0
-
-" NERDTree configuration
-" do chdir when change root
-let g:NERDTreeChDirMode=2
-" show ignore
-let g:NERDTreeIgnore=['node_modules','\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
-" dir tree sorting
-let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
-" enable show bookmarks
-let g:NERDTreeShowBookmarks=1
-let g:nerdtree_tabs_focus_on_files=1
-let g:NERDTreeWinSize = 30
-set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite,*node_modules/
-nnoremap <silent> <F2> :NERDTreeFind<CR>
-nnoremap <silent> <F3> :NERDTreeToggle<CR>
-" show .hidden files
-let NERDTreeShowHidden = 1
-
-nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
-
-" show nerdtree default
-let g:nerdtree_tabs_open_on_console_startup=1
 
 "*****************************************************************************
 "" Commands
@@ -616,7 +659,7 @@ nnoremap <Leader>o :.Gbrowse<CR>
 
 " Apply the most preferred quickfix action to fix diagnostic on the current line
 nmap <leader>qf  <Plug>(coc-fix-current)
-"enter押下で候補を確定させる(改行させない)
+" no new line when hit the enter key
 inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
 
 " cocList shortcut
@@ -834,13 +877,14 @@ vnoremap <leader>rem  :RExtractMethod<cr>
 au FileType rust nmap gd <Plug>(rust-def)
 au FileType rust nmap gs <Plug>(rust-def-split)
 au FileType rust nmap gx <Plug>(rust-def-vertical)
+
 " typescript
 let g:yats_host_keyword = 1
 
 "*****************************************************************************
+"" local config
 "*****************************************************************************
-
-"" Include user's local vim config
+" Include user's local vim config
 if has('nvim')
   if filereadable(expand("~/.config/nvim/local_init.vim"))
     source ~/.config/nvim/local_init.vim
@@ -852,45 +896,5 @@ else
 endif
 
 "*****************************************************************************
-"" Convenience variables
-"*****************************************************************************
-
-" vim-airline
-if !exists('g:airline_symbols')
-  let g:airline_symbols = {}
-endif
-
-if !exists('g:airline_powerline_fonts')
-  let g:airline#extensions#tabline#left_sep = ' '
-  let g:airline#extensions#tabline#left_alt_sep = '|'
-  let g:airline_left_sep          = '▶'
-  let g:airline_left_alt_sep      = '»'
-  let g:airline_right_sep         = '◀'
-  let g:airline_right_alt_sep     = '«'
-  let g:airline#extensions#branch#prefix     = '⤴' "➔, ➥, ⎇
-  let g:airline#extensions#readonly#symbol   = '⊘'
-  let g:airline#extensions#linecolumn#prefix = '¶'
-  let g:airline#extensions#paste#symbol      = 'ρ'
-  let g:airline_symbols.linenr    = '␊'
-  let g:airline_symbols.branch    = '⎇'
-  let g:airline_symbols.paste     = 'ρ'
-  let g:airline_symbols.paste     = 'Þ'
-  let g:airline_symbols.paste     = '∥'
-  let g:airline_symbols.whitespace = 'Ξ'
-else
-  let g:airline#extensions#tabline#left_sep = ''
-  let g:airline#extensions#tabline#left_alt_sep = ''
-
-  " powerline symbols
-  let g:airline_left_sep = ''
-  let g:airline_left_alt_sep = ''
-  let g:airline_right_sep = ''
-  let g:airline_right_alt_sep = ''
-  let g:airline_symbols.branch = ''
-  let g:airline_symbols.readonly = ''
-  let g:airline_symbols.linenr = ''
-endif
-
-"*****************************************************************************
-"" features
+"" tests
 "*****************************************************************************
