@@ -398,7 +398,7 @@ cnoreabbrev Q q
 cnoreabbrev Qall qall
 
 " grep.vim
-nnoremap <silent> <leader>f :Rgrep<CR>
+nnoremap <silent> <leader>gf :Rgrep<CR>
 let Grep_Default_Options = '-IR'
 let Grep_Skip_Files = '*.log *.db'
 let Grep_Skip_Dirs = '.git node_modules'
@@ -596,7 +596,17 @@ nnoremap <silent> <leader>e :FZF -m<CR>
 nmap <leader>y :History:<CR>
 " execute my ":Files" command by fzf from current dir
 " nmap <leader>sf :call fzf#run(fzf#wrap({'dir': '~'}))<CR>
-nmap <leader>sf :FZF ~<CR>
+
+function! s:fzf_with_dots(cmd)
+  let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
+  execute a:cmd
+endfunction
+function! s:fzf_without_dots(cmd)
+  let $FZF_DEFAULT_COMMAND =  "find * -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f -print -o -type l -print 2> /dev/null"
+  execute a:cmd
+endfunction
+nmap <leader>sf :call <SID>fzf_with_dots('FZF ~')<CR>
+nmap <leader>f :call <SID>fzf_without_dots('FZF')<CR>
 
 " snippets
 let g:UltiSnipsExpandTrigger="<tab>"
