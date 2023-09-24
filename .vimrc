@@ -573,7 +573,8 @@ noremap <Leader>te :tabe <C-R>=expand("%:p:h") . "/" <CR>
 "" fzf.vim
 set wildmode=list:longest,list:full
 set wildignore+=*.o,*.obj,.git,*.rbc,*.pyc,__pycache__
-let $FZF_DEFAULT_COMMAND =  "find * -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o  -type f -print -o -type l -print 2> /dev/null"
+"let $FZF_DEFAULT_COMMAND =  "find * -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f -print -o -type l -print 2> /dev/null"
+let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
 
 " The Silver Searcher
 if executable('ag')
@@ -593,6 +594,9 @@ nnoremap <silent> <leader>b :Buffers<CR>
 nnoremap <silent> <leader>e :FZF -m<CR>
 "Recovery commands from history through FZF
 nmap <leader>y :History:<CR>
+" execute my ":Files" command by fzf from current dir
+" nmap <leader>sf :call fzf#run(fzf#wrap({'dir': '~'}))<CR>
+nmap <leader>sf :FZF ~<CR>
 
 " snippets
 let g:UltiSnipsExpandTrigger="<tab>"
