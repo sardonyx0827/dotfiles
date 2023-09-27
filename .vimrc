@@ -614,7 +614,7 @@ function! s:fzf_without_dots(cmd)
   execute a:cmd
 endfunction
 nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
-nmap <leader>f :call <SID>fzf_without_dots('Files')<CR>
+nmap <leader>f :call <SID>fzf_without_dots('Files ')<CR>
 
 " snippets
 let g:UltiSnipsExpandTrigger="<tab>"
@@ -687,6 +687,15 @@ inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
 " cocList shortcut
 nnoremap <silent> <leader>cl <cmd>CocList<CR>
 
+" check documentation on cursor
+nnoremap <silent> <leader>cd :call <SID>check_documentation()<CR>
+function! s:check_documentation()
+  if (index(['vim','help'], &filetype) >= 0)
+    execute 'h '.expand('<cword>')
+  else
+    call CocAction('doHover')
+  endif
+endfunction
 "*****************************************************************************
 "" Custom configs
 "*****************************************************************************
