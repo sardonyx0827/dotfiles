@@ -396,6 +396,8 @@ cnoreabbrev WQ wq
 cnoreabbrev W w
 cnoreabbrev Q q
 cnoreabbrev Qall qall
+cnoreabbrev f Files
+cnoreabbrev gf GFiles
 
 " grep.vim
 nnoremap <silent> <leader>gf :Rgrep<CR>
@@ -577,7 +579,8 @@ noremap <Leader>te :tabe <C-R>=expand("%:p:h") . "/" <CR>
 set wildmode=list:longest,list:full
 set wildignore+=*.o,*.obj,.git,*.rbc,*.pyc,__pycache__
 "let $FZF_DEFAULT_COMMAND =  "find * -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f -print -o -type l -print 2> /dev/null"
-let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -type f -print -o -type l -print 2> /dev/null"
+" let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -type f -print -o -type l -print 2> /dev/null"
+let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
 
 " The Silver Searcher
 if executable('ag')
@@ -599,6 +602,8 @@ nnoremap <silent> <leader>e :FZF -m<CR>
 nmap <leader>y :History:<CR>
 " execute my ":Files" command by fzf from current dir
 "nmap <leader>sf :call fzf#run(fzf#wrap({'dir': '~'}), {'options':'--hidden'})<CR>
+command! -bang -nargs=? -complete=dir Files
+  \ call fzf#vim#files(<q-args>, fzf#vim#with_preview(), <bang>0)
 
 function! s:fzf_with_dots(cmd)
   let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
@@ -608,7 +613,7 @@ function! s:fzf_without_dots(cmd)
   let $FZF_DEFAULT_COMMAND =  "find * -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f -print -o -type l -print 2> /dev/null"
   execute a:cmd
 endfunction
-nmap <leader>sf :call <SID>fzf_with_dots('FZF ~')<CR>
+nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
 nmap <leader>f :call <SID>fzf_without_dots('FZF')<CR>
 
 " snippets
