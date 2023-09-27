@@ -614,7 +614,7 @@ function! s:fzf_without_dots(cmd)
   execute a:cmd
 endfunction
 nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
-nmap <leader>f :call <SID>fzf_without_dots('FZF')<CR>
+nmap <leader>f :call <SID>fzf_without_dots('Files')<CR>
 
 " snippets
 let g:UltiSnipsExpandTrigger="<tab>"
