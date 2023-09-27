@@ -429,6 +429,9 @@ nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
 " show nerdtree default
 let g:nerdtree_tabs_open_on_console_startup=1
 
+" set cursor position in new tab(or file) when launch Vim
+autocmd VimEnter * NERDTree | wincmd p
+
 "*****************************************************************************
 "" Terminal
 "*****************************************************************************
@@ -483,7 +486,7 @@ if has('nvim')
   tnoremap <silent> <C-W>gT     <cmd>call <SID>TermExec('tabp')<CR>
 else
   nnoremap <silent> <leader>sh :terminal<CR>
- endif
+endif
 
 "*****************************************************************************
 "" Commands
@@ -574,7 +577,7 @@ noremap <Leader>te :tabe <C-R>=expand("%:p:h") . "/" <CR>
 set wildmode=list:longest,list:full
 set wildignore+=*.o,*.obj,.git,*.rbc,*.pyc,__pycache__
 "let $FZF_DEFAULT_COMMAND =  "find * -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f -print -o -type l -print 2> /dev/null"
-let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
+let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -type f -print -o -type l -print 2> /dev/null"
 
 " The Silver Searcher
 if executable('ag')
@@ -595,7 +598,7 @@ nnoremap <silent> <leader>e :FZF -m<CR>
 "Recovery commands from history through FZF
 nmap <leader>y :History:<CR>
 " execute my ":Files" command by fzf from current dir
-" nmap <leader>sf :call fzf#run(fzf#wrap({'dir': '~'}))<CR>
+"nmap <leader>sf :call fzf#run(fzf#wrap({'dir': '~'}), {'options':'--hidden'})<CR>
 
 function! s:fzf_with_dots(cmd)
   let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
