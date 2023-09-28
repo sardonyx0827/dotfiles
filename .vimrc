@@ -693,7 +693,11 @@ function! s:check_documentation()
   if (index(['vim','help'], &filetype) >= 0)
     execute 'h '.expand('<cword>')
   else
-    call CocAction('doHover')
+    " 'call CocAction('doHover')' has hangdup when hover menu was not found.
+    " use async method.
+    if CocAction('hasProvider', 'hover')
+      call CocActionAsync('doHover')
+    endif
   endif
 endfunction
 "*****************************************************************************
