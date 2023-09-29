@@ -40,23 +40,37 @@ endif
 "*****************************************************************************
 "" Plug install packages
 "*****************************************************************************
+" The NERDTree is a file system explorer for the Vim editor.
 Plug 'preservim/nerdtree'
 Plug 'jistr/vim-nerdtree-tabs'
+" Comment stuff out.
 Plug 'tpope/vim-commentary'
+" Fugitive is the premier Vim plugin for Git.
 Plug 'tpope/vim-fugitive'
+" show git diff marks in the sign column.
+Plug 'airblade/vim-gitgutter'
+" statusline at the bottom of each vim window.
 Plug 'vim-airline/vim-airline'
 Plug 'vim-airline/vim-airline-themes'
-Plug 'airblade/vim-gitgutter'
+" Grep search tools integration with Vim.
 Plug 'vim-scripts/grep.vim'
+" It's hard to find colorschemes for terminal Vim.
 Plug 'vim-scripts/CSApprox'
+" automatic closing of quotes, parenthesis, brackets, etc.
 Plug 'Raimondi/delimitMate'
+" displays tags in a window, ordered by scope.
 Plug 'majutsushi/tagbar'
+" Asynchronous Lint Engine
 Plug 'dense-analysis/ale'
+" display the indention levels with thin vertical lines.
 Plug 'Yggdroot/indentLine'
+" using vim-bootstrap
 Plug 'editor-bootstrap/vim-bootstrap-updater'
+" GitHub extension for fugitive.vim
 Plug 'tpope/vim-rhubarb'
+" my cool color theme.
 Plug 'joshdick/onedark.vim'
-Plug 'rust-lang/rust.vim'
+" preview markdown
 Plug 'skanehira/preview-markdown.vim'
 
 if isdirectory('/usr/local/opt/fzf')
@@ -147,6 +161,7 @@ Plug 'ecomba/vim-ruby-refactoring', {'tag': 'main'}
 
 " rust
 " Vim racer
+Plug 'rust-lang/rust.vim'
 Plug 'racer-rust/vim-racer'
 
 " Rust.vim
@@ -269,8 +284,8 @@ if has('nvim')
   set wildmenu
 
   " mouse support
-  set mouse=a
 endif
+set mouse=a
 set mousemodel=popup
 set t_Co=256
 set guioptions=egmrti
@@ -834,7 +849,7 @@ vmap <silent><Leader>em :<C-U>call phpactor#ExtractMethod()<CR>
 " vim-python
 augroup vimrc-python
   autocmd!
-  autocmd FileType python setlocal expandtab shiftwidth=4 tabstop=8 colorcolumn=79
+  autocmd FileType python setlocal expandtab shiftwidth=4 tabstop=8
       \ formatoptions+=croq softtabstop=4
       \ cinwords=if,elif,else,for,while,try,except,finally,def,class,with
 augroup END
