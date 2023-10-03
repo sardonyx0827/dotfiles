@@ -134,8 +134,8 @@ Plug 'vim-scripts/slimv.vim'
 
 " lua
 "" Lua Bundle
-Plug 'xolox/vim-lua-ftplugin'
-Plug 'xolox/vim-lua-inspect'
+"Plug 'xolox/vim-lua-ftplugin'
+"Plug 'xolox/vim-lua-inspect'
 
 " perl
 "" Perl Bundle
@@ -691,6 +691,12 @@ vmap > >gv
 vnoremap J :m '>+1<CR>gv=gv
 vnoremap K :m '<-2<CR>gv=gv
 
+"" count up/down. prefix 'C-a' is already used in Tmux
+vnoremap <C-k> <C-a>gv
+vnoremap <C-j> <C-x>gv
+nmap <C-k> <C-a>
+nmap <C-j> <C-x>
+
 "" Open current line on GitHub
 nnoremap <Leader>o :.Gbrowse<CR>
 
@@ -715,6 +721,7 @@ function! s:check_documentation()
     endif
   endif
 endfunction
+
 "*****************************************************************************
 "" Custom configs
 "*****************************************************************************
