@@ -93,6 +93,9 @@ Plug 'xolox/vim-session'
 Plug 'SirVer/ultisnips'
 Plug 'honza/vim-snippets'
 
+"" GitHub Copilot
+Plug 'github/copilot.vim'
+
 "*****************************************************************************
 "" Custom bundles
 "*****************************************************************************
@@ -700,8 +703,6 @@ nmap <C-j> <C-x>
 "" Open current line on GitHub
 nnoremap <Leader>o :.Gbrowse<CR>
 
-" Apply the most preferred quickfix action to fix diagnostic on the current line
-nmap <leader>qf  <Plug>(coc-fix-current)
 " no new line when hit the enter key
 inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
 
@@ -721,6 +722,10 @@ function! s:check_documentation()
     endif
   endif
 endfunction
+
+"" select next suggestion with GitHub copilot
+imap <C-j> <Plug>(copilot-next)
+imap <C-k> <Plug>(copilot-previous)
 
 "*****************************************************************************
 "" Custom configs
