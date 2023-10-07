@@ -1,6 +1,6 @@
 -- disable netrw at the very start of your init.lua
-vim.g.loaded_netrw = 1
-vim.g.loaded_netrwPlugin = 1
+--vim.g.loaded_netrw = 1
+--vim.g.loaded_netrwPlugin = 1
 
 -- set termguicolors to enable highlight groups
 vim.opt.termguicolors = true
@@ -16,6 +16,14 @@ require("nvim-tree").setup({
   },
   renderer = {
     group_empty = true,
+    icons = {
+      glyphs = {
+        git = {
+          unstaged = '!', renamed = '»', untracked = '?', deleted = '✘',
+          staged = '✓', unmerged = '', ignored = '◌',
+        },
+      },
+    },
   },
   filters = {
     dotfiles = false,
@@ -23,6 +31,7 @@ require("nvim-tree").setup({
 })
 
 
+-- Toggle nvim-tree
 vim.api.nvim_create_autocmd("QuitPre", {
   callback = function()
     local invalid_win = {}
@@ -39,3 +48,4 @@ vim.api.nvim_create_autocmd("QuitPre", {
     end
   end
 })
+
