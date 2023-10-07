@@ -30,3 +30,6 @@ end)
 vim.keymap.set("n", "<leader><Space>", function()
     vim.cmd("noh")
 end)
+
+vim.keymap.set("n", "<Tab>", "gt")
+vim.keymap.set("n", "<S-Tab>", "gT")

@@ -71,6 +71,7 @@ return require('packer').startup(function(use)
 		  {'rafamadriz/friendly-snippets'},
 	  }
   }
+  use({"neoclide/coc.nvim", branch = 'release'})
 
   use("folke/zen-mode.nvim")
   use("github/copilot.vim")
