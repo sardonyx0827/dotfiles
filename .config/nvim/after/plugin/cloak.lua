@@ -8,9 +8,9 @@ require("cloak").setup({
       -- Match any file starting with ".env".
       -- This can be a table to match multiple file patterns.
       file_pattern = {
-          ".env*",
-          "wrangler.toml",
-          ".dev.vars",
+        ".env*",
+        "wrangler.toml",
+        ".dev.vars",
       },
       -- Match an equals sign and any character after it.
       -- This can also be a table of patterns to cloak,

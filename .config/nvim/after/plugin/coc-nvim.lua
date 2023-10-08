@@ -13,8 +13,8 @@ vim.opt.signcolumn = "yes"
 local keyset = vim.keymap.set
 -- Autocomplete
 function _G.check_back_space()
-    local col = vim.fn.col('.') - 1
-    return col == 0 or vim.fn.getline('.'):sub(col, col):match('%s') ~= nil
+  local col = vim.fn.col('.') - 1
+  return col == 0 or vim.fn.getline('.'):sub(col, col):match('%s') ~= nil
 end
 
 local opts = {silent = true, noremap = true, expr = true, replace_keycodes = false}
@@ -22,14 +22,14 @@ keyset("i", "<TAB>", 'coc#pum#visible() ? coc#pum#next(1) : v:lua.check_back_spa
 keyset("i", "<S-TAB>", [[coc#pum#visible() ? coc#pum#prev(1) : "\<C-h>"]], opts)
 
 function _G.show_docs()
-    local cw = vim.fn.expand('<cword>')
-    if vim.fn.index({'vim', 'help'}, vim.bo.filetype) >= 0 then
-        vim.api.nvim_command('h ' .. cw)
-    elseif vim.api.nvim_eval('coc#rpc#ready()') then
-        vim.fn.CocActionAsync('doHover')
-    else
-        vim.api.nvim_command('!' .. vim.o.keywordprg .. ' ' .. cw)
-    end
+  local cw = vim.fn.expand('<cword>')
+  if vim.fn.index({'vim', 'help'}, vim.bo.filetype) >= 0 then
+    vim.api.nvim_command('h ' .. cw)
+  elseif vim.api.nvim_eval('coc#rpc#ready()') then
+    vim.fn.CocActionAsync('doHover')
+  else
+    vim.api.nvim_command('!' .. vim.o.keywordprg .. ' ' .. cw)
+  end
 end
 keyset("n", "<leader>cd", '<CMD>lua _G.show_docs()<CR>', {silent = true})
 
@@ -47,19 +47,19 @@ inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
 " check documentation on cursor
 " text must contains '()' to detect input and its must be 1 character
 function! ChoseAction(actions) abort
-  echo join(map(copy(a:actions), { _, v -> v.text }), ", ") .. ": "
-  let result = getcharstr()
-  let result = filter(a:actions, { _, v -> v.text =~# printf(".*\(%s\).*", result)})
-  return len(result) ? result[0].value : ""
+echo join(map(copy(a:actions), { _, v -> v.text }), ", ") .. ": "
+let result = getcharstr()
+let result = filter(a:actions, { _, v -> v.text =~# printf(".*\(%s\).*", result)})
+return len(result) ? result[0].value : ""
 endfunction
 
 function! CocJumpAction() abort
-  let actions = [
-        \ {"text": "(s)plit", "value": "split"},
-        \ {"text": "(v)slit", "value": "vsplit"},
-        \ {"text": "(t)ab", "value": "tabedit"},
-        \ ]
-  return ChoseAction(actions)
+let actions = [
+  \ {"text": "(s)plit", "value": "split"},
+  \ {"text": "(v)slit", "value": "vsplit"},
+  \ {"text": "(t)ab", "value": "tabedit"},
+\ ]
+return ChoseAction(actions)
 endfunction
 nnoremap <silent> <C-t> :<C-u>call CocActionAsync('jumpDefinition', CocJumpAction())<CR>
 

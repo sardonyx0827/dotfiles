@@ -20,11 +20,11 @@ vim.keymap.set("n", "<leader>f", vim.lsp.buf.format)
 vim.keymap.set("n", "<leader>r", [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>]])
 
 vim.keymap.set("n", "<leader><leader>", function()
-    vim.cmd("so")
+  vim.cmd("so")
 end)
 
 vim.keymap.set("n", "<leader><Space>", function()
-    vim.cmd("noh")
+  vim.cmd("noh")
 end)
 
 vim.keymap.set("n", "<Tab>", "gt")
