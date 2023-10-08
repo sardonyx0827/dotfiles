@@ -18,8 +18,8 @@ function _G.check_back_space()
 end
 
 local opts = {silent = true, noremap = true, expr = true, replace_keycodes = false}
---keyset("i", "<TAB>", 'coc#pum#visible() ? coc#pum#next(1) : v:lua.check_back_space() ? "<TAB>" : coc#refresh()', opts)
---keyset("i", "<S-TAB>", [[coc#pum#visible() ? coc#pum#prev(1) : "\<C-h>"]], opts)
+-- no new line when hit the enter key
+keyset("i", "<cr>", [[coc#pum#visible() ? coc#pum#confirm() : "\<C-g>u\<CR>\<c-r>=coc#on_enter()\<CR>"]], opts)
 
 function _G.show_docs()
   local cw = vim.fn.expand('<cword>')
@@ -33,6 +33,14 @@ function _G.show_docs()
 end
 keyset("n", "<leader>cd", '<CMD>lua _G.show_docs()<CR>', {silent = true})
 
+-- GoTo code navigation
+keyset("n", "<leader>cg", "<Plug>(coc-references)", {silent = true})
+keyset("n", "<leader>cr", "<Plug>(coc-rename)", {silent = true})
+
+-- Formatting selected code
+keyset("x", "<leader>cf", "<Plug>(coc-format-selected)", {silent = true})
+keyset("n", "<leader>cf", "<Plug>(coc-format-selected)", {silent = true})
+
 vim.cmd[[
 
 " set file type for tsx when file is opend first time
@@ -41,8 +49,6 @@ autocmd BufNewFile,BufRead *.tsx set filetype=typescript.tsx
 let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyzer', 'coc-react-refactor', 'coc-xml',
   \ 'coc-yaml', 'coc-translator', 'coc-sh', 'coc-lua', 'coc-json', 'coc-jedi', 'coc-diagnostic', 'coc-css', 'coc-prettier', 'coc-fzf-preview', 'coc-lists' ]
 
-" no new line when hit the enter key
-inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
 
 " check documentation on cursor
 " text must contains '()' to detect input and its must be 1 character
