@@ -45,13 +45,12 @@ lsp.set_preferences({
 })
 
 lsp.on_attach(function(client, bufnr)
-  print(client)
   local opts = {buffer = bufnr, remap = false}
 
-  --vim.keymap.set("n", "cd", function() vim.lsp.buf.definition() end, opts)
+  vim.keymap.set("n", "<leader>jd", function() vim.lsp.buf.definition() end, opts)
   vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end, opts)
-  vim.keymap.set("n", "<leader>rn", function() vim.lsp.buf.rename() end, opts)
-  vim.keymap.set("i", "<C-h>", function() vim.lsp.buf.signature_help() end, opts)
+  vim.keymap.set("n", "<leader>rr", function() vim.lsp.buf.rename() end, opts)
+  vim.keymap.set("n", "<leader>lc", function() vim.lsp.buf.code_action() end, opts)
 end)
 
 -- disable when using coc-nvim
