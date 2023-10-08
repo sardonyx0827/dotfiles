@@ -35,7 +35,7 @@ keyset("n", "<leader>cd", '<CMD>lua _G.show_docs()<CR>', {silent = true})
 
 -- GoTo code navigation
 keyset("n", "<leader>cg", "<Plug>(coc-references)", {silent = true})
-keyset("n", "<leader>cr", "<Plug>(coc-rename)", {silent = true})
+keyset("n", "<leader>crr", "<Plug>(coc-rename)", {silent = true})
 
 -- Formatting selected code
 keyset("x", "<leader>cf", "<Plug>(coc-format-selected)", {silent = true})
