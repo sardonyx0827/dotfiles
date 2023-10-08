@@ -29,3 +29,4 @@ end)
 
 vim.keymap.set("n", "<Tab>", "gt")
 vim.keymap.set("n", "<S-Tab>", "gT")
+
