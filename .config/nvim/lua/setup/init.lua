@@ -33,9 +33,6 @@ vim.g.netrw_winsize = 80
 vim.g.netrw_browse_split = 2
 
 vim.cmd[[
-imap <C-j> <Plug>(copilot-next)
-imap <C-k> <Plug>(copilot-previous)
-
 " set color on tail space
 highlight ExtraWhitespace ctermbg=red guibg=red
 au ColorScheme * highlight ExtraWhitespace guibg=red
