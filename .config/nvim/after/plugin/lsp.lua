@@ -4,6 +4,8 @@ lsp.preset("recommended")
 
 -- https://github.com/williamboman/mason-lspconfig.nvim
 lsp.ensure_installed({
+  'cssls',
+  'bashls',
   'tsserver',
   'rust_analyzer',
   'lua_ls',
@@ -11,6 +13,7 @@ lsp.ensure_installed({
   'jsonls',
   'dockerls',
   'docker_compose_language_service',
+  'yamlls',
 })
 -- Fix Undefined global 'vim'
 lsp.nvim_workspace()
