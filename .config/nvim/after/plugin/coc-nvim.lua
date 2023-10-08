@@ -41,6 +41,13 @@ keyset("n", "<leader>cr", "<Plug>(coc-rename)", {silent = true})
 keyset("x", "<leader>cf", "<Plug>(coc-format-selected)", {silent = true})
 keyset("n", "<leader>cf", "<Plug>(coc-format-selected)", {silent = true})
 
+--CocConfig
+-- {
+--   "languageserver": {},
+--   "diagnostic.enable": false,
+--   "suggest.autoTrigger": "none"
+-- }
+
 vim.cmd[[
 
 " set file type for tsx when file is opend first time
@@ -48,7 +55,6 @@ autocmd BufNewFile,BufRead *.tsx let b:tsx_ext_found = 1
 autocmd BufNewFile,BufRead *.tsx set filetype=typescript.tsx
 let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyzer', 'coc-react-refactor', 'coc-xml',
   \ 'coc-yaml', 'coc-translator', 'coc-sh', 'coc-lua', 'coc-json', 'coc-jedi', 'coc-diagnostic', 'coc-css', 'coc-prettier', 'coc-fzf-preview', 'coc-lists' ]
-
 
 " check documentation on cursor
 " text must contains '()' to detect input and its must be 1 character

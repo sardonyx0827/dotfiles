@@ -1,4 +1,5 @@
  {
    "languageserver": {},
-   "diagnostic.enable": false
+   "diagnostic.enable": false,
+   "suggest.autoTrigger": "none"
  }

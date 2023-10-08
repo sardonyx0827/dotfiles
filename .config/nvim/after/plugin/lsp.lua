@@ -2,14 +2,18 @@ local lsp = require("lsp-zero")
 
 lsp.preset("recommended")
 
+-- https://github.com/williamboman/mason-lspconfig.nvim
 lsp.ensure_installed({
   'tsserver',
   'rust_analyzer',
+  'lua_ls',
+  'jedi_language_server',
+  'jsonls',
+  'dockerls',
+  'docker_compose_language_service',
 })
-
 -- Fix Undefined global 'vim'
 lsp.nvim_workspace()
-
 
 local cmp = require('cmp')
 local cmp_select = {behavior = cmp.SelectBehavior.Select}
@@ -53,7 +57,7 @@ lsp.on_attach(function(client, bufnr)
 end)
 
 -- disable when using coc-nvim
---lsp.setup()
+lsp.setup()
 
 vim.diagnostic.config({
   virtual_text = true
