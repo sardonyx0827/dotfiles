@@ -55,7 +55,6 @@ lsp.on_attach(function(client, bufnr)
   vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end, opts)
   vim.keymap.set("n", "<leader>ca", function() vim.lsp.buf.code_action() end, opts)
   vim.keymap.set('n', '<leader>ff', function() vim.lsp.buf.format { async = true } end, opts)
-  vim.keymap.set('n', '<leader>cg', vim.lsp.buf.references, opts)
 end)
 
 -- disable when using coc-nvim
