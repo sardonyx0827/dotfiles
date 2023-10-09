@@ -8,14 +8,16 @@ return require('packer').startup(function(use)
   -- Packer can manage itself
   use 'wbthomason/packer.nvim'
 
+  -- fuzzy search using ripgrep
   use {
     'nvim-telescope/telescope.nvim', tag = '0.1.3',
     requires = { {'nvim-lua/plenary.nvim'} }
   }
 
+  -- colorscheme
   use({
     --'rose-pine/neovim',
-    'Mofiqul/vscode.nvim',
+    'Mofiqul/vscode.nvim', -- VSCode theme
     --as = 'rose-pine',
     as = 'vscode',
     config = function()
@@ -24,6 +26,7 @@ return require('packer').startup(function(use)
     end
   })
 
+  -- Find Troubles in my code
   use({
     "folke/trouble.nvim",
     config = function()
@@ -37,46 +40,56 @@ return require('packer').startup(function(use)
   })
 
   use {
+    -- Highlitght colors, Indents, etc
     'nvim-treesitter/nvim-treesitter',
     run = function()
       local ts_update = require('nvim-treesitter.install').update({ with_sync = true })
       ts_update()
-    end,}
-    use("nvim-treesitter/playground")
-    use("mbbill/undotree")
-    use("tpope/vim-fugitive")
-    use("nvim-treesitter/nvim-treesitter-context");
+  end,}
+  -- customize highlight
+  use("nvim-treesitter/playground")
+  use("nvim-treesitter/nvim-treesitter-context");
+  -- useful for +-trees on redo/undo
+  use("mbbill/undotree")
+  -- use git inside vim
+  use("tpope/vim-fugitive")
 
-    use {
-      'VonHeikemen/lsp-zero.nvim',
-      branch = 'v1.x',
-      requires = {
-        -- LSP Support
-        {'neovim/nvim-lspconfig'},
-        {'williamboman/mason.nvim'},
-        {'williamboman/mason-lspconfig.nvim'},
+  -- builtin lsp
+  use {
+    'VonHeikemen/lsp-zero.nvim',
+    branch = 'v1.x',
+    requires = {
+      -- LSP Support
+      {'neovim/nvim-lspconfig'},
+      {'williamboman/mason.nvim'},
+      {'williamboman/mason-lspconfig.nvim'},
 
-        -- Autocompletion
-        {'hrsh7th/nvim-cmp'},
-        {'hrsh7th/cmp-buffer'},
-        {'hrsh7th/cmp-path'},
-        {'saadparwaiz1/cmp_luasnip'},
-        {'hrsh7th/cmp-nvim-lsp'},
-        {'hrsh7th/cmp-nvim-lua'},
+      -- Autocompletion
+      {'hrsh7th/nvim-cmp'},
+      {'hrsh7th/cmp-buffer'},
+      {'hrsh7th/cmp-path'},
+      {'saadparwaiz1/cmp_luasnip'},
+      {'hrsh7th/cmp-nvim-lsp'},
+      {'hrsh7th/cmp-nvim-lua'},
 
-        -- Snippets
-        {'L3MON4D3/LuaSnip'},
-        {'rafamadriz/friendly-snippets'},
-      }
+      -- Snippets
+      {'L3MON4D3/LuaSnip'},
+      {'rafamadriz/friendly-snippets'},
     }
-    use({"neoclide/coc.nvim", branch = 'release'})
+  }
 
-    use("folke/zen-mode.nvim")
-    use("github/copilot.vim")
-    use("eandrju/cellular-automaton.nvim")
-    use("laytan/cloak.nvim")
-    use("nvim-tree/nvim-tree.lua")
-    use("vim-airline/vim-airline")
-    use("vim-airline/vim-airline-themes")
+  -- ZEN-MODE is good for focus
+  use("folke/zen-mode.nvim")
+  -- GitHub Copilot
+  use("github/copilot.vim")
+  -- animations :CellularAutomaton args
+  use("eandrju/cellular-automaton.nvim")
+  -- Cloak allows you to overlay *'s (or any other character) over defined patterns in defined files.
+  use("laytan/cloak.nvim")
+  -- File Explorer
+  use("nvim-tree/nvim-tree.lua")
+  -- Show Statusline
+  use("vim-airline/vim-airline")
+  use("vim-airline/vim-airline-themes")
 
-  end)
+end)
