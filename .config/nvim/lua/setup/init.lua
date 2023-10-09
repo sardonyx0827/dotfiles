@@ -33,14 +33,8 @@ vim.g.netrw_winsize = 80
 vim.g.netrw_browse_split = 2
 
 vim.cmd[[
-" set color on tail space
-highlight ExtraWhitespace ctermbg=red guibg=red
-au ColorScheme * highlight ExtraWhitespace guibg=red
-au BufEnter * match ExtraWhitespace /\s\+$/
-au InsertEnter * match ExtraWhitespace /\s\+\%#\@<!$/
-au InsertLeave * match ExtraWhiteSpace /\s\+$/
 
-" Terminal Setting like a Vim
+" Terminal Setting (Vim)
 " start with Insert-Mode
 autocmd TermOpen * :startinsert
 " no line number

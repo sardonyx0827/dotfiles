@@ -24,6 +24,8 @@ local cmp_mappings = lsp.defaults.cmp_mappings({
   ['<C-p>'] = cmp.mapping.select_prev_item(cmp_select),
   ['<C-n>'] = cmp.mapping.select_next_item(cmp_select),
   ['<C-y>'] = cmp.mapping.confirm({ select = true }),
+  ['<C-u>'] = cmp.mapping.scroll_docs(-4),
+  ['<C-d>'] = cmp.mapping.scroll_docs(4),
   ["<C-Space>"] = cmp.mapping.complete(),
 })
 
@@ -51,7 +53,7 @@ lsp.on_attach(function(client, bufnr)
   vim.keymap.set("n", "<C-t>", function() vim.lsp.buf.definition() end, opts)
   -- show definition in a split
   vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end, opts)
-  vim.keymap.set("n", "<leader>lc", function() vim.lsp.buf.code_action() end, opts)
+  vim.keymap.set("n", "<leader>ca", function() vim.lsp.buf.code_action() end, opts)
   vim.keymap.set('n', '<leader>ff', function() vim.lsp.buf.format { async = true } end, opts)
   vim.keymap.set('n', '<leader>cg', vim.lsp.buf.references, opts)
 end)
