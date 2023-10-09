@@ -47,9 +47,10 @@ lsp.set_preferences({
 lsp.on_attach(function(client, bufnr)
   local opts = {buffer = bufnr, remap = false}
 
+  -- jump to definition
   vim.keymap.set("n", "<C-t>", function() vim.lsp.buf.definition() end, opts)
+  -- show definition in a split
   vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end, opts)
-  vim.keymap.set("n", "<leader>mv", function() vim.lsp.buf.rename() end, opts)
   vim.keymap.set("n", "<leader>lc", function() vim.lsp.buf.code_action() end, opts)
   vim.keymap.set('n', '<leader>ff', function() vim.lsp.buf.format { async = true } end, opts)
   vim.keymap.set('n', '<leader>cg', vim.lsp.buf.references, opts)
