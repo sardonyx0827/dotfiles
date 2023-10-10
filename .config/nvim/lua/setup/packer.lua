@@ -51,7 +51,7 @@ return require('packer').startup(function(use)
   use("nvim-treesitter/nvim-treesitter-context");
   -- useful for +-trees on redo/undo
   use("mbbill/undotree")
-  -- use git inside vim
+  -- use git commands
   use("tpope/vim-fugitive")
 
   -- builtin lsp

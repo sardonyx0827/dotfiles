@@ -1,5 +1,0 @@
- {
-   "languageserver": {},
-   "diagnostic.enable": false,
-   "suggest.autoTrigger": "none"
- }

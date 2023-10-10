@@ -47,7 +47,6 @@ lsp.set_preferences({
 })
 
 lsp.on_attach(function(client, bufnr)
-  print(client)
   local opts = {buffer = bufnr, remap = false}
 
   -- jump to definition
