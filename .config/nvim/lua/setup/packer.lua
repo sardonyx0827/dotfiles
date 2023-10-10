@@ -78,6 +78,15 @@ return require('packer').startup(function(use)
     }
   }
 
+  -- use coc-nvim without lsp
+  -- [CocConfig]
+  -- {
+  --  "languageserver": {},
+  --  "diagnostic.enable": false,
+  --  "suggest.autoTrigger": "none"
+  --}
+  use({"neoclide/coc.nvim", branch = 'release'})
+
   -- ZEN-MODE is good for focus
   use("folke/zen-mode.nvim")
   -- GitHub Copilot
