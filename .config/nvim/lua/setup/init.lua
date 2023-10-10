@@ -22,7 +22,7 @@ autocmd('TextYankPost', {
   end,
 })
 
-autocmd({"BufWritePre"}, {
+autocmd({ "BufWritePre" }, {
   group = setupGroup,
   pattern = "*",
   command = [[%s/\s\+$//e]],
@@ -32,7 +32,7 @@ vim.g.netrw_liststyle = 3
 vim.g.netrw_winsize = 80
 vim.g.netrw_browse_split = 2
 
-vim.cmd[[
+vim.cmd [[
 
 " Terminal Setting (Vim)
 " start with Insert-Mode

@@ -1,5 +1,4 @@
-
-vim.cmd[[
+vim.cmd [[
 "" vim-airline
 let g:airline#extensions#tabline#enabled = 1
 let g:airline#extensions#default#layout = [

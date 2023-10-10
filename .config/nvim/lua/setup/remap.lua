@@ -1,4 +1,3 @@
-
 vim.g.mapleader = ","
 --vim.keymap.set("n", "<leader>e", vim.cmd.Ex)
 
@@ -17,9 +16,5 @@ vim.keymap.set("n", "<leader><Space>", function()
   vim.cmd("noh")
 end)
 
-vim.keymap.set("n", "<leader><leader>", function()
-  vim.cmd("so")
-end)
 vim.keymap.set("n", "<Tab>", "gt")
 vim.keymap.set("n", "<S-Tab>", "gT")
-

@@ -17,8 +17,13 @@ require("nvim-tree").setup({
     icons = {
       glyphs = {
         git = {
-          unstaged = '!', renamed = '»', untracked = '?', deleted = '✘',
-          staged = '✓', unmerged = '', ignored = '◌',
+          unstaged = '!',
+          renamed = '»',
+          untracked = '?',
+          deleted = '✘',
+          staged = '✓',
+          unmerged = '',
+          ignored = '◌',
         },
       },
     },
@@ -47,4 +52,3 @@ vim.api.nvim_create_autocmd("QuitPre", {
     end
   end
 })
-
