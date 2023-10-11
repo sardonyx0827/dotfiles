@@ -99,8 +99,7 @@ return require('packer').startup(function(use)
   -- Show icons https://github.com/nvim-tree/nvim-web-devicons
   use ("nvim-tree/nvim-web-devicons")
   -- Show Statusline
-  use("vim-airline/vim-airline")
-  use("vim-airline/vim-airline-themes")
+  use("nvim-lualine/lualine.nvim")
   -- Toggle comments numToStr/Comment.nvim
   use("numToStr/Comment.nvim")
   -- highlight cursor text https://github.com/RRethy/vim-illuminate
