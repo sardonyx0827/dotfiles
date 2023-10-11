@@ -85,6 +85,7 @@ return require('packer').startup(function(use)
   --  "suggest.autoTrigger": "none"
   --}
   use({ "neoclide/coc.nvim", branch = 'release' })
+  use({ "akinsho/toggleterm.nvim", tag = '*' })
 
   -- ZEN-MODE is good for focus
   use("folke/zen-mode.nvim")
@@ -97,7 +98,7 @@ return require('packer').startup(function(use)
   -- File Explorer
   use("nvim-tree/nvim-tree.lua")
   -- Show icons https://github.com/nvim-tree/nvim-web-devicons
-  use ("nvim-tree/nvim-web-devicons")
+  use("nvim-tree/nvim-web-devicons")
   -- Show Statusline
   use("nvim-lualine/lualine.nvim")
   -- Toggle comments numToStr/Comment.nvim
@@ -108,6 +109,6 @@ return require('packer').startup(function(use)
   use("lukas-reineke/indent-blankline.nvim")
   -- change args color
   use("m-demare/hlargs.nvim")
-
-
+  -- show scroll bar
+  use("petertriho/nvim-scrollbar")
 end)
