@@ -4,9 +4,19 @@ require('telescope').setup({
   },
   pickers = {
     live_grep = {
+      --theme = "dropdown",
       additional_args = function()
         return { "--hidden" }
       end
+    },
+    find_files = {
+      theme = "dropdown"
+    },
+    git_files = {
+      theme = "dropdown",
+    },
+    buffers = {
+      theme = "dropdown",
     },
   },
 })

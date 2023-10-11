@@ -96,7 +96,17 @@ return require('packer').startup(function(use)
   use("laytan/cloak.nvim")
   -- File Explorer
   use("nvim-tree/nvim-tree.lua")
+  -- Show icons https://github.com/nvim-tree/nvim-web-devicons
+  use ("nvim-tree/nvim-web-devicons")
   -- Show Statusline
   use("vim-airline/vim-airline")
   use("vim-airline/vim-airline-themes")
+  -- Toggle comments numToStr/Comment.nvim
+  use("numToStr/Comment.nvim")
+  -- highlight cursor text https://github.com/RRethy/vim-illuminate
+  use("RRethy/vim-illuminate")
+  -- indent lines https://github.com/lukas-reineke/indent-blankline.nvim
+  use("lukas-reineke/indent-blankline.nvim")
+
+
 end)
