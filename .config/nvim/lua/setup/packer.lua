@@ -107,6 +107,8 @@ return require('packer').startup(function(use)
   use("RRethy/vim-illuminate")
   -- indent lines https://github.com/lukas-reineke/indent-blankline.nvim
   use("lukas-reineke/indent-blankline.nvim")
+  -- change args color
+  use("m-demare/hlargs.nvim")
 
 
 end)
