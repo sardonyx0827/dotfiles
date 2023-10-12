@@ -8,16 +8,13 @@ return require('packer').startup(function(use)
   use 'wbthomason/packer.nvim'
 
   -- **********************************
-  -- Visual
+  -- visual settings
   -- **********************************
   -- colorscheme
   use({
-    --'rose-pine/neovim',
     'Mofiqul/vscode.nvim', -- VSCode theme
-    --as = 'rose-pine',
     as = 'vscode',
     config = function()
-      --vim.cmd('colorscheme rose-pine')
       vim.cmd('colorscheme vscode')
     end
   })
@@ -45,7 +42,7 @@ return require('packer').startup(function(use)
   use("petertriho/nvim-scrollbar")
 
   -- **********************************
-  -- Functions
+  -- utilities
   -- **********************************
   -- fuzzy search using ripgrep
   use {

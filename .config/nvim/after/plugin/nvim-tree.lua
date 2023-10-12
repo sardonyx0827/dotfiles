@@ -11,6 +11,8 @@ require("nvim-tree").setup({
   sort_by = "case_sensitive",
   view = {
     width = 30,
+    --float = { enable = true },
+    --side = "left",
   },
   renderer = {
     group_empty = true,
@@ -35,7 +37,7 @@ require("nvim-tree").setup({
 })
 
 
--- Toggle nvim-tree
+-- close nvim-tree when all windows are closed
 vim.api.nvim_create_autocmd("QuitPre", {
   callback = function()
     local invalid_win = {}
