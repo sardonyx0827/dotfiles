@@ -25,9 +25,12 @@ return require('packer').startup(function(use)
       local ts_update = require('nvim-treesitter.install').update({ with_sync = true })
       ts_update()
     end, }
+  use("p00f/nvim-ts-rainbow")
   -- customize highlight
   use("nvim-treesitter/playground")
-  use("nvim-treesitter/nvim-treesitter-context");
+  use("nvim-treesitter/nvim-treesitter-context")
+  -- A high-performance color highlighter
+  use("norcalli/nvim-colorizer.lua")
   -- Show Statusline
   use("nvim-lualine/lualine.nvim")
   -- Toggle comments numToStr/Comment.nvim
