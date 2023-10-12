@@ -6,6 +6,8 @@ if wezterm.config_builder then
   config = wezterm.config_builder()
 end
 
+-- Acceptable values are SteadyBlock, BlinkingBlock, SteadyUnderline, BlinkingUnderline, SteadyBar, and BlinkingBar.
+config.default_cursor_style = 'BlinkingBlock'
 -- font
 config.font = wezterm.font("Ubuntu Mono", {weight="Medium", stretch="Normal", style="Normal"})
 -- font-size (default: 12)
