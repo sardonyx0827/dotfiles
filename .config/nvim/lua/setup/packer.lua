@@ -66,8 +66,6 @@ return require('packer').startup(function(use)
   })
   -- useful for +-trees on redo/undo
   use("mbbill/undotree")
-  -- use git commands
-  use("tpope/vim-fugitive")
   -- builtin lsp
   use {
     'VonHeikemen/lsp-zero.nvim',
@@ -114,6 +112,9 @@ return require('packer').startup(function(use)
   use("nvim-tree/nvim-tree.lua")
   -- Show icons https://github.com/nvim-tree/nvim-web-devicons
   use("nvim-tree/nvim-web-devicons")
+  -- use git commands
+  use("tpope/vim-fugitive")
+  -- git client
   use {
     "NeogitOrg/neogit",
     dependencies = {
@@ -121,5 +122,6 @@ return require('packer').startup(function(use)
     },
     config = true
   }
+  -- Show git diff
   use("sindrets/diffview.nvim")
 end)
