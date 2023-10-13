@@ -16,3 +16,16 @@ end
 -- if you only want these mappings for toggle term use term://*toggleterm#* instead
 vim.cmd('autocmd! TermOpen term://* lua set_terminal_keymaps()')
 vim.keymap.set("n", "<leader>sh", "<cmd>ToggleTerm<cr>")
+
+-- use docui https://github.com/skanehira/docui
+local Terminal = require("toggleterm.terminal").Terminal
+local docui = Terminal:new({
+	cmd = "docui",
+	direction = "float",
+	hidden = true
+})
+
+function _docui_toggle()
+	docui:toggle()
+end
+vim.api.nvim_set_keymap("n", "<leader>do", "<cmd>lua _docui_toggle()<CR>", { noremap = true, silent = true })
