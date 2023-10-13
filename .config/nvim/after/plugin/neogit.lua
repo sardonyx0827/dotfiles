@@ -59,7 +59,7 @@ neogit.setup {
   -- Automatically show console if a command takes more than console_timeout milliseconds
   auto_show_console = true,
   status = {
-    recent_commit_count = 10,
+    recent_commit_count = 100,
   },
   commit_editor = {
     kind = "split",
