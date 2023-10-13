@@ -91,6 +91,8 @@ return require('packer').startup(function(use)
       { 'rafamadriz/friendly-snippets' },
     }
   }
+  -- for lint and formatter(no lsp)
+  use("jose-elias-alvarez/null-ls.nvim")
   -- use coc-nvim without lsp
   -- [CocConfig]
   -- {
