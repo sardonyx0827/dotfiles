@@ -117,9 +117,9 @@ return require('packer').startup(function(use)
   use {
     "NeogitOrg/neogit",
     dependencies = {
-      "nvim-lua/plenary.nvim",         -- required
-      "sindrets/diffview.nvim",        -- optional
+      "nvim-lua/plenary.nvim", -- required
     },
     config = true
   }
+  use("sindrets/diffview.nvim")
 end)
