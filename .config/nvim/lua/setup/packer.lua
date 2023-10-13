@@ -114,4 +114,12 @@ return require('packer').startup(function(use)
   use("nvim-tree/nvim-tree.lua")
   -- Show icons https://github.com/nvim-tree/nvim-web-devicons
   use("nvim-tree/nvim-web-devicons")
+  use {
+    "NeogitOrg/neogit",
+    dependencies = {
+      "nvim-lua/plenary.nvim",         -- required
+      "sindrets/diffview.nvim",        -- optional
+    },
+    config = true
+  }
 end)
