@@ -51,6 +51,7 @@ neogit.setup {
   -- Sorting keys: https://git-scm.com/docs/git-for-each-ref#_options
   sort_branches = "-committerdate",
   -- Change the default way of opening neogit
+  -- tab (default) replace floating split split_above vsplit auto
   kind = "tab",
   -- Disable line numbers and relative line numbers
   disable_line_numbers = true,

@@ -10,13 +10,13 @@ require('telescope').setup({
       end
     },
     find_files = {
-      theme = "dropdown"
+      --theme = "dropdown"
     },
     git_files = {
-      theme = "dropdown",
+      --theme = "dropdown",
     },
     buffers = {
-      theme = "dropdown",
+      --theme = "dropdown",
     },
   },
 })
