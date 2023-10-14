@@ -118,7 +118,6 @@ return require('packer').startup(function(use)
     dependencies = {
       "nvim-lua/plenary.nvim", -- required
     },
-    config = true
   }
   -- show git diff explorer (and for neogit)
   use("sindrets/diffview.nvim")

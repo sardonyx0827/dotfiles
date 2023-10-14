@@ -1,5 +1,4 @@
 vim.g.mapleader = ","
---vim.keymap.set("n", "<leader>e", vim.cmd.Ex)
 
 -- best solutions for me
 vim.keymap.set("v", "<", "<gv")
@@ -15,9 +14,6 @@ vim.keymap.set("n", "<leader>rn", [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left>
 vim.keymap.set("n", "<leader><Space>", function()
   vim.cmd("noh")
 end)
-
-vim.keymap.set("n", "<Tab>", "gt")
-vim.keymap.set("n", "<S-Tab>", "gT")
 
 vim.cmd[[
 cnoreabbrev W! w!
