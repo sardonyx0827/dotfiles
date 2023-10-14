@@ -2,6 +2,7 @@ require('lualine').setup {
   options = {
     icons_enabled = true,
     theme = 'auto',
+    --color = { bg = 'none' },
     component_separators = { left = '', right = '' },
     section_separators = { left = '', right = '' },
     disabled_filetypes = {
@@ -38,3 +39,11 @@ require('lualine').setup {
   inactive_winbar = {},
   extensions = {}
 }
+
+-- set highlights
+--vim.api.nvim_set_hl(0, "lualine_a_normal", { bg = "none" })
+--vim.api.nvim_set_hl(0, "lualine_b_normal", { bg = "none" })
+--vim.api.nvim_set_hl(0, "lualine_c_normal", { bg = "none" })
+--vim.api.nvim_set_hl(0, "lualine_x_normal", { bg = "none" })
+--vim.api.nvim_set_hl(0, "lualine_y_normal", { bg = "none" })
+--vim.api.nvim_set_hl(0, "lualine_z_normal", { bg = "none" })
