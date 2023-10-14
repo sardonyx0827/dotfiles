@@ -33,8 +33,6 @@ return require('packer').startup(function(use)
   use("norcalli/nvim-colorizer.lua")
   -- Show Statusline
   use("nvim-lualine/lualine.nvim")
-  -- Toggle comments numToStr/Comment.nvim
-  use("numToStr/Comment.nvim")
   -- highlight cursor text https://github.com/RRethy/vim-illuminate
   use("RRethy/vim-illuminate")
   -- indent lines https://github.com/lukas-reineke/indent-blankline.nvim
@@ -52,7 +50,7 @@ return require('packer').startup(function(use)
     'nvim-telescope/telescope.nvim', tag = '0.1.3',
     requires = { { 'nvim-lua/plenary.nvim' } }
   }
-  -- Find Troubles in my code
+  -- find Trouble in my code
   use({
     "folke/trouble.nvim",
     config = function()
@@ -64,9 +62,9 @@ return require('packer').startup(function(use)
       }
     end
   })
-  -- useful for +-trees on redo/undo
+  -- +-tree on redo/undo
   use("mbbill/undotree")
-  -- builtin lsp
+  -- lsp settings
   use {
     'VonHeikemen/lsp-zero.nvim',
     branch = 'v1.x',
@@ -100,19 +98,19 @@ return require('packer').startup(function(use)
   --}
   use({ "neoclide/coc.nvim", branch = 'release' })
   use({ "akinsho/toggleterm.nvim", tag = '*' })
-  -- ZEN-MODE is good for focus
+  -- Toggle comments numToStr/Comment.nvim
+  use("numToStr/Comment.nvim")
+  -- focus
   use("folke/zen-mode.nvim")
   -- GitHub Copilot
   use("github/copilot.vim")
-  -- animations :CellularAutomaton args
-  use("eandrju/cellular-automaton.nvim")
   -- Cloak allows you to overlay *'s (or any other character) over defined patterns in defined files.
   use("laytan/cloak.nvim")
   -- File Explorer
   use("nvim-tree/nvim-tree.lua")
-  -- Show icons https://github.com/nvim-tree/nvim-web-devicons
+  -- show icons https://github.com/nvim-tree/nvim-web-devicons
   use("nvim-tree/nvim-web-devicons")
-  -- use git commands
+  -- git commands in nvim
   use("tpope/vim-fugitive")
   -- git client
   use {
@@ -122,6 +120,6 @@ return require('packer').startup(function(use)
     },
     config = true
   }
-  -- Show git diff
+  -- show git diff explorer
   use("sindrets/diffview.nvim")
 end)

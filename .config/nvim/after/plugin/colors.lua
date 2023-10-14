@@ -1,10 +1,8 @@
---require('rose-pine').setup({
 require('vscode').setup({
   disable_background = true
 })
 
 function ColorMyPencils(color)
-  --color = color or "rose-pine"
   color = color or "vscode"
   vim.cmd.colorscheme(color)
 
