@@ -29,7 +29,7 @@ return require('packer').startup(function(use)
   -- customize highlight
   use("nvim-treesitter/playground")
   use("nvim-treesitter/nvim-treesitter-context")
-  -- A high-performance color highlighter
+  -- A high-performance color highlighter. show color in code, like #ffffff
   use("norcalli/nvim-colorizer.lua")
   -- Show Statusline
   use("nvim-lualine/lualine.nvim")
@@ -117,10 +117,9 @@ return require('packer').startup(function(use)
     "NeogitOrg/neogit",
     dependencies = {
       "nvim-lua/plenary.nvim", -- required
-      "sindrets/diffview.nvim",
     },
     config = true
   }
-  -- show git diff explorer
+  -- show git diff explorer (and for neogit)
   use("sindrets/diffview.nvim")
 end)

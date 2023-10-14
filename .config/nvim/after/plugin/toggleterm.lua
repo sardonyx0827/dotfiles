@@ -17,8 +17,8 @@ end
 vim.cmd('autocmd! TermOpen term://* lua set_terminal_keymaps()')
 vim.keymap.set("n", "<leader>sh", "<cmd>ToggleTerm<cr>")
 
--- use docui https://github.com/skanehira/docui
 local Terminal = require("toggleterm.terminal").Terminal
+-- use docui https://github.com/skanehira/docui
 local docui = Terminal:new({
 	cmd = "docui",
 	direction = "float",
@@ -29,3 +29,15 @@ function _docui_toggle()
 	docui:toggle()
 end
 vim.api.nvim_set_keymap("n", "<leader>do", "<cmd>lua _docui_toggle()<CR>", { noremap = true, silent = true })
+
+-- todo (pip install dooit)
+local dooit = Terminal:new({
+	cmd = "dooit",
+	direction = "float",
+	hidden = true
+})
+
+function _dooit_toggle()
+	dooit:toggle()
+end
+vim.api.nvim_set_keymap("n", "<leader>to", "<cmd>lua _dooit_toggle()<CR>", { noremap = true, silent = true })
