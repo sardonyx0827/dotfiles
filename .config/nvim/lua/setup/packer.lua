@@ -28,6 +28,8 @@ return require('packer').startup(function(use)
   -- customize highlight
   use("nvim-treesitter/playground")
   use("nvim-treesitter/nvim-treesitter-context")
+  -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
+  use("hiphish/rainbow-delimiters.nvim")
   -- A high-performance color highlighter. show color in code, like #ffffff
   use("norcalli/nvim-colorizer.lua")
   -- Show Statusline
