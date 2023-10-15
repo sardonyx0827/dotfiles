@@ -105,8 +105,6 @@ return require('packer').startup(function(use)
   use("folke/zen-mode.nvim")
   -- GitHub Copilot
   use("github/copilot.vim")
-  -- Cloak allows you to overlay *'s (or any other character) over defined patterns in defined files.
-  use("laytan/cloak.nvim")
   -- File Explorer
   use("nvim-tree/nvim-tree.lua")
   -- show icons https://github.com/nvim-tree/nvim-web-devicons
