@@ -119,4 +119,5 @@ return require('packer').startup(function(use)
       { "sindrets/diffview.nvim" }, -- optional but recommended
     },
   }
+  use ("APZelos/blamer.nvim")
 end)
