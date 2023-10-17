@@ -12,8 +12,9 @@ export ZSH="$HOME/.oh-my-zsh"
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
 #ZSH_THEME="risto" # fish like
-ZSH_THEME="eastwood" # 1
-#ZSH_THEME="clean" # 2
+ZSH_THEME="kennethreitz" # 1
+#ZSH_THEME="gallois" # 2
+#ZSH_THEME="eastwood" # 3
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
