@@ -42,6 +42,9 @@ return require('packer').startup(function(use)
   use("m-demare/hlargs.nvim")
   -- show scroll bar
   use("petertriho/nvim-scrollbar")
+  -- gitsigns
+  use("lewis6991/gitsigns.nvim")
+
 
   -- **********************************
   -- utilities
@@ -90,14 +93,6 @@ return require('packer').startup(function(use)
   }
   -- for lint and formatter(no lsp)
   use("jose-elias-alvarez/null-ls.nvim")
-  -- use coc-nvim without lsp
-  -- [CocConfig]
-  -- {
-  --  "languageserver": {},
-  --  "diagnostic.enable": false,
-  --  "suggest.autoTrigger": "none"
-  --}
-  use({ "neoclide/coc.nvim", branch = 'release' })
   use({ "akinsho/toggleterm.nvim", tag = '*' })
   -- Toggle comments numToStr/Comment.nvim
   use("numToStr/Comment.nvim")
