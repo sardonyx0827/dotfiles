@@ -21,8 +21,7 @@ end
 vim.g.rainbow_delimiters = {
   strategy = {
     [''] = rainbow_delimiters.strategy['global'],
-    --vim = rainbow_delimiters.strategy['local'],
-    vim = give_up,
+    --vim = give_up,
   },
   query = {
     [''] = 'rainbow-delimiters',
