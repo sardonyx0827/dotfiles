@@ -14,3 +14,6 @@ vim.keymap.set("n", "<leader>rn", [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left>
 vim.keymap.set("n", "<leader><Space>", function()
   vim.cmd("noh")
 end)
+vim.keymap.set("n", "<C-s>", function()
+  vim.cmd("w")
+end)
