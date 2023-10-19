@@ -27,6 +27,7 @@ return require('packer').startup(function(use)
     end, }
   -- customize highlight
   use("nvim-treesitter/playground")
+  -- show context
   use("nvim-treesitter/nvim-treesitter-context")
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   use("hiphish/rainbow-delimiters.nvim")
@@ -114,5 +115,6 @@ return require('packer').startup(function(use)
       { "sindrets/diffview.nvim" }, -- optional but recommended
     },
   }
+  -- show git diff
   use ("APZelos/blamer.nvim")
 end)

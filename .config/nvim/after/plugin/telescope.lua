@@ -27,6 +27,7 @@ vim.keymap.set('n', '<leader>gs', builtin.git_status, {})
 vim.keymap.set('n', '<leader>b', builtin.buffers, {})
 vim.keymap.set('n', '<leader>h', builtin.help_tags, {})
 vim.keymap.set('n', '<leader>j', builtin.jumplist, {})
+vim.keymap.set('n', '<leader>rg', builtin.registers, {})
 
 -- using ripgrep. "sudo apt install ripgrep" or "brew install ripgrep"
 vim.keymap.set('n', '<leader>gr', builtin.live_grep, {})

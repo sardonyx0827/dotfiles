@@ -31,3 +31,6 @@ vim.opt.updatetime = 50
 vim.opt.clipboard:append { 'unnamedplus' }
 
 vim.opt.mouse = ""
+
+vim.opt.ignorecase = true
+vim.opt.smartcase = true
