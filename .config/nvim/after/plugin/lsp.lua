@@ -4,10 +4,7 @@ lsp.preset("recommended")
 
 -- https://github.com/williamboman/mason-lspconfig.nvim
 lsp.ensure_installed({
-  'cssls',
-  'bashls',
-  'tsserver',
-  'rust_analyzer',
+  'vtsls',
   'lua_ls',
   'jedi_language_server',
   'jsonls',
