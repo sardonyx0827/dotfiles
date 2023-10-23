@@ -43,15 +43,13 @@ lsp.set_preferences({
 })
 
 lsp.on_attach(function(client, bufnr)
-  local opts = { buffer = bufnr, remap = false }
-
   -- jump to definition
-  vim.keymap.set("n", "<C-t>", function() vim.lsp.buf.definition() end, opts)
+  vim.keymap.set("n", "<C-t>", function() vim.lsp.buf.definition() end, { buffer = bufnr, remap = false, desc = "jump to definition" })
   -- show definition in a split
-  vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end, opts)
-  vim.keymap.set("n", "<leader>ca", function() vim.lsp.buf.code_action() end, opts)
-  vim.keymap.set('n', '<leader>ff', function() vim.lsp.buf.format { async = true } end, opts)
-  vim.keymap.set('n', '<leader>ra', function() vim.lsp.buf.rename() end)
+  vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end, { buffer = bufnr, remap = false, desc = "show definition" })
+  vim.keymap.set("n", "<leader>ca", function() vim.lsp.buf.code_action() end, { buffer = bufnr, remap = false, desc = "code action" })
+  vim.keymap.set('n', '<leader>ff', function() vim.lsp.buf.format { async = true } end, { buffer = bufnr, remap = false, desc = "format this file" })
+  vim.keymap.set('n', '<leader>ra', function() vim.lsp.buf.rename() end, {desc = "rename all file in workspace"})
 end)
 
 -- disable when using coc-nvim

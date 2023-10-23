@@ -21,14 +21,14 @@ require('telescope').setup({
   },
 })
 local builtin = require('telescope.builtin')
-vim.keymap.set('n', '<leader>sf', builtin.find_files, {})
-vim.keymap.set('n', '<leader>gf', builtin.git_files, {})
-vim.keymap.set('n', '<leader>gs', builtin.git_status, {})
-vim.keymap.set('n', '<leader>b', builtin.buffers, {})
-vim.keymap.set('n', '<leader>h', builtin.help_tags, {})
-vim.keymap.set('n', '<leader>j', builtin.jumplist, {})
-vim.keymap.set('n', '<leader>rg', builtin.registers, {})
+vim.keymap.set('n', '<leader>sf', builtin.find_files, {desc="Find Files"})
+vim.keymap.set('n', '<leader>gf', builtin.git_files, {desc="Git Files"})
+vim.keymap.set('n', '<leader>gs', builtin.git_status, {desc="Git Status"})
+vim.keymap.set('n', '<leader>b', builtin.buffers, {desc="Buffers"})
+vim.keymap.set('n', '<leader>h', builtin.help_tags, {desc="Help Tags"})
+vim.keymap.set('n', '<leader>j', builtin.jumplist, {desc="Jump List"})
+vim.keymap.set('n', '<leader>rg', builtin.registers, {desc="Registers"})
 
 -- using ripgrep. "sudo apt install ripgrep" or "brew install ripgrep"
-vim.keymap.set('n', '<leader>gr', builtin.live_grep, {})
-vim.keymap.set('n', '<leader>gw', builtin.grep_string, {})
+vim.keymap.set('n', '<leader>gr', builtin.live_grep, {desc="Live Grep"})
+vim.keymap.set('n', '<leader>gw', builtin.grep_string, {desc="Grep String"})

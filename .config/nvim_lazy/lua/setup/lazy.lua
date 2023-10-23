@@ -32,10 +32,6 @@ local plugins = {
   {
     -- Highlitght colors, Indents, etc
     'nvim-treesitter/nvim-treesitter',
-    --build = function()
-    --  local ts_update = require('nvim-treesitter.install').update({ with_sync = true })
-    --  ts_update()
-    --end,
   },
   -- customize highlight
   "nvim-treesitter/playground",
@@ -64,7 +60,8 @@ local plugins = {
   -- **********************************
   -- fuzzy search using ripgrep
   {
-    'nvim-telescope/telescope.nvim', version = "0.1.3",
+    'nvim-telescope/telescope.nvim',
+    version = "0.1.3",
     dependencies = { { 'nvim-lua/plenary.nvim' } }
   },
   -- find Trouble in my code
@@ -123,13 +120,15 @@ local plugins = {
   {
     "NeogitOrg/neogit",
     dependencies = {
-      { "nvim-lua/plenary.nvim" }, -- required
+      { "nvim-lua/plenary.nvim" },  -- required
       { "sindrets/diffview.nvim" }, -- optional but recommended
     },
   },
   -- show git diff
   "APZelos/blamer.nvim",
+  -- key navigation
+  'folke/which-key.nvim',
 }
-local opts = {
-}
+
+local opts = {}
 require("lazy").setup(plugins, opts)
