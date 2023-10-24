@@ -56,9 +56,10 @@ local settings = {
         title = "Basic Commands",
         margin = 5,
         content = {
-            { " New Game", "lua require'startup'.new_file()", "<leader>nf" },
-            { " Continue", "Telescope oldfiles", "<leader>of" },
-            { " Save Datas", "Telescope find_files", "<leader>ff" },
+            { "🐴New Game", "lua require'startup'.new_file()", "<leader>nf" },
+            { "🪜Continue", "Telescope oldfiles", "<leader>of" },
+            { "🪃Save Datas", "Telescope find_files", "<leader>ff" },
+            { "🪦Quit", "q", "q" },
             --{ " Find Datas", "Telescope live_grep", "<leader>lg" },
             --{ " File Browser", "Telescope file_browser", "<leader>fb" },
             --{ " Colorschemes", "Telescope colorscheme", "<leader>cs" },
