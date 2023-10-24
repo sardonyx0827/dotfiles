@@ -34,3 +34,5 @@ vim.opt.mouse = ""
 
 vim.opt.ignorecase = true
 vim.opt.smartcase = true
+
+vim.opt.cursorline = true
