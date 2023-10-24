@@ -20,7 +20,8 @@ local plugins = {
   -- colorscheme
   {
     "folke/tokyonight.nvim",
-    name = "tokyonight"
+    name = "tokyonight",
+    event = "VeryLazy",
   },
   {
     "Mofiqul/vscode.nvim", -- default
@@ -36,7 +37,7 @@ local plugins = {
       "nvim-lua/plenary.nvim"
     },
     config = function()
-      require"startup".setup({theme = "dashboard"}) -- dashboard(default), evil, startify
+      require "startup".setup({ theme = "dashboard" }) -- dashboard(default), evil, startify
     end
   },
   {
@@ -48,21 +49,39 @@ local plugins = {
   -- show context
   "nvim-treesitter/nvim-treesitter-context",
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
-  "hiphish/rainbow-delimiters.nvim",
+  {
+    "hiphish/rainbow-delimiters.nvim",
+    event = "VeryLazy",
+  },
   -- A high-performance color highlighter. show color in code, like #ffffff
-  "norcalli/nvim-colorizer.lua",
+  {
+    "norcalli/nvim-colorizer.lua",
+    event = "VeryLazy",
+  },
   -- Show Statusline
   "nvim-lualine/lualine.nvim",
   -- highlight cursor text https://github.com/RRethy/vim-illuminate
-  "RRethy/vim-illuminate",
+  {
+    "RRethy/vim-illuminate",
+    event = "VeryLazy",
+  },
   -- indent lines https://github.com/lukas-reineke/indent-blankline.nvim
   "lukas-reineke/indent-blankline.nvim",
   -- change args color
-  "m-demare/hlargs.nvim",
+  {
+    "m-demare/hlargs.nvim",
+    event = "VeryLazy",
+  },
   -- show scroll bar
-  "petertriho/nvim-scrollbar",
+  {
+    "petertriho/nvim-scrollbar",
+    event = "VeryLazy",
+  },
   -- gitsigns
-  "lewis6991/gitsigns.nvim",
+  {
+    "lewis6991/gitsigns.nvim",
+    event = "VeryLazy",
+  },
 
 
   -- **********************************
@@ -77,6 +96,7 @@ local plugins = {
   -- find Trouble in my code
   {
     "folke/trouble.nvim",
+    event = "VeryLazy",
     config = function()
       require("trouble").setup {
         icons = false,
@@ -87,37 +107,54 @@ local plugins = {
     end
   },
   -- +-tree on redo/undo
-  "mbbill/undotree",
+  {
+    "mbbill/undotree",
+    event = "VeryLazy",
+  },
   -- lsp settings
   {
     "VonHeikemen/lsp-zero.nvim",
     branch = "v1.x",
+    event = "VeryLazy",
     dependencies = {
       -- LSP Support
-      { "neovim/nvim-lspconfig" },
-      { "williamboman/mason.nvim" },
-      { "williamboman/mason-lspconfig.nvim" },
+      { "neovim/nvim-lspconfig",             lazy = true },
+      { "williamboman/mason.nvim",           lazy = true },
+      { "williamboman/mason-lspconfig.nvim", lazy = true },
 
       -- Autocompletion
-      { "hrsh7th/nvim-cmp" },
-      { "hrsh7th/cmp-buffer" },
-      { "hrsh7th/cmp-path" },
-      { "saadparwaiz1/cmp_luasnip" },
-      { "hrsh7th/cmp-nvim-lsp" },
-      { "hrsh7th/cmp-nvim-lua" },
+      { "hrsh7th/nvim-cmp",                  lazy = true },
+      { "hrsh7th/cmp-buffer",                lazy = true },
+      { "hrsh7th/cmp-path",                  lazy = true },
+      { "saadparwaiz1/cmp_luasnip",          lazy = true },
+      { "hrsh7th/cmp-nvim-lsp",              lazy = true },
+      { "hrsh7th/cmp-nvim-lua",              lazy = true },
 
       -- Snippets
-      { "L3MON4D3/LuaSnip" },
-      { "rafamadriz/friendly-snippets" },
+      { "L3MON4D3/LuaSnip",                  lazy = true },
+      { "rafamadriz/friendly-snippets",      lazy = true },
     }
   },
   -- for lint and formatter(no lsp)
-  "jose-elias-alvarez/null-ls.nvim",
-  { "akinsho/toggleterm.nvim", version = "*" },
+  {
+    "jose-elias-alvarez/null-ls.nvim",
+    lazy = true
+  },
+  {
+    "akinsho/toggleterm.nvim",
+    version = "*",
+    event = "VeryLazy",
+  },
   -- Toggle comments numToStr/Comment.nvim
-  "numToStr/Comment.nvim",
+  {
+    "numToStr/Comment.nvim",
+    event = "VeryLazy",
+  },
   -- focus
-  "folke/zen-mode.nvim",
+  {
+    "folke/zen-mode.nvim",
+    event = "VeryLazy",
+  },
   -- GitHub Copilot
   "github/copilot.vim",
   -- File Explorer
@@ -125,7 +162,10 @@ local plugins = {
   -- show icons https://github.com/nvim-tree/nvim-web-devicons
   "nvim-tree/nvim-web-devicons",
   -- git commands in nvim
-  "tpope/vim-fugitive",
+  {
+    "tpope/vim-fugitive",
+    event = "VeryLazy",
+  },
   -- git client
   {
     "NeogitOrg/neogit",
@@ -135,9 +175,15 @@ local plugins = {
     },
   },
   -- show git diff
-  "APZelos/blamer.nvim",
+  {
+    "APZelos/blamer.nvim",
+    event = "VeryLazy",
+  },
   -- key navigation
-  "folke/which-key.nvim",
+  {
+    "folke/which-key.nvim",
+    event = "VeryLazy",
+  },
 }
 
 local opts = {}
