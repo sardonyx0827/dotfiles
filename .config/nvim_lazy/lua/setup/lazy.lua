@@ -30,6 +30,16 @@ local plugins = {
     end
   },
   {
+    "startup-nvim/startup.nvim",
+    dependencies = {
+      "nvim-telescope/telescope.nvim",
+      "nvim-lua/plenary.nvim"
+    },
+    config = function()
+      require"startup".setup({theme = "dashboard"}) -- dashboard(default), evil, startify
+    end
+  },
+  {
     -- Highlitght colors, Indents, etc
     'nvim-treesitter/nvim-treesitter',
   },
