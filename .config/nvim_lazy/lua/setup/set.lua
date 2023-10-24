@@ -28,7 +28,7 @@ vim.opt.isfname:append("@-@")
 
 vim.opt.updatetime = 50
 
-vim.opt.clipboard:append { 'unnamedplus' }
+vim.opt.clipboard:append { "unnamedplus" }
 
 vim.opt.mouse = ""
 

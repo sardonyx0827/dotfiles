@@ -1,6 +1,6 @@
-require('telescope').setup({
+require("telescope").setup({
   defaults = {
-    file_ignore_patterns = { 'node_modules', 'vendor', 'dist', 'build' },
+    file_ignore_patterns = { "node_modules", "vendor", "dist", "build" },
   },
   pickers = {
     live_grep = {
@@ -20,16 +20,16 @@ require('telescope').setup({
     },
   },
 })
-local builtin = require('telescope.builtin')
-vim.keymap.set('n', '<leader>sf', builtin.find_files, {desc="Find Files"})
-vim.keymap.set('n', '<leader>gf', builtin.git_files, {desc="Git Files"})
-vim.keymap.set('n', '<leader>gs', builtin.git_status, {desc="Git Status"})
-vim.keymap.set('n', '<leader>of', builtin.oldfiles, {desc="Old Files"})
-vim.keymap.set('n', '<leader>b', builtin.buffers, {desc="Buffers"})
-vim.keymap.set('n', '<leader>j', builtin.jumplist, {desc="Jump List"})
-vim.keymap.set('n', '<leader>h', builtin.help_tags, {desc="Help Tags"})
-vim.keymap.set('n', '<leader>rg', builtin.registers, {desc="Registers"})
+local builtin = require("telescope.builtin")
+vim.keymap.set("n", "<leader>sf", builtin.find_files, {desc="Find Files"})
+vim.keymap.set("n", "<leader>gf", builtin.git_files, {desc="Git Files"})
+vim.keymap.set("n", "<leader>gs", builtin.git_status, {desc="Git Status"})
+vim.keymap.set("n", "<leader>of", builtin.oldfiles, {desc="Old Files"})
+vim.keymap.set("n", "<leader>b", builtin.buffers, {desc="Buffers"})
+vim.keymap.set("n", "<leader>j", builtin.jumplist, {desc="Jump List"})
+vim.keymap.set("n", "<leader>h", builtin.help_tags, {desc="Help Tags"})
+vim.keymap.set("n", "<leader>rg", builtin.registers, {desc="Registers"})
 
 -- using ripgrep. "sudo apt install ripgrep" or "brew install ripgrep"
-vim.keymap.set('n', '<leader>gr', builtin.live_grep, {desc="Live Grep"})
-vim.keymap.set('n', '<leader>gw', builtin.grep_string, {desc="Grep String"})
+vim.keymap.set("n", "<leader>gr", builtin.live_grep, {desc="Live Grep"})
+vim.keymap.set("n", "<leader>gw", builtin.grep_string, {desc="Grep String"})

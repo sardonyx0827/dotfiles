@@ -1,5 +1,5 @@
-require('hlargs').setup {
-  color = '#ef9123',
+require("hlargs").setup {
+  color = "#ef9123",
   highlight = {},
   excluded_filetypes = {},
   paint_arg_declarations = true,
@@ -15,8 +15,8 @@ require('hlargs').setup {
   excluded_argnames = {
     declarations = {},
     usages = {
-      python = { 'self', 'cls' },
-      lua = { 'self' }
+      python = { "self", "cls" },
+      lua = { "self" }
     }
   },
   performance = {
@@ -32,4 +32,4 @@ require('hlargs').setup {
     }
   }
 }
--- (You may omit the settings whose defaults you're ok with)
+-- (You may omit the settings whose defaults you"re ok with)

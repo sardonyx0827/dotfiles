@@ -1,4 +1,4 @@
-require('vscode').setup({
+require("vscode").setup({
   disable_background = true
 })
 

@@ -1,10 +1,10 @@
 -- default configuration
-require('illuminate').configure({
+require("illuminate").configure({
   -- providers: provider used to get references in the buffer, ordered by priority
   providers = {
-    'lsp',
-    'treesitter',
-    'regex',
+    "lsp",
+    "treesitter",
+    "regex",
   },
   -- delay: delay in milliseconds
   delay = 100,
@@ -14,9 +14,9 @@ require('illuminate').configure({
   filetype_overrides = {},
   -- filetypes_denylist: filetypes to not illuminate, this overrides filetypes_allowlist
   filetypes_denylist = {
-    'dirbuf',
-    'dirvish',
-    'fugitive',
+    "dirbuf",
+    "dirvish",
+    "fugitive",
   },
   -- filetypes_allowlist: filetypes to illuminate, this is overridden by filetypes_denylist
   -- You must set filetypes_denylist = {} to override the defaults to allow filetypes_allowlist to take effect
@@ -28,12 +28,12 @@ require('illuminate').configure({
   -- See `:help mode()` for possible values
   modes_allowlist = {},
   -- providers_regex_syntax_denylist: syntax to not illuminate, this overrides providers_regex_syntax_allowlist
-  -- Only applies to the 'regex' provider
-  -- Use :echom synIDattr(synIDtrans(synID(line('.'), col('.'), 1)), 'name')
+  -- Only applies to the "regex" provider
+  -- Use :echom synIDattr(synIDtrans(synID(line("."), col("."), 1)), "name")
   providers_regex_syntax_denylist = {},
   -- providers_regex_syntax_allowlist: syntax to illuminate, this is overridden by providers_regex_syntax_denylist
-  -- Only applies to the 'regex' provider
-  -- Use :echom synIDattr(synIDtrans(synID(line('.'), col('.'), 1)), 'name')
+  -- Only applies to the "regex" provider
+  -- Use :echom synIDattr(synIDtrans(synID(line("."), col("."), 1)), "name")
   providers_regex_syntax_allowlist = {},
   -- under_cursor: whether or not to illuminate under the cursor
   under_cursor = true,
@@ -47,7 +47,7 @@ require('illuminate').configure({
   -- min_count_to_highlight: minimum number of matches required to perform highlighting
   min_count_to_highlight = 1,
   -- should_enable: a callback that overrides all other settings to
-  -- enable/disable illumination. This will be called a lot so don't do
+  -- enable/disable illumination. This will be called a lot so don"t do
   -- anything expensive in it.
   should_enable = function(bufnr) return true end,
   -- case_insensitive_regex: sets regex case sensitivity

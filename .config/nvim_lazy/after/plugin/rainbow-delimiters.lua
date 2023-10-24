@@ -20,20 +20,20 @@ end
 
 vim.g.rainbow_delimiters = {
   strategy = {
-    [''] = rainbow_delimiters.strategy['global'],
+    [""] = rainbow_delimiters.strategy["global"],
     --vim = give_up,
   },
   query = {
-    [''] = 'rainbow-delimiters',
-    lua = 'rainbow-blocks',
+    [""] = "rainbow-delimiters",
+    lua = "rainbow-blocks",
   },
   highlight = {
-    'RainbowDelimiterYellow',
-    'RainbowDelimiterBlue',
-    'RainbowDelimiterOrange',
-    'RainbowDelimiterGreen',
-    'RainbowDelimiterViolet',
-    'RainbowDelimiterCyan',
-    --'RainbowDelimiterRed',
+    "RainbowDelimiterYellow",
+    "RainbowDelimiterBlue",
+    "RainbowDelimiterOrange",
+    "RainbowDelimiterGreen",
+    "RainbowDelimiterViolet",
+    "RainbowDelimiterCyan",
+    --"RainbowDelimiterRed",
   },
 }

@@ -19,14 +19,14 @@ local plugins = {
   -- **********************************
   -- colorscheme
   {
-    'folke/tokyonight.nvim',
-    name = 'tokyonight'
+    "folke/tokyonight.nvim",
+    name = "tokyonight"
   },
   {
-    'Mofiqul/vscode.nvim', -- default
-    name = 'vscode',
+    "Mofiqul/vscode.nvim", -- default
+    name = "vscode",
     config = function()
-      vim.cmd('colorscheme vscode')
+      vim.cmd("colorscheme vscode")
     end
   },
   {
@@ -41,7 +41,7 @@ local plugins = {
   },
   {
     -- Highlitght colors, Indents, etc
-    'nvim-treesitter/nvim-treesitter',
+    "nvim-treesitter/nvim-treesitter",
   },
   -- customize highlight
   "nvim-treesitter/playground",
@@ -70,9 +70,9 @@ local plugins = {
   -- **********************************
   -- fuzzy search using ripgrep
   {
-    'nvim-telescope/telescope.nvim',
+    "nvim-telescope/telescope.nvim",
     version = "0.1.3",
-    dependencies = { { 'nvim-lua/plenary.nvim' } }
+    dependencies = { { "nvim-lua/plenary.nvim" } }
   },
   -- find Trouble in my code
   {
@@ -90,25 +90,25 @@ local plugins = {
   "mbbill/undotree",
   -- lsp settings
   {
-    'VonHeikemen/lsp-zero.nvim',
-    branch = 'v1.x',
+    "VonHeikemen/lsp-zero.nvim",
+    branch = "v1.x",
     dependencies = {
       -- LSP Support
-      { 'neovim/nvim-lspconfig' },
-      { 'williamboman/mason.nvim' },
-      { 'williamboman/mason-lspconfig.nvim' },
+      { "neovim/nvim-lspconfig" },
+      { "williamboman/mason.nvim" },
+      { "williamboman/mason-lspconfig.nvim" },
 
       -- Autocompletion
-      { 'hrsh7th/nvim-cmp' },
-      { 'hrsh7th/cmp-buffer' },
-      { 'hrsh7th/cmp-path' },
-      { 'saadparwaiz1/cmp_luasnip' },
-      { 'hrsh7th/cmp-nvim-lsp' },
-      { 'hrsh7th/cmp-nvim-lua' },
+      { "hrsh7th/nvim-cmp" },
+      { "hrsh7th/cmp-buffer" },
+      { "hrsh7th/cmp-path" },
+      { "saadparwaiz1/cmp_luasnip" },
+      { "hrsh7th/cmp-nvim-lsp" },
+      { "hrsh7th/cmp-nvim-lua" },
 
       -- Snippets
-      { 'L3MON4D3/LuaSnip' },
-      { 'rafamadriz/friendly-snippets' },
+      { "L3MON4D3/LuaSnip" },
+      { "rafamadriz/friendly-snippets" },
     }
   },
   -- for lint and formatter(no lsp)
@@ -137,7 +137,7 @@ local plugins = {
   -- show git diff
   "APZelos/blamer.nvim",
   -- key navigation
-  'folke/which-key.nvim',
+  "folke/which-key.nvim",
 }
 
 local opts = {}
