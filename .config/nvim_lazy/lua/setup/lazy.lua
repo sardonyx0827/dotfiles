@@ -33,15 +33,15 @@ local plugins = {
   {
     "startup-nvim/startup.nvim",
     dependencies = {
-      "nvim-telescope/telescope.nvim",
-      "nvim-lua/plenary.nvim"
+      { "nvim-telescope/telescope.nvim", lazy = true },
+      { "nvim-lua/plenary.nvim",         lazy = true }
     },
     config = function()
       require "startup".setup({ theme = "dashboard" }) -- dashboard(default), evil, startify
     end
   },
+  -- Highlitght colors, Indents, etc
   {
-    -- Highlitght colors, Indents, etc
     "nvim-treesitter/nvim-treesitter",
   },
   -- customize highlight
@@ -51,7 +51,7 @@ local plugins = {
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   {
     "hiphish/rainbow-delimiters.nvim",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- A high-performance color highlighter. show color in code, like #ffffff
   {
@@ -59,28 +59,30 @@ local plugins = {
     event = "VeryLazy",
   },
   -- Show Statusline
-  "nvim-lualine/lualine.nvim",
+  {
+    "nvim-lualine/lualine.nvim",
+  },
   -- highlight cursor text https://github.com/RRethy/vim-illuminate
   {
     "RRethy/vim-illuminate",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- indent lines https://github.com/lukas-reineke/indent-blankline.nvim
   "lukas-reineke/indent-blankline.nvim",
   -- change args color
   {
     "m-demare/hlargs.nvim",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- show scroll bar
   {
     "petertriho/nvim-scrollbar",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- gitsigns
   {
     "lewis6991/gitsigns.nvim",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
 
 
@@ -91,7 +93,7 @@ local plugins = {
   {
     "nvim-telescope/telescope.nvim",
     version = "0.1.3",
-    dependencies = { { "nvim-lua/plenary.nvim" } }
+    dependencies = { { "nvim-lua/plenary.nvim", lazy = true } }
   },
   -- find Trouble in my code
   {
@@ -109,18 +111,18 @@ local plugins = {
   -- +-tree on redo/undo
   {
     "mbbill/undotree",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- lsp settings
   {
     "VonHeikemen/lsp-zero.nvim",
     branch = "v1.x",
-    event = "VeryLazy",
     dependencies = {
       -- LSP Support
       { "neovim/nvim-lspconfig",             lazy = true },
       { "williamboman/mason.nvim",           lazy = true },
       { "williamboman/mason-lspconfig.nvim", lazy = true },
+      { "jose-elias-alvarez/null-ls.nvim",   lazy = true },
 
       -- Autocompletion
       { "hrsh7th/nvim-cmp",                  lazy = true },
@@ -137,10 +139,6 @@ local plugins = {
   },
   -- for lint and formatter(no lsp)
   {
-    "jose-elias-alvarez/null-ls.nvim",
-    lazy = true
-  },
-  {
     "akinsho/toggleterm.nvim",
     version = "*",
     event = "VeryLazy",
@@ -148,36 +146,40 @@ local plugins = {
   -- Toggle comments numToStr/Comment.nvim
   {
     "numToStr/Comment.nvim",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- focus
   {
     "folke/zen-mode.nvim",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- GitHub Copilot
-  "github/copilot.vim",
+  {
+    "github/copilot.vim",
+  },
   -- File Explorer
-  "nvim-tree/nvim-tree.lua",
+  {
+    "nvim-tree/nvim-tree.lua",
+  },
   -- show icons https://github.com/nvim-tree/nvim-web-devicons
   "nvim-tree/nvim-web-devicons",
   -- git commands in nvim
   {
     "tpope/vim-fugitive",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- git client
   {
     "NeogitOrg/neogit",
     dependencies = {
-      { "nvim-lua/plenary.nvim" },  -- required
-      { "sindrets/diffview.nvim" }, -- optional but recommended
+      { "nvim-lua/plenary.nvim",  lazy = true }, -- required
+      { "sindrets/diffview.nvim", lazy = true }, -- optional but recommended
     },
   },
   -- show git diff
   {
     "APZelos/blamer.nvim",
-    event = "VeryLazy",
+    event = "BufWinEnter",
   },
   -- key navigation
   {
@@ -186,5 +188,7 @@ local plugins = {
   },
 }
 
+local lazy = require("lazy")
+--lazy.config.default.lazy = true
 local opts = {}
-require("lazy").setup(plugins, opts)
+lazy.setup(plugins, opts)
