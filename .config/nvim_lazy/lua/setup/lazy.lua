@@ -156,7 +156,7 @@ local plugins = {
     branch = "v1.x",
     dependencies = {
       -- LSP Support
-      { "neovim/nvim-lspconfig"},
+      { "neovim/nvim-lspconfig" },
       { "williamboman/mason.nvim" },
       { "williamboman/mason-lspconfig.nvim" },
 
@@ -234,7 +234,7 @@ local plugins = {
   {
     "NeogitOrg/neogit",
     dependencies = {
-      { "nvim-lua/plenary.nvim" }, -- required
+      { "nvim-lua/plenary.nvim" },  -- required
       { "sindrets/diffview.nvim" }, -- optional but recommended
     },
     config = function()
@@ -250,6 +250,13 @@ local plugins = {
   {
     "folke/which-key.nvim",
     event = "VeryLazy",
+  },
+  -- **********************************
+  -- others
+  -- **********************************
+  {
+    'alanfortlink/blackjack.nvim',
+    dependencies = { 'nvim-lua/plenary.nvim' },
   },
 }
 
