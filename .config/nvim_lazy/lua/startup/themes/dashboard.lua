@@ -67,7 +67,7 @@ local settings = {
             { "🗡Continue", "Telescope oldfiles", "<leader>of" },
             { "🐎New Game", "lua require'startup'.new_file()", "<leader>nf" },
             { "🪃Save Datas", "Telescope find_files", "<leader>ff" },
-            { "🪦Quit", "q", "q" },
+            { "🧚Quit", "q", "q" },
             --{ " Find Datas", "Telescope live_grep", "<leader>lg" },
             --{ " File Browser", "Telescope file_browser", "<leader>fb" },
             --{ " Colorschemes", "Telescope colorscheme", "<leader>cs" },

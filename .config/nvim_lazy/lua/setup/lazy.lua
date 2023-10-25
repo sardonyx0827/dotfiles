@@ -33,8 +33,8 @@ local plugins = {
   {
     "startup-nvim/startup.nvim",
     dependencies = {
-      { "nvim-telescope/telescope.nvim", lazy = true },
-      { "nvim-lua/plenary.nvim",         lazy = true }
+      { "nvim-telescope/telescope.nvim" },
+      { "nvim-lua/plenary.nvim" }
     },
     config = function()
       require "startup".setup({ theme = "dashboard" }) -- dashboard(default), evil, startify
@@ -51,6 +51,7 @@ local plugins = {
   -- show context
   {
     "nvim-treesitter/nvim-treesitter-context",
+    event = "VeryLazy",
   },
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   {
@@ -62,11 +63,11 @@ local plugins = {
     "norcalli/nvim-colorizer.lua",
     event = "VeryLazy",
     config = function()
-    require("colorizer").setup(config, {
-      RRGGBBAA = true;
-      rgb_fn = true;
-      hsl_fn = true;
-    })
+      require("colorizer").setup(config, {
+        RRGGBBAA = true,
+        rgb_fn = true,
+        hsl_fn = true,
+      })
     end,
   },
   -- Show Statusline
@@ -114,7 +115,7 @@ local plugins = {
   {
     "nvim-telescope/telescope.nvim",
     version = "0.1.3",
-    dependencies = { { "nvim-lua/plenary.nvim", lazy = true } },
+    dependencies = { { "nvim-lua/plenary.nvim" } },
     config = function()
       require("telescope").setup({
         defaults = {
@@ -155,27 +156,27 @@ local plugins = {
     branch = "v1.x",
     dependencies = {
       -- LSP Support
-      { "neovim/nvim-lspconfig",             lazy = true },
-      { "williamboman/mason.nvim",           lazy = true },
-      { "williamboman/mason-lspconfig.nvim", lazy = true },
+      { "neovim/nvim-lspconfig"},
+      { "williamboman/mason.nvim" },
+      { "williamboman/mason-lspconfig.nvim" },
 
       -- Autocompletion
-      { "hrsh7th/nvim-cmp",                  lazy = true },
-      { "hrsh7th/cmp-buffer",                lazy = true },
-      { "hrsh7th/cmp-path",                  lazy = true },
-      { "saadparwaiz1/cmp_luasnip",          lazy = true },
-      { "hrsh7th/cmp-nvim-lsp",              lazy = true },
-      { "hrsh7th/cmp-nvim-lua",              lazy = true },
+      { "hrsh7th/nvim-cmp" },
+      { "hrsh7th/cmp-buffer" },
+      { "hrsh7th/cmp-path" },
+      { "saadparwaiz1/cmp_luasnip" },
+      { "hrsh7th/cmp-nvim-lsp" },
+      { "hrsh7th/cmp-nvim-lua" },
 
       -- Snippets
-      { "L3MON4D3/LuaSnip",                  lazy = true },
-      { "rafamadriz/friendly-snippets",      lazy = true },
+      { "L3MON4D3/LuaSnip" },
+      { "rafamadriz/friendly-snippets" },
     }
   },
   -- for lint and formatter(no lsp)
-  { "jose-elias-alvarez/null-ls.nvim",
+  {
+    "jose-elias-alvarez/null-ls.nvim",
     config = function()
-
       local null_ls = require("null-ls")
       null_ls.setup({
         sources = {
@@ -191,7 +192,7 @@ local plugins = {
     version = "*",
     event = "VeryLazy",
     config = function()
-      require("toggleterm").setup{
+      require("toggleterm").setup {
         -- "vertical" | "horizontal" | "tab" | "float"
         direction = "float"
       }
@@ -217,11 +218,12 @@ local plugins = {
   -- File Explorer
   {
     "nvim-tree/nvim-tree.lua",
+    event = "VeryLazy",
   },
   -- show icons https://github.com/nvim-tree/nvim-web-devicons
   {
     "nvim-tree/nvim-web-devicons",
-    lazy = true,
+    event = "VeryLazy",
   },
   -- git commands in nvim
   {
@@ -232,8 +234,8 @@ local plugins = {
   {
     "NeogitOrg/neogit",
     dependencies = {
-      { "nvim-lua/plenary.nvim",  lazy = true }, -- required
-      { "sindrets/diffview.nvim", lazy = true }, -- optional but recommended
+      { "nvim-lua/plenary.nvim" }, -- required
+      { "sindrets/diffview.nvim" }, -- optional but recommended
     },
     config = function()
       require("neogit").setup()
