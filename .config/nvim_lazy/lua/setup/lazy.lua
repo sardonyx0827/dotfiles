@@ -45,9 +45,15 @@ local plugins = {
     "nvim-treesitter/nvim-treesitter",
   },
   -- customize highlight
-  "nvim-treesitter/playground",
+  {
+    "nvim-treesitter/playground",
+    lazy = true,
+  },
   -- show context
-  "nvim-treesitter/nvim-treesitter-context",
+  {
+    "nvim-treesitter/nvim-treesitter-context",
+    lazy = true,
+  },
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   {
     "hiphish/rainbow-delimiters.nvim",
@@ -57,6 +63,13 @@ local plugins = {
   {
     "norcalli/nvim-colorizer.lua",
     event = "VeryLazy",
+    config = function()
+    require("colorizer").setup(config, {
+      RRGGBBAA = true;
+      rgb_fn = true;
+      hsl_fn = true;
+    })
+    end,
   },
   -- Show Statusline
   {
@@ -65,7 +78,6 @@ local plugins = {
   -- highlight cursor text https://github.com/RRethy/vim-illuminate
   {
     "RRethy/vim-illuminate",
-    event = "BufWinEnter",
   },
   -- indent lines https://github.com/lukas-reineke/indent-blankline.nvim
   "lukas-reineke/indent-blankline.nvim",
@@ -73,11 +85,22 @@ local plugins = {
   {
     "m-demare/hlargs.nvim",
     event = "BufWinEnter",
+    config = function()
+      require("hlargs").setup({
+        color = "#ef9123",
+        performance = {
+          max_iterations = 400,
+        },
+      })
+    end,
   },
   -- show scroll bar
   {
     "petertriho/nvim-scrollbar",
     event = "BufWinEnter",
+    config = function()
+      require("scrollbar").setup()
+    end,
   },
   -- gitsigns
   {
@@ -93,7 +116,22 @@ local plugins = {
   {
     "nvim-telescope/telescope.nvim",
     version = "0.1.3",
-    dependencies = { { "nvim-lua/plenary.nvim", lazy = true } }
+    dependencies = { { "nvim-lua/plenary.nvim", lazy = true } },
+    config = function()
+      require("telescope").setup({
+        defaults = {
+          file_ignore_patterns = { "node_modules", "vendor", "dist", "build" },
+        },
+        pickers = {
+          live_grep = {
+            --theme = "dropdown",
+            additional_args = function()
+              return { "--hidden" }
+            end
+          },
+        },
+      })
+    end,
   },
   -- find Trouble in my code
   {
@@ -122,7 +160,6 @@ local plugins = {
       { "neovim/nvim-lspconfig",             lazy = true },
       { "williamboman/mason.nvim",           lazy = true },
       { "williamboman/mason-lspconfig.nvim", lazy = true },
-      { "jose-elias-alvarez/null-ls.nvim",   lazy = true },
 
       -- Autocompletion
       { "hrsh7th/nvim-cmp",                  lazy = true },
@@ -138,15 +175,38 @@ local plugins = {
     }
   },
   -- for lint and formatter(no lsp)
+  { "jose-elias-alvarez/null-ls.nvim",
+    lazy = true,
+    config = function()
+
+      local null_ls = require("null-ls")
+      null_ls.setup({
+        sources = {
+          null_ls.builtins.formatting.stylua,
+          null_ls.builtins.diagnostics.eslint,
+          null_ls.builtins.completion.spell,
+        },
+      })
+    end,
+  },
   {
     "akinsho/toggleterm.nvim",
     version = "*",
     event = "VeryLazy",
+    config = function()
+      require("toggleterm").setup{
+        -- "vertical" | "horizontal" | "tab" | "float"
+        direction = "float"
+      }
+    end,
   },
   -- Toggle comments numToStr/Comment.nvim
   {
     "numToStr/Comment.nvim",
     event = "BufWinEnter",
+    config = function()
+      require("Comment").setup()
+    end,
   },
   -- focus
   {
@@ -162,7 +222,10 @@ local plugins = {
     "nvim-tree/nvim-tree.lua",
   },
   -- show icons https://github.com/nvim-tree/nvim-web-devicons
-  "nvim-tree/nvim-web-devicons",
+  {
+    "nvim-tree/nvim-web-devicons",
+    lazy = true,
+  },
   -- git commands in nvim
   {
     "tpope/vim-fugitive",
@@ -175,6 +238,9 @@ local plugins = {
       { "nvim-lua/plenary.nvim",  lazy = true }, -- required
       { "sindrets/diffview.nvim", lazy = true }, -- optional but recommended
     },
+    config = function()
+      require("neogit").setup()
+    end,
   },
   -- show git diff
   {

@@ -1,25 +1,3 @@
-require("telescope").setup({
-  defaults = {
-    file_ignore_patterns = { "node_modules", "vendor", "dist", "build" },
-  },
-  pickers = {
-    live_grep = {
-      --theme = "dropdown",
-      additional_args = function()
-        return { "--hidden" }
-      end
-    },
-    find_files = {
-      --theme = "dropdown"
-    },
-    git_files = {
-      --theme = "dropdown",
-    },
-    buffers = {
-      --theme = "dropdown",
-    },
-  },
-})
 local builtin = require("telescope.builtin")
 vim.keymap.set("n", "<leader>sf", builtin.find_files, {desc="Find Files"})
 vim.keymap.set("n", "<leader>gf", builtin.git_files, {desc="Git Files"})
