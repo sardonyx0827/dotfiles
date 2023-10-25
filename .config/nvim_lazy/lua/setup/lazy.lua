@@ -47,12 +47,10 @@ local plugins = {
   -- customize highlight
   {
     "nvim-treesitter/playground",
-    lazy = true,
   },
   -- show context
   {
     "nvim-treesitter/nvim-treesitter-context",
-    lazy = true,
   },
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   {
@@ -176,7 +174,6 @@ local plugins = {
   },
   -- for lint and formatter(no lsp)
   { "jose-elias-alvarez/null-ls.nvim",
-    lazy = true,
     config = function()
 
       local null_ls = require("null-ls")
