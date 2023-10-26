@@ -34,7 +34,7 @@ lsp_zero.set_sign_icons({
 })
 
 vim.diagnostic.config({
-  virtual_text = false,
+  virtual_text = true,
   severity_sort = true,
   float = {
     style = 'minimal',
@@ -89,8 +89,5 @@ cmp.setup({
     ['<C-u>'] = cmp.mapping.scroll_docs(-5),
 
   }),
-})
-vim.diagnostic.config({
-  virtual_text = true
 })
 
