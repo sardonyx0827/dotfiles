@@ -143,7 +143,7 @@ local plugins = {
     "folke/trouble.nvim",
     event = "VeryLazy",
     lazy = true,
-    cmd = {"TroubleToggle", "Trouble", "TroubleRefresh"},
+    cmd = { "TroubleToggle", "Trouble", "TroubleRefresh" },
     config = function()
       require("trouble").setup {
         icons = false,
@@ -249,11 +249,11 @@ local plugins = {
     lazy = true,
     cmd = "Neogit",
     dependencies = {
-      { "nvim-lua/plenary.nvim" },  -- required
+      { "nvim-lua/plenary.nvim" }, -- required
       {
         "sindrets/diffview.nvim",
         lazy = true,
-        cmd = {"DiffviewOpen", "DiffviewClose", "DiffviewToggleFiles", "DiffviewFocusFiles", "DiffviewRefresh", "Neogit"},
+        cmd = { "DiffviewOpen", "DiffviewClose", "DiffviewToggleFiles", "DiffviewFocusFiles", "DiffviewRefresh", "Neogit" },
       }, -- optional but recommended
     },
     config = function()
@@ -271,6 +271,17 @@ local plugins = {
     "folke/which-key.nvim",
     lazy = true,
     cmd = "WhichKey",
+  },
+  -- Surround selections
+  {
+    "kylechui/nvim-surround",
+    version = "*", -- Use for stability; omit to use `main` branch for the latest features
+    event = "VeryLazy",
+    config = function()
+      require("nvim-surround").setup({
+        -- Configuration here, or leave empty to use defaults
+      })
+    end
   },
   -- **********************************
   -- others
