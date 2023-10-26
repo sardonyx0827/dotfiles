@@ -3,14 +3,14 @@ local lsp = require("lsp-zero")
 lsp.preset("recommended")
 
 -- https://github.com/williamboman/mason-lspconfig.nvim
-lsp.ensure_installed({
-  "lua_ls",
-  "jedi_language_server",
-  "jsonls",
-  "dockerls",
-  "docker_compose_language_service",
-  "yamlls",
-})
+--lsp.ensure_installed({
+--  "lua_ls",
+--  "jedi_language_server",
+--  "jsonls",
+--  "dockerls",
+--  "docker_compose_language_service",
+--  "yamlls",
+--})
 -- Fix Undefined global "vim"
 lsp.nvim_workspace()
 

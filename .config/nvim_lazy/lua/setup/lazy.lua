@@ -32,6 +32,7 @@ local plugins = {
   },
   {
     "startup-nvim/startup.nvim",
+    event = "VimEnter",
     dependencies = {
       { "nvim-telescope/telescope.nvim" },
       { "nvim-lua/plenary.nvim" }
@@ -43,15 +44,16 @@ local plugins = {
   -- Highlitght colors, Indents, etc
   {
     "nvim-treesitter/nvim-treesitter",
+    --event = "VeryLazy",
   },
   -- customize highlight
   {
     "nvim-treesitter/playground",
+    event = "VeryLazy",
   },
   -- show context
   {
     "nvim-treesitter/nvim-treesitter-context",
-    event = "VeryLazy",
   },
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   {
@@ -73,13 +75,17 @@ local plugins = {
   -- Show Statusline
   {
     "nvim-lualine/lualine.nvim",
+    event = "VeryLazy",
   },
   -- highlight cursor text https://github.com/RRethy/vim-illuminate
   {
     "RRethy/vim-illuminate",
+    event = "VeryLazy",
   },
   -- indent lines https://github.com/lukas-reineke/indent-blankline.nvim
-  "lukas-reineke/indent-blankline.nvim",
+  {
+    "lukas-reineke/indent-blankline.nvim",
+  },
   -- change args color
   {
     "m-demare/hlargs.nvim",
@@ -136,6 +142,8 @@ local plugins = {
   {
     "folke/trouble.nvim",
     event = "VeryLazy",
+    lazy = true,
+    cmd = {"TroubleToggle", "Trouble", "TroubleRefresh"},
     config = function()
       require("trouble").setup {
         icons = false,
@@ -148,7 +156,8 @@ local plugins = {
   -- +-tree on redo/undo
   {
     "mbbill/undotree",
-    event = "BufWinEnter",
+    lazy = true,
+    cmd = "UndotreeToggle",
   },
   -- lsp settings
   {
@@ -176,6 +185,7 @@ local plugins = {
   -- for lint and formatter(no lsp)
   {
     "jose-elias-alvarez/null-ls.nvim",
+    event = "VeryLazy",
     config = function()
       local null_ls = require("null-ls")
       null_ls.setup({
@@ -190,7 +200,8 @@ local plugins = {
   {
     "akinsho/toggleterm.nvim",
     version = "*",
-    event = "VeryLazy",
+    lazy = true,
+    cmd = { "ToggleTerm" },
     config = function()
       require("toggleterm").setup {
         -- "vertical" | "horizontal" | "tab" | "float"
@@ -218,7 +229,8 @@ local plugins = {
   -- File Explorer
   {
     "nvim-tree/nvim-tree.lua",
-    event = "VeryLazy",
+    lazy = true,
+    cmd = "NvimTreeToggle",
   },
   -- show icons https://github.com/nvim-tree/nvim-web-devicons
   {
@@ -228,14 +240,21 @@ local plugins = {
   -- git commands in nvim
   {
     "tpope/vim-fugitive",
-    event = "BufWinEnter",
+    lazy = true,
+    cmd = "Gvdiffsplit",
   },
   -- git client
   {
     "NeogitOrg/neogit",
+    lazy = true,
+    cmd = "Neogit",
     dependencies = {
       { "nvim-lua/plenary.nvim" },  -- required
-      { "sindrets/diffview.nvim" }, -- optional but recommended
+      {
+        "sindrets/diffview.nvim",
+        lazy = true,
+        cmd = {"DiffviewOpen", "DiffviewClose", "DiffviewToggleFiles", "DiffviewFocusFiles", "DiffviewRefresh", "Neogit"},
+      }, -- optional but recommended
     },
     config = function()
       require("neogit").setup()
@@ -244,19 +263,23 @@ local plugins = {
   -- show git diff
   {
     "APZelos/blamer.nvim",
-    event = "BufWinEnter",
+    lazy = true,
+    cmd = "BlamerToggle",
   },
   -- key navigation
   {
     "folke/which-key.nvim",
-    event = "VeryLazy",
+    lazy = true,
+    cmd = "WhichKey",
   },
   -- **********************************
   -- others
   -- **********************************
+  -- BlackJack
   {
-    'alanfortlink/blackjack.nvim',
-    dependencies = { 'nvim-lua/plenary.nvim' },
+    "alanfortlink/blackjack.nvim",
+    event = "VeryLazy",
+    dependencies = { "nvim-lua/plenary.nvim" },
   },
 }
 
