@@ -19,6 +19,11 @@ local plugins = {
   -- **********************************
   -- colorscheme
   {
+    'rose-pine/neovim',
+    name = 'rose-pine',
+    event = "VeryLazy",
+  },
+  {
     "folke/tokyonight.nvim",
     name = "tokyonight",
     event = "VeryLazy",
@@ -32,6 +37,7 @@ local plugins = {
   },
   {
     "startup-nvim/startup.nvim",
+    lazy = true,
     event = "VimEnter",
     dependencies = {
       { "nvim-telescope/telescope.nvim" },
@@ -160,44 +166,22 @@ local plugins = {
     cmd = "UndotreeToggle",
   },
   -- lsp settings
---  {
---    "VonHeikemen/lsp-zero.nvim",
---    branch = "v1.x",
---    dependencies = {
---      -- LSP Support
---      { "neovim/nvim-lspconfig" },
---      { "williamboman/mason.nvim" },
---      { "williamboman/mason-lspconfig.nvim" },
---
---      -- Autocompletion
---      { "hrsh7th/nvim-cmp" },
---      { "hrsh7th/cmp-buffer" },
---      { "hrsh7th/cmp-path" },
---      { "saadparwaiz1/cmp_luasnip" },
---      { "hrsh7th/cmp-nvim-lsp" },
---      { "hrsh7th/cmp-nvim-lua" },
---
---      -- Snippets
---      { "L3MON4D3/LuaSnip" },
---      { "rafamadriz/friendly-snippets" },
---    }
---  },
-  {'VonHeikemen/lsp-zero.nvim', branch = 'v3.x'},
+  { 'VonHeikemen/lsp-zero.nvim',        branch = 'v3.x' },
 
   -- LSP Support
-  {'williamboman/mason.nvim'},
-  {'williamboman/mason-lspconfig.nvim'},
-  {'neovim/nvim-lspconfig'},
+  { 'williamboman/mason.nvim' },
+  { 'williamboman/mason-lspconfig.nvim' },
+  { 'neovim/nvim-lspconfig' },
 
   -- Autocompletion
-  {'hrsh7th/nvim-cmp'},
-  {'hrsh7th/cmp-nvim-lsp'},
-  {'hrsh7th/cmp-buffer'},
-  {'hrsh7th/cmp-path'},
-  {'saadparwaiz1/cmp_luasnip'},
-  {'hrsh7th/cmp-nvim-lua'},
-  {'L3MON4D3/LuaSnip'},
-  {'rafamadriz/friendly-snippets'},
+  { 'hrsh7th/nvim-cmp' },
+  { 'hrsh7th/cmp-nvim-lsp' },
+  { 'hrsh7th/cmp-buffer' },
+  { 'hrsh7th/cmp-path' },
+  { 'saadparwaiz1/cmp_luasnip' },
+  { 'hrsh7th/cmp-nvim-lua' },
+  { 'L3MON4D3/LuaSnip' },
+  { 'rafamadriz/friendly-snippets' },
   -- for lint and formatter(no lsp)
   {
     "jose-elias-alvarez/null-ls.nvim",
