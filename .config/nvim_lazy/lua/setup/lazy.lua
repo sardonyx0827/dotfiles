@@ -19,8 +19,8 @@ local plugins = {
   -- **********************************
   -- colorscheme
   {
-    'rose-pine/neovim',
-    name = 'rose-pine',
+    "rose-pine/neovim",
+    name = "rose-pine",
     event = "VeryLazy",
   },
   {
