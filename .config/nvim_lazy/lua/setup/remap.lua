@@ -23,3 +23,14 @@ vim.keymap.set("v", "<C-k>", "<C-a>gv")
 vim.keymap.set("v", "<C-j>", "<C-x>gv")
 vim.keymap.set("n", "<C-k>", "<C-a>")
 vim.keymap.set("n", "<C-j>", "<C-x>")
+
+-- resize current window
+-- make the window biger vertically
+vim.keymap.set('n', '<C-up>', '1<C-w>+', { noremap = true, silent = true})
+-- make the window smaller vertically
+vim.keymap.set('n', '<C-Down>', '1<C-w>-', { noremap = true, silent = true})
+-- make the window bigger horizontally by pressing shift and =
+vim.keymap.set('n', '<C-Right>', '1<C-w>>', { noremap = true, silent = true})
+-- make the window smaller horizontally by pressing shift and -
+vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true})
+
