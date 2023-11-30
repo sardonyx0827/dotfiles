@@ -12,7 +12,6 @@ dap.adapters = {
     }
   }
 }
-print(dap.adapters.debugpy.executable.command)
 
 dap.configurations = {
   python = {
