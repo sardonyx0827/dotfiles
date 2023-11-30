@@ -4,13 +4,23 @@ dap.adapters = {
     type = 'server',
     port = '${port}',
     executable = {
-
-      --command = vim.fn.stdpath('data') .. '/mason/packages/debugpy/extension/adapter/debugpy',
-      command = '/home/sardonyx0827/.local/share/nvim/mason/packages/debugpy/debugpy-adapter',
-
+      command = vim.fn.stdpath('data') .. '/mason/packages/debugpy/debugpy-adapter',
       args = {'--port', '${port}'}
     }
-  }
+  },
+  codelldb = {
+    type = 'server',
+    port = '${port}',
+    executable = {
+      command = vim.fn.stdpath('data') .. '/mason/packages/codelldb/extension/adapter/codelldb',
+      args = {'--port', '${port}'}
+    }
+  },
+  cppdbg = {
+    type = 'executable',
+    port = '${port}',
+    command = vim.fn.stdpath('data') .. '/mason/packages/cpptools/extension/debugAdapters/bin/OpenDebugAD7',
+  },
 }
 
 dap.configurations = {
@@ -24,20 +34,45 @@ dap.configurations = {
       -- Options below are for debugpy, see https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings for supported options
       program = "${file}"; -- This configuration will launch the current file if used.
     }
+  },
+  cpp = {
+  --  {
+  --    type = "cppdbg",
+  --    request = "launch",
+  --    cwd = '${workspaceFolder}',
+  --    program = function()
+  --      --return vim.fn.input('Path to executable: ', vim.fn.getcwd() .. '/', 'file')
+  --      return vim.fn.input('Path to executable: ', vim.fn.getcwd() .. '/a.out', 'file')
+  --    end,
+  --    stopAtEntry = true,
+  --  }
+    {
+      -- The first three options are required by nvim-dap
+      type = 'codelldb'; -- the type here established the link to the adapter definition: `dap.adapters.python`
+      request = 'launch';
+      name = "Launch file";
+
+      -- Options below are for debugpy, see https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings for supported options
+      program = function()
+        return vim.fn.input('Path to executable: ', vim.fn.getcwd() .. '/a.out', 'file')
+      end,
+      cwd = '${workspaceFolder}',
+      stopOnEntry = false,
+    }
   }
 }
 
--- open and close dap-ui when debugging
+-- open and close dap-ui after debug is started and stopped
 local dapui = require("dapui")
 dap.listeners.after.event_initialized["dapui_config"] = function()
   dapui.open()
 end
-dap.listeners.before.event_terminated["dapui_config"] = function()
-  dapui.close()
-end
-dap.listeners.before.event_exited["dapui_config"] = function()
-  dapui.close()
-end
+--dap.listeners.before.event_terminated["dapui_config"] = function()
+--  dapui.close()
+--end
+--dap.listeners.before.event_exited["dapui_config"] = function()
+--  dapui.close()
+--end
 
 vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<leader>bc', ':lua require("dap").clear_breakpoints()<CR>', { silent = true })
