@@ -119,7 +119,6 @@ local plugins = {
     event = "BufWinEnter",
   },
 
-
   -- **********************************
   -- utilities
   -- **********************************
@@ -197,6 +196,13 @@ local plugins = {
       })
     end,
   },
+  -- DAP
+  {'mfussenegger/nvim-dap'},
+  {'rcarriga/nvim-dap-ui'},
+  {'jay-babu/mason-nvim-dap.nvim'},
+  {'https://github.com/mfussenegger/nvim-dap-python'},
+
+  -- Terminal
   {
     "akinsho/toggleterm.nvim",
     version = "*",
