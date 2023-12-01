@@ -27,12 +27,13 @@ dap.configurations = {
   python = {
     {
       -- The first three options are required by nvim-dap
-      type = 'debugpy'; -- the type here established the link to the adapter definition: `dap.adapters.python`
-      request = 'launch';
-      name = "Launch file";
+      type = 'debugpy', -- the type here established the link to the adapter definition: `dap.adapters.python`
+      request = 'launch',
+      name = "Launch file(no pipenv)",
 
       -- Options below are for debugpy, see https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings for supported options
-      program = "${file}"; -- This configuration will launch the current file if used.
+      program = "${file}", -- This configuration will launch the current file if used.
+      stopOnEntry = false
     }
   },
   cpp = {
@@ -48,9 +49,9 @@ dap.configurations = {
   --  }
     {
       -- The first three options are required by nvim-dap
-      type = 'codelldb'; -- the type here established the link to the adapter definition: `dap.adapters.python`
-      request = 'launch';
-      name = "Launch file";
+      type = 'codelldb', -- the type here established the link to the adapter definition: `dap.adapters.python`
+      request = 'launch',
+      name = "Launch file",
 
       -- Options below are for debugpy, see https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings for supported options
       program = function()
@@ -73,6 +74,11 @@ end
 --dap.listeners.before.event_exited["dapui_config"] = function()
 --  dapui.close()
 --end
+
+-- for using pipenv or any other virtualenv
+local venv = os.getenv('VIRTUAL_ENV')
+local command = string.format('%s/bin/python', venv)
+require('dap-python').setup(command)
 
 vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<leader>bc', ':lua require("dap").clear_breakpoints()<CR>', { silent = true })
