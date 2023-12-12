@@ -32,6 +32,14 @@ local plugins = {
     "Mofiqul/vscode.nvim", -- default
     name = "vscode",
     config = function()
+      -- clear bg color
+      require("vscode").setup({
+        transparent = true,
+        styles = {
+            sidebars = "transparent",
+            floats = "transparent",
+        },
+      })
       vim.cmd("colorscheme vscode")
     end
   },
