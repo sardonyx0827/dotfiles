@@ -36,8 +36,8 @@ local plugins = {
       require("onedark").setup({
         transparent = true,
         styles = {
-            sidebars = "transparent",
-            floats = "transparent",
+          sidebars = "transparent",
+          floats = "transparent",
         },
       })
     end
@@ -51,8 +51,8 @@ local plugins = {
       require("vscode").setup({
         transparent = true,
         styles = {
-            sidebars = "transparent",
-            floats = "transparent",
+          sidebars = "transparent",
+          floats = "transparent",
         },
       })
       vim.cmd("colorscheme vscode")
@@ -207,7 +207,6 @@ local plugins = {
   -- for lint and formatter(no lsp)
   {
     "jose-elias-alvarez/null-ls.nvim",
-    event = "VeryLazy",
     config = function()
       local null_ls = require("null-ls")
       null_ls.setup({
@@ -220,10 +219,10 @@ local plugins = {
     end,
   },
   -- DAP
-  {'mfussenegger/nvim-dap'},
-  {'rcarriga/nvim-dap-ui'},
-  {'jay-babu/mason-nvim-dap.nvim'},
-  {'https://github.com/mfussenegger/nvim-dap-python'},
+  { 'mfussenegger/nvim-dap' },
+  { 'rcarriga/nvim-dap-ui' },
+  { 'jay-babu/mason-nvim-dap.nvim' },
+  { 'https://github.com/mfussenegger/nvim-dap-python' },
 
   -- Terminal
   {
@@ -253,7 +252,42 @@ local plugins = {
   },
   -- GitHub Copilot
   {
-    "github/copilot.vim",
+    --"github/copilot.vim",
+    "zbirenbaum/copilot.lua",
+    --config = function()
+    --  require("copilot").setup({
+    --    suggestion = { enabled = false },
+    --    panel = { enabled = false },
+    --  })
+    --end,
+    event = "InsertEnter",
+    cmd = "Copilot",
+    config = function()
+       require("copilot").setup({
+         suggestion = {
+           --enabled = true,
+           enabled = false,
+           auto_trigger = true,
+           debounce = 75,
+           keymap = {
+             accept = "<TAB>",
+             accept_word = false,
+             accept_line = false,
+             next = "<c-j>",
+             prev = "<c-k>",
+             dismiss = "<C-]>",
+           },
+         },
+         panel = { enabled = false },
+      })
+    end,
+
+  },
+  {
+    "zbirenbaum/copilot-cmp",
+    config = function ()
+      require("copilot_cmp").setup()
+    end
   },
   -- File Explorer
   {

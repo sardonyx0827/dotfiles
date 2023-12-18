@@ -62,6 +62,7 @@ cmp.setup({
     documentation = cmp.config.window.bordered(),
   },
   sources = {
+    {name = "copilot"},
     {name = 'path'},
     {name = 'nvim_lsp'},
     {name = 'nvim_lua'},
