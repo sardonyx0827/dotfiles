@@ -29,8 +29,23 @@ local plugins = {
     event = "VeryLazy",
   },
   {
+    "navarasu/onedark.nvim",
+    name = "onedark",
+    config = function()
+      -- clear bg color
+      require("onedark").setup({
+        transparent = true,
+        styles = {
+            sidebars = "transparent",
+            floats = "transparent",
+        },
+      })
+    end
+  },
+  {
     "Mofiqul/vscode.nvim", -- default
     name = "vscode",
+    --event = "VeryLazy",
     config = function()
       -- clear bg color
       require("vscode").setup({

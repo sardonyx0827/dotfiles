@@ -82,13 +82,14 @@ require('dap-python').setup(command)
 
 vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<leader>bc', ':lua require("dap").clear_breakpoints()<CR>', { silent = true })
-vim.api.nvim_set_keymap('n', '<F4>', ':lua require("dap").run_last()<CR>', { silent = true })
+--vim.api.nvim_set_keymap('n', '<F4>', ':lua require("dap").run_last()<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F5>', ':DapContinue<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F10>', ':DapStepOver<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F11>', ':DapStepInto<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F12>', ':DapStepOut<CR>', { silent = true })
-vim.api.nvim_set_keymap('n', '<leader>de', '<cmd>lua require("dap").disconnect({ terminateDebuggee = true })<CR>'
-  ..'<cmd>lua require("dap").close()<CR><cmd>lua require("dap").clear_breakpoints()<CR>', { silent = true })
+vim.api.nvim_set_keymap('n', '<S-F5>', '<cmd>lua require("dap").disconnect({ terminateDebuggee = true })<CR>'
+  ..'<cmd>lua require("dap").close()<CR>', { silent = true })
+  --..'<cmd>lua require("dap").close()<CR><cmd>lua require("dap").clear_breakpoints()<CR>', { silent = true })
 --vim.api.nvim_set_keymap('n', '<leader>B', ':lua require("dap").set_breakpoint(nil, nil, vim.fn.input("Breakpoint condition: "))<CR>', { silent = true })
 --vim.api.nvim_set_keymap('n', '<leader>lp', ':lua require("dap").set_breakpoint(nil, nil, vim.fn.input("Log point message: "))<CR>', { silent = true })
 
