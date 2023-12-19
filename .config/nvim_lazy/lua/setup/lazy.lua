@@ -72,7 +72,7 @@ local plugins = {
   -- Highlitght colors, Indents, etc
   {
     "nvim-treesitter/nvim-treesitter",
-    --event = "VeryLazy",
+    event = "VimEnter",
   },
   -- customize highlight
   {
@@ -267,28 +267,28 @@ local plugins = {
     event = "InsertEnter",
     cmd = "Copilot",
     config = function()
-       require("copilot").setup({
-         suggestion = {
-           --enabled = true,
-           enabled = false,
-           auto_trigger = true,
-           debounce = 75,
-           keymap = {
-             accept = "<TAB>",
-             accept_word = false,
-             accept_line = false,
-             next = "<c-j>",
-             prev = "<c-k>",
-             dismiss = "<C-]>",
-           },
-         },
-         panel = { enabled = false },
+      require("copilot").setup({
+        suggestion = {
+          --enabled = true,
+          enabled = false,
+          auto_trigger = true,
+          debounce = 75,
+          keymap = {
+            accept = "<TAB>",
+            accept_word = false,
+            accept_line = false,
+            next = "<c-j>",
+            prev = "<c-k>",
+            dismiss = "<C-]>",
+          },
+        },
+        panel = { enabled = false },
       })
     end,
   },
   {
     "zbirenbaum/copilot-cmp",
-    config = function ()
+    config = function()
       require("copilot_cmp").setup()
     end
   },
@@ -361,6 +361,5 @@ local plugins = {
 }
 
 local lazy = require("lazy")
---lazy.config.default.lazy = true
 local opts = {}
 lazy.setup(plugins, opts)
