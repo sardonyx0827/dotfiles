@@ -266,31 +266,11 @@ local plugins = {
     "zbirenbaum/copilot.lua",
     event = "InsertEnter",
     cmd = "Copilot",
-    config = function()
-      require("copilot").setup({
-        suggestion = {
-          --enabled = true,
-          enabled = false,
-          auto_trigger = true,
-          debounce = 75,
-          keymap = {
-            accept = "<TAB>",
-            accept_word = false,
-            accept_line = false,
-            next = "<c-j>",
-            prev = "<c-k>",
-            dismiss = "<C-]>",
-          },
-        },
-        panel = { enabled = false },
-      })
-    end,
   },
   {
     "zbirenbaum/copilot-cmp",
-    config = function()
-      require("copilot_cmp").setup()
-    end
+    event = { "InsertEnter", "LspAttach" },
+    fix_pairs = true,
   },
   -- File Explorer
   {

@@ -130,6 +130,11 @@ cmp.setup({
     -- scroll documentation window
     ['<C-d>'] = cmp.mapping.scroll_docs(5),
     ['<C-u>'] = cmp.mapping.scroll_docs(-5),
+    --["<C-i>"] = cmp.mapping(cmp.mapping.complete(), { "i", "c" }),
+		--["<C-e>"] = cmp.mapping({
+		--	i = cmp.mapping.abort(),
+		--	c = cmp.mapping.close(),
+    --})
 
   }),
 })
