@@ -262,16 +262,18 @@ local plugins = {
   -- GitHub Copilot
   {
     -- Official
-    --"github/copilot.vim",
-    "zbirenbaum/copilot.lua",
-    event = "InsertEnter",
-    cmd = "Copilot",
+    "github/copilot.vim",
   },
-  {
-    "zbirenbaum/copilot-cmp",
-    event = { "InsertEnter", "LspAttach" },
-    fix_pairs = true,
-  },
+  --{
+  --  "zbirenbaum/copilot.lua",
+  --  event = "InsertEnter",
+  --  cmd = "Copilot",
+  --},
+  --{
+  --  "zbirenbaum/copilot-cmp",
+  --  event = { "InsertEnter", "LspAttach" },
+  --  fix_pairs = true,
+  --},
   -- File Explorer
   {
     "nvim-tree/nvim-tree.lua",

@@ -104,7 +104,7 @@ cmp.setup({
     documentation = cmp.config.window.bordered(),
   },
   sources = {
-    {name = "copilot"},
+    --{name = "copilot"},
     {name = 'path'},
     {name = 'nvim_lsp'},
     {name = 'nvim_lua'},
@@ -121,7 +121,7 @@ cmp.setup({
     -- tab complete
     ['<Tab>'] = nil,
     ['<S-Tab>'] = nil,
-    ["<C-Space>"] = cmp.mapping.complete(),
+    --["<C-Space>"] = cmp.mapping.complete(),
 
     -- navigate between snippet placeholder
     ['<C-f>'] = cmp_action.luasnip_jump_forward(),
