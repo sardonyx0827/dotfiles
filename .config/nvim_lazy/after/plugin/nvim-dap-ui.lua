@@ -21,4 +21,4 @@ require("dapui").setup({
     },
   },
 })
-vim.api.nvim_set_keymap('n', '<leader>du', ':lua require("dapui").toggle()<CR>', {})
+vim.api.nvim_set_keymap('n', '<leader>du', ':lua require("dapui").toggle()<CR>', { silent = true })
