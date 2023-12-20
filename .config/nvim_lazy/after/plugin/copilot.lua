@@ -18,5 +18,5 @@ require("copilot").setup({
   panel = { enabled = false },
 })
 require("copilot_cmp").setup()
-vim.keymap.set("n", "<leader>po", ":Copilot panel open<CR>", { silent = true })
-vim.keymap.set("n", "<leader>pa", ":Copilot panel accept<CR>", { silent = true })
+vim.keymap.set("n", "<leader>pp", ":Copilot panel open<CR>", { silent = true })
+vim.keymap.set("n", "<leader>po", ":Copilot panel accept<CR>", { silent = true })
