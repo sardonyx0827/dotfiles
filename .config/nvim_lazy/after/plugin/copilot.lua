@@ -15,7 +15,22 @@ require("copilot").setup({
       dismiss = "<C-]>",
     },
   },
-  panel = { enabled = false },
+   panel = {
+    enabled = true,
+    auto_refresh = true,
+    keymap = {
+      jump_prev = "[[",
+      jump_next = "]]",
+      accept = "<CR>",
+      refresh = "gr",
+      open = "<M-CR>"
+    },
+    layout = {
+      position = "right", -- | top | left | right
+      ratio = 0.5
+    },
+  },
+  --panel = { enabled = false },
 })
 require("copilot_cmp").setup()
 vim.keymap.set("n", "<c-p>", ":Copilot panel<CR>", { silent = true })

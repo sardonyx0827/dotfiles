@@ -36,3 +36,5 @@ vim.opt.ignorecase = true
 vim.opt.smartcase = true
 
 vim.opt.cursorline = true
+
+vim.cmd([[au FileType * set fo-=c fo-=r fo-=o]])
