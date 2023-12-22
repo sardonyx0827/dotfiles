@@ -317,8 +317,11 @@ local plugins = {
   -- key navigation
   {
     "folke/which-key.nvim",
-    lazy = true,
-    cmd = "WhichKey",
+    --lazy = true,
+    --cmd = "WhichKey",
+    config = function()
+      require("which-key").setup {}
+    end,
   },
   -- Surround selections
   {
