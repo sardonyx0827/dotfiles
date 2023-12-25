@@ -274,6 +274,9 @@ local plugins = {
     event = { "InsertEnter", "LspAttach" },
     fix_pairs = true,
   },
+  {
+    "gptlang/CopilotChat.nvim",
+  },
   -- File Explorer
   {
     "nvim-tree/nvim-tree.lua",
