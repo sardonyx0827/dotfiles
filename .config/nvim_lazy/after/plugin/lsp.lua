@@ -138,9 +138,9 @@ cmp.setup({
     --})
 
   }),
-  experimental = {
-    ghost_text = true -- this feature conflict with copilot.vim's preview.
-  }
+  --experimental = {
+  --  ghost_text = true -- this feature conflict with copilot.vim's preview.
+  --}
 })
 
 -- `:` cmdline setup.
