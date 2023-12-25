@@ -3,9 +3,11 @@
 export PATH=/home/sardonyx0827/work/cli/rusty-journal:$PATH
 export PATH=/home/sardonyx0827/work/tools/docui:$PATH
 
-
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
+
+# set less options
+export LESS="-i -M -R -x4"
 
 # Set name of the theme to load --- if set to "random", it will
 # load a random theme each time oh-my-zsh is loaded, in which case,
@@ -81,6 +83,8 @@ plugins=(
   zsh-autosuggestions
   zsh-syntax-highlighting
 )
+# zsh-autosuggestions (5 or 6)
+export ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=6'
 
 source $ZSH/oh-my-zsh.sh
 
@@ -110,6 +114,10 @@ source $ZSH/oh-my-zsh.sh
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 
+# create work container on docker
+cdi () {
+  gnome-terminal -- bash -c "cd ~/work/github/first_boot_setup/docker/; bash create_docker_image.sh"
+}
 # wezterm
 alias imgcat="wezterm imgcat"
 
@@ -121,6 +129,8 @@ alias vim="nvim"
 alias vimdiff="nvim -d"
 alias view="nvim -R"
 
+# use gh copilots
+alias suggest="gh copilot suggest"
 
 # history
 setopt auto_pushd
@@ -142,3 +152,6 @@ setopt correct
 # completion for gh command. need this solution "gh completion -s zsh > /usr/local/share/zsh/site-functions/_gh"
 autoload -U compinit
 compinit -i
+
+# bind key(Ctrl + ])
+bindkey '^]' autosuggest-accept
