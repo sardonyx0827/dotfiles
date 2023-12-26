@@ -33,13 +33,13 @@ local plugins = {
     name = "onedark",
     config = function()
       -- clear bg color
-      require("onedark").setup({
-        transparent = true,
-        styles = {
-          sidebars = "transparent",
-          floats = "transparent",
-        },
-      })
+      -- require("onedark").setup({
+      --   transparent = true,
+      --   styles = {
+      --     sidebars = "transparent",
+      --     floats = "transparent",
+      --   },
+      -- })
     end
   },
   {
@@ -47,13 +47,13 @@ local plugins = {
     name = "vscode",
     config = function()
       -- clear bg color
-      require("vscode").setup({
-        transparent = true,
-        styles = {
-          sidebars = "transparent",
-          floats = "transparent",
-        },
-      })
+      -- require("vscode").setup({
+      --   transparent = true,
+      --   styles = {
+      --     sidebars = "transparent",
+      --     floats = "transparent",
+      --   },
+      -- })
       vim.cmd("colorscheme vscode")
     end
   },
