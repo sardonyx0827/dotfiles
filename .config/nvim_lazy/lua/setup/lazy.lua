@@ -337,6 +337,10 @@ local plugins = {
       })
     end
   },
+  {
+    "ThePrimeagen/harpoon",
+    branch = "harpoon2",
+  },
   -- **********************************
   -- others
   -- **********************************
