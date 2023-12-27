@@ -73,7 +73,6 @@ local plugins = {
   -- Highlitght colors, Indents, etc
   {
     "nvim-treesitter/nvim-treesitter",
-    event = "VimEnter",
   },
   -- customize highlight
   {
@@ -114,6 +113,7 @@ local plugins = {
   -- indent lines https://github.com/lukas-reineke/indent-blankline.nvim
   {
     "lukas-reineke/indent-blankline.nvim",
+    event = "VeryLazy",
   },
   -- change args color
   {
@@ -169,7 +169,6 @@ local plugins = {
   -- find Trouble in my code
   {
     "folke/trouble.nvim",
-    event = "VeryLazy",
     lazy = true,
     cmd = { "TroubleToggle", "Trouble", "TroubleRefresh" },
     config = function()
@@ -258,7 +257,6 @@ local plugins = {
   -- focus
   {
     "folke/zen-mode.nvim",
-    event = "BufWinEnter",
   },
   -- GitHub Copilot
   --{
@@ -277,7 +275,9 @@ local plugins = {
   },
   {
     "gptlang/CopilotChat.nvim",
-    event = "VeryLazy",
+    --event = "VeryLazy",
+    lazy = true,
+    cmd = "CopilotChat",
   },
   -- File Explorer
   {
@@ -344,7 +344,6 @@ local plugins = {
     "ThePrimeagen/harpoon",
     branch = "harpoon2",
     lazy = true,
-    cmd = { "HarpoonAddTerm", "HarpoonAddFile", "HarpoonAddUrl", "HarpoonAddCmd", "HarpoonAddCmdTerm", "HarpoonTermUI", "HarpoonFileUI", "HarpoonUI" },
     keys = {
       { "<C-e>", mode = "n", },
     },
