@@ -31,6 +31,7 @@ local plugins = {
   {
     "navarasu/onedark.nvim",
     name = "onedark",
+    event = "VeryLazy",
     config = function()
       -- clear bg color
       -- require("onedark").setup({
@@ -276,6 +277,7 @@ local plugins = {
   },
   {
     "gptlang/CopilotChat.nvim",
+    event = "VeryLazy",
   },
   -- File Explorer
   {
@@ -322,6 +324,7 @@ local plugins = {
     "folke/which-key.nvim",
     --lazy = true,
     --cmd = "WhichKey",
+    event = "VeryLazy",
     config = function()
       require("which-key").setup {}
     end,
@@ -340,6 +343,11 @@ local plugins = {
   {
     "ThePrimeagen/harpoon",
     branch = "harpoon2",
+    lazy = true,
+    cmd = { "HarpoonAddTerm", "HarpoonAddFile", "HarpoonAddUrl", "HarpoonAddCmd", "HarpoonAddCmdTerm", "HarpoonTermUI", "HarpoonFileUI", "HarpoonUI" },
+    keys = {
+      { "<C-e>", mode = "n", },
+    },
   },
   -- **********************************
   -- others
