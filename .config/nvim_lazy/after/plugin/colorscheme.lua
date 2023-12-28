@@ -8,7 +8,8 @@ local function set_bg_color_to_clear()
       floats = "transparent",
     },
   })
-  vim.cmd("colorscheme " .. color_scheme)
+  --vim.cmd("colorscheme " .. color_scheme)
+  vim.cmd.colorscheme(color_scheme)
 end
 
 local function set_bg_color_to_default()
@@ -21,7 +22,8 @@ local function set_bg_color_to_default()
       floats = "bg",
     },
   })
-  vim.cmd("colorscheme " .. color_scheme)
+  --vim.cmd("colorscheme " .. color_scheme)
+  vim.cmd.colorscheme(color_scheme)
 end
 
 local transparent = false
@@ -34,51 +36,18 @@ local function toggle_transparent()
     transparent = true
   end
 end
-vim.keymap.set("n", "<M-1>", ":colorscheme vscode<CR>", { noremap = true })
-vim.keymap.set("n", "<M-2>", ":colorscheme tokyonight-moon<CR>", { noremap = true })
-vim.keymap.set("n", "<M-3>", ":colorscheme onedark<CR>", { noremap = true })
-vim.keymap.set("n", "<M-4>", ":colorscheme tokyonight<CR>", { noremap = true })
-vim.keymap.set("n", "<M-5>", ":colorscheme rose-pine-moon<CR>", { noremap = true })
-vim.keymap.set("n", "<M-6>", ":colorscheme rose-pine-main<CR>", { noremap = true })
-vim.keymap.set("n", "<M-7>", ":colorscheme lunaperche<CR>", { noremap = true })
-vim.keymap.set("n", "<M-8>", ":colorscheme slate<CR>", { noremap = true })
-vim.keymap.set("n", "<M-9>", ":colorscheme default<CR>", { noremap = true })
-vim.keymap.set("n", "<M-0>", toggle_transparent, { noremap = true, silent = true })
+--vim.keymap.set("n", "<M-1>", ":colorscheme vscode<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-2>", ":colorscheme tokyonight-moon<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-3>", ":colorscheme onedark<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-4>", ":colorscheme tokyonight<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-5>", ":colorscheme rose-pine-moon<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-6>", ":colorscheme rose-pine-main<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-7>", ":colorscheme lunaperche<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-8>", ":colorscheme slate<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-9>", ":colorscheme default<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-0>", toggle_transparent, { noremap = true, silent = true })
 
 -- default color scheme
---vim.cmd("colorscheme tokyonight-moon")
---vim.cmd("colorscheme rose-pine-moon")
-
--- For dark theme (neovim's default)
---vim.o.background = 'dark'
--- For light theme
---vim.o.background = 'light'
-
-local c = require('vscode.colors').get_colors()
-require('vscode').setup({
-    -- Alternatively set style in setup
-    --style = 'light',
-
-    -- Enable transparent background
-    --transparent = true,
-
-    -- Enable italic comment
-    italic_comments = true,
-
-    -- Disable nvim-tree background color
-    disable_nvimtree_bg = true,
-
-    -- Override colors (see ./lua/vscode/colors.lua)
-    color_overrides = {
-        vscLineNumber = '#BBBBBB',
-    },
-
-    -- Override highlight groups (see ./lua/vscode/theme.lua)
-    group_overrides = {
-        -- this supports the same val table as vim.api.nvim_set_hl
-        -- use colors from this colorscheme by requiring vscode.colors!
-        Cursor = { fg=c.vscDarkBlue, bg=c.vscLightGreen, bold=true },
-    }
-})
-require('vscode').load()
-vim.cmd("colorscheme vscode")
+--vim.cmd("colorscheme vscode")
+vim.cmd("colorscheme rose-pine-main")
+--vim.cmd("colorscheme onedark")
