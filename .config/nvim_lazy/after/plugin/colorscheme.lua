@@ -1,6 +1,6 @@
 local function set_bg_color_to_clear()
   -- clear bg color
-  color_scheme = vim.g.colors_name
+  local color_scheme = vim.g.colors_name
   require(color_scheme).setup({
     transparent = true,
     styles = {
@@ -13,7 +13,7 @@ end
 
 local function set_bg_color_to_default()
   -- set bg color to default
-  color_scheme = vim.g.colors_name
+  local color_scheme = vim.g.colors_name
   require(color_scheme).setup({
     transparent = false,
     styles = {
@@ -34,8 +34,8 @@ local function toggle_transparent()
     transparent = true
   end
 end
-vim.keymap.set("n", "<M-1>", ":colorscheme tokyonight-moon<CR>", { noremap = true })
-vim.keymap.set("n", "<M-2>", ":colorscheme vscode<CR>", { noremap = true })
+vim.keymap.set("n", "<M-1>", ":colorscheme vscode<CR>", { noremap = true })
+vim.keymap.set("n", "<M-2>", ":colorscheme tokyonight-moon<CR>", { noremap = true })
 vim.keymap.set("n", "<M-3>", ":colorscheme onedark<CR>", { noremap = true })
 vim.keymap.set("n", "<M-4>", ":colorscheme tokyonight<CR>", { noremap = true })
 vim.keymap.set("n", "<M-5>", ":colorscheme rose-pine-moon<CR>", { noremap = true })
@@ -47,4 +47,38 @@ vim.keymap.set("n", "<M-0>", toggle_transparent, { noremap = true, silent = true
 
 -- default color scheme
 --vim.cmd("colorscheme tokyonight-moon")
-vim.cmd("colorscheme rose-pine-moon")
+--vim.cmd("colorscheme rose-pine-moon")
+
+-- For dark theme (neovim's default)
+--vim.o.background = 'dark'
+-- For light theme
+--vim.o.background = 'light'
+
+local c = require('vscode.colors').get_colors()
+require('vscode').setup({
+    -- Alternatively set style in setup
+    --style = 'light',
+
+    -- Enable transparent background
+    --transparent = true,
+
+    -- Enable italic comment
+    italic_comments = true,
+
+    -- Disable nvim-tree background color
+    disable_nvimtree_bg = true,
+
+    -- Override colors (see ./lua/vscode/colors.lua)
+    color_overrides = {
+        vscLineNumber = '#BBBBBB',
+    },
+
+    -- Override highlight groups (see ./lua/vscode/theme.lua)
+    group_overrides = {
+        -- this supports the same val table as vim.api.nvim_set_hl
+        -- use colors from this colorscheme by requiring vscode.colors!
+        Cursor = { fg=c.vscDarkBlue, bg=c.vscLightGreen, bold=true },
+    }
+})
+require('vscode').load()
+vim.cmd("colorscheme vscode")
