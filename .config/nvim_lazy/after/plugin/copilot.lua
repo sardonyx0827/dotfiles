@@ -31,11 +31,10 @@ require("copilot").setup({
     },
   },
   --panel = { enabled = false },
+
 })
 require("copilot_cmp").setup()
 vim.keymap.set("n", "<c-p>", ":Copilot panel<CR>", { silent = true })
-vim.keymap.set("n", "<c-n>", ":Copilot panel jump_next<CR>", { silent = true })
-vim.keymap.set("n", "<c-l>", ":Copilot panel accept<CR>", { silent = true })
 vim.keymap.set("i", "<c-l>", "<ESC>:Copilot panel<CR>", { silent = true })
 vim.keymap.set("n", "<leader>cc", ":CopilotChat ")
 vim.keymap.set("v", "<leader>cc", "y:CopilotChat ")
