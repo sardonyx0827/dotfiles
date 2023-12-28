@@ -66,7 +66,7 @@ local settings = {
         content = {
             { "🗡 Continue", "Telescope oldfiles", "<leader>of" },
             { "🐎 New Game", "lua require'startup'.new_file()", "<leader>nf" },
-            { "🪃 Save Datas", "Telescope find_files", "<leader>ff" },
+            { "🪃 Save Datas", "Telescope find_files", "<leader>sf" },
             { "🧝 Staff Roll", "BlackJackNewGame", "<leader>ng" },
             { "🧚 Quit", "q", "q" },
             --{ " Find Datas", "Telescope live_grep", "<leader>lg" },

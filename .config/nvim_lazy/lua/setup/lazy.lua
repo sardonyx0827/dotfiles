@@ -31,32 +31,17 @@ local plugins = {
   {
     "navarasu/onedark.nvim",
     name = "onedark",
-    event = "VeryLazy",
     config = function()
-      -- clear bg color
-      -- require("onedark").setup({
-      --   transparent = true,
-      --   styles = {
-      --     sidebars = "transparent",
-      --     floats = "transparent",
-      --   },
-      -- })
+      vim.cmd("colorscheme onedark")
     end
   },
   {
     "Mofiqul/vscode.nvim", -- default
     name = "vscode",
-    config = function()
-      -- clear bg color
-      -- require("vscode").setup({
-      --   transparent = true,
-      --   styles = {
-      --     sidebars = "transparent",
-      --     floats = "transparent",
-      --   },
-      -- })
-      vim.cmd("colorscheme vscode")
-    end
+    event = "VeryLazy",
+    --config = function()
+    --  vim.cmd("colorscheme vscode")
+    --end
   },
   {
     "startup-nvim/startup.nvim",
@@ -73,15 +58,15 @@ local plugins = {
   -- Highlitght colors, Indents, etc
   {
     "nvim-treesitter/nvim-treesitter",
+    dependencies = {
+      -- show context
+      { "nvim-treesitter/nvim-treesitter-context", },
+    },
   },
   -- customize highlight
   {
     "nvim-treesitter/playground",
     event = "VeryLazy",
-  },
-  -- show context
-  {
-    "nvim-treesitter/nvim-treesitter-context",
   },
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   {
@@ -105,7 +90,7 @@ local plugins = {
     "nvim-lualine/lualine.nvim",
     event = "VeryLazy",
   },
-  -- highlight cursor text https://github.com/RRethy/vim-illuminate
+  -- highlight cursor text
   {
     "RRethy/vim-illuminate",
     event = "VeryLazy",
@@ -195,31 +180,31 @@ local plugins = {
   { 'neovim/nvim-lspconfig' },
 
   -- Autocompletion
-  { 'hrsh7th/nvim-cmp' },
-  { 'hrsh7th/cmp-nvim-lsp' },
-  { 'hrsh7th/cmp-buffer' },
-  { 'hrsh7th/cmp-path' },
-  { 'hrsh7th/cmp-cmdline' },
-  { 'saadparwaiz1/cmp_luasnip' },
-  { 'hrsh7th/cmp-nvim-lua' },
-  { 'L3MON4D3/LuaSnip' },
-  { 'rafamadriz/friendly-snippets' },
-  { 'onsails/lspkind.nvim' },
+  {
+    'hrsh7th/nvim-cmp',
+    dependencies = {
+      { 'hrsh7th/cmp-nvim-lsp' },
+      { 'hrsh7th/cmp-buffer' },
+      { 'hrsh7th/cmp-path' },
+      { 'hrsh7th/cmp-cmdline' },
+      { 'saadparwaiz1/cmp_luasnip' },
+      { 'hrsh7th/cmp-nvim-lua' },
+      { 'L3MON4D3/LuaSnip' },
+      { 'rafamadriz/friendly-snippets' },
+      { 'onsails/lspkind.nvim' },
+      {
+        "zbirenbaum/copilot-cmp",
+        event = { "InsertEnter", "LspAttach" },
+        fix_pairs = true,
+      },
+    },
+
+  },
   -- for lint and formatter(no lsp)
   {
     "jose-elias-alvarez/null-ls.nvim",
-    config = function()
-      local null_ls = require("null-ls")
-      null_ls.setup({
-        sources = {
-          null_ls.builtins.formatting.stylua,
-          null_ls.builtins.diagnostics.eslint,
-          null_ls.builtins.completion.spell,
-        },
-      })
-    end,
   },
-  -- DAP
+  -- DAP for Debugging
   {
     'mfussenegger/nvim-dap',
     lazy = true,
@@ -269,11 +254,6 @@ local plugins = {
     cmd = "Copilot",
   },
   {
-    "zbirenbaum/copilot-cmp",
-    event = { "InsertEnter", "LspAttach" },
-    fix_pairs = true,
-  },
-  {
     "gptlang/CopilotChat.nvim",
     --event = "VeryLazy",
     lazy = true,
@@ -285,7 +265,7 @@ local plugins = {
     lazy = true,
     cmd = "NvimTreeToggle",
   },
-  -- show icons https://github.com/nvim-tree/nvim-web-devicons
+  -- show icons
   {
     "nvim-tree/nvim-web-devicons",
     event = "VeryLazy",

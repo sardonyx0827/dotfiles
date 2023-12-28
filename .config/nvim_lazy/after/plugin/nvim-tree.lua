@@ -7,7 +7,7 @@ vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>", { noremap = true, si
 vim.opt.termguicolors = true
 
 -- set bg color
-vim.api.nvim_set_hl(0, "NvimTreeNormal", { bg = "none" })
+--vim.api.nvim_set_hl(0, "NvimTreeNormal", { bg = "none" })
 
 --setup with some options
 require("nvim-tree").setup({

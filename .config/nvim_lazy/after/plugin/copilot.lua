@@ -15,7 +15,7 @@ require("copilot").setup({
       dismiss = "<C-]>",
     },
   },
-   panel = {
+  panel = {
     enabled = true,
     auto_refresh = true,
     keymap = {

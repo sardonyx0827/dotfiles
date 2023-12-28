@@ -37,16 +37,6 @@ dap.configurations = {
     }
   },
   cpp = {
-  --  {
-  --    type = "cppdbg",
-  --    request = "launch",
-  --    cwd = '${workspaceFolder}',
-  --    program = function()
-  --      --return vim.fn.input('Path to executable: ', vim.fn.getcwd() .. '/', 'file')
-  --      return vim.fn.input('Path to executable: ', vim.fn.getcwd() .. '/a.out', 'file')
-  --    end,
-  --    stopAtEntry = true,
-  --  }
     {
       -- The first three options are required by nvim-dap
       type = 'codelldb', -- the type here established the link to the adapter definition: `dap.adapters.python`
@@ -68,12 +58,6 @@ local dapui = require("dapui")
 dap.listeners.after.event_initialized["dapui_config"] = function()
   dapui.open()
 end
---dap.listeners.before.event_terminated["dapui_config"] = function()
---  dapui.close()
---end
---dap.listeners.before.event_exited["dapui_config"] = function()
---  dapui.close()
---end
 
 -- for using pipenv or any other virtualenv
 local venv = os.getenv('VIRTUAL_ENV')
@@ -82,14 +66,9 @@ require('dap-python').setup(command)
 
 vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true, desc= "Toggle Breakpoint." })
 vim.api.nvim_set_keymap('n', '<leader>bc', ':lua require("dap").clear_breakpoints()<CR>', { silent = true, desc= "Clear All Breakpoint." })
---vim.api.nvim_set_keymap('n', '<F4>', ':lua require("dap").run_last()<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F5>', ':DapContinue<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F10>', ':DapStepOver<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F11>', ':DapStepInto<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F12>', ':DapStepOut<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<S-F5>', '<cmd>lua require("dap").disconnect({ terminateDebuggee = true })<CR>'
   ..'<cmd>lua require("dap").close()<CR>', { silent = true })
-  --..'<cmd>lua require("dap").close()<CR><cmd>lua require("dap").clear_breakpoints()<CR>', { silent = true })
---vim.api.nvim_set_keymap('n', '<leader>B', ':lua require("dap").set_breakpoint(nil, nil, vim.fn.input("Breakpoint condition: "))<CR>', { silent = true })
---vim.api.nvim_set_keymap('n', '<leader>lp', ':lua require("dap").set_breakpoint(nil, nil, vim.fn.input("Log point message: "))<CR>', { silent = true })
-
