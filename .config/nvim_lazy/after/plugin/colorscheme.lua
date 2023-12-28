@@ -46,4 +46,5 @@ vim.keymap.set("n", "<M-9>", ":colorscheme default<CR>", { noremap = true })
 vim.keymap.set("n", "<M-0>", toggle_transparent, { noremap = true, silent = true })
 
 -- default color scheme
-vim.cmd("colorscheme tokyonight-moon")
+--vim.cmd("colorscheme tokyonight-moon")
+vim.cmd("colorscheme rose-pine-moon")
