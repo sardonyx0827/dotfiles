@@ -56,6 +56,7 @@ local plugins = {
   -- Highlitght colors, Indents, etc
   {
     "nvim-treesitter/nvim-treesitter",
+    event = "BufRead",
     dependencies = {
       -- show context
       { "nvim-treesitter/nvim-treesitter-context", },
@@ -300,9 +301,12 @@ local plugins = {
   -- key navigation
   {
     "folke/which-key.nvim",
-    --lazy = true,
-    --cmd = "WhichKey",
-    event = "VeryLazy",
+    lazy = true,
+    cmd = "WhichKey",
+    --event = "VeryLazy",
+    keys = {
+      { "<leader>", mode = "n", },
+    },
     config = function()
       require("which-key").setup {}
     end,
@@ -332,7 +336,8 @@ local plugins = {
   -- BlackJack
   {
     "alanfortlink/blackjack.nvim",
-    event = "VeryLazy",
+    lazy = true,
+    cmd = "BlackJackNewGame",
     dependencies = { "nvim-lua/plenary.nvim" },
   },
 }
