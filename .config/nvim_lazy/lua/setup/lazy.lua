@@ -31,9 +31,7 @@ local plugins = {
   {
     "navarasu/onedark.nvim",
     name = "onedark",
-    config = function()
-      vim.cmd("colorscheme onedark")
-    end
+    event = "VeryLazy",
   },
   {
     "Mofiqul/vscode.nvim", -- default
