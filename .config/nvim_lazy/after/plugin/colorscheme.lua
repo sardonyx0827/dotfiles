@@ -8,7 +8,8 @@ local function set_bg_color_to_clear()
       floats = "transparent",
     },
   })
-  --vim.cmd("colorscheme " .. color_scheme)
+  --vim.api.nvim_set_hl(0, "Normal", { bg = "none" })
+  --vim.api.nvim_set_hl(0, "NormalFloat", { bg = "none" })
   vim.cmd.colorscheme(color_scheme)
 end
 
@@ -39,7 +40,7 @@ end
 --vim.keymap.set("n", "<M-1>", ":colorscheme vscode<CR>", { noremap = true })
 --vim.keymap.set("n", "<M-2>", ":colorscheme tokyonight-moon<CR>", { noremap = true })
 --vim.keymap.set("n", "<M-3>", ":colorscheme onedark<CR>", { noremap = true })
---vim.keymap.set("n", "<M-4>", ":colorscheme tokyonight<CR>", { noremap = true })
+--vim.keymap.set("n", "<M-4>", ":colorscheme tokyonight-night<CR>", { noremap = true })
 --vim.keymap.set("n", "<M-5>", ":colorscheme rose-pine-moon<CR>", { noremap = true })
 --vim.keymap.set("n", "<M-6>", ":colorscheme rose-pine-main<CR>", { noremap = true })
 --vim.keymap.set("n", "<M-7>", ":colorscheme lunaperche<CR>", { noremap = true })
@@ -52,6 +53,7 @@ local function set_random_color_scheme()
     "vscode",
     "onedark",
     "rose-pine-main",
+    "tokyonight-night",
   }
   local color_scheme = color_schemes[math.random(#color_schemes)]
   vim.cmd("colorscheme " .. color_scheme)
@@ -60,5 +62,6 @@ end
 --set_random_color_scheme()
 -- default color scheme
 --vim.cmd("colorscheme vscode")
---vim.cmd("colorscheme rose-pine-main")
-vim.cmd("colorscheme onedark")
+vim.cmd("colorscheme rose-pine-main")
+--vim.cmd("colorscheme onedark")
+--vim.cmd("colorscheme tokyonight-night")

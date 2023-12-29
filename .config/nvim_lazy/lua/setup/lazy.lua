@@ -29,7 +29,7 @@ local plugins = {
     event = "VeryLazy",
   },
   {
-    "navarasu/onedark.nvim",
+    "olimorris/onedarkpro.nvim",
     name = "onedark",
     event = "VeryLazy",
   },
@@ -37,9 +37,6 @@ local plugins = {
     "Mofiqul/vscode.nvim", -- default
     name = "vscode",
     event = "VeryLazy",
-    --config = function()
-    --  vim.cmd("colorscheme vscode")
-    --end
   },
   {
     "startup-nvim/startup.nvim",
