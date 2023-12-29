@@ -45,9 +45,20 @@ end
 --vim.keymap.set("n", "<M-7>", ":colorscheme lunaperche<CR>", { noremap = true })
 --vim.keymap.set("n", "<M-8>", ":colorscheme slate<CR>", { noremap = true })
 --vim.keymap.set("n", "<M-9>", ":colorscheme default<CR>", { noremap = true })
---vim.keymap.set("n", "<M-0>", toggle_transparent, { noremap = true, silent = true })
+vim.keymap.set("n", "<M-0>", toggle_transparent, { noremap = true, silent = true })
 
+local function set_random_color_scheme()
+  local color_schemes = {
+    "vscode",
+    "onedark",
+    "rose-pine-main",
+  }
+  local color_scheme = color_schemes[math.random(#color_schemes)]
+  vim.cmd("colorscheme " .. color_scheme)
+  print("color scheme: " .. color_scheme)
+end
+--set_random_color_scheme()
 -- default color scheme
 --vim.cmd("colorscheme vscode")
-vim.cmd("colorscheme rose-pine-main")
---vim.cmd("colorscheme onedark")
+--vim.cmd("colorscheme rose-pine-main")
+vim.cmd("colorscheme onedark")
