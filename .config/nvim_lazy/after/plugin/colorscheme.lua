@@ -18,9 +18,9 @@ local function set_color_scheme()
   local color_schemes = {
     "rose-pine-main",
     "vscode",
-    "onedark",
     "tokyonight-night",
     "slate",
+    "onedark",
   }
   -- tmux_pane_id is number?
   if not tonumber(tmux_pane_id) then
@@ -37,7 +37,7 @@ end
 --set_color_scheme()
 -- default color scheme
 --vim.cmd("colorscheme rose-pine-main")
-vim.cmd("colorscheme vscode")
+--vim.cmd("colorscheme vscode")
 --vim.cmd("colorscheme onedark")
---vim.cmd("colorscheme tokyonight-night")
+vim.cmd("colorscheme tokyonight-night")
 --vim.cmd("colorscheme slate")

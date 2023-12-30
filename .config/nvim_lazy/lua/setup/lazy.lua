@@ -251,9 +251,7 @@ local plugins = {
   },
   {
     "gptlang/CopilotChat.nvim",
-    --event = "VeryLazy",
-    lazy = true,
-    cmd = "CopilotChat",
+    event = "VeryLazy",
   },
   -- File Explorer
   {

@@ -36,5 +36,8 @@ require("copilot").setup({
 require("copilot_cmp").setup()
 vim.keymap.set("n", "<c-p>", ":Copilot panel<CR>", { silent = true })
 vim.keymap.set("i", "<c-l>", "<ESC>:Copilot panel<CR>", { silent = true })
+
+--import sys
+--sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 vim.keymap.set("n", "<leader>cc", ":vertical rightbelow new<CR>:CopilotChat ")
 vim.keymap.set("v", "<leader>cc", "y:vertical rightbelow new<CR>:CopilotChat ")

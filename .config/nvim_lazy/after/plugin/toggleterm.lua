@@ -23,7 +23,7 @@ local docui = Terminal:new({
 function _docui_toggle()
 	docui:toggle()
 end
-vim.api.nvim_set_keymap("n", "<leader>do", "<cmd>lua _docui_toggle()<CR>", { noremap = true, silent = true })
+vim.api.nvim_set_keymap("n", "<leader>dt", "<cmd>lua _docui_toggle()<CR>", { noremap = true, silent = true })
 
 -- todo (pip install dooit)
 local dooit = Terminal:new({
