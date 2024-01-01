@@ -5,7 +5,6 @@ local function set_random_color_scheme(color_schemes)
   vim.cmd("colorscheme " .. color_scheme)
   print("color scheme: " .. color_scheme)
 end
---set_random_color_scheme()
 
 local function set_color_scheme_from_tmux_pane(color_scheme)
   vim.cmd("colorscheme " .. color_scheme)
@@ -19,8 +18,6 @@ local function set_color_scheme()
     "rose-pine-main",
     "vscode",
     "tokyonight-night",
-    "slate",
-    "onedark",
   }
   -- tmux_pane_id is number?
   if not tonumber(tmux_pane_id) then
@@ -34,10 +31,12 @@ local function set_color_scheme()
     end
   end
 end
+-- set color scheme when vim start up, random or tmux pane id
 --set_color_scheme()
+
 -- default color scheme
---vim.cmd("colorscheme rose-pine-main")
+vim.cmd("colorscheme rose-pine-main")
 --vim.cmd("colorscheme vscode")
---vim.cmd("colorscheme onedark")
-vim.cmd("colorscheme tokyonight-night")
+--vim.cmd("colorscheme tokyonight-night")
 --vim.cmd("colorscheme slate")
+--vim.cmd("colorscheme onedark")
