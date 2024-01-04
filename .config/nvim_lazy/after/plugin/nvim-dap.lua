@@ -25,22 +25,9 @@ dap.adapters = {
       args = {'--port', '${port}'}
     }
   },
-  cppdbg = {
-    type = 'executable',
-    port = '${port}',
-    command = vim.fn.stdpath('data') .. '/mason/packages/cpptools/extension/debugAdapters/bin/OpenDebugAD7',
-  },
 }
 
 dap.configurations = {
-  javascript = {
-    {
-      type = 'node_debug2_adapter',
-      request = 'launch',
-      name = 'Launch file',
-      program = '${file}',
-    },
-  },
   python = {
     {
       -- The first three options are required by nvim-dap
@@ -52,6 +39,14 @@ dap.configurations = {
       program = "${file}", -- This configuration will launch the current file if used.
       stopOnEntry = false
     }
+  },
+  javascript = {
+    {
+      type = 'node_debug2_adapter',
+      request = 'launch',
+      name = 'Launch file',
+      program = '${file}',
+    },
   },
   cpp = {
     {
