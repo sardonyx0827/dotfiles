@@ -8,6 +8,15 @@ dap.adapters = {
       args = {'--port', '${port}'}
     }
   },
+  node_debug2_adapter = {
+    type = 'executable',
+    port = '${port}',
+    command = vim.fn.stdpath('data') .. '/mason/packages/node-debug2-adapter/node-debug2-adapter',
+    --executable = {
+    --  command = vim.fn.stdpath('data') .. '/mason/packages/node-debug2-adapter/node-debug2-adapter',
+    --  args = {'--port', '${port}'}
+    --}
+  },
   codelldb = {
     type = 'server',
     port = '${port}',
@@ -24,6 +33,14 @@ dap.adapters = {
 }
 
 dap.configurations = {
+  javascript = {
+    {
+      type = 'node_debug2_adapter',
+      request = 'launch',
+      name = 'Launch file',
+      program = '${file}',
+    },
+  },
   python = {
     {
       -- The first three options are required by nvim-dap
