@@ -9,6 +9,20 @@ vim.opt.termguicolors = true
 -- set bg color
 --vim.api.nvim_set_hl(0, "NvimTreeNormal", { bg = "none" })
 
+local function tree_on_attach(bufnr)
+  local api = require "nvim-tree.api"
+
+  local function opts(desc)
+    return { desc = "nvim-tree: " .. desc, buffer = bufnr, noremap = true, silent = true, nowait = true }
+  end
+
+  -- default mappings
+  api.config.mappings.default_on_attach(bufnr)
+
+  -- custom mappings
+  vim.keymap.set('n', 'l', api.node.open.edit,        opts('Open'))
+end
+
 --setup with some options
 require("nvim-tree").setup({
   sort_by = "case_sensitive",
@@ -37,6 +51,7 @@ require("nvim-tree").setup({
     dotfiles = false,
     --custom = { "node_modules", ".git" },
   },
+  on_attach = tree_on_attach,
 })
 
 

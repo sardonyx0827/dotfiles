@@ -223,7 +223,7 @@ local plugins = {
     config = function()
       require("toggleterm").setup {
         -- "vertical" | "horizontal" | "tab" | "float"
-        direction = "float"
+        direction = "tab"
       }
     end,
   },
