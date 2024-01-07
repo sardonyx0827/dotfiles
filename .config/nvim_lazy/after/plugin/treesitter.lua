@@ -3,7 +3,8 @@ require("nvim-treesitter.configs").setup {
   --ensure_installed = { "vimdoc", "javascript", "typescript", "c", "lua", "rust" },
   ensure_installed = "all",
   ignore_install = {
-    "python" -- indenting is broken
+    "python", -- indenting is broken
+    "vimdoc"
   },
 
   -- install parsers synchronously (only applied to `ensure_installed`)
