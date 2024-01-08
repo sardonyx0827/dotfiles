@@ -244,11 +244,10 @@ local plugins = {
     "nvim-tree/nvim-tree.lua",
     lazy = true,
     cmd = "NvimTreeToggle",
-  },
-  -- show icons
-  {
-    "nvim-tree/nvim-web-devicons",
-    event = "VeryLazy",
+    dependencies = {
+    -- show icons with Nerd Font
+      "nvim-tree/nvim-web-devicons",
+    },
   },
   -- git commands in nvim
   {
