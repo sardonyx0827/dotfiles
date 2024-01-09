@@ -1,0 +1,114 @@
+{
+    // vim settings
+    "vim.useSystemClipboard": true,
+    "vim.hlsearch": true,
+    "vim.leader": ",",
+    "vim.useCtrlKeys": true,
+    "vim.vimrc.enable": true,
+    "vim.vimrc.path": "$HOME/.vimrc",
+    "workbench.settings.applyToAllProfiles": [
+        "vim.vimrc.path",
+        "vim.vimrc.enable"
+    ],
+    "vim.normalModeKeyBindingsNonRecursive": [
+        {
+            "before": [
+                "<C-i>"
+            ],
+            // CopilotChat inline editor
+            "commands": [
+                "interactiveEditor.start"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "e"
+            ],
+            // open explorer
+            "commands": [
+                "workbench.view.explorer"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "u"
+            ],
+            // timeline
+            "commands": [
+                "timeline.focus"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "f",
+            ],
+            // find in files
+            "commands": [
+                "workbench.action.findInFiles"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "g",
+            ],
+            // open source control
+            "commands": [
+                "workbench.view.scm"
+            ]
+        }
+    ],
+    "vim.visualModeKeyBindingsNonRecursive": [
+        {
+            "before": [
+                "<C-i>"
+            ],
+            // CopilotChat inline editor
+            "commands": [
+                "interactiveEditor.start"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "e"
+            ],
+            // open explorer
+            "commands": [
+                "workbench.view.explorer"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "u"
+            ],
+            // timeline
+            "commands": [
+                "timeline.focus"
+            ]
+        }
+    ],
+    "vim.insertModeKeyBindingsNonRecursive": [
+        {
+            "before": [
+                "<C-i>"
+            ],
+            // CopilotChat inline editor
+            "commands": [
+                "interactiveEditor.start"
+            ]
+        }
+    ],
+    // editor settings
+    "workbench.startupEditor": "none",
+    "terminal.integrated.defaultProfile.linux": "zsh",
+    "terminal.integrated.defaultProfile.osx": "zsh",
+    "extensions.experimental.affinity": {
+        "asvetliakov.vscode-neovim": 1
+    },
+    "indentRainbow.indicatorStyle": "light",
+    "vscode_vibrancy.opacity": 1.7,
+    "vscode_vibrancy.refreshInterval": 10000,
+    "glassit.alpha": 255,
+    "workbench.colorTheme": "Rosé Pine Moon (no italics)",
+    "editor.lineNumbers": "relative",
+    "git.autofetch": true,
+}

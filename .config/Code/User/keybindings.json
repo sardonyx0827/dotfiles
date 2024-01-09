@@ -1,0 +1,30 @@
+// Place your key bindings in this file to override the defaults
+[
+    {
+        "key": "ctrl+m",
+        "command": "type",
+        "args": {
+            "text" : "\n"
+        },
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "ctrl+[",
+        "command": "extension.vim_escape",
+    },
+    // show definition
+    {
+        "key": "shift+k",
+        "command": "editor.action.showDefinitionPreviewHover"
+    },
+    // jump to definition
+    {
+        "key": "ctrl+t",
+        "command": "editor.action.revealDefinition",
+        "when": "editorHasDefinitionProvider && editorTextFocus && !isInEmbeddedEditor"
+    },
+    {
+        "key": "ctrl+shift+t",
+        "command": "timeline.focus"
+    },
+]
