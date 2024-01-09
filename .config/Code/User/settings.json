@@ -4,8 +4,6 @@
     "vim.hlsearch": true,
     "vim.leader": ",",
     "vim.useCtrlKeys": true,
-    "vim.vimrc.enable": true,
-    "vim.vimrc.path": "$HOME/.vimrc",
     "workbench.settings.applyToAllProfiles": [
         "vim.vimrc.path",
         "vim.vimrc.enable"
@@ -55,6 +53,14 @@
             "commands": [
                 "workbench.view.scm"
             ]
+        },{
+            "before": [
+                "<leader>",
+                " ",
+            ],
+            "commands": [
+                ":noh"
+            ]
         }
     ],
     "vim.visualModeKeyBindingsNonRecursive": [
@@ -83,6 +89,20 @@
             // timeline
             "commands": [
                 "timeline.focus"
+            ]
+        },{
+            "before": [
+                ">",
+            ],
+            "commands": [
+                "editor.action.indentLines"
+            ]
+        },{
+            "before": [
+                "<",
+            ],
+            "commands": [
+                "editor.action.outdentLines"
             ]
         }
     ],
