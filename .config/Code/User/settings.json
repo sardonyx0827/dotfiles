@@ -2,12 +2,9 @@
     // vim settings
     "vim.useSystemClipboard": true,
     "vim.hlsearch": true,
+    "vim.incsearch": true,
     "vim.leader": ",",
     "vim.useCtrlKeys": true,
-    "workbench.settings.applyToAllProfiles": [
-        "vim.vimrc.path",
-        "vim.vimrc.enable"
-    ],
     "vim.normalModeKeyBindingsNonRecursive": [
         {
             "before": [
@@ -16,6 +13,15 @@
             // CopilotChat inline editor
             "commands": [
                 "interactiveEditor.start"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "c"
+            ],
+            // CopilotChat inline editor
+            "commands": [
+                "workbench.panel.chat.view.copilot.focus"
             ]
         },{
             "before": [
@@ -38,7 +44,7 @@
         },{
             "before": [
                 "<leader>",
-                "f",
+                "s",
             ],
             // find in files
             "commands": [
@@ -58,8 +64,50 @@
                 "<leader>",
                 " ",
             ],
+            // disable search highlight
             "commands": [
                 ":noh"
+            ]
+        },{
+            "before": [
+                "u",
+            ],
+            "commands": [
+                "undo"
+            ]
+        },{
+            "before": [
+                "<C-r>",
+            ],
+            "commands": [
+                "redo"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "r",
+            ],
+            // search and replace
+            "commands": [
+                "editor.action.startFindReplaceAction"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "d",
+            ],
+            // git diff on current file
+            "commands": [
+                "git.openChange"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "f",
+            ],
+            // format document
+            "commands": [
+                "editor.action.formatDocument"
             ]
         }
     ],
@@ -71,6 +119,15 @@
             // CopilotChat inline editor
             "commands": [
                 "interactiveEditor.start"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "c"
+            ],
+            // CopilotChat inline editor
+            "commands": [
+                "workbench.panel.chat.view.copilot.focus"
             ]
         },{
             "before": [
