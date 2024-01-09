@@ -1,5 +1,6 @@
 // Place your key bindings in this file to override the defaults
 [
+    // instead of enter
     {
         "key": "ctrl+m",
         "command": "type",
@@ -8,6 +9,7 @@
         },
         "when": "editorTextFocus"
     },
+    // instead of ESC
     {
         "key": "ctrl+[",
         "command": "extension.vim_escape",
@@ -23,10 +25,12 @@
         "command": "editor.action.revealDefinition",
         "when": "editorHasDefinitionProvider && editorTextFocus && !isInEmbeddedEditor"
     },
+    // instead of undotree
     {
         "key": "ctrl+shift+t",
         "command": "timeline.focus"
     },
+    // find and replace in current file
     {
         "key": "ctrl+shift+r",
         "command": "editor.action.startFindReplaceAction",
@@ -37,6 +41,7 @@
         "command": "-editor.action.startFindReplaceAction",
         "when": "editorFocus || editorIsOpen"
     },
+    // show help page
     {
         "key": "ctrl+shift+h",
         "command": "workbench.action.keybindingsReference"
@@ -45,6 +50,7 @@
         "key": "ctrl+k ctrl+r",
         "command": "-workbench.action.keybindingsReference"
     },
+    // copilot generate
     {
         "key": "ctrl+l",
         "command": "github.copilot.generate",
@@ -55,6 +61,7 @@
         "command": "-github.copilot.generate",
         "when": "editorTextFocus && github.copilot.activated && !inInteractiveInput && !interactiveEditorFocused"
     },
+    // find and replace in workbench
     {
         "key": "ctrl+shift+s",
         "command": "workbench.action.findInFiles"
@@ -63,6 +70,7 @@
         "key": "ctrl+shift+f",
         "command": "-workbench.action.findInFiles"
     },
+    // format document
     {
         "key": "ctrl+shift+f",
         "command": "editor.action.formatDocument",
@@ -73,6 +81,7 @@
         "command": "-editor.action.formatDocument",
         "when": "editorHasDocumentFormattingProvider && editorTextFocus && !editorReadonly && !inCompositeEditor"
     },
+    // format document none
     {
         "key": "ctrl+shift+f",
         "command": "editor.action.formatDocument.none",
