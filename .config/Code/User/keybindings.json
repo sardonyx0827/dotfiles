@@ -92,4 +92,14 @@
         "command": "-editor.action.formatDocument.none",
         "when": "editorTextFocus && !editorHasDocumentFormattingProvider && !editorReadonly"
     },
+    {
+        "key": "alt+enter",
+        "command": "github.copilot.acceptCursorPanelSolution",
+        "when": "github.copilot.activated && github.copilot.panelVisible"
+    },
+    {
+        "key": "ctrl+/",
+        "command": "-github.copilot.acceptCursorPanelSolution",
+        "when": "github.copilot.activated && github.copilot.panelVisible"
+    },
 ]

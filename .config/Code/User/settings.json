@@ -172,6 +172,22 @@
             "commands": [
                 "interactiveEditor.start"
             ]
+        },{
+            "before": [
+                "<C-j>"
+            ],
+            // Copilot suggestion(next)
+            "commands": [
+                "editor.action.inlineSuggest.showNext"
+            ]
+        },{
+            "before": [
+                "<C-k>"
+            ],
+            // Copilot suggestion(previous)
+            "commands": [
+                "editor.action.inlineSuggest.showPrevious"
+            ]
         }
     ],
     // editor settings
@@ -188,4 +204,8 @@
     "workbench.colorTheme": "Rosé Pine Moon (no italics)",
     "editor.lineNumbers": "relative",
     "git.autofetch": true,
+    "github.copilot.enable": {
+        "plaintext": "true",
+        "markdown": "true"
+    },
 }
