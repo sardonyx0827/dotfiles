@@ -208,4 +208,5 @@
         "plaintext": "true",
         "markdown": "true"
     },
+    "window.titleBarStyle": "custom",
 }
