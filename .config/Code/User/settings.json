@@ -109,6 +109,22 @@
             "commands": [
                 "editor.action.formatDocument"
             ]
+        },{
+            "before": [
+                "K",
+            ],
+            // definition preview
+            "commands": [
+                "editor.action.showDefinitionPreviewHover"
+            ]
+        },{
+            "before": [
+                "<C-t>",
+            ],
+            // jump to definition
+            "commands": [
+                "editor.action.revealDefinition"
+            ]
         }
     ],
     "vim.visualModeKeyBindingsNonRecursive": [
