@@ -95,4 +95,8 @@
         "key": "ctrl+m",
         "command": "-editor.action.toggleTabFocusMode"
     },
+    {
+        "key": "ctrl+shift+i",
+        "command": "workbench.panel.chat.view.copilot.focus"
+    },
 ]
