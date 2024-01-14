@@ -19,7 +19,7 @@
                 "<leader>",
                 "c"
             ],
-            // CopilotChat inline editor
+            // CopilotChat
             "commands": [
                 "workbench.panel.chat.view.copilot.focus"
             ]
