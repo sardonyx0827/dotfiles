@@ -35,8 +35,8 @@ end
 --set_color_scheme()
 
 -- default color scheme
-vim.cmd("colorscheme rose-pine-main")
+--vim.cmd("colorscheme rose-pine-main")
 --vim.cmd("colorscheme vscode")
---vim.cmd("colorscheme tokyonight-night")
+vim.cmd("colorscheme tokyonight-night")
 --vim.cmd("colorscheme slate")
 --vim.cmd("colorscheme onedark")

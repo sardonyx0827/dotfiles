@@ -217,7 +217,7 @@
     "vscode_vibrancy.opacity": 1.7,
     "vscode_vibrancy.refreshInterval": 10000,
     "glassit.alpha": 255,
-    "workbench.colorTheme": "Rosé Pine Moon (no italics)",
+    "workbench.colorTheme": "Tokyo Night",
     "editor.lineNumbers": "relative",
     "git.autofetch": true,
     "github.copilot.enable": {
