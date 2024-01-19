@@ -137,11 +137,22 @@ local plugins = {
           file_ignore_patterns = { "node_modules", "vendor", "dist", "build" },
         },
         pickers = {
+          show_all_buffers = true,
           live_grep = {
             --theme = "dropdown",
             additional_args = function()
               return { "--hidden" }
             end
+          },
+          buffers = {
+            mappings = {
+              n = {
+                ['<M-x>'] = "delete_buffer"
+              }, -- n
+              i = {
+                ['<M-x>'] = "delete_buffer"
+              } -- i
+            },
           },
         },
       })

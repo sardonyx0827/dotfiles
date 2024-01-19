@@ -34,3 +34,6 @@ vim.keymap.set('n', '<C-Right>', '1<C-w>>', { noremap = true, silent = true})
 -- make the window smaller horizontally by pressing shift and -
 vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true})
 
+-- jump next/prev buffer
+vim.keymap.set("n", "<M-j>", ":bnext<CR>", {desc = "next buffer"})
+vim.keymap.set("n", "<M-k>", ":bprev<CR>", {desc = "previous buffer"})
