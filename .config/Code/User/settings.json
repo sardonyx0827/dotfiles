@@ -222,7 +222,8 @@
     "git.autofetch": true,
     "github.copilot.enable": {
         "plaintext": "true",
-        "markdown": "true"
+        "markdown": "true",
+        "scminput": "true"
     },
     "window.titleBarStyle": "custom",
 }

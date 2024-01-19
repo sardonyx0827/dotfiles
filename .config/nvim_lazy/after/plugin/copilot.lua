@@ -50,5 +50,6 @@ vim.keymap.set("n", "<leader>cf", "ggVGy:vertical rightbelow new<CR>:CopilotChat
 vim.keymap.set("v", "<leader>cf", "y:vertical rightbelow new<CR>:CopilotChat /fix<CR>", { desc = "Copilot Chat(fix)" })
 vim.keymap.set("n", "<leader>ct", "ggVGy:vertical rightbelow new<CR>:CopilotChat /test<CR>", { desc = "Copilot Chat(test)" })
 vim.keymap.set("v", "<leader>ct", "y:vertical rightbelow new<CR>:CopilotChat /test<CR>", { desc = "Copilot Chat(test)" })
-vim.keymap.set("n", "<leader>cj", "ggVGy:vertical rightbelow new<CR>:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat(test)" })
-vim.keymap.set("v", "<leader>cj", "y:vertical rightbelow new<CR>:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat(test)" })
+vim.keymap.set("n", "<leader>cj", "ggVGy:vertical rightbelow new<CR>:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat(Translate to Japanese)" })
+vim.keymap.set("v", "<leader>cj", "y:vertical rightbelow new<CR>:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat(Translate to Japanese)" })
+vim.keymap.set("n", "<leader>cs", "{V}y:vertical rightbelow new<CR>:CopilotChat ", { desc = "Copilot Chat" })

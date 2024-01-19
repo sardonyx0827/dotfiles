@@ -66,7 +66,7 @@ local plugins = {
   },
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   {
-    "hiphish/rainbow-delimiters.nvim",
+    "HiPhish/rainbow-delimiters.nvim",
     event = "BufWinEnter",
   },
   -- A high-performance color highlighter. show color in code, like #ffffff
