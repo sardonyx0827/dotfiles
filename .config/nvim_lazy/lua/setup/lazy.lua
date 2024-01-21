@@ -85,6 +85,9 @@ local plugins = {
   {
     "nvim-lualine/lualine.nvim",
     event = "VeryLazy",
+    dependencies = {
+      'AndreM222/copilot-lualine'
+    },
   },
   -- highlight cursor text
   {
@@ -336,7 +339,17 @@ local plugins = {
     cmd = "Copilot",
   },
   {
-    "gptlang/CopilotChat.nvim",
+    --"gptlang/CopilotChat.nvim",
+    "jellydn/CopilotChat.nvim",
+    opts = {
+      mode = "newbuffer", -- newbuffer or split  , default: newbuffer
+    },
+    build = function()
+      vim.defer_fn(function()
+        vim.cmd("UpdateRemotePlugins")
+        vim.notify("CopilotChat - Updated remote plugins. Please restart Neovim.")
+      end, 3000)
+    end,
     event = "VeryLazy",
   },
 
