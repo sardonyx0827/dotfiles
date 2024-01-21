@@ -17,6 +17,7 @@
         },{
             "before": [
                 "<leader>",
+                "c",
                 "c"
             ],
             // CopilotChat
@@ -45,6 +46,7 @@
             "before": [
                 "<leader>",
                 "s",
+                "f",
             ],
             // find in files
             "commands": [
@@ -54,6 +56,17 @@
             "before": [
                 "<leader>",
                 "g",
+                "r",
+            ],
+            // find in files
+            "commands": [
+                "workbench.action.findInFiles"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "g",
+                "c",
             ],
             // open source control
             "commands": [
@@ -86,6 +99,7 @@
             "before": [
                 "<leader>",
                 "r",
+                "n",
             ],
             // search and replace
             "commands": [
@@ -94,6 +108,7 @@
         },{
             "before": [
                 "<leader>",
+                "g",
                 "d",
             ],
             // git diff on current file
@@ -103,6 +118,7 @@
         },{
             "before": [
                 "<leader>",
+                "f",
                 "f",
             ],
             // format document
@@ -125,6 +141,33 @@
             "commands": [
                 "editor.action.revealDefinition"
             ]
+        },{
+            "before": [
+                "<leader>",
+                "b",
+                "f",
+            ],
+            "commands": [
+                "workbench.files.action.focusOpenEditorsView"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "l",
+                "s",
+            ],
+            "commands": [
+                "workbench.files.action.focusOpenEditorsView"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "s",
+                "l",
+            ],
+            "commands": [
+                "workbench.files.action.focusOpenEditorsView"
+            ]
         }
     ],
     "vim.visualModeKeyBindingsNonRecursive": [
@@ -139,6 +182,7 @@
         },{
             "before": [
                 "<leader>",
+                "c",
                 "c"
             ],
             // CopilotChat inline editor
@@ -226,4 +270,5 @@
         "scminput": "true"
     },
     "window.titleBarStyle": "custom",
+    "workbench.editor.showTabs": "single",
 }

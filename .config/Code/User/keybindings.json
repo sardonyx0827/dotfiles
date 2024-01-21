@@ -99,4 +99,8 @@
         "key": "ctrl+shift+i",
         "command": "workbench.panel.chat.view.copilot.focus"
     },
+    {
+        "key": "alt+x",
+        "command": "openEditors.closeAll"
+    },
 ]
