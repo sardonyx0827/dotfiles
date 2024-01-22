@@ -191,6 +191,16 @@
             "commands": [
                 "workbench.action.files.openFolderInNewWindow"
             ]
+        },{
+            "before": [
+                "<leader>",
+                "g",
+                "c",
+            ],
+            // toggle comment
+            "commands": [
+                "editor.action.commentLine"
+            ]
         }
     ],
     "vim.visualModeKeyBindingsNonRecursive": [
@@ -243,6 +253,16 @@
             ],
             "commands": [
                 "editor.action.outdentLines"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "g",
+                "c",
+            ],
+            // toggle comment
+            "commands": [
+                "editor.action.commentLine"
             ]
         }
     ],
