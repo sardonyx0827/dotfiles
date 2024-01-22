@@ -295,4 +295,5 @@
     "workbench.editor.showTabs": "single",
     "window.customMenuBarAltFocus": false,
     "window.titleBarStyle": "custom",
+    "workbench.activityBar.location": "top",
 }
