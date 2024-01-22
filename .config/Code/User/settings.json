@@ -181,6 +181,16 @@
             "commands": [
                 "workbench.files.action.focusOpenEditorsView"
             ]
+        },{
+            "before": [
+                "<leader>",
+                "e",
+                "x",
+            ],
+            // instead of Buffers
+            "commands": [
+                "workbench.action.files.openFolderInNewWindow"
+            ]
         }
     ],
     "vim.visualModeKeyBindingsNonRecursive": [
