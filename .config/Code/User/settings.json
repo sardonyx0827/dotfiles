@@ -184,8 +184,8 @@
         },{
             "before": [
                 "<leader>",
-                "e",
                 "x",
+                "p",
             ],
             // instead of Buffers
             "commands": [
