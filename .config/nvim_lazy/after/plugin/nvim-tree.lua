@@ -1,7 +1,41 @@
 -- disable netrw at the very start of your init.lua
 --vim.g.loaded_netrw = 1
 --vim.g.loaded_netrwPlugin = 1
-vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>", { noremap = true, silent = true, desc = "Toggle NvimTree" })
+
+-- is nvim-tree already opened?
+local function is_opend()
+  local wins = vim.api.nvim_list_wins()
+  for _, w in ipairs(wins) do
+    local bufname = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w))
+    if bufname:match("NvimTree_") ~= nil then
+      return true
+    end
+  end
+  return false
+end
+-- if nvim-tree is already opened, focus it
+local function focus_tree()
+  local wins = vim.api.nvim_list_wins()
+  for _, w in ipairs(wins) do
+    local bufname = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w))
+    if bufname:match("NvimTree_") ~= nil then
+      vim.api.nvim_set_current_win(w)
+      return
+    end
+  end
+end
+
+local function toggle_tree()
+  if is_opend() then
+    focus_tree()
+    vim.cmd("NvimTreeFocus")
+  else
+    vim.cmd("NvimTreeOpen")
+  end
+end
+
+--vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>", { noremap = true, silent = true, desc = "Toggle NvimTree" })
+vim.keymap.set("n", "<leader>e", toggle_tree, { noremap = true, silent = true, desc = "Toggle NvimTree" })
 
 -- set termguicolors to enable highlight groups
 vim.opt.termguicolors = true

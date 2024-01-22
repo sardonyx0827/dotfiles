@@ -147,6 +147,7 @@
                 "b",
                 "f",
             ],
+            // instead of Buffers
             "commands": [
                 "workbench.files.action.focusOpenEditorsView"
             ]
@@ -156,6 +157,7 @@
                 "l",
                 "s",
             ],
+            // instead of Buffers
             "commands": [
                 "workbench.files.action.focusOpenEditorsView"
             ]
@@ -165,6 +167,17 @@
                 "s",
                 "l",
             ],
+            // instead of Buffers
+            "commands": [
+                "workbench.files.action.focusOpenEditorsView"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "l",
+                "l",
+            ],
+            // instead of Buffers
             "commands": [
                 "workbench.files.action.focusOpenEditorsView"
             ]
