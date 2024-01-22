@@ -25,7 +25,7 @@ local function focus_tree()
   end
 end
 
-local function toggle_tree()
+local function toggle_tree_focus()
   if is_opend() then
     focus_tree()
     vim.cmd("NvimTreeFocus")
@@ -35,7 +35,7 @@ local function toggle_tree()
 end
 
 --vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>", { noremap = true, silent = true, desc = "Toggle NvimTree" })
-vim.keymap.set("n", "<leader>e", toggle_tree, { noremap = true, silent = true, desc = "Toggle NvimTree" })
+vim.keymap.set("n", "<leader>e", toggle_tree_focus, { noremap = true, silent = true, desc = "Toggle and focus NvimTree" })
 
 -- set termguicolors to enable highlight groups
 vim.opt.termguicolors = true

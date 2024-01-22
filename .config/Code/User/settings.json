@@ -284,7 +284,6 @@
     "vscode_vibrancy.opacity": 1.7,
     "vscode_vibrancy.refreshInterval": 10000,
     "glassit.alpha": 255,
-    "workbench.colorTheme": "Tokyo Night",
     "editor.lineNumbers": "relative",
     "git.autofetch": true,
     "github.copilot.enable": {
@@ -296,4 +295,5 @@
     "window.customMenuBarAltFocus": false,
     "window.titleBarStyle": "custom",
     "workbench.activityBar.location": "top",
+    "workbench.colorTheme": "Rosé Pine (no italics)",
 }
