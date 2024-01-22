@@ -53,6 +53,9 @@ local function tree_on_attach(bufnr)
   -- default mappings
   api.config.mappings.default_on_attach(bufnr)
 
+  -- float preview
+  local FloatPreview = require("float-preview")
+  FloatPreview.attach_nvimtree(bufnr)
   -- custom mappings
   vim.keymap.set('n', 'l', api.node.open.edit,        opts('Open'))
 end
