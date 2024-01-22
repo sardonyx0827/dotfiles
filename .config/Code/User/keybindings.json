@@ -103,8 +103,4 @@
         "key": "alt+x",
         "command": "workbench.action.closeActiveEditor"
     },
-    {
-        "key": "ctrl+w",
-        "command": "-workbench.action.closeActiveEditor"
-    },
 ]
