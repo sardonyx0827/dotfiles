@@ -207,9 +207,30 @@
                 "x",
                 "w",
             ],
-            // toggle comment
+            // display all problems
             "commands": [
                 "workbench.actions.view.problems"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "x",
+                "n",
+            ],
+            // jump to next problem
+            "commands": [
+                "editor.action.marker.nextInFiles"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "q",
+                "f",
+            ],
+            // quick fix(using Copilot)
+            "commands": [
+                "editor.action.marker.nextInFiles",
+                "interactiveEditor.start",
             ]
         }
     ],
