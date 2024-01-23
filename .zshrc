@@ -118,6 +118,19 @@ source $ZSH/oh-my-zsh.sh
 cdi () {
   gnome-terminal -- bash -c "cd ~/work/github/first_boot_setup/docker/; bash create_docker_image.sh"
 }
+sshs () {
+  t=$(cat ~/.ssh/config | grep 'Host ' | cut -f2 -d' ' | fzf --preview "cat ~/.ssh/config | sed -ne '/^Host {}$/,/^\s*$/p'")
+  if [ -n "$t" ]; then
+    ssh "$t"
+  fi
+}
+fd () {
+  echo $(find . -name "*" -type d | fzf)
+}
+fcd () {
+  cd $(find . -name "*" -type d | fzf)
+}
+
 # wezterm
 alias imgcat="wezterm imgcat"
 
