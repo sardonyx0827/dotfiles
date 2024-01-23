@@ -50,7 +50,7 @@
             ],
             // find in files
             "commands": [
-                "workbench.action.findInFiles"
+                "workbench.action.quickOpen"
             ]
         },{
             "before": [
@@ -316,4 +316,5 @@
     "window.titleBarStyle": "custom",
     "workbench.activityBar.location": "top",
     "workbench.colorTheme": "Rosé Pine (no italics)",
+    "editor.minimap.enabled": false,
 }
