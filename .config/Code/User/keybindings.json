@@ -95,34 +95,43 @@
         "key": "ctrl+m",
         "command": "-editor.action.toggleTabFocusMode"
     },
+    // open copilot chat side window
     {
         "key": "ctrl+shift+i",
         "command": "workbench.panel.chat.view.copilot.focus"
     },
+    // delete opened buffer
     {
         "key": "alt+x",
         "command": "workbench.action.closeActiveEditor"
     },
+
+    // explorer actions
+    // create new file
     {
         "key": "a",
         "command": "explorer.newFile",
-        "when": "listFocus && !inputFocus"
+        "when": "filesExplorerFocus && foldersViewVisible && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus"
     },
+    // create new dir
     {
         "key": "shift+a",
         "command": "explorer.newFolder",
-        "when": "listFocus && !inputFocus"
+        "when": "filesExplorerFocus && foldersViewVisible && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus"
     },
+    // rename
     {
         "key": "r",
         "command": "renameFile",
         "when": "filesExplorerFocus && foldersViewVisible && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus"
     },
+    // open with vertical split window
     {
         "key": "ctrl+v",
         "command": "explorer.openToSide",
         "when": "explorerViewletFocus && foldersViewVisible && !inputFocus"
     },
+    // delete file
     {
         "key": "d",
         "command": "moveFileToTrash",
