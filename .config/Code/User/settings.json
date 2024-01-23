@@ -201,8 +201,20 @@
             "commands": [
                 "editor.action.commentLine"
             ]
+        },{
+            "before": [
+                "<leader>",
+                "x",
+                "w",
+            ],
+            // toggle comment
+            "commands": [
+                "workbench.actions.view.problems"
+            ]
+
         }
     ],
+
     "vim.visualModeKeyBindingsNonRecursive": [
         {
             "before": [
@@ -265,6 +277,7 @@
             ]
         }
     ],
+
     "vim.insertModeKeyBindingsNonRecursive": [
         {
             "before": [
