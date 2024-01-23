@@ -193,8 +193,8 @@
             ]
         },{
             "before": [
-                "<leader>",
                 "g",
+                "c",
                 "c",
             ],
             // toggle comment
@@ -256,7 +256,6 @@
             ]
         },{
             "before": [
-                "<leader>",
                 "g",
                 "c",
             ],
