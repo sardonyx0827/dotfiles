@@ -118,6 +118,8 @@ source $ZSH/oh-my-zsh.sh
 cdi () {
   gnome-terminal -- bash -c "cd ~/work/github/first_boot_setup/docker/; bash create_docker_image.sh"
 }
+
+# using fzf
 sshs () {
   t=$(cat ~/.ssh/config | grep 'Host ' | cut -f2 -d' ' | fzf --preview "cat ~/.ssh/config | sed -ne '/^Host {}$/,/^\s*$/p'")
   if [ -n "$t" ]; then
@@ -125,10 +127,16 @@ sshs () {
   fi
 }
 fd () {
-  echo $(find . -name "*" -type d | fzf)
+  echo $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
 }
 fcd () {
-  cd $(find . -name "*" -type d | fzf)
+  cd $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
+}
+ff () {
+  echo $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
+}
+fvi () {
+  nvim $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
 }
 
 # wezterm
