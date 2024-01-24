@@ -88,7 +88,7 @@ local function quick_fix_next_error_with_ai()
   local lines_text = ""
   for _, line in ipairs(lines_above) do
     if line ~= "" then
-      lines_text = lines_text .. line .. "@"
+      lines_text = lines_text .. line .. "\\n"
     end
   end
   -- open Copilot chat window
