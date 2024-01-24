@@ -54,3 +54,23 @@ vim.keymap.set("n", "<leader>cj", "ggVGy:vertical rightbelow new<CR>:setlocal fi
 vim.keymap.set("v", "<leader>cj", "y:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat(Translate to Japanese)" })
 vim.keymap.set("n", "<leader>cs", "{V}y:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat ", { desc = "Copilot Chat(copy surround)" })
 vim.keymap.set("n", "<leader>cl", "50kV100j50ky:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat ", { desc = "Copilot Chat(copy 100lines)" })
+
+-- jump to next error/warn and fix with Copilot
+local function quick_fix_next_error_with_ai()
+  if vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})[1] == nil then
+    print("no error")
+    return
+  end
+  -- jump to next error/warn
+  vim.diagnostic.goto_next({severity = vim.diagnostic.severity.ERROR})
+  -- fix with Copilot
+  -- copy diagnostic message and current line
+  local diagnostic_message = vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})[1].message
+  local current_line_text = vim.api.nvim_get_current_line()
+  -- open Copilot chat window
+  vim.cmd("vertical rightbelow new")
+  vim.cmd("setlocal filetype=markdown")
+  vim.cmd("CopilotChat ".. "error message : " .. diagnostic_message .. " | current line text : " .. current_line_text .. " | your job : how to fix it?")
+end
+vim.keymap.set("n", "<leader>xn", vim.diagnostic.goto_next, {desc="Jump to Next Error/Warn"})
+vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error"})
