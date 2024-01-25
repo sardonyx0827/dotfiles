@@ -84,5 +84,67 @@ local function select_line_same_indent()
   vim.cmd("normal! V")
   vim.api.nvim_win_set_cursor(0, {end_line, 0})
 end
+vim.keymap.set("n", "<leader>vi", select_line_same_indent, {desc = "select lines - same indentation", noremap = true})
 
-vim.keymap.set("n", "<leader>v", select_line_same_indent, {desc = "select lines - same indentation", noremap = true})
+-- select codeblock text
+local function move_cursor_to_above_codeblock()
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  local start_line = current_line_number
+  -- search above
+  for i = current_line_number, 0, -1 do
+    local _line = vim.fn.getline(i)
+    if string.match(_line, "^```") then
+      start_line = i - 1
+      break
+    end
+    if i <= 1 then
+      start_line = 1
+      break
+    end
+  end
+  vim.api.nvim_win_set_cursor(0, {start_line, 0})
+end
+local function select_codeblock_text(cursor_position)
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  local start_line = current_line_number
+  local end_line = current_line_number
+  local max_line = vim.api.nvim_buf_line_count(0)
+  -- search above
+  for i = current_line_number, 0, -1 do
+    local _line = vim.fn.getline(i)
+    if string.match(_line, "^```") then
+      start_line = i + 1
+      break
+    end
+    if i == 1 then
+      start_line = 1
+      break
+    end
+  end
+  -- search below
+  for i = current_line_number, max_line do
+    local _line = vim.fn.getline(i)
+    if string.match(_line, "^```") then
+      end_line = i - 1
+      break
+    end
+  end
+  if start_line <= 1 then
+    print("no codeblock text")
+    -- restore cursor position
+    vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
+  else
+    -- select lines
+    vim.api.nvim_win_set_cursor(0, {start_line, 0})
+    vim.cmd("normal! V")
+    vim.api.nvim_win_set_cursor(0, {end_line, 0})
+  end
+end
+local function select_last_codeblock_text()
+  -- save cursor position
+  local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
+  vim.cmd("normal! G")
+  move_cursor_to_above_codeblock()
+  select_codeblock_text(cursor_position)
+end
+vim.keymap.set("n", "<leader>vm", select_last_codeblock_text, {desc = "select codeblock text (last)", noremap = true})
