@@ -16,14 +16,14 @@ function _G._toggleterm_open(count)
     require("toggleterm").toggle(count, 12)
   end
 end
-vim.keymap.set("n", "<leader>sh1", "<cmd>ToggleTerm<cr>")
-vim.keymap.set("n", "<leader>sh2", "<cmd>ToggleTerm 2direction=horizontal<cr>")
-vim.keymap.set("n", "<leader>sh3", "<cmd>ToggleTerm 3direction=horizontal<cr>")
-vim.keymap.set("n", "<leader>sh4", "<cmd>ToggleTerm 4direction=horizontal<cr>")
-vim.keymap.set("n", "<leader>sh9", "<cmd>ToggleTerm 9direction=vertical<cr>")
-vim.keymap.set("n", "<leader>sh8", "<cmd>ToggleTerm 8direction=vertical<cr>")
-vim.keymap.set("n", "<leader>sh7", "<cmd>ToggleTerm 7direction=vertical<cr>")
-vim.keymap.set("n", "<leader>sh6", "<cmd>ToggleTerm 6direction=vertical<cr>")
+vim.keymap.set("n", "<leader>sh1", ":ToggleTerm<cr>", {desc = "ToggleTerm - toggle session 1"})
+vim.keymap.set("n", "<leader>sh2", ":ToggleTerm 2direction=horizontal<cr>", {desc = "ToggleTerm - toggle session 2"})
+vim.keymap.set("n", "<leader>sh3", ":ToggleTerm 3direction=horizontal<cr>", {desc = "ToggleTerm - toggle session 3"})
+vim.keymap.set("n", "<leader>sh4", ":ToggleTerm 4direction=horizontal<cr>", {desc = "ToggleTerm - toggle session 4"})
+vim.keymap.set("n", "<leader>sh9", ":ToggleTerm 9direction=vertical<cr>", {desc = "ToggleTerm - toggle session 9"})
+vim.keymap.set("n", "<leader>sh8", ":ToggleTerm 8direction=vertical<cr>", {desc = "ToggleTerm - toggle session 8"})
+vim.keymap.set("n", "<leader>sh7", ":ToggleTerm 7direction=vertical<cr>", {desc = "ToggleTerm - toggle session 7"})
+vim.keymap.set("n", "<leader>sh6", ":ToggleTerm 6direction=vertical<cr>", {desc = "ToggleTerm - toggle session 6"})
 
 local Terminal = require("toggleterm.terminal").Terminal
 -- use docui https://github.com/skanehira/docui
@@ -36,7 +36,7 @@ local docui = Terminal:new({
 function _docui_toggle()
 	docui:toggle()
 end
-vim.api.nvim_set_keymap("n", "<leader>dt", "<cmd>lua _docui_toggle()<CR>", { noremap = true, silent = true })
+vim.api.nvim_set_keymap("n", "<leader>dt", "<cmd>lua _docui_toggle()<CR>", { noremap = true, silent = true, desc = "toggle docui - CUI tool" })
 
 -- todo (pip install dooit)
 local dooit = Terminal:new({
@@ -48,4 +48,4 @@ local dooit = Terminal:new({
 function _dooit_toggle()
 	dooit:toggle()
 end
-vim.api.nvim_set_keymap("n", "<leader>to", "<cmd>lua _dooit_toggle()<CR>", { noremap = true, silent = true })
+vim.api.nvim_set_keymap("n", "<leader>to", "<cmd>lua _dooit_toggle()<CR>", { noremap = true, silent = true, desc = "toggle dooit - CUI tool" })

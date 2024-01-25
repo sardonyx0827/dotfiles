@@ -24,4 +24,4 @@ vim.keymap.set("n", "<leader>zZ", function()
   vim.wo.number = false
   vim.wo.rnu = false
   vim.opt.colorcolumn = "0"
-end, {desc = "toggle zen mode(no number, no ruler, no colorcolumn)"})
+end, {desc = "toggle zen mode - no number, no ruler, no colorcolumn"})

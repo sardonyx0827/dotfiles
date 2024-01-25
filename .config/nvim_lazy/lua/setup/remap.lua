@@ -37,3 +37,52 @@ vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true})
 -- jump next/prev buffer
 vim.keymap.set("n", "<M-j>", ":bnext<CR>", {desc = "next buffer"})
 vim.keymap.set("n", "<M-k>", ":bprev<CR>", {desc = "previous buffer"})
+
+-- select line the same indentation with current line
+local function count_indent(line)
+  local indent = string.match(line, "^%s+")
+  if indent == nil then
+    return 0
+  end
+  return string.len(indent)
+end
+local function select_line_same_indent()
+  -- check current line indent
+  local line = vim.fn.getline(".")
+  local current_indent = count_indent(line)
+  print(current_indent)
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  -- search above the same indentation with current_indent
+  local start_line = current_line_number
+  local end_line = 0
+  for i = current_line_number, 0, -1 do
+    local _line = vim.fn.getline(i)
+    local indent = count_indent(_line)
+    if indent == current_indent then
+      start_line = i
+    else
+      break
+    end
+    if i == 1 then
+      start_line = 1
+      break
+    end
+  end
+  -- search below the same indentation with current_indent
+  local max_line = vim.api.nvim_buf_line_count(0)
+  for i = current_line_number, max_line do
+    local _line = vim.fn.getline(i)
+    local indent = count_indent(_line)
+    if indent == current_indent then
+      end_line = i
+    else
+      break
+    end
+  end
+  -- select lines
+  vim.api.nvim_win_set_cursor(0, {start_line, 0})
+  vim.cmd("normal! V")
+  vim.api.nvim_win_set_cursor(0, {end_line, 0})
+end
+
+vim.keymap.set("n", "<leader>v", select_line_same_indent, {desc = "select lines - same indentation", noremap = true})
