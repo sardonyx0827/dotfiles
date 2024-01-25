@@ -105,6 +105,10 @@
         "key": "alt+x",
         "command": "workbench.action.closeActiveEditor"
     },
+    {
+        "key": "cmd+x",
+        "command": "workbench.action.closeActiveEditor"
+    },
 
     // explorer actions
     // create new file
