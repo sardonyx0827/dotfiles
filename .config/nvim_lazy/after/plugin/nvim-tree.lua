@@ -35,7 +35,8 @@ local function toggle_tree_focus()
 end
 
 --vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>", { noremap = true, silent = true, desc = "Toggle NvimTree" })
-vim.keymap.set("n", "<leader>e", toggle_tree_focus, { noremap = true, silent = true, desc = "Toggle and focus NvimTree" })
+vim.keymap.set("n", "<leader>e", toggle_tree_focus, { noremap = true, silent = true, desc = "NvimTree - Toggle and focus" })
+vim.keymap.set("n", "<leader>te", ":lua require('nvim-tree.api').tree.expand_all()<CR>", { noremap = true, silent = true, desc = "NvimTree - expand all" })
 
 -- set termguicolors to enable highlight groups
 vim.opt.termguicolors = true
@@ -64,6 +65,7 @@ end
 require("nvim-tree").setup({
   sort_by = "case_sensitive",
   view = {
+    relativenumber = true,
     width = 30,
     --float = { enable = true },
     --side = "left",
@@ -231,7 +233,7 @@ local function createTreeActions()
 end
 
 createTreeActions()
-vim.keymap.set("n", "<leader>ta", actionsMenu)
+vim.keymap.set("n", "<leader>ta", actionsMenu, {desc = "NvimTree - action menu"})
 
 local M = {}
 
