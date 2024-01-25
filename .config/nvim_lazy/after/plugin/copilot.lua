@@ -66,6 +66,11 @@ local function quick_fix_next_error_with_ai()
   -- fix with Copilot
   -- copy diagnostic message and current line
   local diagnostic_message = vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})[1].message
+  -- diagnostic_message has any lines?
+  if diagnostic_message:find("\n") ~= nil then
+    -- replace new line code to escaped code
+    diagnostic_message = diagnostic_message:gsub("\n", "\\n")
+  end
   local current_line_text = vim.api.nvim_get_current_line()
   -- 5 lines above and 5 lines below
   local current_line = vim.api.nvim_win_get_cursor(0)[1]
