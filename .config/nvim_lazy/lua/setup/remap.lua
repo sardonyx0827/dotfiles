@@ -84,7 +84,7 @@ local function select_line_same_indent()
   vim.cmd("normal! V")
   vim.api.nvim_win_set_cursor(0, {end_line, 0})
 end
-vim.keymap.set("n", "<leader>vi", select_line_same_indent, {desc = "select lines - same indentation", noremap = true})
+vim.keymap.set("n", "<leader>vin", select_line_same_indent, {desc = "select lines - same indentation", noremap = true})
 
 -- select codeblock text
 local function move_cursor_to_above_codeblock()
@@ -147,4 +147,34 @@ local function select_last_codeblock_text()
   move_cursor_to_above_codeblock()
   select_codeblock_text(cursor_position)
 end
-vim.keymap.set("n", "<leader>vm", select_last_codeblock_text, {desc = "select codeblock text (last)", noremap = true})
+vim.keymap.set("n", "<leader>vml", select_last_codeblock_text, {desc = "select codeblock text (last)", noremap = true})
+
+local function save_yanked_text(path, reg)
+  local text = vim.fn.getreg(reg)
+  if text == nil or text == "" then
+    print("no text in register")
+    return
+  end
+  local file = io.open(path, "w")
+  if file == nil then
+    print("cannot open file")
+    return
+  end
+  file:write(text)
+  file:close()
+end
+local function diff_texts(path1, path2)
+  -- open path2 text to new tab
+  vim.cmd("tabnew " .. path2)
+  vim.cmd("vertical diffsplit " .. path1)
+end
+local diff_codeblock_text = function()
+  local path1 = "/tmp/yanked_text"
+  local path2 = "/tmp/yanked_text_"
+  save_yanked_text(path1, '"')
+  select_last_codeblock_text()
+  vim.cmd('normal! y')
+  save_yanked_text(path2, '"')
+  diff_texts(path1, path2)
+end
+vim.keymap.set("n", "<leader>vmd", diff_codeblock_text, {desc = "diff codeblock text", noremap = true})
