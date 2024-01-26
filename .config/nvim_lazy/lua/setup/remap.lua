@@ -163,18 +163,42 @@ local function save_yanked_text(path, reg)
   file:write(text)
   file:close()
 end
-local function diff_texts(path1, path2)
+local function diff_texts(path1, path2, filetype)
   -- open path2 text to new tab
   vim.cmd("tabnew " .. path2)
+  vim.cmd("setlocal filetype=" .. filetype)
   vim.cmd("vertical diffsplit " .. path1)
+  vim.cmd("setlocal filetype=" .. filetype)
+end
+
+local function get_filetype_from_codeblock()
+  vim.cmd("normal! G")
+  move_cursor_to_above_codeblock()
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  local block_line = current_line_number
+  for i = current_line_number, 0, -1 do
+    local _line = vim.fn.getline(i)
+    if string.match(_line, "^```") then
+      block_line = i
+      break
+    end
+  end
+  vim.api.nvim_win_set_cursor(0, {block_line, 0})
+
+  local filetype = vim.api.nvim_get_current_line()
+  print(filetype)
+  -- extract filetype from codeblock
+  filetype = filetype:match("^```(%w+)")
+  return filetype
 end
 local diff_codeblock_text = function()
   local path1 = "/tmp/yanked_text"
   local path2 = "/tmp/yanked_text_"
   save_yanked_text(path1, '"')
+  local filetype = get_filetype_from_codeblock()
   select_last_codeblock_text()
   vim.cmd('normal! y')
   save_yanked_text(path2, '"')
-  diff_texts(path1, path2)
+  diff_texts(path1, path2, filetype)
 end
 vim.keymap.set("n", "<leader>vmd", diff_codeblock_text, {desc = "diff codeblock text", noremap = true})

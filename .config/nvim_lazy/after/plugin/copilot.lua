@@ -101,5 +101,4 @@ local function quick_fix_next_error_with_ai()
   vim.cmd("setlocal filetype=markdown")
   vim.cmd("CopilotChat ".. "error message : " .. diagnostic_message .. " | current line text : " .. lines_text .. " | your job : how to fix it?")
 end
-vim.keymap.set("n", "<leader>xn", vim.diagnostic.goto_next, {desc="Jump to Next Error/Warn"})
 vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with Copilot"})
