@@ -209,6 +209,9 @@ local function diff_texts(target_text, copilot_text, filetype)
   vim.cmd("setlocal filetype=" .. filetype)
 end
 
+-- tmp file path
+local target_text = "/tmp/_target_text"
+local copilot_text = "/tmp/_copilot_suggestion"
 local function diff_codeblock_text()
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   vim.cmd("normal! G")
@@ -221,8 +224,6 @@ local function diff_codeblock_text()
     return
   end
 
-  local target_text = "/tmp/_target_text"
-  local copilot_text = "/tmp/_copilot_suggestion"
 
   save_and_check(target_text, '"')
   local filetype = get_filetype_from_codeblock()
@@ -232,5 +233,17 @@ local function diff_codeblock_text()
   diff_texts(target_text, copilot_text, filetype)
 end
 
+local function close_diff_tab()
+  local wins = vim.api.nvim_list_wins()
+  for _, w in ipairs(wins) do
+    local bufname = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w))
+    if bufname:match("/tmp/_") ~= nil then
+      vim.api.nvim_win_close(w, true)
+    end
+  end
+  -- delete tmp files
+  vim.cmd("silent !rm " .. target_text)
+  vim.cmd("silent !rm " .. copilot_text)
+end
 vim.keymap.set("n", "<leader>vmd", diff_codeblock_text, {desc = "diff codeblock text", noremap = true})
-vim.keymap.set("n", "<leader>vmc", ":tabclose<CR>", {desc = "close diff tab", noremap = true})
+vim.keymap.set("n", "<leader>vmc", close_diff_tab, {desc = "close diff tab", noremap = true})

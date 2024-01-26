@@ -50,6 +50,10 @@ vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true})
 vim.keymap.set("n", "<M-j>", ":bnext<CR>", {desc = "next buffer"})
 vim.keymap.set("n", "<M-k>", ":bprev<CR>", {desc = "previous buffer"})
 
+-- change directory to current file
+vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", {desc = "change directory to current file"})
+vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", {desc = "change up directory"})
+
 -- select line the same indentation with current line
 local function count_indent(line)
   local indent = string.match(line, "^%s+")

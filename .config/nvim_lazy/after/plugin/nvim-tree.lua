@@ -59,6 +59,8 @@ local function tree_on_attach(bufnr)
   FloatPreview.attach_nvimtree(bufnr)
   -- custom mappings
   vim.keymap.set('n', 'l', api.node.open.edit,        opts('Open'))
+  vim.keymap.set('n', '<C-l>', api.tree.change_root_to_node,        opts('CD'))
+  vim.keymap.set('n', '<C-h>', api.tree.change_root_to_parent,        opts('Up'))
 end
 
 --setup with some options
