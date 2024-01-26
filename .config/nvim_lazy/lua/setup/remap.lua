@@ -1,19 +1,31 @@
 vim.g.mapleader = ","
 
 -- best solutions for me
+-- In visual mode, shift text left and reselect
 vim.keymap.set("v", "<", "<gv")
+-- In visual mode, shift text right and reselect
 vim.keymap.set("v", ">", ">gv")
+-- In visual mode, move selected lines down and reselect
 vim.keymap.set("v", "J", ":m '>+1<CR>gv=gv")
+-- In visual mode, move selected lines up and reselect
 vim.keymap.set("v", "K", ":m '<-2<CR>gv=gv")
+-- In normal mode, join lines and return to initial position
 vim.keymap.set("n", "J", "mzJ`z")
+-- In normal mode, scroll down half a page and center
 vim.keymap.set("n", "<C-d>", "<C-d>zz")
+-- In normal mode, scroll up half a page and center
 vim.keymap.set("n", "<C-u>", "<C-u>zz")
+-- In normal mode, find next match and center
 vim.keymap.set("n", "n", "nzzzv")
+-- In normal mode, find previous match and center
 vim.keymap.set("n", "N", "Nzzzv")
+-- In normal mode, rename text in this file
 vim.keymap.set("n", "<leader>rn", [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>]], {desc = "rename text in this file"})
+-- In normal mode, clear search highlighting
 vim.keymap.set("n", "<leader><Space>", function()
   vim.cmd("noh")
 end)
+-- In normal mode, save the current file
 vim.keymap.set("n", "<C-s>", function()
   vim.cmd("w")
 end)
@@ -50,7 +62,6 @@ local function select_line_same_indent()
   -- check current line indent
   local line = vim.fn.getline(".")
   local current_indent = count_indent(line)
-  print(current_indent)
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
   -- search above the same indentation with current_indent
   local start_line = current_line_number
@@ -147,21 +158,22 @@ local function select_last_codeblock_text()
   move_cursor_to_above_codeblock()
   select_codeblock_text(cursor_position)
 end
-vim.keymap.set("n", "<leader>vml", select_last_codeblock_text, {desc = "select codeblock text (last)", noremap = true})
+vim.keymap.set("n", "<leader>vmm", select_last_codeblock_text, {desc = "select codeblock text (last)", noremap = true})
 
 local function save_yanked_text(path, reg)
   local text = vim.fn.getreg(reg)
   if text == nil or text == "" then
     print("no text in register")
-    return
+    return false
   end
   local file = io.open(path, "w")
   if file == nil then
     print("cannot open file")
-    return
+    return false
   end
   file:write(text)
   file:close()
+  return true
 end
 local function diff_texts(path1, path2, filetype)
   -- open path2 text to new tab
@@ -186,19 +198,25 @@ local function get_filetype_from_codeblock()
   vim.api.nvim_win_set_cursor(0, {block_line, 0})
 
   local filetype = vim.api.nvim_get_current_line()
-  print(filetype)
   -- extract filetype from codeblock
   filetype = filetype:match("^```(%w+)")
   return filetype
 end
-local diff_codeblock_text = function()
-  local path1 = "/tmp/yanked_text"
-  local path2 = "/tmp/yanked_text_"
-  save_yanked_text(path1, '"')
+local function diff_codeblock_text()
+  local path1 = "/tmp/_target_text"
+  local path2 = "/tmp/_copilot_suggestion"
+  local function save_and_check(path, register)
+    local result = save_yanked_text(path, register)
+    if not result then
+      error("Failed to save yanked text to " .. path)
+    end
+  end
+  save_and_check(path1, '"')
   local filetype = get_filetype_from_codeblock()
   select_last_codeblock_text()
   vim.cmd('normal! y')
-  save_yanked_text(path2, '"')
+  save_and_check(path2, '"')
   diff_texts(path1, path2, filetype)
 end
 vim.keymap.set("n", "<leader>vmd", diff_codeblock_text, {desc = "diff codeblock text", noremap = true})
+vim.keymap.set("n", "<leader>vmc", ":tabclose<CR>", {desc = "diff codeblock text", noremap = true})
