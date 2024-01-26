@@ -125,38 +125,33 @@ end
 
 local function select_codeblock_text(cursor_position)
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
-  local start_line = current_line_number
-  local end_line = current_line_number
   local max_line = vim.api.nvim_buf_line_count(0)
-  -- search above
-  for i = current_line_number, 0, -1 do
-    local _line = vim.fn.getline(i)
-    if string.match(_line, "^```") then
+  local start_line, end_line
+
+  -- search upwards for start of code block
+  for i = current_line_number, 1, -1 do
+    if string.match(vim.fn.getline(i), "^```") then
       start_line = i + 1
       break
     end
-    if i == 1 then
-      start_line = 1
-      break
-    end
   end
-  -- search below
+
+  -- search downwards for end of code block
   for i = current_line_number, max_line do
-    local _line = vim.fn.getline(i)
-    if string.match(_line, "^```") then
+    if string.match(vim.fn.getline(i), "^```") then
       end_line = i - 1
       break
     end
   end
-  if start_line <= 1 then
-    print("no codeblock text")
-    -- restore cursor position
-    vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
-  else
-    -- select lines
+
+  -- if start_line and end_line are found, select the text
+  if start_line and end_line then
     vim.api.nvim_win_set_cursor(0, {start_line, 0})
     vim.cmd("normal! V")
     vim.api.nvim_win_set_cursor(0, {end_line, 0})
+  else
+    print("No code block found.")
+    vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
   end
 end
 
@@ -205,44 +200,48 @@ local function get_filetype_from_codeblock()
   return filetype
 end
 
+local function find_start_line()
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  for i = current_line_number, 0, -1 do
+    local _line = vim.fn.getline(i)
+    if string.match(_line, "^```") then
+      return i + 1
+    end
+    if i == 1 then
+      return 1
+    end
+  end
+end
+
+local function save_and_check(path, register)
+  local result = save_yanked_text(path, register)
+  if not result then
+    error("Failed to save yanked text to " .. path)
+  end
+end
+
+local function diff_texts(target_text, copilot_text, filetype)
+  vim.cmd("tabnew " .. copilot_text)
+  vim.cmd("setlocal filetype=" .. filetype)
+  vim.cmd("vertical diffsplit " .. target_text)
+  vim.cmd("setlocal filetype=" .. filetype)
+end
+
 local function diff_codeblock_text()
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   vim.cmd("normal! G")
   move_cursor_to_above_codeblock()
-  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
-  local start_line = current_line_number
-  for i = current_line_number, 0, -1 do
-    local _line = vim.fn.getline(i)
-    if string.match(_line, "^```") then
-      start_line = i + 1
-      break
-    end
-    if i == 1 then
-      start_line = 1
-      break
-    end
-  end
+  local start_line = find_start_line()
+
   if start_line <= 1 then
     print("no codeblock in this buffer")
-    -- restore cursor position
     vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
     return
   end
+
   local target_text = "/tmp/_target_text"
   local copilot_text = "/tmp/_copilot_suggestion"
-  local function save_and_check(path, register)
-    local result = save_yanked_text(path, register)
-    if not result then
-      error("Failed to save yanked text to " .. path)
-    end
-  end
-  local function diff_texts(target_text, copilot_text, filetype)
-    -- open copilot_text text to new tab
-    vim.cmd("tabnew " .. copilot_text)
-    vim.cmd("setlocal filetype=" .. filetype)
-    vim.cmd("vertical diffsplit " .. target_text)
-    vim.cmd("setlocal filetype=" .. filetype)
-  end
+
   save_and_check(target_text, '"')
   local filetype = get_filetype_from_codeblock()
   select_last_codeblock_text()
@@ -250,5 +249,6 @@ local function diff_codeblock_text()
   save_and_check(copilot_text, '"')
   diff_texts(target_text, copilot_text, filetype)
 end
+
 vim.keymap.set("n", "<leader>vmd", diff_codeblock_text, {desc = "diff codeblock text", noremap = true})
 vim.keymap.set("n", "<leader>vmc", ":tabclose<CR>", {desc = "close diff tab", noremap = true})
