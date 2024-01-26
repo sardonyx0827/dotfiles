@@ -57,50 +57,32 @@ vim.keymap.set("n", "<leader>cl", "50kV100j50ky:vertical rightbelow new<CR>:setl
 
 -- jump to next error/warn and fix with Copilot Chat
 local function quick_fix_next_error_with_ai()
-  if vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})[1] == nil then
-    print("no error")
+  local diagnostics = vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})
+  if #diagnostics == 0 then
+    print("No errors found.")
     return
   end
+
   -- jump to next error/warn
   vim.diagnostic.goto_next({severity = vim.diagnostic.severity.ERROR})
-  -- fix with Copilot
-  -- copy diagnostic message and current line
-  local diagnostic_message = vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})[1].message
-  -- diagnostic_message has any lines?
-  if diagnostic_message:find("\n") ~= nil then
-    -- replace new line code to escaped code
-    diagnostic_message = diagnostic_message:gsub("\n", "\\n")
-  end
-  local current_line_text = vim.api.nvim_get_current_line()
-  -- 5 lines above and 5 lines below
+
+  -- get diagnostic message and current line
+  local diagnostic_message = diagnostics[1].message:gsub("\n", "\\n")
+
+  -- get 5 lines above and 5 lines below
   local current_line = vim.api.nvim_win_get_cursor(0)[1]
-  local start = -5
-  local finish = 5
-  if current_line < 5 then
-    start = 0
-  else
-    start = current_line - 5
-  end
-  -- max line number
-  local max_line = vim.api.nvim_buf_line_count(0)
-  if current_line + 5 > max_line then
-    finish = max_line
-  else
-    finish = current_line + 5
-  end
+  local start = math.max(0, current_line - 5)
+  local finish = math.min(vim.api.nvim_buf_line_count(0), current_line + 5)
 
   local lines_above = vim.api.nvim_buf_get_lines(0, start, finish, false)
-  local lines_text = ""
-  for _, line in ipairs(lines_above) do
-    if line ~= "" then
-      lines_text = lines_text .. line .. "\\n"
-    end
-  end
+  local lines_text = table.concat(lines_above, "\\n")
+
   -- open Copilot chat window
   vim.cmd("vertical rightbelow new")
   vim.cmd("setlocal filetype=markdown")
   vim.cmd("CopilotChat ".. "error message : " .. diagnostic_message .. " | current line text : " .. lines_text .. " | your job : how to fix it?")
 end
+
 vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with Copilot"})
 
 
