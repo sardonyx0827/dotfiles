@@ -328,9 +328,9 @@ local plugins = {
   },
   -- show git diff
   {
-    "APZelos/blamer.nvim",
+    "FabijanZulj/blame.nvim",
     lazy = true,
-    cmd = "BlamerToggle",
+    cmd = "ToggleBlame",
   },
   -- key navigation
   {
