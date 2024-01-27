@@ -58,9 +58,10 @@ local function tree_on_attach(bufnr)
   local FloatPreview = require("float-preview")
   FloatPreview.attach_nvimtree(bufnr)
   -- custom mappings
-  vim.keymap.set('n', 'l', api.node.open.edit,        opts('Open'))
-  vim.keymap.set('n', '<C-l>', api.tree.change_root_to_node,        opts('CD'))
-  vim.keymap.set('n', '<C-h>', api.tree.change_root_to_parent,        opts('Up'))
+  vim.keymap.set('n', 'l', api.node.open.edit, opts('Open'))
+  vim.keymap.set('n', '<C-l>', api.tree.change_root_to_node, opts('CD'))
+  vim.keymap.set('n', '<C-h>', api.tree.change_root_to_parent, opts('Up'))
+  vim.keymap.set('n', '<leader>e', api.tree.close, opts('Close'))
 end
 
 --setup with some options
@@ -91,6 +92,9 @@ require("nvim-tree").setup({
   filters = {
     dotfiles = false,
     --custom = { "node_modules", ".git" },
+  },
+  update_focused_file = {
+    enable = true
   },
   on_attach = tree_on_attach,
 })
