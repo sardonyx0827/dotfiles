@@ -112,14 +112,6 @@ local plugins = {
       })
     end,
   },
-  -- show scroll bar
-  {
-    "petertriho/nvim-scrollbar",
-    event = "BufWinEnter",
-    config = function()
-      require("scrollbar").setup()
-    end,
-  },
   -- gitsigns
   {
     "lewis6991/gitsigns.nvim",

@@ -52,8 +52,6 @@ vim.keymap.set("n", "<leader>ct", "ggVGy:vertical rightbelow new<CR>:setlocal fi
 vim.keymap.set("v", "<leader>ct", "y:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat /test<CR>", { desc = "Copilot Chat - /test" })
 vim.keymap.set("n", "<leader>cj", "ggVGy:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
 vim.keymap.set("v", "<leader>cj", "y:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
-vim.keymap.set("n", "<leader>cs", "{V}y:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat ", { desc = "Copilot Chat - yank surround" })
-vim.keymap.set("n", "<leader>cl", "50kV100j50ky:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat ", { desc = "Copilot Chat - yank 100lines" })
 
 -- jump to next error/warn and fix with Copilot Chat
 local function quick_fix_next_error_with_ai()
@@ -203,6 +201,9 @@ local function save_and_check(path, register)
 end
 
 local function diff_texts(target_text, copilot_text, filetype)
+  if filetype == nil then
+    filetype = "text"
+  end
   vim.cmd("tabnew " .. copilot_text)
   vim.cmd("setlocal filetype=" .. filetype)
   vim.cmd("vertical diffsplit " .. target_text)
@@ -224,7 +225,6 @@ local function diff_codeblock_text()
     return
   end
 
-
   save_and_check(target_text, '"')
   local filetype = get_filetype_from_codeblock()
   select_last_codeblock_text()
@@ -242,8 +242,71 @@ local function close_diff_tab()
     end
   end
   -- delete tmp files
-  vim.cmd("silent !rm " .. target_text)
-  vim.cmd("silent !rm " .. copilot_text)
+  --os.remove(target_text)  -- Use Lua's os.remove function to delete files
+  --os.remove(copilot_text)
 end
 vim.keymap.set("n", "<leader>vmd", diff_codeblock_text, {desc = "diff codeblock text", noremap = true})
 vim.keymap.set("n", "<leader>vmc", close_diff_tab, {desc = "close diff tab", noremap = true})
+
+local function show_diff_files()
+  diff_texts(target_text, copilot_text)
+end
+vim.keymap.set("n", "<leader>vms", show_diff_files, {desc = "show old diff files", noremap = true})
+
+-- reflect Copilot suggestion
+local function reflect_copilot_suggestion()
+  -- read file text in _target_text
+  local target_line_list = {}
+  local file = io.open(target_text, "r")
+  if file then
+    for line in file:lines() do
+      table.insert(target_line_list, line)
+    end
+    file:close()
+  else
+    print("Cannot open target file: " .. target_text)
+    return false
+  end
+
+  -- read file text in _copilot_suggestion
+  local suggested_lines = ""
+  local file2 = io.open(copilot_text, "r")
+  if file2 then
+    suggested_lines = file2:read("a")
+    file2:close()
+  else
+    print("Cannot open suggestion file: " .. copilot_text)
+    return false
+  end
+
+  close_diff_tab()
+  vim.cmd("wincmd h")
+
+  -- delete lines in target buffer
+  vim.cmd("normal! V" .. #target_line_list - 1 .. "j")
+  -- save suggested_lines to clipboard and paste
+  vim.fn.setreg('"', suggested_lines)
+  vim.cmd("normal! P")
+end
+vim.keymap.set("n", "<leader>vma", reflect_copilot_suggestion, {desc = "accept copilot suggestion (after diff)", noremap = true})
+
+local function obtain_copilot_suggestion()
+  local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
+  vim.cmd("normal! G")
+  move_cursor_to_above_codeblock()
+  local start_line = find_start_line()
+
+  if start_line <= 1 then
+    print("no codeblock in this buffer")
+    vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
+    return
+  end
+
+  save_and_check(target_text, '"')
+  select_last_codeblock_text()
+  vim.cmd('normal! y')
+  save_and_check(copilot_text, '"')
+  reflect_copilot_suggestion()
+end
+
+vim.keymap.set("n", "<leader>vmo", obtain_copilot_suggestion, {desc = "obtain copilot suggestion (no diff)", noremap = true})
