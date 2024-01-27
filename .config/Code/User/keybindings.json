@@ -141,4 +141,40 @@
         "command": "moveFileToTrash",
         "when": "explorerResourceMoveableToTrash && filesExplorerFocus && foldersViewVisible && !explorerResourceReadonly && !inputFocus"
     },
+    // stage all changes (git)
+    {
+        "key": "shift+s",
+        "command": "git.stageAll",
+        "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
+    // stage changes (git)
+    {
+        "key": "ctrl+s",
+        "command": "git.stage",
+        "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
+    // unstage changes (git)
+    {
+        "key": "ctrl+u",
+        "command": "git.unstageAll",
+        "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
+    // commit (git)
+    {
+        "key": "ctrl+c",
+        "command": "git.commitStaged",
+        "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
+    // push (git)
+    {
+        "key": "shift+p",
+        "command": "git.push",
+        "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
+    // pull (git)
+    {
+        "key": "ctrl+p",
+        "command": "git.pull",
+        "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
 ]
