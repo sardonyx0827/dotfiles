@@ -177,4 +177,8 @@
         "command": "git.pull",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
+    {
+        "key": "alt+l",
+        "command": "workbench.action.compareEditor.focusOtherSide"
+    },
 ]
