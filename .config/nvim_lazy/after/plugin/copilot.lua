@@ -85,26 +85,7 @@ end
 
 vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with Copilot"})
 
-
 -- select codeblock text
-local function move_cursor_to_above_codeblock()
-  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
-  local start_line = current_line_number
-  -- search above
-  for i = current_line_number, 0, -1 do
-    local _line = vim.fn.getline(i)
-    if string.match(_line, "^```") then
-      start_line = i - 1
-      break
-    end
-    if i <= 1 then
-      start_line = 1
-      break
-    end
-  end
-  vim.api.nvim_win_set_cursor(0, {start_line, 0})
-end
-
 local function select_codeblock_text(cursor_position)
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
   local max_line = vim.api.nvim_buf_line_count(0)
@@ -137,19 +118,10 @@ local function select_codeblock_text(cursor_position)
   end
 end
 
-local function select_last_codeblock_text()
-  -- save cursor position
-  local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
-  vim.cmd("normal! G")
-  move_cursor_to_above_codeblock()
-  select_codeblock_text(cursor_position)
-end
-
 local function select_between_codeblock_text()
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   select_codeblock_text(cursor_position)
 end
-vim.keymap.set("n", "<leader>vml", select_last_codeblock_text, {desc = "select codeblock text (last)", noremap = true})
 vim.keymap.set("n", "<leader>vmm", select_between_codeblock_text, {desc = "select codeblock text (between)", noremap = true})
 
 -- move to next codeblock
@@ -172,7 +144,12 @@ local function move_next_codeblock()
       break
     end
   end
-  vim.api.nvim_win_set_cursor(0, {between_line, 0})
+  if between_line ~= max_line then
+    vim.api.nvim_win_set_cursor(0, {between_line, 0})
+  else
+    print("no next codeblock")
+    vim.api.nvim_win_set_cursor(0, {current_line_number, 0})
+  end
 end
 
 -- move to preiv codeblock
@@ -195,7 +172,12 @@ local function move_prev_codeblock()
       break
     end
   end
-  vim.api.nvim_win_set_cursor(0, {between_line, 0})
+  if between_line ~= 1 then
+    vim.api.nvim_win_set_cursor(0, {between_line, 0})
+  else
+    print("no prev codeblock")
+    vim.api.nvim_win_set_cursor(0, {current_line_number, 0})
+  end
 end
 vim.keymap.set("n", "<leader>vmn", move_next_codeblock, {desc = "select next codeblock text (between)", noremap = true})
 vim.keymap.set("n", "<leader>vmp", move_prev_codeblock, {desc = "select prev codeblock text (between)", noremap = true})
@@ -267,29 +249,7 @@ end
 -- tmp file path
 local target_text = "/tmp/_target_text"
 local copilot_text = "/tmp/_copilot_suggestion"
-local function diff_codeblock_text_last()
-  local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
-  vim.cmd("normal! G")
-  move_cursor_to_above_codeblock()
-  local start_line = find_start_line()
-
-  if start_line <= 1 then
-    print("no codeblock in this buffer")
-    vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
-    return
-  end
-
-  save_and_check(target_text, '"')
-  vim.cmd("normal! G")
-  move_cursor_to_above_codeblock()
-  local filetype = get_filetype_from_codeblock()
-  select_last_codeblock_text()
-  vim.cmd('normal! y')
-  save_and_check(copilot_text, '"')
-  diff_texts(target_text, copilot_text, filetype)
-end
-
-local function diff_code_block_text_between()
+local function compare_code_block()
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   local start_line = find_start_line()
 
@@ -319,12 +279,8 @@ local function close_diff_tab()
       vim.api.nvim_win_close(w, true)
     end
   end
-  -- delete tmp files
-  --os.remove(target_text)  -- Use Lua's os.remove function to delete files
-  --os.remove(copilot_text)
 end
-vim.keymap.set("n", "<leader>vme", diff_codeblock_text_last, {desc = "diff codeblock text(last)", noremap = true})
-vim.keymap.set("n", "<leader>vmd", diff_code_block_text_between, {desc = "diff codeblock text(between)", noremap = true})
+vim.keymap.set("n", "<leader>vmd", compare_code_block, {desc = "diff codeblock text(between)", noremap = true})
 vim.keymap.set("n", "<leader>vmc", close_diff_tab, {desc = "close diff tab", noremap = true})
 
 local function show_diff_files()
@@ -380,7 +336,7 @@ local function obtain_copilot_suggestion()
   end
 
   save_and_check(target_text, '"')
-  select_last_codeblock_text()
+  compare_code_block()
   vim.cmd('normal! y')
   save_and_check(copilot_text, '"')
   reflect_copilot_suggestion()
