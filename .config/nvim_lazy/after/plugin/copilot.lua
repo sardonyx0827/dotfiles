@@ -152,6 +152,30 @@ end
 vim.keymap.set("n", "<leader>vml", select_last_codeblock_text, {desc = "select codeblock text (last)", noremap = true})
 vim.keymap.set("n", "<leader>vmm", select_between_codeblock_text, {desc = "select codeblock text (between)", noremap = true})
 
+-- move to preiv codeblock
+local function move_prev_codeblock()
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  -- search prev
+  local min_line = vim.api.nvim_buf_line_count(0)
+  local between_line = min_line
+  for i = current_line_number, 0, -1 do
+    local _line = vim.fn.getline(i)
+    if string.match(_line, "^```") then
+      local filetype = _line:match("^```(%w+)")
+      if filetype == nil then
+        between_line = i - 1
+        break
+      end
+    end
+    if i <= 1 then
+      between_line = 1
+      break
+    end
+  end
+  vim.api.nvim_win_set_cursor(0, {between_line, 0})
+end
+vim.keymap.set("n", "<leader>vmp", move_prev_codeblock, {desc = "select codeblock text (between)", noremap = true})
+
 local function save_yanked_text(path, reg)
   local text = vim.fn.getreg(reg)
   if text == nil or text == "" then
@@ -319,7 +343,7 @@ local function reflect_copilot_suggestion()
   vim.fn.setreg('"', suggested_lines)
   vim.cmd("normal! P")
 end
-vim.keymap.set("n", "<leader>vma", reflect_copilot_suggestion, {desc = "accept copilot suggestion (after diff)", noremap = true})
+vim.keymap.set("n", "<leader>vma", reflect_copilot_suggestion, {desc = "close diff tab and accept copilot suggestion (after diff)", noremap = true})
 
 local function obtain_copilot_suggestion()
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
@@ -338,4 +362,4 @@ local function obtain_copilot_suggestion()
   reflect_copilot_suggestion()
 end
 
-vim.keymap.set("n", "<leader>vmo", obtain_copilot_suggestion, {desc = "obtain copilot suggestion (no diff)", noremap = true})
+vim.keymap.set("n", "<leader>vmo", obtain_copilot_suggestion, {desc = "obtain copilot suggestion (no diff, between)", noremap = true})
