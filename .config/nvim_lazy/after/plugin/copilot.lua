@@ -152,6 +152,29 @@ end
 vim.keymap.set("n", "<leader>vml", select_last_codeblock_text, {desc = "select codeblock text (last)", noremap = true})
 vim.keymap.set("n", "<leader>vmm", select_between_codeblock_text, {desc = "select codeblock text (between)", noremap = true})
 
+-- move to next codeblock
+local function move_next_codeblock()
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  -- search next
+  local max_line = vim.api.nvim_buf_line_count(0)
+  local between_line = max_line
+  for i = current_line_number, max_line do
+    local _line = vim.fn.getline(i)
+    if string.match(_line, "^```") then
+      local filetype = _line:match("^```(%w+)")
+      if filetype ~= nil then
+        between_line = i + 1
+        break
+      end
+    end
+    if i >= max_line then
+      between_line = max_line
+      break
+    end
+  end
+  vim.api.nvim_win_set_cursor(0, {between_line, 0})
+end
+
 -- move to preiv codeblock
 local function move_prev_codeblock()
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
@@ -174,7 +197,8 @@ local function move_prev_codeblock()
   end
   vim.api.nvim_win_set_cursor(0, {between_line, 0})
 end
-vim.keymap.set("n", "<leader>vmp", move_prev_codeblock, {desc = "select codeblock text (between)", noremap = true})
+vim.keymap.set("n", "<leader>vmn", move_next_codeblock, {desc = "select next codeblock text (between)", noremap = true})
+vim.keymap.set("n", "<leader>vmp", move_prev_codeblock, {desc = "select prev codeblock text (between)", noremap = true})
 
 local function save_yanked_text(path, reg)
   local text = vim.fn.getreg(reg)
