@@ -171,14 +171,16 @@
         "command": "git.push",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
+    // push (fetch)
+    {
+        "key": "ctrl+f",
+        "command": "git.fetch",
+        "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
     // pull (git)
     {
         "key": "ctrl+p",
         "command": "git.pull",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
-    },
-    {
-        "key": "alt+l",
-        "command": "workbench.action.compareEditor.focusOtherSide"
     },
 ]

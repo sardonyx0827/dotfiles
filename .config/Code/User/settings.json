@@ -232,6 +232,15 @@
                 "editor.action.marker.nextInFiles",
                 "interactiveEditor.start",
             ]
+        },{
+            "before": [
+                "<leader>",
+                "w",
+                "w",
+            ],
+            "commands": [
+                "workbench.action.compareEditor.focusOtherSide"
+            ]
         }
     ],
 
