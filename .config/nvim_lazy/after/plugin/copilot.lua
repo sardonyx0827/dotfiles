@@ -343,8 +343,8 @@ local function reflect_copilot_suggestion()
   -- delete lines in target buffer
   vim.cmd("normal! V" .. #target_line_list - 1 .. "j")
   -- save suggested_lines to clipboard and paste
-  vim.fn.setreg('"', suggested_lines)
-  vim.cmd("normal! P")
+  vim.fn.setreg('c', suggested_lines)
+  vim.cmd('normal! "cP')
 
 end
 vim.keymap.set("n", "<leader>vma", reflect_copilot_suggestion, {desc = "close diff tab and accept copilot suggestion (after diff)", noremap = true})
