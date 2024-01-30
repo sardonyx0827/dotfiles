@@ -86,7 +86,7 @@ end
 vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with Copilot"})
 
 -- select codeblock text
-local function get_codeblock_text()
+local function select_codeblock_text()
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
   local max_line = vim.api.nvim_buf_line_count(0)
@@ -119,9 +119,16 @@ local function get_codeblock_text()
   end
 end
 
-vim.keymap.set("n", "<leader>vmm", get_codeblock_text, {desc = "select codeblock text (between codeblock)", noremap = true})
+vim.keymap.set("n", "<leader>vmm", select_codeblock_text, {desc = "select codeblock text (between codeblock)", noremap = true})
 
+-- Function to move to the next or previous code block
 local function move_to_codeblock(direction)
+  -- Check if the direction argument is valid
+  if direction ~= "next" and direction ~= "prev" then
+    print("Invalid direction argument. It should be either 'next' or 'prev'.")
+    return
+  end
+
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
   local line_count = vim.api.nvim_buf_line_count(0)
   local between_line = line_count
@@ -129,6 +136,7 @@ local function move_to_codeblock(direction)
   local limit = direction == "next" and line_count or 1
   local message = direction == "next" and "no next codeblock" or "no prev codeblock"
 
+  -- Loop through the lines based on the direction
   for i = current_line_number, limit, step do
     local _line = vim.fn.getline(i)
     if string.match(_line, "^```") then
@@ -144,6 +152,7 @@ local function move_to_codeblock(direction)
     end
   end
 
+  -- Set the cursor position or print a message if no code block is found
   if between_line ~= limit then
     vim.api.nvim_win_set_cursor(0, {between_line, 0})
   else
@@ -237,9 +246,9 @@ local function compare_code_block()
   print(vim.api.nvim_win_get_cursor(0)[1])
   -- move cursor +1
   vim.cmd("normal! j")
-  get_codeblock_text()
-  vim.cmd('normal! y')
-  save_and_check(copilot_text, '"')
+  select_codeblock_text()
+  vim.cmd('normal! "cy')
+  save_and_check(copilot_text, 'c')
   diff_texts(target_text, copilot_text, filetype)
 end
 
