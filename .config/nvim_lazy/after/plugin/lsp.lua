@@ -133,11 +133,11 @@ cmp.setup({
   },
   mapping = cmp.mapping.preset.insert({
     -- confirm completion item
-    ['<CR>'] = cmp.mapping.confirm({select = false}),
+    ['<Tab>'] = cmp.mapping.confirm({select = false}),
     -- toggle completion menu
     ['<C-e>'] = cmp_action.toggle_completion(),
     -- tab complete
-    ['<Tab>'] = nil,
+    --['<Tab>'] = nil,
     ['<S-Tab>'] = nil,
     -- navigate between snippet placeholder
     ['<C-f>'] = cmp_action.luasnip_jump_forward(),
