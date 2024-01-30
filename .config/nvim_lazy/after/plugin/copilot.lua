@@ -80,46 +80,10 @@ local function quick_fix_next_error_with_ai()
   -- open Copilot chat window
   vim.cmd("vertical rightbelow new")
   vim.cmd("setlocal filetype=markdown")
-  vim.cmd("CopilotChat ".. "error message : " .. diagnostic_message .. " | current line text : " .. lines_text .. " | your job : how to fix it?")
+  vim.cmd("CopilotChat ".. "Error message : " .. diagnostic_message .. " | Current line text : " .. lines_text .. " | Your job : how to fix it?")
 end
 
 vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with Copilot"})
-
--- select codeblock text
-local function select_codeblock_text()
-  local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
-  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
-  local max_line = vim.api.nvim_buf_line_count(0)
-  local start_line, end_line
-
-  -- search upwards for start of code block
-  for i = current_line_number, 1, -1 do
-    if string.match(vim.fn.getline(i), "^```") then
-      start_line = i + 1
-      break
-    end
-  end
-
-  -- search downwards for end of code block
-  for i = current_line_number, max_line do
-    if string.match(vim.fn.getline(i), "^```") then
-      end_line = i - 1
-      break
-    end
-  end
-
-  -- if start_line and end_line are found, select the text
-  if start_line and end_line then
-    vim.api.nvim_win_set_cursor(0, {start_line, 0})
-    vim.cmd("normal! V")
-    vim.api.nvim_win_set_cursor(0, {end_line, 0})
-  else
-    print("No code block found.")
-    vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
-  end
-end
-
-vim.keymap.set("n", "<leader>vmm", select_codeblock_text, {desc = "select codeblock text (between codeblock)", noremap = true})
 
 -- Function to move to the next or previous code block
 local function move_to_codeblock(direction)
@@ -134,7 +98,7 @@ local function move_to_codeblock(direction)
   local between_line = line_count
   local step = direction == "next" and 1 or -1
   local limit = direction == "next" and line_count or 1
-  local message = direction == "next" and "no next codeblock" or "no prev codeblock"
+  local message = direction == "next" and "No next codeblock" or "No prev codeblock"
 
   -- Loop through the lines based on the direction
   for i = current_line_number, limit, step do
@@ -163,15 +127,50 @@ end
 vim.keymap.set("n", "<leader>vmn", function() move_to_codeblock("next") end, {desc = "move to next codeblock text", noremap = true})
 vim.keymap.set("n", "<leader>vmp", function() move_to_codeblock("prev") end, {desc = "move to prev codeblock text", noremap = true})
 
+-- select codeblock text (current)
+local function select_codeblock_text()
+  local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  local max_line = vim.api.nvim_buf_line_count(0)
+  local start_line, end_line
+
+  -- search upwards for start of code block
+  for i = current_line_number, 1, -1 do
+    if string.match(vim.fn.getline(i), "^```") then
+      start_line = i + 1
+      break
+    end
+  end
+
+  -- search downwards for end of code block
+  for i = current_line_number, max_line do
+    if string.match(vim.fn.getline(i), "^```") then
+      end_line = i - 1
+      break
+    end
+  end
+
+  -- if start_line and end_line are found, select the text
+  if start_line and end_line then
+    vim.api.nvim_win_set_cursor(0, {start_line, 0})
+    vim.cmd("normal! V")
+    vim.api.nvim_win_set_cursor(0, {end_line, 0})
+  else
+    print("No code block found. Please move to a codeblock and try again.")
+    vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
+  end
+end
+vim.keymap.set("n", "<leader>vmm", select_codeblock_text, {desc = "select codeblock text", noremap = true})
+
 local function save_yanked_text(path, reg)
   local text = vim.fn.getreg(reg)
   if text == nil or text == "" then
-    print("no text in register")
+    print("No text in register")
     return false
   end
   local file = io.open(path, "w")
   if file == nil then
-    print("cannot open file")
+    print("Cannot open file")
     return false
   end
   file:write(text)
@@ -211,6 +210,12 @@ local function find_start_line()
 end
 
 local function save_and_check(path, register)
+  if path == nil then
+    error("path is nil")
+  end
+  if register == nil then
+    error("register is nil")
+  end
   local result = save_yanked_text(path, register)
   if not result then
     error("Failed to save yanked text to " .. path)
@@ -235,7 +240,7 @@ local function compare_code_block()
   local start_line = find_start_line()
 
   if start_line <= 1 then
-    print("no codeblock in this buffer")
+    print("No code block found. Please move to a codeblock and try again.")
     vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
     return
   end
@@ -263,7 +268,7 @@ local function close_diff_tab()
     end
   end
 end
-vim.keymap.set("n", "<leader>vmd", compare_code_block, {desc = "diff codeblock text(between)", noremap = true})
+vim.keymap.set("n", "<leader>vmd", compare_code_block, {desc = "diff codeblock text", noremap = true})
 vim.keymap.set("n", "<leader>vmc", close_diff_tab, {desc = "close diff tab", noremap = true})
 
 local function show_diff_files()
@@ -347,7 +352,7 @@ local function reflect_copilot_suggestion()
   vim.cmd('normal! "cP')
 
 end
-vim.keymap.set("n", "<leader>vma", reflect_copilot_suggestion, {desc = "close diff tab and accept copilot suggestion (after diff)", noremap = true})
+vim.keymap.set("n", "<leader>vma", reflect_copilot_suggestion, {desc = "close diff tab and accept copilot suggestion (use in diff tab)", noremap = true})
 
 -- compare texts, yanked text and copilot suggestion
 local function obtain_copilot_suggestion()
@@ -355,7 +360,7 @@ local function obtain_copilot_suggestion()
   local start_line = find_start_line()
 
   if start_line <= 1 then
-    print("no codeblock in this buffer")
+    print("No code block found. Please move to a codeblock and try again.")
     vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
     return
   end
@@ -369,4 +374,4 @@ local function obtain_copilot_suggestion()
   reflect_copilot_suggestion()
 end
 
-vim.keymap.set("n", "<leader>vmo", obtain_copilot_suggestion, {desc = "obtain copilot suggestion (no diff, between codeblock)", noremap = true})
+vim.keymap.set("n", "<leader>vmo", obtain_copilot_suggestion, {desc = "obtain copilot suggestion (no diff)", noremap = true})
