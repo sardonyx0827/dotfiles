@@ -240,7 +240,7 @@ local function compare_code_block()
     return
   end
 
-  save_and_check(target_text, '"')
+  save_and_check(target_text, '0') -- 0 is yank register
   local filetype = get_filetype_from_codeblock()
 
   print(vim.api.nvim_win_get_cursor(0)[1])
@@ -316,10 +316,10 @@ local function obtain_copilot_suggestion()
     return
   end
 
-  save_and_check(target_text, '"')
+  save_and_check(target_text, '0') -- 0 is yank register
   compare_code_block()
-  vim.cmd('normal! y')
-  save_and_check(copilot_text, '"')
+  vim.cmd('normal! "cy')
+  save_and_check(copilot_text, 'c')
   reflect_copilot_suggestion()
 end
 
