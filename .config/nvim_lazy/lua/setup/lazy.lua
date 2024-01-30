@@ -27,6 +27,15 @@ local plugins = {
     "folke/tokyonight.nvim",
     name = "tokyonight",
     event = "VeryLazy",
+    config = function()
+      require("tokyonight").setup({
+        transparent = true,
+        styles = {
+          sidebars = "transparent",
+          floats = "transparent",
+        },
+      })
+    end
   },
   {
     "olimorris/onedarkpro.nvim",

@@ -240,13 +240,15 @@ local function compare_code_block()
     return
   end
 
-  save_and_check(target_text, '0') -- 0 is yank register
+  -- save target text using yank register
+  save_and_check(target_text, '0')
   local filetype = get_filetype_from_codeblock()
 
   print(vim.api.nvim_win_get_cursor(0)[1])
   -- move cursor +1
   vim.cmd("normal! j")
   select_codeblock_text()
+  -- save to register c
   vim.cmd('normal! "cy')
   save_and_check(copilot_text, 'c')
   diff_texts(target_text, copilot_text, filetype)
@@ -268,6 +270,45 @@ local function show_diff_files()
   diff_texts(target_text, copilot_text)
 end
 vim.keymap.set("n", "<leader>vms", show_diff_files, {desc = "show old diff files", noremap = true})
+
+-- search target text in buffer (compare opening buffer and _target_text)
+local function search_target_text_in_buffer()
+  vim.cmd("normal! gg")
+  local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+  local start_line = 1
+  local max_line = vim.api.nvim_buf_line_count(0)
+  local target_line_list = {}
+
+  -- Improvement 1: Enhanced error handling
+  local file, err = io.open(target_text, "r")
+  if err then
+    print("Error opening target file: " .. err)
+    return false
+  end
+
+  if file then
+    for line in file:lines() do
+      table.insert(target_line_list, line)
+    end
+    file:close()
+  end
+
+  local buffer_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local target_line_number = 1
+  for i = current_line_number, max_line do
+    local _line = buffer_lines[i]
+    if _line == target_line_list[target_line_number] then
+      if target_line_number == #target_line_list then
+        start_line = i - target_line_number + 1
+        break
+      end
+      target_line_number = target_line_number + 1
+    else
+      target_line_number = 1
+    end
+  end
+  vim.api.nvim_win_set_cursor(0, {start_line, 0})
+end
 
 -- reflect Copilot suggestion
 local function reflect_copilot_suggestion()
@@ -298,14 +339,17 @@ local function reflect_copilot_suggestion()
   close_diff_tab()
   vim.cmd("wincmd h")
 
+  search_target_text_in_buffer()
   -- delete lines in target buffer
   vim.cmd("normal! V" .. #target_line_list - 1 .. "j")
   -- save suggested_lines to clipboard and paste
   vim.fn.setreg('"', suggested_lines)
   vim.cmd("normal! P")
+
 end
 vim.keymap.set("n", "<leader>vma", reflect_copilot_suggestion, {desc = "close diff tab and accept copilot suggestion (after diff)", noremap = true})
 
+-- compare texts, yanked text and copilot suggestion
 local function obtain_copilot_suggestion()
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   local start_line = find_start_line()
@@ -316,8 +360,10 @@ local function obtain_copilot_suggestion()
     return
   end
 
-  save_and_check(target_text, '0') -- 0 is yank register
+  -- save target text using yank register
+  save_and_check(target_text, '0')
   compare_code_block()
+  -- save to register c
   vim.cmd('normal! "cy')
   save_and_check(copilot_text, 'c')
   reflect_copilot_suggestion()
