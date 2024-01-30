@@ -38,7 +38,7 @@ vim.keymap.set("n", "<c-p>", ":Copilot panel<CR>", { silent = true })
 vim.keymap.set("i", "<c-l>", "<ESC>:Copilot panel<CR>", { silent = true })
 
 
--- Copilot Chat
+-- Copilot Chat - Keymaps
 vim.keymap.set("n", "<leader>cc", "ggVGy:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat ", { desc = "Copilot Chat - select all" })
 vim.keymap.set("v", "<leader>cc", "y:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat ", { desc = "Copilot Chat - selected" })
 vim.keymap.set("n", "<leader>co", ":CopilotChat ", { desc = "Copilot Chat - ongoing" })
@@ -189,7 +189,6 @@ local function get_filetype_from_codeblock()
     end
   end
   vim.api.nvim_win_set_cursor(0, {block_line, 0})
-
   local filetype = vim.api.nvim_get_current_line()
   -- extract filetype from codeblock
   filetype = filetype:match("^```(%w+)")

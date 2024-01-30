@@ -184,12 +184,10 @@ local plugins = {
   },
   -- lsp settings
   { 'VonHeikemen/lsp-zero.nvim',        branch = 'v3.x' },
-
   -- LSP Support
   { 'williamboman/mason.nvim' },
   { 'williamboman/mason-lspconfig.nvim' },
   { 'neovim/nvim-lspconfig' },
-
   -- Autocompletion
   {
     'hrsh7th/nvim-cmp',
@@ -200,7 +198,11 @@ local plugins = {
       { 'hrsh7th/cmp-cmdline' },
       { 'saadparwaiz1/cmp_luasnip' },
       { 'hrsh7th/cmp-nvim-lua' },
-      { 'L3MON4D3/LuaSnip' },
+      {
+        "L3MON4D3/LuaSnip",
+        -- follow latest release.
+        version = "v2.*", -- Replace <CurrentMajor> by the latest released major (first number of latest release)
+      },
       { 'rafamadriz/friendly-snippets' },
       { 'onsails/lspkind.nvim' },
       {
@@ -228,7 +230,6 @@ local plugins = {
       'mfussenegger/nvim-dap-python',
     },
   },
-
   -- Terminal
   {
     "akinsho/toggleterm.nvim",
@@ -336,12 +337,7 @@ local plugins = {
   -- key navigation
   {
     "folke/which-key.nvim",
-    lazy = true,
-    cmd = "WhichKey",
-    --event = "VeryLazy",
-    keys = {
-      { "<leader>", mode = "n", },
-    },
+    event = "VeryLazy",
     config = function()
       require("which-key").setup {}
     end,
@@ -380,17 +376,17 @@ local plugins = {
     cmd = "Copilot",
   },
   {
-    "gptlang/CopilotChat.nvim",
-    -- "jellydn/CopilotChat.nvim",
-    -- opts = {
-    --   mode = "newbuffer", -- newbuffer or split  , default: newbuffer
-    -- },
-    -- build = function()
-    --   vim.defer_fn(function()
-    --     vim.cmd("UpdateRemotePlugins")
-    --     vim.notify("CopilotChat - Updated remote plugins. Please restart Neovim.")
-    --   end, 3000)
-    -- end,
+    --"gptlang/CopilotChat.nvim",
+    "jellydn/CopilotChat.nvim",
+    opts = {
+      mode = "newbuffer", -- newbuffer or split  , default: newbuffer
+    },
+    build = function()
+      vim.defer_fn(function()
+        vim.cmd("UpdateRemotePlugins")
+        vim.notify("CopilotChat - Updated remote plugins. Please restart Neovim.")
+      end, 3000)
+    end,
     event = "VeryLazy",
   },
 

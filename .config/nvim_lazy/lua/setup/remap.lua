@@ -1,6 +1,5 @@
 vim.g.mapleader = ","
 
--- best solutions for me
 -- In visual mode, shift text left and reselect
 vim.keymap.set("v", "<", "<gv")
 -- In visual mode, shift text right and reselect
@@ -29,13 +28,11 @@ end)
 vim.keymap.set("n", "<C-s>", function()
   vim.cmd("w")
 end)
-
 -- count up/down. 'C-a' is already used in Tmux(prefix)
 vim.keymap.set("v", "<C-k>", "<C-a>gv")
 vim.keymap.set("v", "<C-j>", "<C-x>gv")
 vim.keymap.set("n", "<C-k>", "<C-a>")
 vim.keymap.set("n", "<C-j>", "<C-x>")
-
 -- resize current window
 -- make the window biger vertically
 vim.keymap.set('n', '<C-up>', '1<C-w>+', { noremap = true, silent = true})
@@ -45,11 +42,9 @@ vim.keymap.set('n', '<C-Down>', '1<C-w>-', { noremap = true, silent = true})
 vim.keymap.set('n', '<C-Right>', '1<C-w>>', { noremap = true, silent = true})
 -- make the window smaller horizontally by pressing shift and -
 vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true})
-
 -- jump next/prev buffer
 vim.keymap.set("n", "<M-j>", ":bnext<CR>", {desc = "next buffer"})
 vim.keymap.set("n", "<M-k>", ":bprev<CR>", {desc = "previous buffer"})
-
 -- change directory to current file
 vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", {desc = "change directory to current file"})
 vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", {desc = "change up directory"})

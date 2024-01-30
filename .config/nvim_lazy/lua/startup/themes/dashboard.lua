@@ -90,7 +90,6 @@ local settings = {
         default_color = "",
         oldfiles_amount = 0,
     },
-
     options = {
         mapping_keys = true,
         cursor_column = 0.5,

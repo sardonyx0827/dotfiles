@@ -24,7 +24,6 @@ local function focus_tree()
     end
   end
 end
-
 local function toggle_tree_focus()
   if is_opend() then
     focus_tree()
@@ -46,14 +45,11 @@ vim.opt.termguicolors = true
 
 local function tree_on_attach(bufnr)
   local api = require "nvim-tree.api"
-
   local function opts(desc)
     return { desc = "nvim-tree: " .. desc, buffer = bufnr, noremap = true, silent = true, nowait = true }
   end
-
   -- default mappings
   api.config.mappings.default_on_attach(bufnr)
-
   -- float preview
   local FloatPreview = require("float-preview")
   FloatPreview.attach_nvimtree(bufnr)
@@ -116,7 +112,6 @@ local function actionsMenu(nd)
     sorter = require("telescope.sorters").get_generic_fuzzy_sorter(),
     attach_mappings = function(prompt_buffer_number)
       local actions = require "telescope.actions"
-
       -- On item select
       actions.select_default:replace(function()
         -- Closing the picker
@@ -205,7 +200,6 @@ function M.on_attach(bufnr)
   local opts = function(desc)
     return { desc = "nvim-tree: " .. desc, buffer = bufnr, nowait = true }
   end
-
   for _, cmd in pairs(command) do
     if (string.len(cmd[1]) > 0) then
       vim.keymap.set("n", cmd[1], cmd[2], opts(cmd[3]))

@@ -67,11 +67,12 @@ vim.diagnostic.config({
 local cmp = require('cmp')
 local cmp_action = lsp_zero.cmp_action()
 -- default configuration for cmp
-local cmp_format = lsp_zero.cmp_format()
+--local cmp_format = lsp_zero.cmp_format()
 require('luasnip.loaders.from_vscode').lazy_load()
 vim.opt.completeopt = {'menu', 'menuone', 'noselect'}
 
 local lspkind = require('lspkind')
+
 cmp.setup({
   --formatting = cmp_format,
   formatting = {
@@ -115,7 +116,6 @@ cmp.setup({
       --end
     }),
   },
-
   preselect = 'item',
   completion = {
     completeopt = 'menu,menuone,noinsert'
@@ -134,28 +134,17 @@ cmp.setup({
   mapping = cmp.mapping.preset.insert({
     -- confirm completion item
     ['<CR>'] = cmp.mapping.confirm({select = false}),
-
     -- toggle completion menu
     ['<C-e>'] = cmp_action.toggle_completion(),
-
     -- tab complete
     ['<Tab>'] = nil,
     ['<S-Tab>'] = nil,
-    --["<C-Space>"] = cmp.mapping.complete(),
-
     -- navigate between snippet placeholder
     ['<C-f>'] = cmp_action.luasnip_jump_forward(),
     ['<C-b>'] = cmp_action.luasnip_jump_backward(),
-
     -- scroll documentation window
     ['<C-d>'] = cmp.mapping.scroll_docs(5),
     ['<C-u>'] = cmp.mapping.scroll_docs(-5),
-    --["<C-i>"] = cmp.mapping(cmp.mapping.complete(), { "i", "c" }),
-		--["<C-e>"] = cmp.mapping({
-		--	i = cmp.mapping.abort(),
-		--	c = cmp.mapping.close(),
-    --})
-
   }),
   --experimental = {
   --  ghost_text = true -- this feature conflict with copilot.vim's preview.

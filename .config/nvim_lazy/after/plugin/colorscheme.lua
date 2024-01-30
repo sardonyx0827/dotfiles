@@ -5,7 +5,6 @@ local function set_random_color_scheme(color_schemes)
   vim.cmd("colorscheme " .. color_scheme)
   print("color scheme: " .. color_scheme)
 end
-
 local function set_color_scheme_from_tmux_pane(color_scheme)
   vim.cmd("colorscheme " .. color_scheme)
   print("color scheme: " .. color_scheme)
@@ -31,6 +30,7 @@ local function set_color_scheme()
     end
   end
 end
+
 -- set color scheme when vim start up, random or tmux pane id
 --set_color_scheme()
 
