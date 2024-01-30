@@ -374,4 +374,4 @@ local function obtain_copilot_suggestion()
   reflect_copilot_suggestion()
 end
 
-vim.keymap.set("n", "<leader>vmo", obtain_copilot_suggestion, {desc = "obtain copilot suggestion (no diff)", noremap = true})
+vim.keymap.set("n", "<leader>vmo", obtain_copilot_suggestion, {desc = "obtain copilot suggestion (use in copilot chat window)", noremap = true})
