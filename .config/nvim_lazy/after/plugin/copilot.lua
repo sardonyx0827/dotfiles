@@ -124,8 +124,8 @@ local function move_to_codeblock(direction)
     vim.api.nvim_win_set_cursor(0, {current_line_number, 0})
   end
 end
-vim.keymap.set("n", "<leader>vcn", function() move_to_codeblock("next") end, {desc = "move to next codeblock text", noremap = true})
-vim.keymap.set("n", "<leader>vcp", function() move_to_codeblock("prev") end, {desc = "move to prev codeblock text", noremap = true})
+vim.keymap.set("n", "<leader>vn", function() move_to_codeblock("next") end, {desc = "move to next codeblock text", noremap = true})
+vim.keymap.set("n", "<leader>vp", function() move_to_codeblock("prev") end, {desc = "move to prev codeblock text", noremap = true})
 
 -- select codeblock text (current)
 local function select_codeblock_text()
@@ -160,7 +160,7 @@ local function select_codeblock_text()
     vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
   end
 end
-vim.keymap.set("n", "<leader>vcs", select_codeblock_text, {desc = "Select codeblock text", noremap = true})
+vim.keymap.set("n", "<leader>vs", select_codeblock_text, {desc = "Select codeblock text", noremap = true})
 
 local function save_yanked_text(path, reg)
   local text = vim.fn.getreg(reg)
@@ -267,13 +267,13 @@ local function close_diff_tab()
     end
   end
 end
-vim.keymap.set("n", "<leader>vcd", compare_code_block, {desc = "Diff codeblock text", noremap = true})
-vim.keymap.set("n", "<leader>vcc", close_diff_tab, {desc = "Close diff tab", noremap = true})
+vim.keymap.set("n", "<leader>vd", compare_code_block, {desc = "Diff codeblock text", noremap = true})
+vim.keymap.set("n", "<leader>vc", close_diff_tab, {desc = "Close diff tab", noremap = true})
 
 local function show_diff_files()
   compare_texts(target_text, copilot_text)
 end
-vim.keymap.set("n", "<leader>vcb", show_diff_files, {desc = "show before diff files", noremap = true})
+vim.keymap.set("n", "<leader>vb", show_diff_files, {desc = "show before diff files", noremap = true})
 
 -- search target text in buffer (compare opening buffer and _target_text)
 local function search_target_text_in_buffer()
@@ -351,7 +351,7 @@ local function reflect_copilot_suggestion()
   vim.cmd('normal! "cP')
 
 end
-vim.keymap.set("n", "<leader>vca", reflect_copilot_suggestion, {desc = "close diff tab and Accept copilot suggestion - use in diff tab", noremap = true})
+vim.keymap.set("n", "<leader>va", reflect_copilot_suggestion, {desc = "close diff tab and Accept copilot suggestion - use in diff tab", noremap = true})
 
 -- compare texts, yanked text and copilot suggestion
 local function obtain_copilot_suggestion()
@@ -373,4 +373,4 @@ local function obtain_copilot_suggestion()
   reflect_copilot_suggestion()
 end
 
-vim.keymap.set("n", "<leader>vco", obtain_copilot_suggestion, {desc = "Obtain copilot suggestion - use in copilot chat window", noremap = true})
+vim.keymap.set("n", "<leader>vo", obtain_copilot_suggestion, {desc = "Obtain copilot suggestion - use in copilot chat window", noremap = true})
