@@ -1,4 +1,5 @@
 function _G.set_terminal_keymaps()
+
   local opts = { buffer = 0 }
   vim.keymap.set("t", "<esc>", [[<C-\><C-n>]], opts)
   vim.keymap.set("t", "<C-h>", [[<Cmd>wincmd h<CR>]], opts)
@@ -6,6 +7,7 @@ function _G.set_terminal_keymaps()
   vim.keymap.set("t", "<C-k>", [[<Cmd>wincmd k<CR>]], opts)
   vim.keymap.set("t", "<C-l>", [[<Cmd>wincmd l<CR>]], opts)
   vim.keymap.set("t", "<C-s>", [[<C-\><C-n><C-w>]], opts)
+
 end
 
 -- if you only want these mappings for toggle term use term://*toggleterm#* instead
@@ -16,6 +18,7 @@ function _G._toggleterm_open(count)
     require("toggleterm").toggle(count, 12)
   end
 end
+
 vim.keymap.set("n", "<leader>sh1", ":ToggleTerm<cr>", {desc = "ToggleTerm - toggle session 1"})
 vim.keymap.set("n", "<leader>sh2", ":ToggleTerm 2direction=horizontal<cr>", {desc = "ToggleTerm - toggle session 2"})
 vim.keymap.set("n", "<leader>sh3", ":ToggleTerm 3direction=horizontal<cr>", {desc = "ToggleTerm - toggle session 3"})

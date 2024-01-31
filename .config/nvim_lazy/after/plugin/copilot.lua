@@ -1,6 +1,7 @@
 --vim.keymap.set("i", "<C-j>", "<Plug>(copilot-next)")
 --vim.keymap.set("i", "<C-k>", "<Plug>(copilot-previous)")
 require("copilot").setup({
+
   suggestion = {
     --enabled = true,
     enabled = false,
@@ -15,6 +16,7 @@ require("copilot").setup({
       dismiss = "<C-]>",
     },
   },
+
   panel = {
     enabled = true,
     auto_refresh = true,
@@ -57,6 +59,7 @@ vim.keymap.set("n", "<leader>cl", "50kV100j50ky:vertical rightbelow new<CR>:setl
 
 -- jump to next error/warn and fix with Copilot Chat
 local function quick_fix_next_error_with_ai()
+
   local diagnostics = vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})
   if #diagnostics == 0 then
     print("No errors found.")
@@ -81,12 +84,14 @@ local function quick_fix_next_error_with_ai()
   vim.cmd("vertical rightbelow new")
   vim.cmd("setlocal filetype=markdown")
   vim.cmd("CopilotChat ".. "Error message : " .. diagnostic_message .. " | Current line text : " .. lines_text .. " | Your job : how to fix it?")
+
 end
 
 vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with Copilot"})
 
 -- Function to move to the next or previous code block
 local function move_to_codeblock(direction)
+
   -- Check if the direction argument is valid
   if direction ~= "next" and direction ~= "prev" then
     print("Invalid direction argument. It should be either 'next' or 'prev'.")
@@ -122,13 +127,16 @@ local function move_to_codeblock(direction)
   else
     print(message)
     vim.api.nvim_win_set_cursor(0, {current_line_number, 0})
+
   end
+
 end
 vim.keymap.set("n", "<leader><leader>n", function() move_to_codeblock("next") end, {desc = "move to next codeblock text", noremap = true})
 vim.keymap.set("n", "<leader><leader>p", function() move_to_codeblock("prev") end, {desc = "move to prev codeblock text", noremap = true})
 
 -- select codeblock text (current)
 local function select_codeblock_text()
+
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
   local max_line = vim.api.nvim_buf_line_count(0)
@@ -159,11 +167,14 @@ local function select_codeblock_text()
     print("No code block found. Please move to a codeblock and try again.")
     vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
   end
+
 end
 vim.keymap.set("n", "<leader><leader>s", select_codeblock_text, {desc = "Select codeblock text", noremap = true})
 
 local function save_yanked_text(path, reg)
+
   local text = vim.fn.getreg(reg)
+
   if text == nil or text == "" then
     print("No text in register")
     return false
@@ -175,12 +186,16 @@ local function save_yanked_text(path, reg)
   end
   file:write(text)
   file:close()
+
   return true
+
 end
 
 local function get_filetype_from_codeblock()
+
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
   local block_line = current_line_number
+
   for i = current_line_number, 0, -1 do
     local _line = vim.fn.getline(i)
     if string.match(_line, "^```") then
@@ -188,15 +203,21 @@ local function get_filetype_from_codeblock()
       break
     end
   end
+
   vim.api.nvim_win_set_cursor(0, {block_line, 0})
+
   local filetype = vim.api.nvim_get_current_line()
   -- extract filetype from codeblock
   filetype = filetype:match("^```(%w+)")
+
   return filetype
+
 end
 
 local function find_start_line()
+
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
+
   for i = current_line_number, 0, -1 do
     local _line = vim.fn.getline(i)
     if string.match(_line, "^```") then
@@ -209,12 +230,14 @@ local function find_start_line()
 end
 
 local function save_and_check(path, register)
+
   if path == nil then
     error("path is nil")
   end
   if register == nil then
     error("register is nil")
   end
+
   local result = save_yanked_text(path, register)
   if not result then
     error("Failed to save yanked text to " .. path)
@@ -222,19 +245,24 @@ local function save_and_check(path, register)
 end
 
 local function compare_texts(target_text, copilot_text, filetype)
+
   if filetype == nil then
     filetype = "text"
   end
+
   vim.cmd("tabnew " .. copilot_text)
   vim.cmd("setlocal filetype=" .. filetype)
   vim.cmd("vertical diffsplit " .. target_text)
   vim.cmd("setlocal filetype=" .. filetype)
+
 end
 
 -- tmp file path
 local target_text = "/tmp/_target_text"
 local copilot_text = "/tmp/_copilot_suggestion"
+
 local function compare_code_block()
+
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   local start_line = find_start_line()
 
@@ -256,16 +284,20 @@ local function compare_code_block()
   vim.cmd('normal! "cy')
   save_and_check(copilot_text, 'c')
   compare_texts(target_text, copilot_text, filetype)
+
 end
 
 local function close_diff_tab()
+
   local wins = vim.api.nvim_list_wins()
+
   for _, w in ipairs(wins) do
     local bufname = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w))
     if bufname:match("/tmp/_") ~= nil then
       vim.api.nvim_win_close(w, true)
     end
   end
+
 end
 vim.keymap.set("n", "<leader><leader>d", compare_code_block, {desc = "Diff codeblock text", noremap = true})
 vim.keymap.set("n", "<leader><leader>c", close_diff_tab, {desc = "Close diff tab", noremap = true})
@@ -277,14 +309,16 @@ vim.keymap.set("n", "<leader><leader>b", show_diff_files, {desc = "show before d
 
 -- search target text in buffer (compare opening buffer and _target_text)
 local function search_target_text_in_buffer()
+
   vim.cmd("normal! gg")
+
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
   local start_line = 1
   local max_line = vim.api.nvim_buf_line_count(0)
   local target_line_list = {}
-
   -- Improvement 1: Enhanced error handling
   local file, err = io.open(target_text, "r")
+
   if err then
     print("Error opening target file: " .. err)
     return false
@@ -299,6 +333,7 @@ local function search_target_text_in_buffer()
 
   local buffer_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   local target_line_number = 1
+
   for i = current_line_number, max_line do
     local _line = buffer_lines[i]
     if _line == target_line_list[target_line_number] then
@@ -311,14 +346,18 @@ local function search_target_text_in_buffer()
       target_line_number = 1
     end
   end
+
   vim.api.nvim_win_set_cursor(0, {start_line, 0})
+
 end
 
 -- reflect Copilot suggestion
 local function reflect_copilot_suggestion()
+
   -- read file text in _target_text
   local target_line_list = {}
   local file = io.open(target_text, "r")
+
   if file then
     for line in file:lines() do
       table.insert(target_line_list, line)
@@ -332,6 +371,7 @@ local function reflect_copilot_suggestion()
   -- read file text in _copilot_suggestion
   local suggested_lines = ""
   local file2 = io.open(copilot_text, "r")
+
   if file2 then
     suggested_lines = file2:read("a")
     file2:close()
@@ -355,6 +395,7 @@ vim.keymap.set("n", "<leader><leader>a", reflect_copilot_suggestion, {desc = "cl
 
 -- compare texts, yanked text and copilot suggestion
 local function obtain_copilot_suggestion()
+
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   local start_line = find_start_line()
 
@@ -371,6 +412,7 @@ local function obtain_copilot_suggestion()
   vim.cmd('normal! "cy')
   save_and_check(copilot_text, 'c')
   reflect_copilot_suggestion()
+
 end
 
 vim.keymap.set("n", "<leader><leader>o", obtain_copilot_suggestion, {desc = "Obtain copilot suggestion - use in copilot chat window", noremap = true})

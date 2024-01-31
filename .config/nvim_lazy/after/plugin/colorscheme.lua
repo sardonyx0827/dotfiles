@@ -1,15 +1,21 @@
 vim.keymap.set("n", "<M-0>", ":colorscheme ", { noremap = true })
 
 local function set_random_color_scheme(color_schemes)
+
   local color_scheme = color_schemes[math.random(#color_schemes)]
   vim.cmd("colorscheme " .. color_scheme)
   print("color scheme: " .. color_scheme)
+
 end
+
 local function set_color_scheme_from_tmux_pane(color_scheme)
+
   vim.cmd("colorscheme " .. color_scheme)
   print("color scheme: " .. color_scheme)
+
 end
 local function set_color_scheme()
+
   local tmux_pane_id = vim.fn.system("tmux run \"echo '#{pane_id}'\"")
   tmux_pane_id = string.gsub(tmux_pane_id, "%%", "")
   -- my recommended color schemes
@@ -18,6 +24,7 @@ local function set_color_scheme()
     "vscode",
     "tokyonight-night",
   }
+
   -- tmux_pane_id is number?
   if not tonumber(tmux_pane_id) then
     set_random_color_scheme(color_schemes)
@@ -29,6 +36,7 @@ local function set_color_scheme()
       set_color_scheme_from_tmux_pane(color_schemes[tmux_pane_id+1])
     end
   end
+
 end
 
 -- set color scheme when vim start up, random or tmux pane id
