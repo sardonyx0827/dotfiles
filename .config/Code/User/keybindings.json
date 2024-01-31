@@ -183,4 +183,13 @@
         "command": "git.pull",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
+    // focus text editor
+    {
+        "key": "alt+f",
+        "command": "workbench.action.focusFirstEditorGroup"
+    },
+    {
+        "key": "cmd+f",
+        "command": "workbench.action.focusFirstEditorGroup"
+    },
 ]
