@@ -54,20 +54,20 @@ local plugins = {
         -- Enable transparent background
         transparent = true,
         -- Enable italic comment
-        italic_comments = true,
+        italic_comments = false,
         -- Disable nvim-tree background color
         disable_nvimtree_bg = true,
 
         -- Override colors (see ./lua/vscode/colors.lua)
-        color_overrides = {
-            vscLineNumber = '#FFFFFF',
-        },
+        --color_overrides = {
+        --    vscLineNumber = '#FFFFFF',
+        --},
 
         -- Override highlight groups (see ./lua/vscode/theme.lua)
         group_overrides = {
-            -- this supports the same val table as vim.api.nvim_set_hl
-            -- use colors from this colorscheme by requiring vscode.colors!
-            Cursor = { fg=c.vscDarkBlue, bg=c.vscLightGreen, bold=true },
+          -- this supports the same val table as vim.api.nvim_set_hl
+          -- use colors from this colorscheme by requiring vscode.colors!
+          Cursor = { fg=c.vscDarkBlue, bg=c.vscLightGreen, bold=true },
         }
       })
     end
@@ -177,10 +177,10 @@ local plugins = {
             mappings = {
               n = {
                 ['<M-x>'] = "delete_buffer"
-              }, -- n
+              },
               i = {
                 ['<M-x>'] = "delete_buffer"
-              } -- i
+              }
             },
           },
         },
@@ -208,7 +208,10 @@ local plugins = {
     cmd = "UndotreeToggle",
   },
   -- lsp settings
-  { 'VonHeikemen/lsp-zero.nvim',        branch = 'v3.x' },
+  {
+    'VonHeikemen/lsp-zero.nvim',
+    branch = 'v3.x'
+  },
   -- LSP Support
   { 'williamboman/mason.nvim' },
   { 'williamboman/mason-lspconfig.nvim' },

@@ -36,7 +36,7 @@ require("copilot").setup({
 
 })
 require("copilot_cmp").setup()
-vim.keymap.set("n", "<c-p>", ":Copilot panel<CR>", { silent = true })
+vim.keymap.set("n", "<c-l>", ":Copilot panel<CR>", { silent = true })
 vim.keymap.set("i", "<c-l>", "<ESC>:Copilot panel<CR>", { silent = true })
 
 

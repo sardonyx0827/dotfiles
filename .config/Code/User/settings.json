@@ -344,7 +344,7 @@
     "indentRainbow.indicatorStyle": "light",
     "vscode_vibrancy.opacity": 1.7,
     "vscode_vibrancy.refreshInterval": 10000,
-    "glassit.alpha": 230,
+    "glassit.alpha": 240,
     "editor.lineNumbers": "relative",
     "git.autofetch": true,
     "github.copilot.enable": {
@@ -358,4 +358,5 @@
     "workbench.activityBar.location": "top",
     //"workbench.colorTheme": "Rosé Pine (no italics)",
     "editor.minimap.enabled": false,
+    "workbench.colorTheme": "Tokyo Night",
 }
