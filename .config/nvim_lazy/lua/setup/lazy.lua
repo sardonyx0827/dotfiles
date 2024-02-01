@@ -416,13 +416,13 @@ local plugins = {
     --  end, 3000)
     --end,
   },
-  {
-    'kiddos/gemini.nvim',
-    build = { 'pip install -r requirements.txt', ':UpdateRemotePlugins' },
-    config = function()
-      require('gemini').setup()
-    end
-  },
+  -- {
+  --   'kiddos/gemini.nvim',
+  --   build = { 'pip install -r requirements.txt', ':UpdateRemotePlugins' },
+  --   config = function()
+  --     require('gemini').setup()
+  --   end
+  -- },
 
   -- **********************************
   -- others
