@@ -87,7 +87,7 @@ local function quick_fix_next_error_with_ai()
 
 end
 
-vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with Copilot"})
+vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with CChat"})
 
 -- Function to move to the next or previous code block
 local function move_to_codeblock(direction)
@@ -391,7 +391,7 @@ local function reflect_copilot_suggestion()
   vim.cmd('normal! "cP')
 
 end
-vim.keymap.set("n", "<leader><leader>a", reflect_copilot_suggestion, {desc = "close diff tab and Accept copilot suggestion - use in diff tab", noremap = true})
+vim.keymap.set("n", "<leader><leader>a", reflect_copilot_suggestion, {desc = "Accept CChat suggestion - use in diff tab", noremap = true})
 
 -- compare texts, yanked text and copilot suggestion
 local function obtain_copilot_suggestion()
@@ -415,4 +415,4 @@ local function obtain_copilot_suggestion()
 
 end
 
-vim.keymap.set("n", "<leader><leader>o", obtain_copilot_suggestion, {desc = "Obtain copilot suggestion - use in copilot chat window", noremap = true})
+vim.keymap.set("n", "<leader><leader>o", obtain_copilot_suggestion, {desc = "Obtain CChat suggestion - use in CChat window", noremap = true})
