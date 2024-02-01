@@ -404,18 +404,24 @@ local plugins = {
     cmd = "Copilot",
   },
   {
-    --"gptlang/CopilotChat.nvim",
-    "jellydn/CopilotChat.nvim",
-    opts = {
-      mode = "newbuffer", -- newbuffer or split  , default: newbuffer
-    },
-    build = function()
-      vim.defer_fn(function()
-        vim.cmd("UpdateRemotePlugins")
-        vim.notify("CopilotChat - Updated remote plugins. Please restart Neovim.")
-      end, 3000)
-    end,
-    event = "VeryLazy",
+    "gptlang/CopilotChat.nvim",
+    --"jellydn/CopilotChat.nvim",
+    --opts = {
+    --  mode = "newbuffer", -- newbuffer or split  , default: newbuffer
+    --},
+    --build = function()
+    --  vim.defer_fn(function()
+    --    vim.cmd("UpdateRemotePlugins")
+    --    vim.notify("CopilotChat - Updated remote plugins. Please restart Neovim.")
+    --  end, 3000)
+    --end,
+  },
+  {
+    'kiddos/gemini.nvim',
+    build = { 'pip install -r requirements.txt', ':UpdateRemotePlugins' },
+    config = function()
+      require('gemini').setup()
+    end
   },
 
   -- **********************************
