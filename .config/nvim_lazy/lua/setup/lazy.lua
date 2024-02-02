@@ -404,17 +404,25 @@ local plugins = {
     cmd = "Copilot",
   },
   {
+-- for errors
+-- ** in mypynvim/ui_components/popup.py
+-- from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Union
+-- from typing_extensions import Unpack
+-- ** in mypynvim/core/buffer.py
+-- from typing import TYPE_CHECKING, Any, Union, Callable, Dict
+-- from typing_extensions import LiteralString
+
     "gptlang/CopilotChat.nvim",
-    --"jellydn/CopilotChat.nvim",
-    --opts = {
-    --  mode = "newbuffer", -- newbuffer or split  , default: newbuffer
-    --},
-    --build = function()
-    --  vim.defer_fn(function()
-    --    vim.cmd("UpdateRemotePlugins")
-    --    vim.notify("CopilotChat - Updated remote plugins. Please restart Neovim.")
-    --  end, 3000)
-    --end,
+    dependencies = { "zbirenbaum/copilot.lua" }, -- Or { "github/copilot.vim" }
+    opts = {
+      mode = "newbuffer", -- newbuffer or split, default: newbuffer
+      show_help = "yes", -- Show help text for CopilotChatInPlace, default: yes
+      debug = false, -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
+    },
+    build = function()
+      vim.notify("Please update the remote plugins by running ':UpdateRemotePlugins', then restart Neovim.")
+    end,
+    event = "VeryLazy",
   },
   {
     'kiddos/gemini.nvim',
