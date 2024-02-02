@@ -56,7 +56,9 @@ vim.keymap.set("n", "<leader>cj", "ggVGy:vertical rightbelow new<CR>:setlocal fi
 vim.keymap.set("v", "<leader>cj", "y:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
 vim.keymap.set("n", "<leader>cs", "{V}y:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat ", { desc = "Copilot Chat - yank surround" })
 vim.keymap.set("n", "<leader>cl", "50kV100j50ky:vertical rightbelow new<CR>:setlocal filetype=markdown<CR>:CopilotChat ", { desc = "Copilot Chat - yank 100lines" })
-vim.keymap.set("n", "<leader>cp", "ggVGy:CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
+vim.keymap.set("n", "<C-i>", ":CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
+vim.keymap.set("v", "<C-i>", "y:CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
+vim.keymap.set("n", "<leader>cp", ":CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
 vim.keymap.set("v", "<leader>cp", "y:CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
 
 -- jump to next error/warn and fix with Copilot Chat
