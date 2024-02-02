@@ -357,6 +357,6 @@
     "window.titleBarStyle": "custom",
     "workbench.activityBar.location": "top",
     //"workbench.colorTheme": "Rosé Pine (no italics)",
+    //"workbench.colorTheme": "Tokyo Night",
     "editor.minimap.enabled": false,
-    "workbench.colorTheme": "Tokyo Night",
 }
