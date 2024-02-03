@@ -8,7 +8,7 @@
     "vim.normalModeKeyBindingsNonRecursive": [
         {
             "before": [
-                "<C-k>"
+                "<C-c>"
             ],
             // CopilotChat inline editor
             "commands": [
@@ -247,7 +247,7 @@
     "vim.visualModeKeyBindingsNonRecursive": [
         {
             "before": [
-                "<C-k>"
+                "<C-c>"
             ],
             // CopilotChat inline editor
             "commands": [
@@ -310,7 +310,7 @@
     "vim.insertModeKeyBindingsNonRecursive": [
         {
             "before": [
-                "<C-k>"
+                "<C-c>"
             ],
             // CopilotChat inline editor
             "commands": [

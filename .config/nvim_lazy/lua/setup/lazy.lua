@@ -434,7 +434,9 @@ local plugins = {
     'kiddos/gemini.nvim',
     build = { 'pip install -r requirements.txt', ':UpdateRemotePlugins' },
     config = function()
-      require('gemini').setup()
+      require('gemini').setup({
+        --menu_key = '<C-p>',
+      })
     end
   },
 
