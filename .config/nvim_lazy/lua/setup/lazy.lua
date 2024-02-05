@@ -435,8 +435,9 @@ local plugins = {
     build = { 'pip install -r requirements.txt', ':UpdateRemotePlugins' },
     config = function()
       require('gemini').setup({
-        --menu_key = '<C-p>',
+        menu_key = '<C-p>',
       })
+      vim.keymap.set("n", "<C-g>", ":GeminiChat<CR>", { desc = "Gemini Chat - Prompt" })
     end
   },
 
