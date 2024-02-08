@@ -107,7 +107,7 @@ local plugins = {
   -- This Neovim plugin provides alternating syntax highlighting (“rainbow parentheses”) for Neovim
   {
     "HiPhish/rainbow-delimiters.nvim",
-    event = "BufWinEnter",
+    event = "VeryLazy",
   },
   -- A high-performance color highlighter. show color in code, like #ffffff
   {
@@ -419,6 +419,7 @@ local plugins = {
 -- from typing_extensions import LiteralString
 
     "gptlang/CopilotChat.nvim",
+    event = "VeryLazy",
     dependencies = { "zbirenbaum/copilot.lua" }, -- Or { "github/copilot.vim" }
     opts = {
       mode = "newbuffer", -- newbuffer or split, default: newbuffer
@@ -428,17 +429,20 @@ local plugins = {
     build = function()
       vim.notify("Please update the remote plugins by running ':UpdateRemotePlugins', then restart Neovim.")
     end,
-    event = "VeryLazy",
   },
   {
     'kiddos/gemini.nvim',
+    event = "VeryLazy",
     build = { 'pip install -r requirements.txt', ':UpdateRemotePlugins' },
+    dependencies = {
+      { "nvim-lua/plenary.nvim" }, -- required
+    },
     config = function()
       require('gemini').setup({
         menu_key = '<C-p>',
       })
       vim.keymap.set("n", "<C-g>", ":GeminiChat<CR>", { desc = "Gemini Chat - Prompt" })
-    end
+    end,
   },
 
   -- **********************************

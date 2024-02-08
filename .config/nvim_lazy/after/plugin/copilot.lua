@@ -85,8 +85,8 @@ local function quick_fix_next_error_with_ai()
   local lines_text = table.concat(lines_above, "\\n")
 
   -- open Copilot chat window
-  vim.cmd("vertical rightbelow new")
-  vim.cmd("setlocal filetype=markdown")
+  -- vim.cmd("vertical rightbelow new")
+  -- vim.cmd("setlocal filetype=markdown")
   vim.cmd("CopilotChat ".. "Error message : " .. diagnostic_message .. " | Current line text : " .. lines_text .. " | Your job : how to fix it?")
 
 end
