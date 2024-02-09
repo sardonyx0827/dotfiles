@@ -50,3 +50,9 @@ vim.keymap.set("n", "<M-k>", ":bprev<CR>", {desc = "previous buffer"})
 -- change directory to current file
 vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", {desc = "change directory to current file"})
 vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", {desc = "change up directory"})
+
+-- move cursor in insert mode
+vim.keymap.set("i", "<C-j>", "<C-o>gj")
+vim.keymap.set("i", "<C-k>", "<C-o>gk")
+vim.keymap.set("i", "<C-h>", "<C-o>h")
+vim.keymap.set("i", "<C-l>", "<C-o>l")

@@ -37,8 +37,6 @@ require("copilot").setup({
 })
 require("copilot_cmp").setup()
 vim.keymap.set("n", "<c-l>", ":Copilot panel<CR>", { silent = true })
-vim.keymap.set("i", "<c-l>", "<ESC>:Copilot panel<CR>", { silent = true })
-
 
 -- Copilot Chat - Keymaps
 vim.keymap.set("n", "<leader>cc", "ggVGy:CopilotChat ", { desc = "Copilot Chat - select all" })
@@ -46,12 +44,12 @@ vim.keymap.set("v", "<leader>cc", "y:CopilotChat ", { desc = "Copilot Chat - sel
 vim.keymap.set("n", "<leader>co", ":CopilotChat ", { desc = "Copilot Chat - ongoing" })
 vim.keymap.set("n", "<C-M-i>", "ggVGy:CopilotChat ", { desc = "Copilot Chat - select all" })
 vim.keymap.set("v", "<C-M-i>", "y:CopilotChat ", { desc = "Copilot Chat - selected" })
-vim.keymap.set("n", "<leader>ce", "ggVGy:CopilotChat /explain<CR>", { desc = "Copilot Chat - /explain" })
-vim.keymap.set("v", "<leader>ce", "y:CopilotChat /explain<CR>", { desc = "Copilot Chat - /explain" })
+vim.keymap.set("n", "<leader>ce", "ggVGy:CopilotChatExplain<CR>", { desc = "Copilot Chat - /explain" })
+vim.keymap.set("v", "<leader>ce", "y:CopilotChatExplain<CR>", { desc = "Copilot Chat - /explain" })
 vim.keymap.set("n", "<leader>cf", "ggVGy:CopilotChat /fix<CR>", { desc = "Copilot Chat - /fix" })
 vim.keymap.set("v", "<leader>cf", "y:CopilotChat /fix<CR>", { desc = "Copilot Chat - /fix" })
-vim.keymap.set("n", "<leader>ct", "ggVGy:CopilotChat /test<CR>", { desc = "Copilot Chat - /test" })
-vim.keymap.set("v", "<leader>ct", "y:CopilotChat /test<CR>", { desc = "Copilot Chat - /test" })
+vim.keymap.set("n", "<leader>ct", "ggVGy:CopilotChatTests<CR>", { desc = "Copilot Chat - /test" })
+vim.keymap.set("v", "<leader>ct", "y:CopilotChatTests<CR>", { desc = "Copilot Chat - /test" })
 vim.keymap.set("n", "<leader>cj", "ggVGy:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
 vim.keymap.set("v", "<leader>cj", "y:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
 vim.keymap.set("n", "<leader>cs", "{V}y:CopilotChat ", { desc = "Copilot Chat - yank surround" })

@@ -41,7 +41,7 @@
     },
     // copilot generate
     {
-        "key": "ctrl+l",
+        "key": "ctrl+p",
         "command": "github.copilot.generate",
         "when": "editorTextFocus && github.copilot.activated && !inInteractiveInput && !interactiveEditorFocused"
     },

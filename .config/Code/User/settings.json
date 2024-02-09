@@ -317,20 +317,55 @@
                 "interactiveEditor.start"
             ]
         },{
+        //     "before": [
+        //         "<C-j>"
+        //     ],
+        //     // Copilot suggestion(next)
+        //     "commands": [
+        //         "editor.action.inlineSuggest.showNext"
+        //     ]
+        // },{
+        //     "before": [
+        //         "<C-k>"
+        //     ],
+        //     // Copilot suggestion(previous)
+        //     "commands": [
+        //         "editor.action.inlineSuggest.showPrevious"
+        //     ]
+        // },{
+            // move cursor
+            "before": [
+                "<C-h>"
+            ],
+            "after": [
+                "<C-o>",
+                "h"
+            ]
+        },{
+            "before": [
+                "<C-l>"
+            ],
+            "after": [
+                "<C-o>",
+                "l"
+            ]
+        },{
             "before": [
                 "<C-j>"
             ],
-            // Copilot suggestion(next)
-            "commands": [
-                "editor.action.inlineSuggest.showNext"
+            "after": [
+                "<C-o>",
+                "g",
+                "j"
             ]
         },{
             "before": [
                 "<C-k>"
             ],
-            // Copilot suggestion(previous)
-            "commands": [
-                "editor.action.inlineSuggest.showPrevious"
+            "after": [
+                "<C-o>",
+                "g",
+                "k"
             ]
         }
     ],
