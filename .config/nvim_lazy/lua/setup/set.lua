@@ -11,6 +11,7 @@ vim.opt.expandtab = true
 vim.opt.smartindent = true
 
 vim.opt.wrap = false
+vim.opt.whichwrap:append("<,>,[,],h,l")
 
 vim.opt.swapfile = false
 vim.opt.backup = false
