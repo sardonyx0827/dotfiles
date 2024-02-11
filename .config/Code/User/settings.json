@@ -387,11 +387,12 @@
         "markdown": "true",
         "scminput": "true"
     },
-    "workbench.editor.showTabs": "single",
+    //"workbench.editor.showTabs": "single",
     "window.customMenuBarAltFocus": false,
     "window.titleBarStyle": "custom",
     "workbench.activityBar.location": "top",
     //"workbench.colorTheme": "Rosé Pine (no italics)",
     "workbench.colorTheme": "Tokyo Night",
     "editor.minimap.enabled": false,
+    "explorer.confirmDragAndDrop": false,
 }
