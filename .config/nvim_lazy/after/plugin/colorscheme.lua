@@ -14,6 +14,7 @@ local function set_color_scheme_from_tmux_pane(color_scheme)
   print("color scheme: " .. color_scheme)
 
 end
+
 local function set_color_scheme()
 
   local tmux_pane_id = vim.fn.system("tmux run \"echo '#{pane_id}'\"")
@@ -43,9 +44,9 @@ end
 --set_color_scheme()
 
 -- default color scheme
---vim.cmd("colorscheme rose-pine-main")
+vim.cmd("colorscheme rose-pine-main")
 --vim.cmd("colorscheme vscode")
-vim.cmd("colorscheme tokyonight-night")
+--vim.cmd("colorscheme tokyonight-night")
 --vim.cmd("colorscheme slate")
 --vim.cmd("colorscheme onedark")
 
