@@ -397,4 +397,6 @@
     "explorer.confirmDragAndDrop": false,
     "CodeGPT.apiKey": "Google AI Studio",
     "CodeGPT.query.language": "Japanese",
+    "CodeGPT.Autocomplete.enabled": false,
+    "window.enableMenuBarMnemonics": false,
 }
