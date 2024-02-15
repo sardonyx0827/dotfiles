@@ -103,6 +103,15 @@ require("nvim-tree").setup({
   update_focused_file = {
     enable = true
   },
+  -- sync open/close with other tabs
+  tab = {
+    sync = {
+      open = true,
+      close = true,
+      ignore = { "toggleterm", "NeogitStatus", "DiffviewFilePanel" },
+    },
+  },
+
   on_attach = tree_on_attach,
 })
 
@@ -144,13 +153,13 @@ local api = require "nvim-tree.api"
 local tree, fs, node = api.tree, api.fs, api.node
 
 local command = {
-  { "",      tree.change_root_to_node,       "CD" },
-  { "",      node.open.replace_tree_buffer,  "Open: In Place" },
-  { "",      node.show_info_popup,           "Info" },
-  { "",      fs.rename_sub,                  "Rename: Omit Filename" },
-  { "",      node.open.tab,                  "Open: New Tab" },
-  { "",      node.open.vertical,             "Open: Vertical Split" },
-  { "",      node.open.horizontal,           "Open: Horizontal Split" },
+  { "<C-]>", tree.change_root_to_node,       "CD" },
+  { "<C-e>", node.open.replace_tree_buffer,  "Open: In Place" },
+  { "<C-k>", node.show_info_popup,           "Info" },
+  { "<C-r>", fs.rename_sub,                  "Rename: Omit Filename" },
+  { "<C-t>", node.open.tab,                  "Open: New Tab" },
+  { "<C-v>", node.open.vertical,             "Open: Vertical Split" },
+  { "<C-x>", node.open.horizontal,           "Open: Horizontal Split" },
   { "<BS>",  node.navigate.parent_close,     "Close Directory" },
   { "<CR>",  node.open.edit,                 "Open" },
   { "<Tab>", node.open.preview,              "Open Preview" },
@@ -158,17 +167,19 @@ local command = {
   { "<",     node.navigate.sibling.prev,     "Previous Sibling" },
   { ".",     node.run.cmd,                   "Run Command" },
   { "-",     tree.change_root_to_parent,     "Up" },
-  { "",      fs.create,                      "Create File" },
-  { "",      api.marks.bulk.move,            "Move Bookmarked" },
+  { "a",     fs.create,                      "Create File" },
+  { "bd",    api.marks.bulk.delete,          "Delete Bookmarked" },
+  { "bt",    api.marks.bulk.trash,           "Trash Bookmarked" },
+  { "bmv",   api.marks.bulk.move,            "Move Bookmarked" },
   { "B",     tree.toggle_no_buffer_filter,   "Toggle No Buffer" },
-  { "",      fs.copy.node,                   "Copy" },
+  { "c",     fs.copy.node,                   "Copy" },
   { "C",     tree.toggle_git_clean_filter,   "Toggle Git Clean" },
   { "[c",    node.navigate.git.prev,         "Prev Git" },
   { "]c",    node.navigate.git.next,         "Next Git" },
-  { "",      fs.remove,                      "Delete" },
-  { "",      fs.trash,                       "Trash" },
+  { "d",     fs.remove,                      "Delete" },
+  { "D",     fs.trash,                       "Trash" },
   { "E",     tree.expand_all,                "Expand All" },
-  { "",      fs.rename_basename,             "Rename: Basename" },
+  { "e",     fs.rename_basename,             "Rename: Basename" },
   { "]e",    node.navigate.diagnostics.next, "Next Diagnostic" },
   { "[e",    node.navigate.diagnostics.prev, "Prev Diagnostic" },
   { "F",     api.live_filter.clear,          "Clean Filter" },
@@ -182,7 +193,7 @@ local command = {
   { "m",     api.marks.toggle,               "Toggle Bookmark" },
   { "o",     node.open.edit,                 "Open" },
   { "O",     node.open.no_window_picker,     "Open: No Window Picker" },
-  { "",      fs.paste,                       "Paste" },
+  { "p",     fs.paste,                       "Paste" },
   { "P",     node.navigate.parent,           "Parent Directory" },
   { "q",     tree.close,                     "Close" },
   { "r",     fs.rename,                      "Rename" },
@@ -191,7 +202,7 @@ local command = {
   { "S",     tree.search_node,               "Search" },
   { "U",     tree.toggle_custom_filter,      "Toggle Hidden" },
   { "W",     tree.collapse_all,              "Collapse" },
-  { "",      fs.cut,                         "Cut" },
+  { "x",     fs.cut,                         "Cut" },
   { "y",     fs.copy.filename,               "Copy Name" },
   { "Y",     fs.copy.relative_path,          "Copy Relative Path" },
 }

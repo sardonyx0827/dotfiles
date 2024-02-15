@@ -8,7 +8,7 @@ vim.keymap.set("n", "<leader>sl", builtin.buffers, {desc="Buffers"})
 vim.keymap.set("n", "<leader>ll", builtin.buffers, {desc="Buffers"})
 vim.keymap.set("n", "<leader>la", ":ls!<CR>", {desc="Buffers"})
 vim.keymap.set("n", "<leader>j", builtin.jumplist, {desc="Jump List"})
-vim.keymap.set("n", "<leader>he", builtin.help_tags, {desc="Help Tags"})
+vim.keymap.set("n", "<leader>h", builtin.help_tags, {desc="Help Tags"})
 vim.keymap.set("n", "<leader>rg", builtin.registers, {desc="Registers"})
 
 -- using ripgrep. "sudo apt install ripgrep" or "brew install ripgrep"

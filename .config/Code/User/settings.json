@@ -391,7 +391,6 @@
     "window.customMenuBarAltFocus": false,
     "window.titleBarStyle": "custom",
     "workbench.activityBar.location": "top",
-    "workbench.colorTheme": "Rosé Pine (no italics)",
     "editor.minimap.enabled": false,
     "explorer.confirmDragAndDrop": false,
     "CodeGPT.apiKey": "Google AI Studio",
