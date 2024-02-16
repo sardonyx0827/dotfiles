@@ -299,6 +299,41 @@ local plugins = {
       'mfussenegger/nvim-dap-python',
     },
   },
+  {
+    "folke/edgy.nvim",
+    event = "VeryLazy",
+    init = function()
+      vim.opt.laststatus = 3
+      vim.opt.splitkeep = "screen"
+    end,
+    opts = {
+      wo = {
+        spell = false,
+      },
+      animate = {
+        enabled = false,
+      },
+      exit_when_last = true,
+      right = {
+        {
+          title = "CopilotChat.nvim", -- Title of the window
+          ft = "copilot-chat", -- This is custom file type from CopilotChat.nvim
+          size = { width = 0.4 }, -- Width of the window
+        },
+      },
+      left = {
+        "vuffers",
+        "NvimTree",
+        {
+          title = "UndoTree",
+          ft = "undotree",
+        },
+      },
+      bottom = {
+         "Trouble",
+      },
+    },
+  },
   -- Terminal
   {
     "akinsho/toggleterm.nvim",
@@ -445,14 +480,6 @@ local plugins = {
     cmd = "Copilot",
   },
   {
--- for errors
--- ** in mypynvim/ui_components/popup.py
--- from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Union
--- from typing_extensions import Unpack
--- ** in mypynvim/core/buffer.py
--- from typing import TYPE_CHECKING, Any, Union, Callable, Dict
--- from typing_extensions import LiteralString
-
     "gptlang/CopilotChat.nvim",
     event = "VeryLazy",
     dependencies = { "zbirenbaum/copilot.lua" }, -- Or { "github/copilot.vim" }
@@ -464,40 +491,6 @@ local plugins = {
     build = function()
       vim.notify("Please update the remote plugins by running ':UpdateRemotePlugins', then restart Neovim.")
     end,
-  },
-  {
-    "folke/edgy.nvim",
-    event = "VeryLazy",
-    init = function()
-      vim.opt.laststatus = 3
-      vim.opt.splitkeep = "screen"
-    end,
-    opts = {
-      wo = {
-        spell = false,
-      },
-      animate = {
-        enabled = false,
-      },
-      right = {
-        {
-          title = "CopilotChat.nvim", -- Title of the window
-          ft = "copilot-chat", -- This is custom file type from CopilotChat.nvim
-          size = { width = 0.4 }, -- Width of the window
-        },
-      },
-      left = {
-        "vuffers",
-        "NvimTree",
-        {
-          title = "UndoTree",
-          ft = "undotree",
-        },
-      },
-      bottom = {
-         "Trouble",
-      },
-    },
   },
   {
     'kiddos/gemini.nvim',
