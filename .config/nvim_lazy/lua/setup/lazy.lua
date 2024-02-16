@@ -230,9 +230,23 @@ local plugins = {
   },
   -- +-tree on redo/undo
   {
-    "mbbill/undotree",
-    lazy = true,
-    cmd = "UndotreeToggle",
+    "jiaoshijie/undotree",
+    dependencies = "nvim-lua/plenary.nvim",
+    config = true,
+    keys = { -- load the plugin only when using it's keybinding:
+      { "<leader>u", "<cmd>lua require('undotree').toggle()<cr>" },
+    },
+  },
+  {
+    "Hajime-Suzuki/vuffers.nvim",
+    dependencies = { "nvim-tree/nvim-web-devicons" },
+    config = function()
+      require("vuffers").setup({
+      })
+    end,
+    keys = {
+      { "<leader>vu", "<cmd>lua require('vuffers').toggle()<cr>" },
+    },
   },
   -- lsp settings
   {
@@ -454,7 +468,7 @@ local plugins = {
   {
     "folke/edgy.nvim",
     event = "VeryLazy",
-      init = function()
+    init = function()
       vim.opt.laststatus = 3
       vim.opt.splitkeep = "screen"
     end,
@@ -472,7 +486,17 @@ local plugins = {
           size = { width = 0.4 }, -- Width of the window
         },
       },
-
+      left = {
+        "vuffers",
+        "NvimTree",
+        {
+          title = "UndoTree",
+          ft = "undotree",
+        },
+      },
+      bottom = {
+         "Trouble",
+      },
     },
   },
   {
