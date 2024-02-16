@@ -42,6 +42,7 @@ local function toggle_tree_focus()
 
 end
 
+
 --vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>", { noremap = true, silent = true, desc = "Toggle NvimTree" })
 vim.keymap.set("n", "<leader>e", toggle_tree_focus, { noremap = true, silent = true, desc = "NvimTree - Toggle and focus" })
 vim.keymap.set("n", "<leader>te", ":lua require('nvim-tree.api').tree.expand_all()<CR>", { noremap = true, silent = true, desc = "NvimTree - expand all" })
@@ -52,6 +53,9 @@ vim.opt.termguicolors = true
 -- set bg color
 --vim.api.nvim_set_hl(0, "NvimTreeNormal", { bg = "none" })
 
+local function move_l()
+  vim.cmd("wincmd l")
+end
 local function tree_on_attach(bufnr)
 
   local api = require "nvim-tree.api"
@@ -67,7 +71,8 @@ local function tree_on_attach(bufnr)
   vim.keymap.set('n', 'l', api.node.open.edit, opts('Open'))
   vim.keymap.set('n', '<C-l>', api.tree.change_root_to_node, opts('CD'))
   vim.keymap.set('n', '<C-h>', api.tree.change_root_to_parent, opts('Up'))
-  vim.keymap.set('n', '<leader>e', api.tree.close, opts('Close'))
+  --vim.keymap.set('n', '<leader>e', api.tree.close, opts('Close'))
+  vim.keymap.set('n', '<leader>e', move_l, opts('Close'))
 
 end
 

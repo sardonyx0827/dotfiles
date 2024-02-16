@@ -452,6 +452,30 @@ local plugins = {
     end,
   },
   {
+    "folke/edgy.nvim",
+    event = "VeryLazy",
+      init = function()
+      vim.opt.laststatus = 3
+      vim.opt.splitkeep = "screen"
+    end,
+    opts = {
+      wo = {
+        spell = false,
+      },
+      animate = {
+        enabled = false,
+      },
+      right = {
+        {
+          title = "CopilotChat.nvim", -- Title of the window
+          ft = "copilot-chat", -- This is custom file type from CopilotChat.nvim
+          size = { width = 0.4 }, -- Width of the window
+        },
+      },
+
+    },
+  },
+  {
     'kiddos/gemini.nvim',
     event = "VeryLazy",
     build = { 'pip install -r requirements.txt', ':UpdateRemotePlugins' },
