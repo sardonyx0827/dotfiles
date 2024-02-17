@@ -322,7 +322,11 @@ local plugins = {
         },
       },
       left = {
-        "vuffers",
+        {
+          title = "vuffers",
+          ft = "vuffers",
+          size = { height = 0.2 },
+        },
         "NvimTree",
         {
           title = "UndoTree",
