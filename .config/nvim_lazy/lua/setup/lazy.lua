@@ -313,7 +313,6 @@ local plugins = {
       animate = {
         enabled = false,
       },
-      exit_when_last = true,
       right = {
         {
           title = "CopilotChat.nvim", -- Title of the window
