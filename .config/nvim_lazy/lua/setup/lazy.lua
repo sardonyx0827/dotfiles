@@ -94,7 +94,7 @@ local plugins = {
         group_overrides = {
           -- this supports the same val table as vim.api.nvim_set_hl
           -- use colors from this colorscheme by requiring vscode.colors!
-          Cursor = { fg=c.vscDarkBlue, bg=c.vscLightGreen, bold=true },
+          Cursor = { fg = c.vscDarkBlue, bg = c.vscLightGreen, bold = true },
         }
       })
     end
@@ -245,7 +245,9 @@ local plugins = {
       })
     end,
     keys = {
-      { "<leader>vu", "<cmd>lua require('vuffers').toggle()<cr>" },
+      { "<leader>vu",  "<cmd>lua require('vuffers').toggle()<cr>" },
+      { "<leader>vsa", "<cmd>lua require('vuffers').sort({ type = 'filename', direction = 'asc' })<cr>" },
+      { "<leader>vsd", "<cmd>lua require('vuffers').sort({ type = 'filename', direction = 'desc' })<cr>" },
     },
   },
   -- lsp settings
@@ -316,8 +318,8 @@ local plugins = {
       right = {
         {
           title = "CopilotChat.nvim", -- Title of the window
-          ft = "copilot-chat", -- This is custom file type from CopilotChat.nvim
-          size = { width = 0.4 }, -- Width of the window
+          ft = "copilot-chat",        -- This is custom file type from CopilotChat.nvim
+          size = { width = 0.4 },     -- Width of the window
         },
       },
       left = {
@@ -333,7 +335,7 @@ local plugins = {
         },
       },
       bottom = {
-         "Trouble",
+        "Trouble",
       },
     },
   },
@@ -370,7 +372,8 @@ local plugins = {
     dependencies = {
       -- show icons with Nerd Font
       "nvim-tree/nvim-web-devicons",
-      { "JMarkin/nvim-tree.lua-float-preview",
+      {
+        "JMarkin/nvim-tree.lua-float-preview",
         lazy = true,
         -- default
         opts = {
@@ -487,9 +490,9 @@ local plugins = {
     event = "VeryLazy",
     dependencies = { "zbirenbaum/copilot.lua" }, -- Or { "github/copilot.vim" }
     opts = {
-      mode = "newbuffer", -- newbuffer or split, default: newbuffer
-      show_help = "no", -- Show help text for CopilotChatInPlace, default: yes
-      debug = false, -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
+      mode = "newbuffer",                        -- newbuffer or split, default: newbuffer
+      show_help = "no",                          -- Show help text for CopilotChatInPlace, default: yes
+      debug = false,                             -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
     },
     build = function()
       vim.notify("Please update the remote plugins by running ':UpdateRemotePlugins', then restart Neovim.")
