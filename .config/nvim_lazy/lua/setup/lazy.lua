@@ -245,7 +245,7 @@ local plugins = {
       })
     end,
     keys = {
-      { "<leader>vu",  "<cmd>lua require('vuffers').toggle()<cr>" },
+      { "<leader>vu", "<cmd>lua require('vuffers').toggle()<cr>" },
       { "<leader>vsa", "<cmd>lua require('vuffers').sort({ type = 'filename', direction = 'asc' })<cr>" },
       { "<leader>vsd", "<cmd>lua require('vuffers').sort({ type = 'filename', direction = 'desc' })<cr>" },
     },
