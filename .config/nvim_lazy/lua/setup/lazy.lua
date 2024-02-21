@@ -39,6 +39,7 @@ local plugins = {
           --TelescopePromptBorder = { fg = "surface", bg = "surface" },
 
           -- bg none settings
+          TelescopeBorder = { fg = "overlay", bg = "none" },
           TelescopeNormal = { fg = "subtle", bg = "none" },
           TelescopeSelection = { fg = "text", bg = "highlight_med" },
           TelescopeSelectionCaret = { fg = "love", bg = "highlight_med" },
@@ -54,6 +55,7 @@ local plugins = {
           Normal = { bg = "none" },
           NormalNC = { bg = "none" },
           NormalFloat = { bg = "none" },
+          FloatBorder = { bg = "none" },
         },
       })
     end

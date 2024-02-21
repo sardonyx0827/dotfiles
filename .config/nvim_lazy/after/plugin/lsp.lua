@@ -121,7 +121,15 @@ cmp.setup({
     completeopt = 'menu,menuone,noinsert'
   },
   window = {
-    documentation = cmp.config.window.bordered(),
+    --documentation = cmp.config.window.bordered(),
+    completion = {
+        border = "rounded",
+        winhighlight = "Normal:CmpNormal",
+    },
+    documentation = {
+        border = "rounded",
+        winhighlight = "Normal:CmpDocNormal",
+    }
   },
   sources = {
     {name = "copilot"},
