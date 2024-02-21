@@ -46,18 +46,17 @@ vim.keymap.set("n", "<C-M-i>", "ggVGy:CopilotChat ", { desc = "Copilot Chat - se
 vim.keymap.set("v", "<C-M-i>", "y:CopilotChat ", { desc = "Copilot Chat - selected" })
 vim.keymap.set("n", "<leader>ce", "ggVGy:CopilotChatExplain<CR>", { desc = "Copilot Chat - /explain" })
 vim.keymap.set("v", "<leader>ce", "y:CopilotChatExplain<CR>", { desc = "Copilot Chat - /explain" })
-vim.keymap.set("n", "<leader>cf", "ggVGy:CopilotChat /fix<CR>", { desc = "Copilot Chat - /fix" })
-vim.keymap.set("v", "<leader>cf", "y:CopilotChat /fix<CR>", { desc = "Copilot Chat - /fix" })
 vim.keymap.set("n", "<leader>ct", "ggVGy:CopilotChatTests<CR>", { desc = "Copilot Chat - /test" })
 vim.keymap.set("v", "<leader>ct", "y:CopilotChatTests<CR>", { desc = "Copilot Chat - /test" })
 vim.keymap.set("n", "<leader>cj", "ggVGy:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
 vim.keymap.set("v", "<leader>cj", "y:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
 vim.keymap.set("n", "<leader>cs", "{V}y:CopilotChat ", { desc = "Copilot Chat - yank surround" })
-vim.keymap.set("n", "<leader>cl", "50kV100j50ky:CopilotChat ", { desc = "Copilot Chat - yank 100lines" })
 vim.keymap.set("n", "<C-c>", ":CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
 vim.keymap.set("v", "<C-c>", ":'<,'>CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
 vim.keymap.set("n", "<leader>cp", ":CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
 vim.keymap.set("v", "<leader>cp", ":'<,'>CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
+vim.keymap.set("n", "<leader>cf", ":CopilotChatFixDiagnostic<CR>", { desc = "Copilot Chat - /fix on cursor" })
+vim.keymap.set("n", "<leader>cr", ":CopilotChatReset<CR>", { desc = "Copilot Chat - reset chat" })
 
 -- jump to next error/warn and fix with Copilot Chat
 local function quick_fix_next_error_with_ai()
@@ -70,21 +69,6 @@ local function quick_fix_next_error_with_ai()
 
   -- jump to next error/warn
   vim.diagnostic.goto_next({severity = vim.diagnostic.severity.ERROR})
-
-  -- get diagnostic message and current line
-  local diagnostic_message = diagnostics[1].message:gsub("\n", "\\n")
-
-  -- get 5 lines above and 5 lines below
-  local current_line = vim.api.nvim_win_get_cursor(0)[1]
-  local start = math.max(0, current_line - 5)
-  local finish = math.min(vim.api.nvim_buf_line_count(0), current_line + 5)
-
-  local lines_above = vim.api.nvim_buf_get_lines(0, start, finish, false)
-  local lines_text = table.concat(lines_above, "\\n")
-
-  -- open Copilot chat window
-  -- vim.cmd("vertical rightbelow new")
-  -- vim.cmd("setlocal filetype=markdown")
   vim.cmd("CopilotChatFixDiagnostic")
 
 end
