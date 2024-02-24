@@ -57,6 +57,7 @@ vim.keymap.set("n", "<leader>cp", ":CopilotChatInPlace<CR>", { desc = "Copilot C
 vim.keymap.set("v", "<leader>cp", ":'<,'>CopilotChatInPlace<CR>", { desc = "Copilot Chat - Prompt" })
 vim.keymap.set("n", "<leader>cf", ":CopilotChatFixDiagnostic<CR>", { desc = "Copilot Chat - /fix on cursor" })
 vim.keymap.set("n", "<leader>cr", ":CopilotChatReset<CR>", { desc = "Copilot Chat - reset chat" })
+vim.keymap.set("n", "<leader>cb", ":CopilotChatBuffer ", { desc = "Copilot Chat - use buffers" })
 
 -- jump to next error/warn and fix with Copilot Chat
 local function quick_fix_next_error_with_ai()
