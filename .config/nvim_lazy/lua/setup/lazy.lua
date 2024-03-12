@@ -526,6 +526,28 @@ local plugins = {
       { "<C-e>", mode = "n", },
     },
   },
+  {
+    'phaazon/hop.nvim',
+    version = 'v2',
+    config = function()
+      local hop = require('hop')
+      local directions = require('hop.hint').HintDirection
+      vim.keymap.set('', 'f', function()
+        hop.hint_char1({ direction = directions.AFTER_CURSOR, current_line_only = true })
+      end, {remap=true, silent = true})
+      vim.keymap.set('', 'F', function()
+        hop.hint_char1({ direction = directions.BEFORE_CURSOR, current_line_only = true })
+      end , {remap=true, silent = true})
+      vim.keymap.set("n", '<leader>ha', ':HopAnywhere<CR>', {remap=true, silent = true, desc = "hop - move to anywhere"})
+      vim.keymap.set("n", '<leader>hw', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
+      vim.keymap.set("n", '<leader>jj', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
+      require("hop").setup({
+        -- you can configure Hop the way you like here; see :h hop-config
+        --require'hop'.setup { keys = 'etovxqpdygfblzhckisuran' }
+      })
+    end
+  },
+
 
   -- **********************************
   -- AI solutions
