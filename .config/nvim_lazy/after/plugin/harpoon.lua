@@ -31,16 +31,3 @@ vim.keymap.set("n", "<M-7>",     function() harpoon:list():select(7) end)
 vim.keymap.set("n", "<M-8>",     function() harpoon:list():select(8) end)
 vim.keymap.set("n", "<M-9>",     function() harpoon:list():select(9) end)
 
-local load_buffer_from_selected_lines = function()
-  local buf = vim.api.nvim_get_current_buf()
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  --local content = table.concat(lines, "\n")
-  for _, line in ipairs(lines) do
-    local bufnr = vim.api.nvim_create_buf(true, false)
-    vim.api.nvim_buf_set_name(bufnr, line)
-    vim.api.nvim_buf_call(bufnr, vim.cmd.edit)
-  end
-end
-
-
-vim.keymap.set("n", "<leader>bl", load_buffer_from_selected_lines, { desc = 'load file buffer from harpoon window' })
