@@ -564,8 +564,14 @@ local plugins = {
   },
   {
     "gptlang/CopilotChat.nvim",
+    branch = "canary",
     event = "VeryLazy",
-    dependencies = { "zbirenbaum/copilot.lua" }, -- Or { "github/copilot.vim" }
+    dependencies = {
+       -- Or { "github/copilot.vim" }
+      "zbirenbaum/copilot.lua",
+      "nvim-lua/plenary.nvim",
+      "nvim-telescope/telescope.nvim"
+    },
     opts = {
       mode = "newbuffer",                        -- newbuffer or split, default: newbuffer
       show_help = "no",                          -- Show help text for CopilotChatInPlace, default: yes
@@ -579,9 +585,8 @@ local plugins = {
   {
     'kiddos/gemini.nvim',
     event = "VeryLazy",
-    build = { 'pip install -r requirements.txt', ':UpdateRemotePlugins' },
     dependencies = {
-      { "nvim-lua/plenary.nvim" }, -- required
+      "nvim-lua/plenary.nvim", -- required
     },
     config = function()
       require('gemini').setup({
