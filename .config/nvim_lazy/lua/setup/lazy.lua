@@ -12,7 +12,25 @@ end
 vim.opt.rtp:prepend(lazypath)
 
 vim.g.mapleader = ","
-
+-- copilot chat prompts
+local prompts = {
+  -- Code related prompts
+  Explain = "Please explain how the following code works.",
+  Review = "Please review the following code and provide suggestions for improvement.",
+  Tests = "Please explain how the selected code works, then generate unit tests for it.",
+  Refactor = "Please refactor the following code to improve its clarity and readability.",
+  FixCode = "Please fix the following code to make it work as intended.",
+  FixError = "Please explain the error in the following text and provide a solution.",
+  BetterNamings = "Please provide better names for the following variables and functions.",
+  Documentation = "Please provide documentation for the following code.",
+  SwaggerApiDocs = "Please provide documentation for the following API using Swagger.",
+  SwaggerJsDocs = "Please write JSDoc for the following API using Swagger.",
+  -- Text related prompts
+  Summarize = "Please summarize the following text.",
+  Spelling = "Please correct any grammar and spelling errors in the following text.",
+  Wording = "Please improve the grammar and wording of the following text.",
+  Concise = "Please rewrite the following text to make it more concise.",
+}
 local plugins = {
   -- **********************************
   -- visual settings
@@ -563,8 +581,8 @@ local plugins = {
     cmd = "Copilot",
   },
   {
-    "gptlang/CopilotChat.nvim",
-    branch = "canary",
+    --"gptlang/CopilotChat.nvim",
+    "CopilotC-Nvim/CopilotChat.nvim",
     event = "VeryLazy",
     dependencies = {
        -- Or { "github/copilot.vim" }
@@ -577,7 +595,58 @@ local plugins = {
       show_help = "no",                          -- Show help text for CopilotChatInPlace, default: yes
       debug = false,                             -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
       language = "Japanese",
+
+      prompts = prompts,
+      auto_follow_cursor = false, -- Don't follow the cursor after getting response
+      mappings = {
+        close = "q", -- Close chat
+        reset = "<C-l>", -- Clear the chat buffer
+        complete = "<Tab>", -- Change to insert mode and press tab to get the completion
+        submit_prompt = "<CR>", -- Submit question to Copilot Chat
+        accept_diff = "<C-y>", -- Accept the diff
+        show_diff = "<C-s>", -- Show the diff
+      },
     },
+    config = function(_, opts)
+      local chat = require("CopilotChat")
+      local select = require("CopilotChat.select")
+      -- Use unnamed register for the selection
+      opts.selection = select.unnamed
+
+      -- Override the git prompts message
+      opts.prompts.Commit = {
+        prompt = "Write commit message for the change with commitizen convention",
+        selection = select.gitdiff,
+      }
+      opts.prompts.CommitStaged = {
+        prompt = "Write commit message for the change with commitizen convention",
+        selection = function(source)
+          return select.gitdiff(source, true)
+        end,
+      }
+
+      chat.setup(opts)
+      vim.api.nvim_create_user_command("CopilotChatInline", function(args)
+        chat.ask(args.args, {
+          selection = select.visual,
+          window = {
+            layout = "float",
+            relative = "cursor",
+            width = 1,
+            height = 0.4,
+            row = 1,
+          },
+        })
+      end, { nargs = "*", range = true })
+    end,
+    keys = {
+      {
+        "<C-c>",
+        ":CopilotChatInline<cr>",
+        mode = "x",
+        desc = "CopilotChat - Inline chat",
+      },
+    }
   },
   {
     'kiddos/gemini.nvim',
@@ -603,6 +672,7 @@ local plugins = {
     cmd = "BlackJackNewGame",
     dependencies = { "nvim-lua/plenary.nvim" },
   },
+
 }
 
 local lazy = require("lazy")
