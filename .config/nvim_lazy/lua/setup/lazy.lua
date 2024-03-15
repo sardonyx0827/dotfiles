@@ -639,14 +639,6 @@ local plugins = {
         })
       end, { nargs = "*", range = true })
     end,
-    keys = {
-      {
-        "<C-c>",
-        ":CopilotChatInline<cr>",
-        mode = "x",
-        desc = "CopilotChat - Inline chat",
-      },
-    }
   },
   {
     'kiddos/gemini.nvim',

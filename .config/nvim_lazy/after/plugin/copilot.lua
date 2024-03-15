@@ -64,6 +64,8 @@ vim.keymap.set({"n", "v"}, "<leader>cp",
     end,
     {desc = "CopilotChat - Prompt actions" })
 
+vim.keymap.set({"n", "v", "i"}, "<C-c>", ":CopilotChatInline<CR>", { desc = "Copilot Chat  Inline chat" })
+
 -- jump to next error/warn and fix with Copilot Chat
 local function quick_fix_next_error_with_ai()
 
