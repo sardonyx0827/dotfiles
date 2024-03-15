@@ -1,3 +1,6 @@
+---------------------------------------------------------
+-- load buffers from filepath list
+---------------------------------------------------------
 -- example
 -- write "find * -type f -name "*.lua"
 -- and execute this command ":.!sh"
@@ -33,6 +36,9 @@ end
 
 vim.keymap.set("n", "<leader>bl", load_buffers_from_file_list, { desc = 'load buffers from file list' })
 
+---------------------------------------------------------
+-- codeblock utilities
+---------------------------------------------------------
 -- Function to move to the next or previous code block
 local function move_to_codeblock(direction)
 
@@ -78,7 +84,7 @@ end
 vim.keymap.set("n", "<leader><leader>n", function() move_to_codeblock("next") end, {desc = "move to next codeblock text", noremap = true})
 vim.keymap.set("n", "<leader><leader>p", function() move_to_codeblock("prev") end, {desc = "move to prev codeblock text", noremap = true})
 
--- select codeblock text (current)
+-- This function is used to select the text within a code block in a markdown file.
 local function select_codeblock_text()
 
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
