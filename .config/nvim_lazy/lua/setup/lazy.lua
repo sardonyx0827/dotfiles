@@ -349,6 +349,7 @@ local plugins = {
     dependencies = {
       'rcarriga/nvim-dap-ui',
       'jay-babu/mason-nvim-dap.nvim',
+      "nvim-neotest/nvim-nio",
       'mfussenegger/nvim-dap-python',
     },
   },

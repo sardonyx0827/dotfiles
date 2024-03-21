@@ -36,7 +36,7 @@ require("copilot").setup({
 
 })
 require("copilot_cmp").setup()
---vim.keymap.set("n", "<c-l>", ":Copilot panel<CR>", { silent = true })
+vim.keymap.set("n", "<c-l>", ":Copilot panel<CR>", { silent = true })
 
 -- Copilot Chat - Keymaps
 vim.keymap.set("n", "<leader>cc", "ggVGy:CopilotChat ", { desc = "Copilot Chat - select all" })
