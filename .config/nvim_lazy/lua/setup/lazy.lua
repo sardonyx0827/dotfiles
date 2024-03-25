@@ -617,14 +617,14 @@ local plugins = {
 
       prompts = prompts,
       auto_follow_cursor = false, -- Don't follow the cursor after getting response
-      mappings = {
-        close = "q", -- Close chat
-        reset = "<C-l>", -- Clear the chat buffer
-        complete = "<Tab>", -- Change to insert mode and press tab to get the completion
-        submit_prompt = "<CR>", -- Submit question to Copilot Chat
-        accept_diff = "<C-y>", -- Accept the diff
-        show_diff = "<C-s>", -- Show the diff
-      },
+    },
+    mappings = {
+      close = "q", -- Close chat
+      reset = "<C-l>", -- Clear the chat buffer
+      complete = "<Tab>", -- Change to insert mode and press tab to get the completion
+      submit_prompt = "<CR>", -- Submit question to Copilot Chat
+      accept_diff = "<C-y>", -- Accept the diff
+      show_diff = "<C-s>", -- Show the diff
     },
     config = function(_, opts)
       local chat = require("CopilotChat")
