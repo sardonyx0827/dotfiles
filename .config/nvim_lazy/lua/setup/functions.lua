@@ -32,6 +32,7 @@ local load_buffers_from_file_list = function()
 
     ::continue::
   end
+  print("load buffers - Processing completed successfully.")
 end
 
 vim.keymap.set("n", "<leader>bl", load_buffers_from_file_list, { desc = 'load buffers from file list' })
