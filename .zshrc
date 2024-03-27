@@ -82,6 +82,7 @@ plugins=(
   git
   zsh-autosuggestions
   zsh-syntax-highlighting
+  z
 )
 # zsh-autosuggestions (5 or 6)
 export ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=6'
@@ -168,7 +169,7 @@ setopt braceccl
 setopt correct
 
 # z
-. /home/sardonyx0827/work/tools/z/z.sh
+#. /home/sardonyx0827/work/tools/z/z.sh
 
 # completion for gh command. need this solution "gh completion -s zsh > /usr/local/share/zsh/site-functions/_gh"
 autoload -U compinit
