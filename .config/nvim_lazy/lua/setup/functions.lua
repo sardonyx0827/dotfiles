@@ -1,8 +1,6 @@
 ---------------------------------------------------------
 -- create filepath list from current directory
 ---------------------------------------------------------
--- example
--- execute "find * -type f"
 local create_file_path_list_from_current_dir = function()
   cmd = "find * -type f"
   -- write it down to the current buffer
