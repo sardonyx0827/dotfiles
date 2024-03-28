@@ -1,9 +1,26 @@
 ---------------------------------------------------------
+-- create filepath list from current directory
+---------------------------------------------------------
+-- example
+-- execute "find * -type f"
+local create_file_path_list_from_current_dir = function()
+  cmd = "find * -type f"
+  -- write it down to the current buffer
+  vim.cmd("normal! i" .. cmd)
+  vim.cmd(".!sh")
+
+  print("execute command: " .. cmd)
+end
+vim.keymap.set("n", "<leader>lb", create_file_path_list_from_current_dir, { desc = 'create file path list from current directory' })
+
+
+---------------------------------------------------------
 -- load buffers from filepath list
 ---------------------------------------------------------
 -- example
--- write "find * -type f -name "*.lua"
+-- write "find * -type f"
 -- and execute this command ":.!sh"
+-- then, execute this command ":lua load_buffers_from_file_list()"
 local load_buffers_from_file_list = function()
 
   local buf = vim.api.nvim_get_current_buf()
