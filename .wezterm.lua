@@ -6,6 +6,7 @@ if wezterm.config_builder then
   config = wezterm.config_builder()
 end
 
+config.use_ime = true
 -- Acceptable values are SteadyBlock, BlinkingBlock, SteadyUnderline, BlinkingUnderline, SteadyBar, and BlinkingBar.
 config.default_cursor_style = 'BlinkingBlock'
 -- font
