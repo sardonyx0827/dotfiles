@@ -177,3 +177,6 @@ compinit -i
 
 # bind key(Ctrl + ])
 bindkey '^]' autosuggest-accept
+bindkey '^n' autosuggest-accept
+
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
