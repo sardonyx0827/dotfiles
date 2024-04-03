@@ -29,17 +29,16 @@ vim.keymap.set("n", "<leader>sh7", ":ToggleTerm 7direction=vertical<cr>", {desc 
 vim.keymap.set("n", "<leader>sh6", ":ToggleTerm 6direction=vertical<cr>", {desc = "ToggleTerm - toggle session 6"})
 
 local Terminal = require("toggleterm.terminal").Terminal
--- use docui https://github.com/skanehira/docui
-local docui = Terminal:new({
-	cmd = "docui",
+local toggle_docker = Terminal:new({
+	cmd = "lazydocker",
 	direction = "float",
 	hidden = true
 })
 
-function _docui_toggle()
-	docui:toggle()
+function _docker_toggle()
+	toggle_docker:toggle()
 end
-vim.api.nvim_set_keymap("n", "<leader>td", "<cmd>lua _docui_toggle()<CR>", { noremap = true, silent = true, desc = "toggle docui - CUI tool" })
+vim.api.nvim_set_keymap("n", "<leader>td", "<cmd>lua _docker_toggle()<CR>", { noremap = true, silent = true, desc = "docker - CUI tool" })
 
 -- todo (pip install dooit)
 local dooit = Terminal:new({
