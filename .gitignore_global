@@ -137,6 +137,8 @@ dist
 
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
+# VSCode Server for Remote - Containers
+.vscode
 
 # yarn v2
 .yarn/cache
@@ -163,3 +165,6 @@ dist
 *packer_compiled.lua
 # Compiled Lazy.lua
 *lazy-lock.json
+
+# python env
+Pipfile
