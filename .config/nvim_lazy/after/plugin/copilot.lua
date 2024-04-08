@@ -3,12 +3,14 @@
 require("copilot").setup({
 
   suggestion = {
-    --enabled = true,
+    -- enabled = true,
+    -- auto_trigger = true,
     enabled = false,
     auto_trigger = false,
     debounce = 75,
     keymap = {
       accept = "<TAB>",
+      -- accept = "<CR>",
       accept_word = false,
       accept_line = false,
       next = "<c-j>",
