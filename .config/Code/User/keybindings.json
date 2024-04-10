@@ -39,12 +39,12 @@
         "key": "ctrl+k ctrl+r",
         "command": "-workbench.action.keybindingsReference"
     },
-    // copilot generate
-    {
-        "key": "ctrl+[BracketLeft]",
-        "command": "github.copilot.generate",
-        "when": "editorTextFocus && github.copilot.activated && !inInteractiveInput && !interactiveEditorFocused"
-    },
+    // // copilot generate
+    // {
+    //     "key": "ctrl+[BracketLeft]",
+    //     "command": "github.copilot.generate",
+    //     "when": "editorTextFocus && github.copilot.activated && !inInteractiveInput && !interactiveEditorFocused"
+    // },
     {
         "key": "ctrl+enter",
         "command": "-github.copilot.generate",
