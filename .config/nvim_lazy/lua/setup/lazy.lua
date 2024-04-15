@@ -15,41 +15,12 @@ vim.g.mapleader = ","
 -- copilot chat prompts
 local prompts = {
   -- Code related prompts
-  -- Explain = "Please explain how the following code works.",
-  -- Review = "Please review the following code and provide suggestions for improvement.",
-  -- Tests = "Please explain how the selected code works, then generate unit tests for it.",
-  -- Refactor = "Please refactor the following code to improve its clarity and readability.",
-  -- FixCode = "Please fix the following code to make it work as intended.",
-  -- FixError = "Please explain the error in the following text and provide a solution.",
-  -- Fix = '/COPILOT_GENERATE There is a problem in this code. Rewrite the code to show it with the bug fixed.',
-  -- BetterNamings = "Please provide better names for the following variables and functions.",
-  -- Documentation = "Please provide documentation for the following code.",
-  -- SwaggerApiDocs = "Please provide documentation for the following API using Swagger.",
-  -- SwaggerJsDocs = "Please write JSDoc for the following API using Swagger.",
-  -- Commit = "Write commit message for the change with commitizen convention. Make sure the title has maximum 50 characters and message is wrapped at 72 characters. Wrap the whole message in code block with language gitcommit.",
-  -- -- Text related prompts
-  -- Summarize = "Please summarize the following text.",
-  -- Spelling = "Please correct any grammar and spelling errors in the following text.",
-  -- Wording = "Please improve the grammar and wording of the following text.",
-  -- Concise = "Please rewrite the following text to make it more concise.",
-
-  -- Code related prompts
-  Explain = "次のコードの動作を説明してください。",
-  Review = "次のコードをレビューし、改善の提案をしてください。",
-  Tests = "選択したコードの動作を説明し、それに対するユニットテストを生成してください。",
-  Refactor = "次のコードをリファクタリングして、その明瞭さと可読性を向上させてください。",
-  --FixCode = "次のコードを修正して、意図した通りに動作するようにしてください。",
-  Fix = "このコードの問題を説明し、解決策を提供してください。",
-  BetterNamings = "次の変数と関数に対して、より良い名前を提供してください。",
-  Documentation = "次のコードに対するドキュメンテーションを提供してください。",
-  SwaggerApiDocs = "Swaggerを使用して、次のAPIのドキュメンテーションを提供してください。",
-  SwaggerJsDocs = "Swaggerを使用して、次のAPIのJSDocを書いてください。",
-  Commit = "Write commit message for the change with commitizen convention. Make sure the title has maximum 50 characters and message is wrapped at 72 characters. Wrap the whole message in code block with language gitcommit.",
-  -- Text related prompts
-  Summarize = "次のテキストを要約してください。",
-  Spelling = "次のテキストの文法とスペルのエラーを修正してください。",
-  Wording = "次のテキストの文法と表現を改善してください。",
-  Concise = "次のテキストをより簡潔に書き直してください。",
+  Explain = "/COPILOT_EXPLAIN 次のコードの動作を説明してください。",
+  Review = "/COPILOT_REVIEW 次のコードをレビューし、改善の提案をしてください。",
+  Fix = "/COPILOT_GENERATE このコードの問題を説明し、解決策を提供してください。",
+  Optimize = "/COPILOT_GENERATE 選択したコードを最適化して、パフォーマンスと可読性を向上させてください。",
+  Docs = "/COPILOT_GENERATE 次のコードに対するドキュメンテーションを提供してください。",
+  Tests = "/COPILOT_GENERATE このコードのテストを生成してください。",
 }
 local plugins = {
   -- **********************************
