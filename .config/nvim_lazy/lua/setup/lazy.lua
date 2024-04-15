@@ -21,10 +21,12 @@ local prompts = {
   -- Refactor = "Please refactor the following code to improve its clarity and readability.",
   -- FixCode = "Please fix the following code to make it work as intended.",
   -- FixError = "Please explain the error in the following text and provide a solution.",
+  -- Fix = '/COPILOT_GENERATE There is a problem in this code. Rewrite the code to show it with the bug fixed.',
   -- BetterNamings = "Please provide better names for the following variables and functions.",
   -- Documentation = "Please provide documentation for the following code.",
   -- SwaggerApiDocs = "Please provide documentation for the following API using Swagger.",
   -- SwaggerJsDocs = "Please write JSDoc for the following API using Swagger.",
+  -- Commit = "Write commit message for the change with commitizen convention. Make sure the title has maximum 50 characters and message is wrapped at 72 characters. Wrap the whole message in code block with language gitcommit.",
   -- -- Text related prompts
   -- Summarize = "Please summarize the following text.",
   -- Spelling = "Please correct any grammar and spelling errors in the following text.",
@@ -36,12 +38,13 @@ local prompts = {
   Review = "次のコードをレビューし、改善の提案をしてください。",
   Tests = "選択したコードの動作を説明し、それに対するユニットテストを生成してください。",
   Refactor = "次のコードをリファクタリングして、その明瞭さと可読性を向上させてください。",
-  FixCode = "次のコードを修正して、意図した通りに動作するようにしてください。",
-  FixError = "次のテキストのエラーを説明し、解決策を提供してください。",
+  --FixCode = "次のコードを修正して、意図した通りに動作するようにしてください。",
+  Fix = "このコードの問題を説明し、解決策を提供してください。",
   BetterNamings = "次の変数と関数に対して、より良い名前を提供してください。",
   Documentation = "次のコードに対するドキュメンテーションを提供してください。",
   SwaggerApiDocs = "Swaggerを使用して、次のAPIのドキュメンテーションを提供してください。",
   SwaggerJsDocs = "Swaggerを使用して、次のAPIのJSDocを書いてください。",
+  Commit = "Write commit message for the change with commitizen convention. Make sure the title has maximum 50 characters and message is wrapped at 72 characters. Wrap the whole message in code block with language gitcommit.",
   -- Text related prompts
   Summarize = "次のテキストを要約してください。",
   Spelling = "次のテキストの文法とスペルのエラーを修正してください。",
@@ -613,7 +616,6 @@ local plugins = {
       show_help = "no",                          -- Show help text for CopilotChatInPlace, default: yes
       debug = false,                             -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
       language = "Japanese",
-
       prompts = prompts,
       auto_follow_cursor = false, -- Don't follow the cursor after getting response
     },
@@ -630,19 +632,6 @@ local plugins = {
       local select = require("CopilotChat.select")
       -- Use unnamed register for the selection
       opts.selection = select.unnamed
-
-      -- Override the git prompts message
-      opts.prompts.Commit = {
-        prompt = "Write commit message for the change with commitizen convention",
-        selection = select.gitdiff,
-      }
-      opts.prompts.CommitStaged = {
-        prompt = "Write commit message for the change with commitizen convention",
-        selection = function(source)
-          return select.gitdiff(source, true)
-        end,
-      }
-
       chat.setup(opts)
       vim.api.nvim_create_user_command("CopilotChatInline", function(args)
         chat.ask(args.args, {
