@@ -383,6 +383,7 @@
     "editor.lineNumbers": "relative",
     "git.autofetch": true,
     "github.copilot.enable": {
+        "*": true,
         "plaintext": "true",
         "markdown": "true",
         "scminput": "true"
@@ -397,4 +398,6 @@
     "CodeGPT.query.language": "Japanese",
     "CodeGPT.Autocomplete.enabled": false,
     "window.enableMenuBarMnemonics": false,
+    "continue.enableTabAutocomplete": false,
+    //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }
