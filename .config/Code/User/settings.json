@@ -399,5 +399,8 @@
     "CodeGPT.Autocomplete.enabled": false,
     "window.enableMenuBarMnemonics": false,
     "continue.enableTabAutocomplete": false,
+    "[typescriptreact]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }

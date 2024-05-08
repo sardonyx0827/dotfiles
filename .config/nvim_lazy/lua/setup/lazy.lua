@@ -636,7 +636,8 @@ local plugins = {
 {
   "David-Kunz/gen.nvim",
   opts = {
-    model = "codegemma:latest", -- The default model to use.
+    -- model = "codegemma:latest", -- The default model to use.
+    model = "phi3:latest", -- The default model to use.
     show_model = true, -- Displays which model you are using at the beginning of your chat session.
   }
 },
