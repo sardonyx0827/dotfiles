@@ -507,7 +507,10 @@ local plugins = {
   {
     "FabijanZulj/blame.nvim",
     lazy = true,
-    cmd = "ToggleBlame",
+    cmd = "BlameToggle",
+    config = function()
+      require("blame").setup()
+    end
   },
   -- key navigation
   {
