@@ -402,5 +402,9 @@
     "[typescriptreact]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
+    "continue.showInlineTip": false,
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }
