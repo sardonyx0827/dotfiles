@@ -586,7 +586,7 @@ local plugins = {
     },
     opts = {
       mode = "newbuffer",                        -- newbuffer or split, default: newbuffer
-      model = 'gpt-4',
+      model = 'gpt-4o',
       show_help = "no",                          -- Show help text for CopilotChatInPlace, default: yes
       debug = false,                             -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
       language = "Japanese",
