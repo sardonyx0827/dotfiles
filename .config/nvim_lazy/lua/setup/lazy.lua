@@ -126,8 +126,8 @@ local plugins = {
   },
   {
     "startup-nvim/startup.nvim",
-    lazy = true,
-    event = "VimEnter",
+    -- lazy = true,
+    -- event = "VimEnter",
     dependencies = {
       { "nvim-telescope/telescope.nvim" },
       { "nvim-lua/plenary.nvim" }
