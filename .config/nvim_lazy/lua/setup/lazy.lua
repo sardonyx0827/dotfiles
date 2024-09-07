@@ -327,44 +327,44 @@ local plugins = {
       'mfussenegger/nvim-dap-python',
     },
   },
-  {
-    "folke/edgy.nvim",
-    event = "VeryLazy",
-    init = function()
-      vim.opt.laststatus = 3
-      vim.opt.splitkeep = "screen"
-    end,
-    opts = {
-      wo = {
-        spell = false,
-      },
-      animate = {
-        enabled = false,
-      },
-      right = {
-        {
-          title = "CopilotChat.nvim", -- Title of the window
-          ft = "copilot-chat",        -- This is custom file type from CopilotChat.nvim
-          size = { width = 0.3 },     -- Width of the window
-        },
-      },
-      left = {
-        {
-          title = "vuffers",
-          ft = "vuffers",
-          size = { height = 0.2 },
-        },
-        "NvimTree",
-        {
-          title = "UndoTree",
-          ft = "undotree",
-        },
-      },
-      bottom = {
-        "Trouble",
-      },
-    },
-  },
+  -- {
+  --   "folke/edgy.nvim",
+  --   event = "VeryLazy",
+  --   init = function()
+  --     vim.opt.laststatus = 3
+  --     vim.opt.splitkeep = "screen"
+  --   end,
+  --   opts = {
+  --     wo = {
+  --       spell = false,
+  --     },
+  --     animate = {
+  --       enabled = false,
+  --     },
+  --     right = {
+  --       {
+  --         title = "CopilotChat.nvim", -- Title of the window
+  --         ft = "copilot-chat",        -- This is custom file type from CopilotChat.nvim
+  --         size = { width = 0.3 },     -- Width of the window
+  --       },
+  --     },
+  --     left = {
+  --       {
+  --         title = "vuffers",
+  --         ft = "vuffers",
+  --         size = { height = 0.2 },
+  --       },
+  --       "NvimTree",
+  --       {
+  --         title = "UndoTree",
+  --         ft = "undotree",
+  --       },
+  --     },
+  --     bottom = {
+  --       "Trouble",
+  --     },
+  --   },
+  -- },
   -- show messages Top-Right, and Rich UI
   {
     "folke/noice.nvim",
@@ -585,7 +585,6 @@ local plugins = {
     cmd = "Copilot",
   },
   {
-    --"gptlang/CopilotChat.nvim",
     "CopilotC-Nvim/CopilotChat.nvim",
     event = "VeryLazy",
     dependencies = {
@@ -603,14 +602,6 @@ local plugins = {
       prompts = prompts,
       auto_follow_cursor = false, -- Don't follow the cursor after getting response
     },
-    -- mappings = {
-    --   close = "q", -- Close chat
-    --   reset = "<C-l>", -- Clear the chat buffer
-    --   complete = "<Tab>", -- Change to insert mode and press tab to get the completion
-    --   submit_prompt = "<CR>", -- Submit question to Copilot Chat
-    --   accept_diff = "<C-y>", -- Accept the diff
-    --   show_diff = "<C-s>", -- Show the diff
-    -- },
     config = function(_, opts)
       local chat = require("CopilotChat")
       local select = require("CopilotChat.select")
@@ -621,9 +612,10 @@ local plugins = {
         chat.ask(args.args, {
           selection = select.visual,
           window = {
+            title = "CopilotChatInline",
             layout = "float",
             relative = "cursor",
-            width = 1,
+            width = 0.5,
             height = 0.4,
             row = 1,
           },
