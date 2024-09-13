@@ -1,7 +1,6 @@
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
-export PATH=/home/sardonyx0827/work/cli/rusty-journal:$PATH
-export PATH=/home/sardonyx0827/work/tools/docui:$PATH
+export PATH=/home/sardonyx0827/go/bin:$PATH
 
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
@@ -140,6 +139,11 @@ fvi () {
   nvim $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
 }
 
+# download web contents
+dwc () {
+  wget -r -l $2 --convert-links --restrict-file-names=nocontrol -E $1
+}
+
 # wezterm
 alias imgcat="wezterm imgcat"
 
@@ -147,19 +151,33 @@ alias imgcat="wezterm imgcat"
 alias restart_ibus="ibus-daemon -drx"
 
 # use nvim
+alias v="nvim"
 alias vim="nvim"
 alias vimdiff="nvim -d"
 alias view="nvim -R"
 
 # use gh copilots
+eval "$(gh copilot alias -- zsh)"
 alias suggest="gh copilot suggest"
 
+# or 'docker exec MyContainer nvim --headless --listen 0.0.0.0:22222'
+alias nvim_listen="nvim --headless --listen 0.0.0.0:22222"
+alias nvim_attach="nvim --remote-ui --server localhost:22222"
+
+# change directory to workspace
+alias cdw="cd ~/work"
+
 # history
+HISTFILE=~/.zsh_history
+HISTSIZE=100000
+SAVEHIST=100000
+setopt append_history
 setopt auto_pushd
 setopt pushd_ignore_dups
 setopt share_history
 setopt hist_reduce_blanks
 setopt hist_ignore_space
+setopt hist_ignore_all_dups
 
 # display japanese character
 setopt print_eight_bit
@@ -167,9 +185,6 @@ setopt extended_glob
 setopt braceccl
 # correct command when mistyped
 setopt correct
-
-# z
-#. /home/sardonyx0827/work/tools/z/z.sh
 
 # completion for gh command. need this solution "gh completion -s zsh > /usr/local/share/zsh/site-functions/_gh"
 autoload -U compinit

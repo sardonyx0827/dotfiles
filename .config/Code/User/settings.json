@@ -384,9 +384,9 @@
     "git.autofetch": true,
     "github.copilot.enable": {
         "*": true,
-        "plaintext": "true",
-        "markdown": "true",
-        "scminput": "true"
+        "plaintext": true,
+        "markdown": true,
+        "scminput": true
     },
     //"workbench.editor.showTabs": "single",
     "window.customMenuBarAltFocus": false,
@@ -406,5 +406,6 @@
     "[javascript]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
+    "github.copilot.advanced": {},
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }
