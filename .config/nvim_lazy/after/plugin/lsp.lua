@@ -11,6 +11,7 @@ lsp_zero.on_attach(function(_, bufnr)
   vim.keymap.set("n", "<leader>ca", function() vim.lsp.buf.code_action() end, { buffer = bufnr, remap = false, desc = "code action" })
   vim.keymap.set("n", "<leader>ff", function() vim.lsp.buf.format { async = true } end, { buffer = bufnr, remap = false, desc = "format this file" })
   vim.keymap.set("n", "<leader>ra", function() vim.lsp.buf.rename() end, {desc = "rename all file in workspace"})
+
 end)
 
 require('mason').setup({})
@@ -18,44 +19,11 @@ local null_ls = require("null-ls")
 require('mason-lspconfig').setup({
   ensure_installed = {},
   handlers = {
-    -- lsp_zero.default_setup,
+    lsp_zero.default_setup,
     lua_ls = function()
       local lua_opts = lsp_zero.nvim_lua_ls()
       require('lspconfig').lua_ls.setup(lua_opts)
     end,
-    function (server_name)
-      if server_name == "tsserver" then
-        if server_name == 'tsserver' then
-          server_name = 'ts_ls'
-        else
-          lsp_zero.default_setup(server_name)
-        end
-      end
-      -- highlight error for definition
-      local opts = {
-        capabilities = require("cmp_nvim_lsp").default_capabilities(),
-        on_attach = function(client, bufnr)
-          if client.supports_method "textDocument/documentHighlight" then
-            local lsp_document_highlight = vim.api.nvim_create_augroup("lsp_document_highlight", {})
-            vim.api.nvim_create_autocmd({ "CursorHold", "CursorHoldI" }, {
-              group = lsp_document_highlight,
-              buffer = bufnr,
-              callback = function()
-                vim.lsp.buf.document_highlight()
-              end,
-            })
-            vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
-              group = lsp_document_highlight,
-              buffer = bufnr,
-              callback = function()
-                vim.lsp.buf.clear_references()
-              end,
-            })
-          end
-        end
-      }
-      require("lspconfig")[server_name].setup(opts)
-    end
   }
 })
 

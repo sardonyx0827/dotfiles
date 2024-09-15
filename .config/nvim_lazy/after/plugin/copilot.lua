@@ -35,6 +35,14 @@ require("copilot").setup({
     },
   },
   --panel = { enabled = false },
+    filetypes = {
+    yaml = true,
+    markdown = true,
+    help = true,
+    gitcommit = true,
+    gitrebase = true,
+    hgcommit = true,
+  },
 
 })
 require("copilot_cmp").setup()
