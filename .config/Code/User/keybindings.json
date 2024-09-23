@@ -204,4 +204,8 @@
         "key": "ctrl+shift+i",
         "command": "-codegpt.getCode"
     },
+    {
+        "key": "ctrl+s",
+        "command": "workbench.action.files.save"
+    }
 ]
