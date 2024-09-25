@@ -570,7 +570,21 @@ local plugins = {
       -- or leave empty for defaults
      },
   },
-
+  -- Live Share
+  {
+    "azratul/live-share.nvim",
+    dependencies = {
+      "jbyuki/instant.nvim",
+    },
+    config = function()
+      vim.g.instant_username = "sardonyx"
+      require("live-share").setup({
+        port_internal = 8765,
+        max_attempts = 40, -- 10 seconds
+        service = "serveo.net"
+      })
+    end
+  },
   -- **********************************
   -- AI solutions
   -- **********************************
@@ -623,19 +637,19 @@ local plugins = {
       end, { nargs = "*", range = true })
     end,
   },
-  -- {
-  --   'kiddos/gemini.nvim',
-  --   event = "VeryLazy",
-  --   dependencies = {
-  --     "nvim-lua/plenary.nvim", -- required
-  --   },
-  --   config = function()
-  --     require('gemini').setup({
-  --       menu_key = '<C-p>',
-  --     })
-  --     vim.keymap.set("n", "<C-g>", ":GeminiChat<CR>", { desc = "Gemini Chat - Prompt" })
-  --   end,
-  -- },
+  {
+    'kiddos/gemini.nvim',
+    event = "VeryLazy",
+    dependencies = {
+      "nvim-lua/plenary.nvim", -- required
+    },
+    config = function()
+      require('gemini').setup({
+        menu_key = '<C-p>',
+      })
+      vim.keymap.set("n", "<C-g>", ":GeminiChat<CR>", { desc = "Gemini Chat - Prompt" })
+    end,
+  },
 
 -- Custom Parameters (with defaults)
 {
