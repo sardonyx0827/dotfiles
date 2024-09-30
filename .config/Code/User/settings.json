@@ -241,7 +241,10 @@
             "commands": [
                 "workbench.action.compareEditor.focusOtherSide"
             ]
-        }
+        },{
+            "before": ["<leader>", "j", "j"],
+            "after": ["leader", "leader", "leader", "b", "d", "w"]
+        },
     ],
 
     "vim.visualModeKeyBindingsNonRecursive": [
