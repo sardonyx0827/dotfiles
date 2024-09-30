@@ -412,5 +412,6 @@
     },
     "editor.tabSize": 2,
     "github.copilot.chat.localeOverride": "ja",
+    "vim.easymotion": true,
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }

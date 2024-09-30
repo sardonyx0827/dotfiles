@@ -109,12 +109,6 @@ local plugins = {
         italic_comments = false,
         -- Disable nvim-tree background color
         disable_nvimtree_bg = true,
-
-        -- Override colors (see ./lua/vscode/colors.lua)
-        --color_overrides = {
-        --    vscLineNumber = '#FFFFFF',
-        --},
-
         -- Override highlight groups (see ./lua/vscode/theme.lua)
         group_overrides = {
           -- this supports the same val table as vim.api.nvim_set_hl
@@ -327,48 +321,9 @@ local plugins = {
       'mfussenegger/nvim-dap-python',
     },
   },
-  -- {
-  --   "folke/edgy.nvim",
-  --   event = "VeryLazy",
-  --   init = function()
-  --     vim.opt.laststatus = 3
-  --     vim.opt.splitkeep = "screen"
-  --   end,
-  --   opts = {
-  --     wo = {
-  --       spell = false,
-  --     },
-  --     animate = {
-  --       enabled = false,
-  --     },
-  --     right = {
-  --       {
-  --         title = "CopilotChat.nvim", -- Title of the window
-  --         ft = "copilot-chat",        -- This is custom file type from CopilotChat.nvim
-  --         size = { width = 0.3 },     -- Width of the window
-  --       },
-  --     },
-  --     left = {
-  --       {
-  --         title = "vuffers",
-  --         ft = "vuffers",
-  --         size = { height = 0.2 },
-  --       },
-  --       "NvimTree",
-  --       {
-  --         title = "UndoTree",
-  --         ft = "undotree",
-  --       },
-  --     },
-  --     bottom = {
-  --       "Trouble",
-  --     },
-  --   },
-  -- },
   -- show messages Top-Right, and Rich UI
   {
     "folke/noice.nvim",
-    event = "VeryLazy",
     opts = {
       -- add any options here
     },
@@ -551,9 +506,9 @@ local plugins = {
       vim.keymap.set('', 'F', function()
         hop.hint_char1({ direction = directions.BEFORE_CURSOR, current_line_only = true })
       end , {remap=true, silent = true})
-      vim.keymap.set("n", '<leader>ha', ':HopAnywhere<CR>', {remap=true, silent = true, desc = "hop - move to anywhere"})
-      vim.keymap.set("n", '<leader>hw', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
-      vim.keymap.set("n", '<leader>jj', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
+      -- vim.keymap.set("n", '<leader>ha', ':HopAnywhere<CR>', {remap=true, silent = true, desc = "hop - move to anywhere"})
+      -- vim.keymap.set("n", '<leader>hw', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
+      vim.keymap.set("n", '<leader><leader>f', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
       require("hop").setup({
         -- you can configure Hop the way you like here; see :h hop-config
         --require'hop'.setup { keys = 'etovxqpdygfblzhckisuran' }
@@ -637,29 +592,6 @@ local plugins = {
       end, { nargs = "*", range = true })
     end,
   },
-  -- {
-  --   'kiddos/gemini.nvim',
-  --   event = "VeryLazy",
-  --   dependencies = {
-  --     "nvim-lua/plenary.nvim", -- required
-  --   },
-  --   config = function()
-  --     require('gemini').setup({
-  --       menu_key = '<C-p>',
-  --     })
-  --     vim.keymap.set("n", "<C-g>", ":GeminiChat<CR>", { desc = "Gemini Chat - Prompt" })
-  --   end,
-  -- },
-
--- Custom Parameters (with defaults)
-{
-  "David-Kunz/gen.nvim",
-  opts = {
-    -- model = "codegemma:latest", -- The default model to use.
-    model = "phi3:latest", -- The default model to use.
-    show_model = true, -- Displays which model you are using at the beginning of your chat session.
-  }
-},
 
   -- **********************************
   -- others
