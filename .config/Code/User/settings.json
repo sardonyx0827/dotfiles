@@ -416,6 +416,6 @@
     "editor.tabSize": 2,
     "github.copilot.chat.localeOverride": "ja",
     "vim.easymotion": true,
-    "vim.easymotionKeys": "hklyuiopnm,qwertzxcvbasdgjf",
+    "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }
