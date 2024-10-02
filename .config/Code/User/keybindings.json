@@ -207,5 +207,15 @@
     {
         "key": "ctrl+s",
         "command": "workbench.action.files.save"
+    },
+    {
+        "key": "ctrl+c",
+        "command": "inlineChat.start",
+        "when": "editorFocus && inlineChatHasProvider && !editorReadonly"
+    },
+    {
+        "key": "ctrl+i",
+        "command": "-inlineChat.start",
+        "when": "editorFocus && inlineChatHasProvider && !editorReadonly"
     }
 ]
