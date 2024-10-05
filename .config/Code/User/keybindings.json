@@ -40,11 +40,6 @@
         "command": "-workbench.action.keybindingsReference"
     },
     // // copilot generate
-    // {
-    //     "key": "ctrl+[BracketLeft]",
-    //     "command": "github.copilot.generate",
-    //     "when": "editorTextFocus && github.copilot.activated && !inInteractiveInput && !interactiveEditorFocused"
-    // },
     {
         "key": "ctrl+enter",
         "command": "-github.copilot.generate",
@@ -191,18 +186,6 @@
     {
         "key": "cmd+f",
         "command": "workbench.action.focusFirstEditorGroup"
-    },
-    {
-        "key": "ctrl+g",
-        "command": "codegpt-sidebar.focus"
-    },
-    {
-        "key": "ctrl+p",
-        "command": "codegpt.getCode"
-    },
-    {
-        "key": "ctrl+shift+i",
-        "command": "-codegpt.getCode"
     },
     {
         "key": "ctrl+s",
