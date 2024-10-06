@@ -247,6 +247,7 @@
                 "j",
                 "j"
             ],
+            // vim easy motion
             "after": [
                 "leader",
                 "leader",
@@ -255,7 +256,17 @@
                 "d",
                 "w"
             ]
-        },
+        },{
+            "before": [
+                "<leader>",
+                "g",
+                "n"
+            ],
+            // git next change
+            "commands": [
+                "workbench.action.editor.nextChange"
+            ]
+        }
     ],
 
     "vim.visualModeKeyBindingsNonRecursive": [
