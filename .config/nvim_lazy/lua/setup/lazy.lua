@@ -240,10 +240,53 @@ local plugins = {
     cmd = { "TroubleToggle", "Trouble", "TroubleRefresh" },
     config = function()
       require("trouble").setup {
-        icons = false,
+        -- icons = false,
         -- your configuration comes here
         -- or leave it empty to use the default settings
         -- refer to the configuration section below
+        icons = {
+          ---@type trouble.Indent.symbols
+          indent = {
+            top           = "│ ",
+            middle        = "├╴",
+            last          = "└╴",
+            -- last          = "-╴",
+            -- last       = "╰╴", -- rounded
+            fold_open     = " ",
+            fold_closed   = " ",
+            ws            = "  ",
+          },
+          folder_closed   = " ",
+          folder_open     = " ",
+          kinds = {
+            Array         = " ",
+            Boolean       = "󰨙 ",
+            Class         = " ",
+            Constant      = "󰏿 ",
+            Constructor   = " ",
+            Enum          = " ",
+            EnumMember    = " ",
+            Event         = " ",
+            Field         = " ",
+            File          = " ",
+            Function      = "󰊕 ",
+            Interface     = " ",
+            Key           = " ",
+            Method        = "󰊕 ",
+            Module        = " ",
+            Namespace     = "󰦮 ",
+            Null          = " ",
+            Number        = "󰎠 ",
+            Object        = " ",
+            Operator      = " ",
+            Package       = " ",
+            Property      = " ",
+            String        = " ",
+            Struct        = "󰆼 ",
+            TypeParameter = " ",
+            Variable      = "󰀫 ",
+          },
+        },
       }
     end
   },
