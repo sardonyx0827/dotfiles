@@ -118,6 +118,16 @@
         },{
             "before": [
                 "<leader>",
+                "g",
+                "n"
+            ],
+            // git next change
+            "commands": [
+                "workbench.action.editor.nextChange"
+            ]
+        },{
+            "before": [
+                "<leader>",
                 "f",
                 "f",
             ],
@@ -215,6 +225,16 @@
             "before": [
                 "<leader>",
                 "x",
+                "x",
+            ],
+            // display all problems
+            "commands": [
+                "workbench.actions.view.problems"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "x",
                 "n",
             ],
             // jump to next problem
@@ -255,16 +275,6 @@
                 "b",
                 "d",
                 "w"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "g",
-                "n"
-            ],
-            // git next change
-            "commands": [
-                "workbench.action.editor.nextChange"
             ]
         }
     ],
