@@ -250,7 +250,8 @@
             // quick fix(using Copilot)
             "commands": [
                 "editor.action.marker.nextInFiles",
-                "interactiveEditor.start",
+                // "interactiveEditor.start",
+                "editor.action.quickFix",
             ]
         },{
             "before": [
