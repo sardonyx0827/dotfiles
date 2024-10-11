@@ -74,8 +74,12 @@ end
 
 -- for using pipenv or any other virtualenv
 local venv = os.getenv('VIRTUAL_ENV')
-local command = string.format('%s/bin/python', venv)
-require('dap-python').setup(command)
+if venv ~= nil then
+  local command = string.format('%s/bin/python', venv)
+  require('dap-python').setup(command)
+else
+  require('dap-python').setup()
+end
 
 vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true, desc= "Toggle Breakpoint." })
 vim.api.nvim_set_keymap('n', '<leader>bc', ':lua require("dap").clear_breakpoints()<CR>', { silent = true, desc= "Clear All Breakpoint." })
