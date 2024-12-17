@@ -25,6 +25,16 @@
                 "workbench.panel.chat.view.copilot.focus"
             ]
         },{
+            // Chat: Open Copilot Edits
+            "before": [
+                "<leader>",
+                "c",
+                "e"
+            ],
+            "commands": [
+                "workbench.action.chat.openEditSession"
+            ]
+        },{
             "before": [
                 "<leader>",
                 "e"
@@ -450,5 +460,6 @@
     "github.copilot.chat.localeOverride": "ja",
     "vim.easymotion": true,
     "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
+    "window.customTitleBarVisibility": "auto",
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }

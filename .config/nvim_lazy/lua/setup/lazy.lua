@@ -631,6 +631,7 @@ local plugins = {
   {
     "CopilotC-Nvim/CopilotChat.nvim",
     event = "VeryLazy",
+    branch = "main",
     dependencies = {
        -- Or { "github/copilot.vim" }
       "zbirenbaum/copilot.lua",

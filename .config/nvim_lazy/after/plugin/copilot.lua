@@ -64,7 +64,7 @@ vim.keymap.set("n", "<leader>cs", "{V}y:CopilotChat ", { desc = "Copilot Chat - 
 vim.keymap.set("n", "<leader>cf", ":CopilotChatFixDiagnostic<CR>", { desc = "Copilot Chat - /fix on cursor" })
 vim.keymap.set("n", "<leader>cr", ":CopilotChatReset<CR>", { desc = "Copilot Chat - reset chat" })
 vim.keymap.set("n", "<leader>cb", ":CopilotChatBuffer ", { desc = "Copilot Chat - use buffers" })
-vim.keymap.set("n", "<leader>cm", ":CopilotChatCommitStaged<CR>", { desc = "Copilot Chat - Write commit message for the change with commitizen convention" })
+vim.keymap.set("n", "<leader>cm", ":CopilotChatCommit<CR>", { desc = "Copilot Chat - Write commit message for the change with commitizen convention" })
 
 vim.keymap.set({"n", "v"}, "<C-h>",
     function()
