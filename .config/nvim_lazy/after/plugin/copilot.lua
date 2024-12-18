@@ -92,3 +92,29 @@ end
 
 vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with CChat"})
 
+-- file selection in chat
+local function copilot_file_selection()
+  -- telescopeでworkspaceのファイルを選択して、選択したファイルのパスを変数に格納
+  local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+
+  require("telescope.builtin").find_files({
+    prompt_title = "CopilotChat - File picker",
+    hidden = true,
+    cwd = vim.fn.expand("%:p:h"),
+    attach_mappings = function(prompt_bufnr, map)
+      actions.select_default:replace(function()
+        actions.close(prompt_bufnr)
+        local selection = action_state.get_selected_entry()
+        local file_name = selection.path
+        print("Selected file: " .. file_name)
+        -- ここでfile_nameを使って必要な処理を行います
+        print(file_name)
+        vim.api.nvim_put({ "> #file:" .. file_name }, "c", true, true)
+      end)
+      return true
+    end,
+  })
+end
+
+vim.keymap.set("n", "<leader>cp", copilot_file_selection, {desc="CopilotChat - File picker"})
