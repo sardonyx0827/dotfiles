@@ -461,5 +461,6 @@
     "vim.easymotion": true,
     "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
     "window.customTitleBarVisibility": "auto",
+    "security.promptForRemoteFileProtocolHandling": false,
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }

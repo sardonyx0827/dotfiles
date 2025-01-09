@@ -600,6 +600,17 @@ local plugins = {
       -- or leave empty for defaults
      },
   },
+  {
+    -- remote-nvim
+    "amitds1997/remote-nvim.nvim",
+    version = "*", -- Pin to GitHub releases
+    dependencies = {
+      "nvim-lua/plenary.nvim", -- For standard functions
+      "MunifTanjim/nui.nvim", -- To build the plugin UI
+      "nvim-telescope/telescope.nvim", -- For picking b/w different remote methods
+    },
+    config = true,
+  },
   -- Live Share
   {
     "azratul/live-share.nvim",
