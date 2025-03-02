@@ -137,3 +137,12 @@ local function select_codeblock_text()
 end
 vim.keymap.set("n", "<leader><leader>s", select_codeblock_text, {desc = "Select codeblock text", noremap = true})
 
+---------------------------------------------------------
+-- PWD command
+---------------------------------------------------------
+local function pwd_command()
+  local pwd = vim.fn.getcwd()
+  vim.api.nvim_put({pwd}, 'l', true, true)
+end
+vim.keymap.set("n", "<leader>ws", pwd_command, {desc = "Put cwd result", noremap = true})
+

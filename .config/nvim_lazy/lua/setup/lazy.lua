@@ -629,11 +629,6 @@ local plugins = {
   -- **********************************
   -- AI solutions
   -- **********************************
-  -- GitHub Copilot
-  --{
-  --  -- Official
-  --  "github/copilot.vim",
-  --},
   {
     "zbirenbaum/copilot.lua",
     event = "InsertEnter",
@@ -678,6 +673,26 @@ local plugins = {
         })
       end, { nargs = "*", range = true })
     end,
+  },
+  -- AI Agent
+  {
+    "olimorris/codecompanion.nvim",
+    dependencies = {
+      "nvim-lua/plenary.nvim",
+      "nvim-treesitter/nvim-treesitter",
+    },
+    -- opts = {
+    --   strategies = {
+    --     -- Change the default chat adapter
+    --     chat = {
+    --       adapter = "gemini",
+    --     },
+    --   },
+    --   opts = {
+    --     -- Set debug logging
+    --     log_level = "DEBUG",
+    --   },
+    -- },
   },
 
   -- **********************************
