@@ -49,9 +49,8 @@ require("copilot_cmp").setup()
 vim.keymap.set("n", "<c-l>", ":Copilot panel<CR>", { silent = true })
 
 -- Copilot Chat - Keymaps
-vim.keymap.set("n", "<leader>cc", ":CopilotChat<CR>", { desc = "Copilot Chat" })
-vim.keymap.set("v", "<leader>cc", "y:CopilotChat<CR>", { desc = "Copilot Chat - selected" })
-vim.keymap.set("n", "<leader>co", ":CopilotChat ", { desc = "Copilot Chat - ongoing" })
+vim.keymap.set("n", "<leader>cc", ":CopilotChatOpen<CR>", { desc = "Copilot Chat" })
+vim.keymap.set("v", "<leader>cc", "y:CopilotChatOpen<CR>", { desc = "Copilot Chat - selected" })
 vim.keymap.set("n", "<C-M-i>", "ggVGy:CopilotChat ", { desc = "Copilot Chat - select all" })
 vim.keymap.set("v", "<C-M-i>", "y:CopilotChat ", { desc = "Copilot Chat - selected" })
 vim.keymap.set("n", "<leader>ce", "ggVGy:CopilotChatExplain<CR>", { desc = "Copilot Chat - /explain" })
@@ -72,8 +71,8 @@ vim.keymap.set({"n", "v"}, "<C-h>",
     end,
     {desc = "CopilotChat - Prompt actions" })
 
-vim.keymap.set("n", "<C-c>", ":CopilotChatInline<CR>", { desc = "Copilot Chat  Inline chat" })
-vim.keymap.set("v", "<C-c>", "y:CopilotChatInline<CR>", { desc = "Copilot Chat  Inline chat - selected" })
+-- vim.keymap.set("n", "<C-c>", ":CopilotChatInline<CR>", { desc = "Copilot Chat  Inline chat" })
+-- vim.keymap.set("v", "<C-c>", "y:CopilotChatInline<CR>", { desc = "Copilot Chat  Inline chat - selected" })
 
 -- jump to next error/warn and fix with Copilot Chat
 local function quick_fix_next_error_with_ai()
