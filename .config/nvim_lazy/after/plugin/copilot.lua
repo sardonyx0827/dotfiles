@@ -53,16 +53,7 @@ vim.keymap.set("n", "<leader>cc", ":CopilotChatOpen<CR>", { desc = "Copilot Chat
 vim.keymap.set("v", "<leader>cc", "y:CopilotChatOpen<CR>", { desc = "Copilot Chat - selected" })
 vim.keymap.set("n", "<C-M-i>", "ggVGy:CopilotChat ", { desc = "Copilot Chat - select all" })
 vim.keymap.set("v", "<C-M-i>", "y:CopilotChat ", { desc = "Copilot Chat - selected" })
-vim.keymap.set("n", "<leader>ce", "ggVGy:CopilotChatExplain<CR>", { desc = "Copilot Chat - /explain" })
-vim.keymap.set("v", "<leader>ce", "y:CopilotChatExplain<CR>", { desc = "Copilot Chat - /explain" })
-vim.keymap.set("n", "<leader>ct", "ggVGy:CopilotChatTests<CR>", { desc = "Copilot Chat - /test" })
-vim.keymap.set("v", "<leader>ct", "y:CopilotChatTests<CR>", { desc = "Copilot Chat - /test" })
-vim.keymap.set("n", "<leader>cj", "ggVGy:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
-vim.keymap.set("v", "<leader>cj", "y:CopilotChat 日本語訳して<CR>", { desc = "Copilot Chat - Translate to Japanese" })
 vim.keymap.set("n", "<leader>cs", "{V}y:CopilotChat ", { desc = "Copilot Chat - yank surround" })
-vim.keymap.set("n", "<leader>cf", ":CopilotChatFixDiagnostic<CR>", { desc = "Copilot Chat - /fix on cursor" })
-vim.keymap.set("n", "<leader>cr", ":CopilotChatReset<CR>", { desc = "Copilot Chat - reset chat" })
-vim.keymap.set("n", "<leader>cb", ":CopilotChatBuffer ", { desc = "Copilot Chat - use buffers" })
 vim.keymap.set("n", "<leader>cm", ":CopilotChatCommit<CR>", { desc = "Copilot Chat - Write commit message for the change with commitizen convention" })
 
 vim.keymap.set({"n", "v"}, "<C-h>",
@@ -85,7 +76,7 @@ local function quick_fix_next_error_with_ai()
 
   -- jump to next error/warn
   vim.diagnostic.goto_next({severity = vim.diagnostic.severity.ERROR})
-  vim.cmd("CopilotChatFixDiagnostic")
+  vim.cmd("CopilotChatFix")
 
 end
 
