@@ -19,7 +19,7 @@ harpoon:extend({
   end,
 })
 
-vim.keymap.set("n", "<leader>a", function() harpoon:list():append() end, { desc = 'append harpoon mark' })
+vim.keymap.set("n", "<leader>ah", function() harpoon:list():append() end, { desc = 'append harpoon mark' })
 vim.keymap.set("n", "<C-e>",     function() harpoon.ui:toggle_quick_menu(harpoon:list()) end)
 vim.keymap.set("n", "<M-1>",     function() harpoon:list():select(1) end)
 vim.keymap.set("n", "<M-2>",     function() harpoon:list():select(2) end)
