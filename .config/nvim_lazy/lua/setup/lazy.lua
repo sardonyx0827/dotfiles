@@ -633,6 +633,8 @@ local plugins = {
     "zbirenbaum/copilot.lua",
     event = "InsertEnter",
     cmd = "Copilot",
+    copilot_model = "claude-3.5-sonnet",
+    copilot_language = "Japanese",
   },
   {
     "CopilotC-Nvim/CopilotChat.nvim",
