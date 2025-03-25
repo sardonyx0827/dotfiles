@@ -707,12 +707,6 @@ local plugins = {
       -- -- add any opts here
       -- -- for example
       -- provider = "copilot",
-      -- -- auto_suggestions_provider = "copilot",
-      -- copilot = {
-      --   model="claude-3.5-sonnet",
-      --   max_completion_tokens = 8192,
-      -- }
-      -- provider = "openrouter" or "copilot",
       provider = "openrouter",
       vendors = {
         openrouter = {
@@ -721,10 +715,6 @@ local plugins = {
           api_key_name = "OPENROUTER_API_KEY",
           model = 'anthropic/claude-3.5-sonnet',
         },
-        -- copilot = {
-        --   model="claude-3.5-sonnet",
-        --   max_completion_tokens = 8192,
-        -- }
       },
     },
     -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
