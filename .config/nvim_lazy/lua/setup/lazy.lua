@@ -704,18 +704,28 @@ local plugins = {
     event = "VeryLazy",
     version = false, -- Never set this value to "*"! Never!
     opts = {
-      -- add any opts here
-      -- for example
-      provider = "copilot",
-      -- auto_suggestions_provider = "copilot",
-      -- openai = {
-      --   endpoint = "https://api.openai.com/v1",
-      --   model = "gpt-4o", -- your desired model (or use gpt-4o, etc.)
-      --   timeout = 30000, -- Timeout in milliseconds, increase this for reasoning models
-      --   temperature = 0,
-      --   max_completion_tokens = 8192, -- Increase this to include reasoning tokens (for reasoning models)
-      --   --reasoning_effort = "medium", -- low|medium|high, only used for reasoning models
-      -- },
+      -- -- add any opts here
+      -- -- for example
+      -- provider = "copilot",
+      -- -- auto_suggestions_provider = "copilot",
+      -- copilot = {
+      --   model="claude-3.5-sonnet",
+      --   max_completion_tokens = 8192,
+      -- }
+      -- provider = "openrouter" or "copilot",
+      provider = "openrouter",
+      vendors = {
+        openrouter = {
+          __inherited_from = 'openai',
+          endpoint = 'https://openrouter.ai/api/v1',
+          api_key_name = "OPENROUTER_API_KEY",
+          model = 'anthropic/claude-3.5-sonnet',
+        },
+        -- copilot = {
+        --   model="claude-3.5-sonnet",
+        --   max_completion_tokens = 8192,
+        -- }
+      },
     },
     -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
     build = "make",
