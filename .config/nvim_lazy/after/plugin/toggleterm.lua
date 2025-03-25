@@ -27,6 +27,8 @@ vim.keymap.set("n", "<leader>sh9", ":ToggleTerm 9direction=vertical<cr>", {desc 
 vim.keymap.set("n", "<leader>sh8", ":ToggleTerm 8direction=vertical<cr>", {desc = "ToggleTerm - toggle session 8"})
 vim.keymap.set("n", "<leader>sh7", ":ToggleTerm 7direction=vertical<cr>", {desc = "ToggleTerm - toggle session 7"})
 vim.keymap.set("n", "<leader>sh6", ":ToggleTerm 6direction=vertical<cr>", {desc = "ToggleTerm - toggle session 6"})
+vim.keymap.set("n", "<leader>shf", ":ToggleTerm direction=float<cr>", {desc = "ToggleTerm - toggle session 1"})
+vim.keymap.set("n", "<leader>shb", ":ToggleTerm direction=horizontal<cr>", {desc = "ToggleTerm - toggle session 1"})
 
 local Terminal = require("toggleterm.terminal").Terminal
 local toggle_docker = Terminal:new({

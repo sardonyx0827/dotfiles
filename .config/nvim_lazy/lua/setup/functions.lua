@@ -2,7 +2,7 @@
 -- create filepath list from current directory
 ---------------------------------------------------------
 local create_file_path_list_from_current_dir = function()
-  cmd = "find * -type f"
+  local cmd = "find * -type f"
   -- write it down to the current buffer
   vim.cmd("normal! i" .. cmd)
   vim.cmd(".!sh")
