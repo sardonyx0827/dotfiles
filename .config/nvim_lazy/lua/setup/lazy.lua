@@ -733,14 +733,21 @@ local plugins = {
     opts = {
       -- -- add any opts here
       -- -- for example
-      -- provider = "copilot",
-      provider = "openrouter",
+      provider = "copilot",
+      copilot = {
+        -- api_key_name = "OPENROUTER_API_KEY",
+        model = 'claude-3.7-sonnet',
+        max_tokens = 8192,
+
+      },
+      -- },
+      -- provider = "openrouter",
       vendors = {
         openrouter = {
           __inherited_from = 'openai',
           endpoint = 'https://openrouter.ai/api/v1',
           api_key_name = "OPENROUTER_API_KEY",
-          model = 'anthropic/claude-3.5-sonnet',
+          model = 'anthropic/claude-3.7-sonnet',
         },
       },
     },
