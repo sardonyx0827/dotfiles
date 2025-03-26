@@ -53,3 +53,16 @@ function _dooit_toggle()
 	dooit:toggle()
 end
 vim.api.nvim_set_keymap("n", "<leader>to", "<cmd>lua _dooit_toggle()<CR>", { noremap = true, silent = true, desc = "toggle dooit - CUI tool" })
+
+-- claude code
+local toggle_claude = Terminal:new({
+	cmd = "claude",
+	direction = "float",
+	hidden = true
+})
+
+function _claude_toggle()
+	toggle_claude:toggle()
+end
+vim.api.nvim_set_keymap("n", "<leader>tc", "<cmd>lua _claude_toggle()<CR>", { noremap = true, silent = true, desc = "claude code - CUI tool" })
+
