@@ -714,7 +714,14 @@ local plugins = {
       copilot = {
         model = 'claude-3.7-sonnet',
         max_tokens = 8192,
-
+      },
+      claude = {
+        endpoint = "https://api.anthropic.com",
+        model = "claude-3-7-sonnet-20250219",
+        api_key_name = "ANTHROPIC_API_KEY",
+        temperature = 0,
+        max_tokens = 8192,
+        disable_tools = true, -- disable tools!
       },
       vendors = {
         openrouter = {
@@ -723,6 +730,9 @@ local plugins = {
           api_key_name = "OPENROUTER_API_KEY",
           model = 'anthropic/claude-3.7-sonnet',
         },
+      },
+      behaviour = {
+        enable_claude_text_editor_tool_mode = true,
       },
     },
     -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
