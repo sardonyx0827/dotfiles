@@ -1,16 +1,11 @@
---vim.keymap.set("i", "<C-j>", "<Plug>(copilot-next)")
---vim.keymap.set("i", "<C-k>", "<Plug>(copilot-previous)")
 require("copilot").setup({
 
   suggestion = {
-    -- enabled = true,
-    -- auto_trigger = true,
     enabled = false,
     auto_trigger = false,
     debounce = 75,
     keymap = {
       accept = "<TAB>",
-      -- accept = "<CR>",
       accept_word = false,
       accept_line = false,
       next = "<c-j>",
@@ -62,9 +57,6 @@ vim.keymap.set({"n", "v"}, "<C-h>",
     end,
     {desc = "CopilotChat - Prompt actions" })
 
--- vim.keymap.set("n", "<C-c>", ":CopilotChatInline<CR>", { desc = "Copilot Chat  Inline chat" })
--- vim.keymap.set("v", "<C-c>", "y:CopilotChatInline<CR>", { desc = "Copilot Chat  Inline chat - selected" })
-
 -- jump to next error/warn and fix with Copilot Chat
 local function quick_fix_next_error_with_ai()
 
@@ -92,7 +84,7 @@ local function copilot_file_selection()
     prompt_title = "CopilotChat - File picker",
     hidden = true,
     cwd = vim.fn.expand("%:p:h"),
-    attach_mappings = function(prompt_bufnr, map)
+    attach_mappings = function(prompt_bufnr, _)
       actions.select_default:replace(function()
         actions.close(prompt_bufnr)
         local selection = action_state.get_selected_entry()

@@ -33,4 +33,3 @@ autocmd({ "BufWritePre" }, {
 
 vim.g.netrw_liststyle = 3
 vim.g.netrw_winsize = 80
---vim.g.netrw_browse_split = 2

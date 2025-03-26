@@ -1,6 +1,2 @@
--- vim.keymap.set("n", "<leader>xw", function() require("trouble").open("workspace_diagnostics") end, {desc="Workspace Diagnostics"})
--- vim.keymap.set("n", "<leader>xd", function() require("trouble").open("document_diagnostics") end, {desc="Document Diagnostics"})
--- vim.keymap.set("n", "<leader>xg", function() require("trouble").open("lsp_references") end, {desc="LSP References"})
---vim.keymap.set("n", "<leader>xn", function() require("trouble").next({skip_groups = true, jump = true}) end, {desc="Jump to Next Error/Warn"})
 vim.keymap.set("n", "<leader>xw", ":Trouble diagnostics toggle<CR>", {desc="Workspace Diagnostics"})
 vim.keymap.set("n", "<leader>xn", vim.diagnostic.goto_next, {desc="Jump to Next Error/Warn"})

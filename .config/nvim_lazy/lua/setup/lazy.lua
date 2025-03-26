@@ -575,18 +575,9 @@ local plugins = {
     config = function()
       local hop = require('hop')
       local directions = require('hop.hint').HintDirection
-      -- vim.keymap.set('', 'f', function()
-      --   hop.hint_char1({ direction = directions.AFTER_CURSOR, current_line_only = true })
-      -- end, {remap=true, silent = true})
-      -- vim.keymap.set('', 'F', function()
-      --   hop.hint_char1({ direction = directions.BEFORE_CURSOR, current_line_only = true })
-      -- end , {remap=true, silent = true})
-      -- vim.keymap.set("n", '<leader>ha', ':HopAnywhere<CR>', {remap=true, silent = true, desc = "hop - move to anywhere"})
       vim.keymap.set("n", '<leader><leader>hw', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
       vim.keymap.set("n", '<leader>jj', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
       require("hop").setup({
-        -- you can configure Hop the way you like here; see :h hop-config
-        --require'hop'.setup { keys = 'etovxqpdygfblzhckisuran' }
       })
     end
   },
@@ -713,35 +704,18 @@ local plugins = {
       }
 
     }
-    -- opts = {
-    --   strategies = {
-    --     -- Change the default chat adapter
-    --     chat = {
-    --       adapter = "gemini",
-    --     },
-    --   },
-    --   opts = {
-    --     -- Set debug logging
-    --     log_level = "DEBUG",
-    --   },
-    -- },
   },
   {
     "yetone/avante.nvim",
     event = "VeryLazy",
     version = false, -- Never set this value to "*"! Never!
     opts = {
-      -- -- add any opts here
-      -- -- for example
       provider = "copilot",
       copilot = {
-        -- api_key_name = "OPENROUTER_API_KEY",
         model = 'claude-3.7-sonnet',
         max_tokens = 8192,
 
       },
-      -- },
-      -- provider = "openrouter",
       vendors = {
         openrouter = {
           __inherited_from = 'openai',

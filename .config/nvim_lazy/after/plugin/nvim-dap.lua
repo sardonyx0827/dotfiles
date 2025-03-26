@@ -13,10 +13,6 @@ dap.adapters = {
     type = 'executable',
     port = '${port}',
     command = vim.fn.stdpath('data') .. '/mason/packages/node-debug2-adapter/node-debug2-adapter',
-    --executable = {
-    --  command = vim.fn.stdpath('data') .. '/mason/packages/node-debug2-adapter/node-debug2-adapter',
-    --  args = {'--port', '${port}'}
-    --}
   },
   codelldb = {
     type = 'server',
