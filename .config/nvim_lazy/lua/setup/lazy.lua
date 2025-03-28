@@ -380,7 +380,8 @@ local plugins = {
   },
   -- for lint and formatter(no lsp)
   {
-    "jose-elias-alvarez/null-ls.nvim",
+    -- "jose-elias-alvarez/null-ls.nvim",
+    "nvimtools/none-ls.nvim",
   },
   -- DAP for Debugging
   {
