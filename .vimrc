@@ -632,8 +632,8 @@ function! s:fzf_without_dots(cmd)
   let $FZF_DEFAULT_COMMAND =  "find * -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f -print -o -type l -print 2> /dev/null"
   execute a:cmd
 endfunction
-nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
-nmap <leader>f :call <SID>fzf_without_dots('Files ')<CR>
+" nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
+nmap <leader>sf :FZF<CR>
 
 " snippets
 " let g:UltiSnipsExpandTrigger="<tab>"
