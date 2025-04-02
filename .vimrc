@@ -90,7 +90,7 @@ Plug 'xolox/vim-misc'
 Plug 'xolox/vim-session'
 
 "" Snippets
-Plug 'SirVer/ultisnips'
+" Plug 'SirVer/ultisnips'
 Plug 'honza/vim-snippets'
 
 "" GitHub Copilot
@@ -445,6 +445,7 @@ nnoremap <silent> <F3> :NERDTreeToggle<CR>
 let NERDTreeShowHidden = 1
 
 nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
+nnoremap <silent> <leader>e :NERDTreeFocusToggle<CR>
 
 " show nerdtree default
 let g:nerdtree_tabs_open_on_console_startup=1
@@ -588,7 +589,7 @@ nnoremap <silent> <S-t> :tabnew<CR>
 nnoremap <leader>. :lcd %:p:h<CR>
 
 "" Opens an edit command with the path of the currently edited file filled in
-noremap <Leader>e :e <C-R>=expand("%:p:h") . "/" <CR>
+" noremap <Leader>e :e <C-R>=expand("%:p:h") . "/" <CR>
 
 "" Opens a tab edit command with the path of the currently edited file filled
 noremap <Leader>te :tabe <C-R>=expand("%:p:h") . "/" <CR>
@@ -615,7 +616,7 @@ endif
 
 cnoremap <C-P> <C-R>=expand("%:p:h") . "/" <CR>
 nnoremap <silent> <leader>b :Buffers<CR>
-nnoremap <silent> <leader>e :FZF -m<CR>
+" nnoremap <silent> <leader>e :FZF -m<CR>
 "Recovery commands from history through FZF
 nmap <leader>y :History:<CR>
 " execute my ":Files" command by fzf from current dir
@@ -635,10 +636,10 @@ nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
 nmap <leader>f :call <SID>fzf_without_dots('Files ')<CR>
 
 " snippets
-let g:UltiSnipsExpandTrigger="<tab>"
-let g:UltiSnipsJumpForwardTrigger="<tab>"
-let g:UltiSnipsJumpBackwardTrigger="<c-b>"
-let g:UltiSnipsEditSplit="vertical"
+" let g:UltiSnipsExpandTrigger="<tab>"
+" let g:UltiSnipsJumpForwardTrigger="<tab>"
+" let g:UltiSnipsJumpBackwardTrigger="<c-b>"
+" let g:UltiSnipsEditSplit="vertical"
 
 " ale
 let g:ale_linters = {}
