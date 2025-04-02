@@ -278,19 +278,19 @@ local plugins = {
         -- refer to the configuration section below
         icons = {
           ---@type trouble.Indent.symbols
-          indent = {
-            top           = "│ ",
-            middle        = "├╴",
-            last          = "└╴",
+          indent        = {
+            top         = "│ ",
+            middle      = "├╴",
+            last        = "└╴",
             -- last          = "-╴",
             -- last       = "╰╴", -- rounded
-            fold_open     = " ",
-            fold_closed   = " ",
-            ws            = "  ",
+            fold_open   = " ",
+            fold_closed = " ",
+            ws          = "  ",
           },
-          folder_closed   = " ",
-          folder_open     = " ",
-          kinds = {
+          folder_closed = " ",
+          folder_open   = " ",
+          kinds         = {
             Array         = " ",
             Boolean       = "󰨙 ",
             Class         = " ",
@@ -339,7 +339,7 @@ local plugins = {
       })
     end,
     keys = {
-      { "<leader>vu", "<cmd>lua require('vuffers').toggle()<cr>" },
+      { "<leader>vu",  "<cmd>lua require('vuffers').toggle()<cr>" },
       { "<leader>vsa", "<cmd>lua require('vuffers').sort({ type = 'filename', direction = 'asc' })<cr>" },
       { "<leader>vsd", "<cmd>lua require('vuffers').sort({ type = 'filename', direction = 'desc' })<cr>" },
     },
@@ -413,7 +413,7 @@ local plugins = {
     },
     config = function()
       require("notify").setup({
-          background_colour = "#000000",
+        background_colour = "#000000",
       })
       require("noice").setup({
         lsp = {
@@ -426,11 +426,11 @@ local plugins = {
         },
         -- you can enable a preset for easier configuration
         presets = {
-          bottom_search = false, -- use a classic bottom cmdline for search
-          command_palette = true, -- position the cmdline and popupmenu together
+          bottom_search = false,        -- use a classic bottom cmdline for search
+          command_palette = true,       -- position the cmdline and popupmenu together
           long_message_to_split = true, -- long messages will be sent to a split
-          inc_rename = false, -- enables an input dialog for inc-rename.nvim
-          lsp_doc_border = false, -- add a border to hover docs and signature help
+          inc_rename = false,           -- enables an input dialog for inc-rename.nvim
+          lsp_doc_border = false,       -- add a border to hover docs and signature help
         },
       })
     end,
@@ -576,8 +576,9 @@ local plugins = {
     config = function()
       local hop = require('hop')
       local directions = require('hop.hint').HintDirection
-      vim.keymap.set("n", '<leader><leader>hw', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
-      vim.keymap.set("n", '<leader>jj', ':HopWord<CR>', {remap=true, silent = true, desc = "hop - move to any word"})
+      vim.keymap.set("n", '<leader><leader>hw', ':HopWord<CR>',
+        { remap = true, silent = true, desc = "hop - move to any word" })
+      vim.keymap.set("n", '<leader>jj', ':HopWord<CR>', { remap = true, silent = true, desc = "hop - move to any word" })
       require("hop").setup({
       })
     end
@@ -585,20 +586,20 @@ local plugins = {
   -- SSH
   {
     -- https://github.com/nosduco/remote-sshfs.nvim
-     "nosduco/remote-sshfs.nvim",
-     dependencies = { "nvim-telescope/telescope.nvim" },
-     opts = {
+    "nosduco/remote-sshfs.nvim",
+    dependencies = { "nvim-telescope/telescope.nvim" },
+    opts = {
       -- Refer to the configuration section below
       -- or leave empty for defaults
-     },
+    },
   },
   {
     -- remote-nvim
     "amitds1997/remote-nvim.nvim",
-    version = "*", -- Pin to GitHub releases
+    version = "*",                     -- Pin to GitHub releases
     dependencies = {
-      "nvim-lua/plenary.nvim", -- For standard functions
-      "MunifTanjim/nui.nvim", -- To build the plugin UI
+      "nvim-lua/plenary.nvim",         -- For standard functions
+      "MunifTanjim/nui.nvim",          -- To build the plugin UI
       "nvim-telescope/telescope.nvim", -- For picking b/w different remote methods
     },
     config = true,
@@ -633,16 +634,16 @@ local plugins = {
     event = "VeryLazy",
     branch = "main",
     dependencies = {
-       -- Or { "github/copilot.vim" }
+      -- Or { "github/copilot.vim" }
       "zbirenbaum/copilot.lua",
       "nvim-lua/plenary.nvim",
       "nvim-telescope/telescope.nvim"
     },
     opts = {
-      mode = "newbuffer",                        -- newbuffer or split, default: newbuffer
+      mode = "newbuffer", -- newbuffer or split, default: newbuffer
       model = 'claude-3.5-sonnet',
-      show_help = "no",                          -- Show help text for CopilotChatInPlace, default: yes
-      debug = false,                             -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
+      show_help = "no",   -- Show help text for CopilotChatInPlace, default: yes
+      debug = false,      -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
       language = "Japanese",
       prompts = prompts,
       auto_follow_cursor = false, -- Don't follow the cursor after getting response
@@ -688,7 +689,8 @@ local plugins = {
           order = 1,
           mapping = "parameters",
           type = "enum",
-          desc = "ID of the model to use. See the model endpoint compatibility table for details on which models work with the Chat API.",
+          desc =
+          "ID of the model to use. See the model endpoint compatibility table for details on which models work with the Chat API.",
           ---@type string|fun(): string
           default = "claude-3.7-sonnet",
           choices = {
@@ -745,12 +747,12 @@ local plugins = {
       "nvim-lua/plenary.nvim",
       "MunifTanjim/nui.nvim",
       --- The below dependencies are optional,
-      "echasnovski/mini.pick", -- for file_selector provider mini.pick
+      "echasnovski/mini.pick",         -- for file_selector provider mini.pick
       "nvim-telescope/telescope.nvim", -- for file_selector provider telescope
-      "hrsh7th/nvim-cmp", -- autocompletion for avante commands and mentions
-      "ibhagwan/fzf-lua", -- for file_selector provider fzf
-      "nvim-tree/nvim-web-devicons", -- or echasnovski/mini.icons
-      "zbirenbaum/copilot.lua", -- for providers='copilot'
+      "hrsh7th/nvim-cmp",              -- autocompletion for avante commands and mentions
+      "ibhagwan/fzf-lua",              -- for file_selector provider fzf
+      "nvim-tree/nvim-web-devicons",   -- or echasnovski/mini.icons
+      "zbirenbaum/copilot.lua",        -- for providers='copilot'
       {
         -- support for image pasting
         "HakonHarnes/img-clip.nvim",
