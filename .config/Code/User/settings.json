@@ -464,5 +464,27 @@
     "security.promptForRemoteFileProtocolHandling": false,
     "cline.preferredLanguage": "Japanese - 日本語",
     "git.openRepositoryInParentFolders": "never",
+    "chat.mcp.discovery.enabled": true,
+    "mcp": {
+        "servers": {
+            "github": {
+                "command": "npx",
+                "args": [
+                    "-y",
+                    "@modelcontextprotocol/server-github"
+                ],
+                "env": {
+                    "GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_PERSONAL_ACCESS_TOKEN}"
+                }
+            }
+        }
+    },
+    "remote.defaultExtensionsIfInstalledLocally": [
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "GitHub.vscode-pull-request-github"
+    ],
+    "github.copilot.nextEditSuggestions.enabled": true,
+    "chat.agent.enabled": true,
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }
