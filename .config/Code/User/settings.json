@@ -463,5 +463,6 @@
     "window.customTitleBarVisibility": "auto",
     "security.promptForRemoteFileProtocolHandling": false,
     "cline.preferredLanguage": "Japanese - 日本語",
+    "git.openRepositoryInParentFolders": "never",
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }
