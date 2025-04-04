@@ -824,7 +824,7 @@ local plugins = {
     build = "npm install -g mcp-hub@latest",   -- Installs globally
     config = function()
       require("mcphub").setup({
-        auto_approve = false,
+        auto_approve = true,
       })
     end,
   },

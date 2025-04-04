@@ -1,4 +1,4 @@
--- avante = require("avante")
+-- local avante = require("avante")
 -- avante.setup({
 --   -- other config
 --   -- The system_prompt type supports both a string and a function that returns a string. Using a function here allows dynamically updating the prompt with mcphub
