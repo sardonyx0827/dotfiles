@@ -67,7 +67,7 @@ local function quick_fix_next_error_with_ai()
   end
 
   -- jump to next error/warn
-  vim.diagnostic.goto_next({severity = vim.diagnostic.severity.ERROR})
+  vim.diagnostic.jump({ count = 1, float = true, severity = vim.diagnostic.severity.ERROR})
   vim.cmd("CopilotChatFix")
 
 end
