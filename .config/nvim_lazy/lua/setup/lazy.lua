@@ -740,6 +740,18 @@ local plugins = {
       copilot = {
         model = 'claude-3.7-sonnet',
         max_tokens = 8192,
+        -- disabled_tools = {
+        --   "list_files",
+        --   "search_files",
+        --   "read_file",
+        --   "create_file",
+        --   "rename_file",
+        --   "delete_file",
+        --   "create_dir",
+        --   "rename_dir",
+        --   "delete_dir",
+        --   "bash",
+        -- },
       },
       claude = {
         endpoint = "https://api.anthropic.com",
@@ -802,6 +814,19 @@ local plugins = {
         ft = { "markdown", "Avante" },
       },
     },
+  },
+  {
+    "ravitemer/mcphub.nvim",
+    dependencies = {
+      "nvim-lua/plenary.nvim",
+    },
+    cmd = "MCPHub",                            -- lazy load by default
+    build = "npm install -g mcp-hub@latest",   -- Installs globally
+    config = function()
+      require("mcphub").setup({
+        auto_approve = false,
+      })
+    end,
   },
   -- **********************************
   -- others
