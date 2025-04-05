@@ -27,7 +27,6 @@ require("lualine").setup {
         cond = require("noice").api.statusline.mode.has,
         color = { fg = "#ff9e64" },
       }
-
     },
     lualine_x = {
       {
@@ -55,6 +54,9 @@ require("lualine").setup {
         },
         show_colors = true,
         show_loading = true
+      },
+      {
+        require('mcphub.extensions.lualine')
       },
       "encoding", "fileformat", "filetype" },
     lualine_y = { "progress" },
