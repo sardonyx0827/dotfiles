@@ -705,6 +705,15 @@ local plugins = {
         -- Change the default chat adapter
         chat = {
           adapter = "copilot",
+          tools = {
+            ["mcp"] = {
+              -- Prevent mcphub from loading before needed
+              callback = function()
+                return require("mcphub.extensions.codecompanion")
+              end,
+              description = "Call tools and resources from the MCP Servers"
+            }
+          }
         },
       },
       schema = {
@@ -771,7 +780,7 @@ local plugins = {
         return { require("mcphub.extensions.avante").mcp_tool() }
       end,
       disabled_tools = {
-        "list_files",
+        -- "list_files",
         "search_files",
         "read_file",
         "create_file",
@@ -780,7 +789,7 @@ local plugins = {
         "create_dir",
         "rename_dir",
         "delete_dir",
-        "bash",
+        -- "bash",
       },
     },
     -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
@@ -831,10 +840,20 @@ local plugins = {
       "nvim-lua/plenary.nvim",
     },
     -- cmd = "MCPHub",                            -- lazy load by default
-    build = "npm install -g mcp-hub@latest",   -- Installs globally
+    build = "npm install -g mcp-hub@latest", -- Installs globally
     config = function()
       require("mcphub").setup({
         auto_approve = true,
+        extensions = {
+          codecompanion = {
+            -- Show the mcp tool result in the chat buffer
+            show_result_in_chat = true,
+            -- Make chat #variables from MCP server resources
+            make_vars = true,
+            -- Create slash commands for prompts
+            make_slash_commands = true,
+          }
+        }
       })
     end,
   },
