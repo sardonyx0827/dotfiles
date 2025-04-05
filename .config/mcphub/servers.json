@@ -1,0 +1,104 @@
+{
+  "mcpServers": {
+    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
+      "custom_instructions": {
+        "text": "Git repository interaction and automation tools",
+        "disabled": false
+      },
+      "disabled_tools": [
+        
+      ],
+      "env": [
+        
+      ],
+      "disabled_resources": [
+        
+      ],
+      "command": "uvx",
+      "args": [
+        "mcp-server-git"
+      ],
+      "disabled": true
+    },
+    "fetch": {
+      "custom_instructions": {
+        "text": "Instructions for this server",
+        "disabled": false
+      },
+      "disabled_tools": [
+        "expensive-tool"
+      ],
+      "disabled_resourceTemplates": [
+        "resource://{project}/data",
+        "resource://fetch/{type}/{id}"
+      ],
+      "env": [
+        
+      ],
+      "disabled_resources": [
+        "resource://fetch/large-data"
+      ],
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "disabled": true
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/github": {
+      "custom_instructions": {
+        "text": "GitHub API integration for file operations, repository management, search functionality, and more.",
+        "disabled": false
+      },
+      "disabled_tools": [
+        
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      },
+      "disabled_resources": [
+        
+      ],
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "disabled": false
+    },
+    "github.com/AgentDeskAI/browser-tools-mcp": {
+      "custom_instructions": {
+        "text": "Browser monitoring and interaction tools that enable AI to capture and analyze browser data through a Chrome extension.",
+        "disabled": false
+      },
+      "disabled_tools": [
+        
+      ],
+      "env": [
+        
+      ],
+      "disabled_resources": [
+        
+      ],
+      "command": "npx",
+      "args": [
+        "@agentdeskai/browser-tools-mcp@latest"
+      ],
+      "disabled": false
+    }
+  },
+  "nativeMCPServers": {
+    "neovim": {
+      "custom_instructions": {
+        "text": "",
+        "disabled": false
+      },
+      "disabled_tools": [
+        
+      ],
+      "disabled_resources": [
+        
+      ],
+      "disabled": false
+    }
+  }
+}
