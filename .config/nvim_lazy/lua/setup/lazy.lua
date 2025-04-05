@@ -740,18 +740,6 @@ local plugins = {
       copilot = {
         model = 'claude-3.7-sonnet',
         max_tokens = 8192,
-        -- disabled_tools = {
-        --   "list_files",
-        --   "search_files",
-        --   "read_file",
-        --   "create_file",
-        --   "rename_file",
-        --   "delete_file",
-        --   "create_dir",
-        --   "rename_dir",
-        --   "delete_dir",
-        --   "bash",
-        -- },
       },
       claude = {
         endpoint = "https://api.anthropic.com",
@@ -771,6 +759,25 @@ local plugins = {
       },
       behaviour = {
         enable_claude_text_editor_tool_mode = true,
+      },
+      system_prompt = function() -- LLMが常に最新のMCPサーバーの状態を持つように関数として定義 [6]
+        local hub = require("mcphub").get_hub_instance()
+        return hub:get_active_servers_prompt()
+      end,
+      custom_tools = function() -- mcphubがロードされる前にrequireされるのを防ぐために関数を使用 [6]
+        return { require("mcphub.extensions.avante").mcp_tool() }
+      end,
+      disabled_tools = {
+        "list_files",
+        "search_files",
+        "read_file",
+        "create_file",
+        "rename_file",
+        "delete_file",
+        "create_dir",
+        "rename_dir",
+        "delete_dir",
+        "bash",
       },
     },
     -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
