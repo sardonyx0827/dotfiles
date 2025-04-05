@@ -759,6 +759,9 @@ local plugins = {
       },
       behaviour = {
         enable_claude_text_editor_tool_mode = true,
+        auto_apply_diff_after_generation = true,
+        enable_cursor_planning_mode = true,
+        support_paste_from_clipboard = true,
       },
       system_prompt = function() -- LLMが常に最新のMCPサーバーの状態を持つように関数として定義 [6]
         local hub = require("mcphub").get_hub_instance()
