@@ -1,18 +1,36 @@
 {
   "mcpServers": {
+    "browser-use": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-browser-use"
+      ],
+      "env": {
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+
+        "MCP_MODEL_PROVIDER": "anthropic",
+        "MCP_MODEL_NAME": "claude-3-7-sonnet-20250219",
+        "BROWSER_HEADLESS": "true",
+        "BROWSER_USE_LOGGING_LEVEL": "INFO",
+
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONUTF8": "1"
+      }
+    },
     "github.com/modelcontextprotocol/servers/tree/main/src/git": {
       "custom_instructions": {
         "text": "Git repository interaction and automation tools",
         "disabled": false
       },
       "disabled_tools": [
-        
+
       ],
       "env": [
-        
+
       ],
       "disabled_resources": [
-        
+
       ],
       "command": "uvx",
       "args": [
@@ -33,7 +51,7 @@
         "resource://fetch/{type}/{id}"
       ],
       "env": [
-        
+
       ],
       "disabled_resources": [
         "resource://fetch/large-data"
@@ -50,13 +68,13 @@
         "disabled": false
       },
       "disabled_tools": [
-        
+
       ],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
       },
       "disabled_resources": [
-        
+
       ],
       "command": "npx",
       "args": [
@@ -71,13 +89,13 @@
         "disabled": false
       },
       "disabled_tools": [
-        
+
       ],
       "env": [
-        
+
       ],
       "disabled_resources": [
-        
+
       ],
       "command": "npx",
       "args": [
@@ -93,10 +111,10 @@
         "disabled": false
       },
       "disabled_tools": [
-        
+
       ],
       "disabled_resources": [
-        
+
       ],
       "disabled": false
     }
