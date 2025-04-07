@@ -1,22 +1,24 @@
 {
-  "mcpServers": {
-    "browser-use": {
-      "command": "uvx",
-      "args": [
-        "mcp-server-browser-use"
+  "nativeMCPServers": {
+    "neovim": {
+      "custom_instructions": {
+        "text": "",
+        "disabled": false
+      },
+      "disabled_tools": [
+
       ],
-      "env": {
-        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+      "disabled_resources": [
 
-        "MCP_MODEL_PROVIDER": "anthropic",
-        "MCP_MODEL_NAME": "claude-3-7-sonnet-20250219",
-        "BROWSER_HEADLESS": "true",
-        "BROWSER_USE_LOGGING_LEVEL": "INFO",
-
-        "PYTHONIOENCODING": "utf-8",
-        "PYTHONUNBUFFERED": "1",
-        "PYTHONUTF8": "1"
-      }
+      ],
+      "disabled": false
+    }
+  },
+  "mcpServers": {
+    "claude_code": {
+      "command": "/usr/local/bin/node",
+      "args": ["claude mcp serve"],
+      "env": {}
     },
     "github.com/modelcontextprotocol/servers/tree/main/src/git": {
       "custom_instructions": {
@@ -102,21 +104,28 @@
         "@agentdeskai/browser-tools-mcp@latest"
       ],
       "disabled": false
-    }
-  },
-  "nativeMCPServers": {
-    "neovim": {
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/filesystem": {
+      "disabled": false,
       "custom_instructions": {
-        "text": "",
+        "text": "File system operations including read/write files, create/list/delete directories, move files/directories, search files, and get file metadata.",
         "disabled": false
       },
-      "disabled_tools": [
+      "env": [
 
       ],
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/sardonyx0827/work/github/dotfiles"
+      ],
+      "command": "npx",
       "disabled_resources": [
 
       ],
-      "disabled": false
+      "disabled_tools": [
+
+      ]
     }
   }
 }
