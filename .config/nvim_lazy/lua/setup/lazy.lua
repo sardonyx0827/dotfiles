@@ -664,7 +664,8 @@ local plugins = {
     },
     opts = {
       mode = "newbuffer", -- newbuffer or split, default: newbuffer
-      model = 'claude-3.5-sonnet',
+      -- model = 'claude-3.5-sonnet',
+      model = 'gpt-4o',
       show_help = "no",   -- Show help text for CopilotChatInPlace, default: yes
       debug = false,      -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
       language = "Japanese",
@@ -746,10 +747,10 @@ local plugins = {
     version = false, -- Never set this value to "*"! Never!
     opts = {
       provider = "copilot",
-      -- copilot = {
-      --   model = 'claude-3.7-sonnet',
-      --   max_tokens = 8192,
-      -- },
+      copilot = {
+        model = 'claude-3.7-sonnet',
+        max_tokens = 8192,
+      },
       claude = {
         endpoint = "https://api.anthropic.com",
         model = "claude-3-7-sonnet-20250219",
