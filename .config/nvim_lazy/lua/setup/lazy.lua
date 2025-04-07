@@ -766,6 +766,10 @@ local plugins = {
         temperature = 0,
         max_tokens = 8192,
       },
+      ollama = {
+        endpoint = "http://127.0.0.1:11434", -- Note that there is no /v1 at the end.
+        model = "gemma3:4b",
+      },
       vendors = {
         openrouter = {
           __inherited_from = 'openai',
