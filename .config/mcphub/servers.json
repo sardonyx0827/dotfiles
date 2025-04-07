@@ -1,129 +1,145 @@
 {
-  "nativeMCPServers": {
-    "neovim": {
-      "custom_instructions": {
-        "text": "",
-        "disabled": false
-      },
-      "disabled_tools": [
-
-      ],
-      "disabled_resources": [
-
-      ],
-      "disabled": false
-    }
-  },
   "mcpServers": {
-    "claude_code": {
-      "command": "/usr/local/bin/node",
-      "args": ["claude mcp serve"],
-      "env": {}
-    },
-    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
+    "github.com/AgentDeskAI/browser-tools-mcp": {
       "custom_instructions": {
-        "text": "Git repository interaction and automation tools",
-        "disabled": false
+        "disabled": false,
+        "text": "Browser monitoring and interaction tools that enable AI to capture and analyze browser data through a Chrome extension."
       },
+      "command": "npx",
+      "disabled": true,
       "disabled_tools": [
 
+      ],
+      "args": [
+        "@agentdeskai/browser-tools-mcp@latest"
       ],
       "env": [
 
       ],
       "disabled_resources": [
 
-      ],
-      "command": "uvx",
-      "args": [
-        "mcp-server-git"
-      ],
-      "disabled": true
-    },
-    "fetch": {
-      "custom_instructions": {
-        "text": "Instructions for this server",
-        "disabled": false
-      },
-      "disabled_tools": [
-        "expensive-tool"
-      ],
-      "disabled_resourceTemplates": [
-        "resource://{project}/data",
-        "resource://fetch/{type}/{id}"
-      ],
-      "env": [
-
-      ],
-      "disabled_resources": [
-        "resource://fetch/large-data"
-      ],
-      "command": "uvx",
-      "args": [
-        "mcp-server-fetch"
-      ],
-      "disabled": true
+      ]
     },
     "github.com/modelcontextprotocol/servers/tree/main/src/github": {
       "custom_instructions": {
-        "text": "GitHub API integration for file operations, repository management, search functionality, and more.",
-        "disabled": false
+        "disabled": false,
+        "text": "GitHub API integration for file operations, repository management, search functionality, and more."
       },
+      "command": "npx",
+      "disabled": true,
       "disabled_tools": [
 
+      ],
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
       ],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
       },
       "disabled_resources": [
 
-      ],
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
-      "disabled": false
+      ]
     },
-    "github.com/AgentDeskAI/browser-tools-mcp": {
+    "fetch": {
       "custom_instructions": {
-        "text": "Browser monitoring and interaction tools that enable AI to capture and analyze browser data through a Chrome extension.",
-        "disabled": false
+        "disabled": false,
+        "text": "Instructions for this server"
       },
+      "command": "uvx",
+      "disabled": false,
       "disabled_tools": [
-
+        "expensive-tool"
+      ],
+      "args": [
+        "mcp-server-fetch"
       ],
       "env": [
 
+      ],
+      "disabled_resourceTemplates": [
+        "resource://{project}/data",
+        "resource://fetch/{type}/{id}"
       ],
       "disabled_resources": [
-
-      ],
-      "command": "npx",
-      "args": [
-        "@agentdeskai/browser-tools-mcp@latest"
-      ],
-      "disabled": false
+        "resource://fetch/large-data"
+      ]
     },
     "github.com/modelcontextprotocol/servers/tree/main/src/filesystem": {
-      "disabled": false,
       "custom_instructions": {
-        "text": "File system operations including read/write files, create/list/delete directories, move files/directories, search files, and get file metadata.",
-        "disabled": false
+        "disabled": false,
+        "text": "File system operations including read/write files, create/list/delete directories, move files/directories, search files, and get file metadata."
       },
-      "env": [
+      "command": "npx",
+      "disabled": false,
+      "disabled_tools": [
 
       ],
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/Users/sardonyx0827/work/github/dotfiles"
+        "/Users/sardonyx0827/work"
       ],
-      "command": "npx",
-      "disabled_resources": [
+      "env": [
 
       ],
+      "disabled_resources": [
+
+      ]
+    },
+    "github.com/Garoth/sleep-mcp": {
+      "custom_instructions": {
+        "disabled": false,
+        "text": "A Model Context Protocol (MCP) server that provides a simple sleep/wait tool. Useful for adding delays between operations, such as waiting between API calls or testing eventually consistent systems."
+      },
+      "command": "node",
+      "disabled": false,
       "disabled_tools": [
+
+      ],
+      "args": [
+        "/Users/sardonyx0827/.mcphub/servers/sleep-mcp/build/index.js"
+      ],
+      "timeout": 300000,
+      "env": [
+
+      ],
+      "disabled_resources": [
+
+      ]
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
+      "custom_instructions": {
+        "disabled": false,
+        "text": "Git repository interaction and automation tools"
+      },
+      "command": "uvx",
+      "disabled": false,
+      "disabled_tools": [
+
+      ],
+      "args": [
+        "mcp-server-git"
+      ],
+      "env": [
+
+      ],
+      "disabled_resources": [
+
+      ]
+    }
+  },
+  "nativeMCPServers": {
+    "neovim": {
+      "custom_instructions": {
+        "disabled": false,
+        "text": ""
+      },
+      "disabled_tools": [
+
+      ],
+      "disabled": false,
+      "disabled_resources": [
 
       ]
     }
