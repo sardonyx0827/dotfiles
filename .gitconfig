@@ -16,3 +16,5 @@
 	excludesfile = ~/.gitignore_global
 [http]
 	sslVerify = false
+[credential]
+	helper = osxkeychain
