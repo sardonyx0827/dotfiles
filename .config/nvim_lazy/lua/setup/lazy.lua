@@ -757,7 +757,6 @@ local plugins = {
         api_key_name = "ANTHROPIC_API_KEY",
         temperature = 0,
         max_tokens = 8192,
-        disable_tools = true, -- disable tools!
       },
       gemini = {
         -- endpoint = "https://gemini.googleapis.com",
