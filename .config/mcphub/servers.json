@@ -1,12 +1,171 @@
 {
+  "mcpServers": {
+    "github.com/modelcontextprotocol/servers/tree/main/src/github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "disabled_tools": [
+
+      ],
+      "disabled": true,
+      "disabled_resources": [
+
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      },
+      "custom_instructions": {
+        "disabled": false,
+        "text": "GitHub API integration for file operations, repository management, search functionality, and more."
+      }
+    },
+    "claude_code": {
+      "command": "/usr/local/bin/node",
+      "args": [
+        "/Users/sardonyx0827/.npm-global/bin/claude",
+        "mcp",
+        "serve"
+      ],
+      "env": [
+
+      ]
+    },
+    "tavily-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "tavily-mcp@0.1.4"
+      ],
+      "autoApprove": [
+
+      ],
+      "disabled": false,
+      "env": {
+        "TAVILY_API_KEY": "${TAVILY_API_KEY}"
+      }
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-git"
+      ],
+      "disabled_tools": [
+
+      ],
+      "disabled": true,
+      "disabled_resources": [
+
+      ],
+      "env": [
+
+      ],
+      "custom_instructions": {
+        "disabled": false,
+        "text": "Git repository interaction and automation tools"
+      }
+    },
+    "fetch": {
+      "command": "uvx",
+      "disabled_resourceTemplates": [
+        "resource://{project}/data",
+        "resource://fetch/{type}/{id}"
+      ],
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "disabled_tools": [
+        "expensive-tool"
+      ],
+      "disabled": true,
+      "disabled_resources": [
+        "resource://fetch/large-data"
+      ],
+      "env": [
+
+      ],
+      "custom_instructions": {
+        "disabled": false,
+        "text": "Instructions for this server"
+      }
+    },
+    "github.com/AgentDeskAI/browser-tools-mcp": {
+      "command": "npx",
+      "args": [
+        "@agentdeskai/browser-tools-mcp@latest"
+      ],
+      "disabled_tools": [
+
+      ],
+      "disabled": true,
+      "disabled_resources": [
+
+      ],
+      "env": [
+
+      ],
+      "custom_instructions": {
+        "disabled": false,
+        "text": "Browser monitoring and interaction tools that enable AI to capture and analyze browser data through a Chrome extension."
+      }
+    },
+    "github.com/Garoth/sleep-mcp": {
+      "command": "node",
+      "custom_instructions": {
+        "disabled": false,
+        "text": "A Model Context Protocol (MCP) server that provides a simple sleep/wait tool. Useful for adding delays between operations, such as waiting between API calls or testing eventually consistent systems."
+      },
+      "args": [
+        "/Users/sardonyx0827/.mcphub/servers/sleep-mcp/build/index.js"
+      ],
+      "disabled_tools": [
+
+      ],
+      "disabled": false,
+      "disabled_resources": [
+
+      ],
+      "env": [
+
+      ],
+      "timeout": 300000
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/sardonyx0827/work"
+      ],
+      "disabled_tools": [
+
+      ],
+      "disabled": true,
+      "disabled_resources": [
+
+      ],
+      "env": [
+
+      ],
+      "custom_instructions": {
+        "disabled": false,
+        "text": "File system operations including read/write files, create/list/delete directories, move files/directories, search files, and get file metadata."
+      }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@executeautomation/playwright-mcp-server"]
+    }
+  },
   "nativeMCPServers": {
     "neovim": {
       "custom_instructions": {
-        "text": "",
-        "disabled": false
+        "disabled": false,
+        "text": ""
       },
       "disabled_resources": [
-        
+
       ],
       "disabled_tools": [
         "delete_item",
@@ -20,161 +179,6 @@
         "write_file"
       ],
       "disabled": false
-    }
-  },
-  "mcpServers": {
-    "fetch": {
-      "disabled_resourceTemplates": [
-        "resource://{project}/data",
-        "resource://fetch/{type}/{id}"
-      ],
-      "disabled_resources": [
-        "resource://fetch/large-data"
-      ],
-      "env": [
-        
-      ],
-      "disabled": true,
-      "command": "uvx",
-      "disabled_tools": [
-        "expensive-tool"
-      ],
-      "args": [
-        "mcp-server-fetch"
-      ],
-      "custom_instructions": {
-        "text": "Instructions for this server",
-        "disabled": false
-      }
-    },
-    "github.com/Garoth/sleep-mcp": {
-      "disabled_tools": [
-        
-      ],
-      "disabled_resources": [
-        
-      ],
-      "timeout": 300000,
-      "disabled": true,
-      "command": "node",
-      "env": [
-        
-      ],
-      "args": [
-        "/Users/sardonyx0827/.mcphub/servers/sleep-mcp/build/index.js"
-      ],
-      "custom_instructions": {
-        "text": "A Model Context Protocol (MCP) server that provides a simple sleep/wait tool. Useful for adding delays between operations, such as waiting between API calls or testing eventually consistent systems.",
-        "disabled": false
-      }
-    },
-    "tavily-mcp": {
-      "disabled": true,
-      "command": "npx",
-      "env": {
-        "TAVILY_API_KEY": "${TAVILY_API_KEY}"
-      },
-      "args": [
-        "-y",
-        "tavily-mcp@0.1.4"
-      ],
-      "autoApprove": [
-        
-      ]
-    },
-    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
-      "disabled_tools": [
-        
-      ],
-      "disabled_resources": [
-        
-      ],
-      "disabled": true,
-      "command": "uvx",
-      "env": [
-        
-      ],
-      "args": [
-        "mcp-server-git"
-      ],
-      "custom_instructions": {
-        "text": "Git repository interaction and automation tools",
-        "disabled": false
-      }
-    },
-    "github.com/modelcontextprotocol/servers/tree/main/src/github": {
-      "disabled_tools": [
-        
-      ],
-      "disabled_resources": [
-        
-      ],
-      "disabled": true,
-      "command": "npx",
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
-      },
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
-      "custom_instructions": {
-        "text": "GitHub API integration for file operations, repository management, search functionality, and more.",
-        "disabled": false
-      }
-    },
-    "claude_code": {
-      "command": "/usr/local/bin/node",
-      "args": [
-        "/Users/sardonyx0827/.npm-global/bin/claude",
-        "mcp",
-        "serve"
-      ],
-      "env": [
-        
-      ]
-    },
-    "github.com/AgentDeskAI/browser-tools-mcp": {
-      "disabled_tools": [
-        
-      ],
-      "disabled_resources": [
-        
-      ],
-      "disabled": true,
-      "command": "npx",
-      "env": [
-        
-      ],
-      "args": [
-        "@agentdeskai/browser-tools-mcp@latest"
-      ],
-      "custom_instructions": {
-        "text": "Browser monitoring and interaction tools that enable AI to capture and analyze browser data through a Chrome extension.",
-        "disabled": false
-      }
-    },
-    "github.com/modelcontextprotocol/servers/tree/main/src/filesystem": {
-      "disabled_tools": [
-        
-      ],
-      "disabled_resources": [
-        
-      ],
-      "disabled": true,
-      "command": "npx",
-      "env": [
-        
-      ],
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/Users/sardonyx0827/work"
-      ],
-      "custom_instructions": {
-        "text": "File system operations including read/write files, create/list/delete directories, move files/directories, search files, and get file metadata.",
-        "disabled": false
-      }
     }
   }
 }
