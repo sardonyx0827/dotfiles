@@ -93,6 +93,8 @@ local function copilot_file_selection()
         -- ここでfile_nameを使って必要な処理を行います
         print(file_name)
         vim.api.nvim_put({ "> #file:" .. file_name }, "c", true, true)
+        -- 最後に改行を追加
+        vim.api.nvim_put({ "" }, "l", true, true)
       end)
       return true
     end,

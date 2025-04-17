@@ -1,11 +1,9 @@
 {
   "nativeMCPServers": {
     "neovim": {
-      "custom_instructions": {
-        "disabled": false,
-        "text": ""
-      },
-      "disabled": false,
+      "disabled_resources": [
+        
+      ],
       "disabled_tools": [
         "delete_item",
         "execute_command",
@@ -17,176 +15,178 @@
         "replace_in_file",
         "write_file"
       ],
-      "disabled_resources": [
-        
-      ]
+      "custom_instructions": {
+        "text": "",
+        "disabled": false
+      },
+      "disabled": false
     }
   },
   "mcpServers": {
     "claude_code": {
-      "command": "/usr/local/bin/node",
       "args": [
         "/Users/sardonyx0827/.npm-global/bin/claude",
         "mcp",
         "serve"
       ],
+      "command": "/usr/local/bin/node",
       "env": [
         
       ]
     },
+    "tavily-mcp": {
+      "args": [
+        "-y",
+        "tavily-mcp@0.1.4"
+      ],
+      "command": "npx",
+      "env": {
+        "TAVILY_API_KEY": "${TAVILY_API_KEY}"
+      },
+      "autoApprove": [
+        
+      ],
+      "disabled": false
+    },
     "github.com/modelcontextprotocol/servers/tree/main/src/filesystem": {
-      "disabled": true,
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
         "/Users/sardonyx0827/work"
       ],
-      "disabled_resources": [
-        
-      ],
-      "command": "npx",
-      "env": [
-        
-      ],
-      "disabled_tools": [
-        
-      ],
       "custom_instructions": {
-        "disabled": false,
-        "text": "File system operations including read/write files, create/list/delete directories, move files/directories, search files, and get file metadata."
-      }
-    },
-    "github.com/modelcontextprotocol/servers/tree/main/src/github": {
-      "disabled": true,
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
-      "disabled_resources": [
-        
-      ],
-      "command": "npx",
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+        "text": "File system operations including read/write files, create/list/delete directories, move files/directories, search files, and get file metadata.",
+        "disabled": false
       },
-      "disabled_tools": [
-        
-      ],
-      "custom_instructions": {
-        "disabled": false,
-        "text": "GitHub API integration for file operations, repository management, search functionality, and more."
-      }
-    },
-    "fetch": {
-      "disabled": true,
-      "disabled_resourceTemplates": [
-        "resource://{project}/data",
-        "resource://fetch/{type}/{id}"
-      ],
-      "args": [
-        "mcp-server-fetch"
-      ],
-      "disabled_resources": [
-        "resource://fetch/large-data"
-      ],
-      "command": "uvx",
       "env": [
         
-      ],
-      "disabled_tools": [
-        "expensive-tool"
-      ],
-      "custom_instructions": {
-        "disabled": false,
-        "text": "Instructions for this server"
-      }
-    },
-    "github.com/Garoth/sleep-mcp": {
-      "disabled": false,
-      "timeout": 300000,
-      "args": [
-        "/Users/sardonyx0827/.mcphub/servers/sleep-mcp/build/index.js"
       ],
       "disabled_resources": [
         
       ],
-      "command": "node",
-      "env": [
-        
-      ],
       "disabled_tools": [
-        
-      ],
-      "custom_instructions": {
-        "disabled": false,
-        "text": "A Model Context Protocol (MCP) server that provides a simple sleep/wait tool. Useful for adding delays between operations, such as waiting between API calls or testing eventually consistent systems."
-      }
-    },
-    "tavily-mcp": {
-      "disabled": true,
-      "args": [
-        "-y",
-        "tavily-mcp@0.1.4"
-      ],
-      "autoApprove": [
         
       ],
       "command": "npx",
-      "env": {
-        "TAVILY_API_KEY": "${TAVILY_API_KEY}"
-      }
+      "disabled": true
     },
     "playwright": {
-      "command": "npx",
       "args": [
         "-y",
         "@executeautomation/playwright-mcp-server"
       ],
+      "command": "npx",
       "disabled": false
     },
-    "Zapier MCP": {
-      "disabled": true,
-      "url": "https://actions.zapier.com/mcp/sk-ak-1UgkAJxoP9TEkJSsS2lW4obBgh/sse"
-    },
-    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
-      "disabled": true,
-      "args": [
-        "mcp-server-git"
-      ],
-      "disabled_resources": [
-        
-      ],
-      "command": "uvx",
-      "env": [
-        
-      ],
-      "disabled_tools": [
-        
-      ],
-      "custom_instructions": {
-        "disabled": false,
-        "text": "Git repository interaction and automation tools"
-      }
-    },
     "github.com/AgentDeskAI/browser-tools-mcp": {
-      "disabled": true,
       "args": [
         "@agentdeskai/browser-tools-mcp@latest"
       ],
-      "disabled_resources": [
+      "custom_instructions": {
+        "text": "Browser monitoring and interaction tools that enable AI to capture and analyze browser data through a Chrome extension.",
+        "disabled": false
+      },
+      "env": [
         
       ],
-      "command": "npx",
-      "env": [
+      "disabled_resources": [
         
       ],
       "disabled_tools": [
         
       ],
+      "command": "npx",
+      "disabled": true
+    },
+    "fetch": {
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "env": [
+        
+      ],
       "custom_instructions": {
-        "disabled": false,
-        "text": "Browser monitoring and interaction tools that enable AI to capture and analyze browser data through a Chrome extension."
-      }
+        "text": "Instructions for this server",
+        "disabled": false
+      },
+      "disabled_resourceTemplates": [
+        "resource://{project}/data",
+        "resource://fetch/{type}/{id}"
+      ],
+      "disabled_resources": [
+        "resource://fetch/large-data"
+      ],
+      "disabled_tools": [
+        "expensive-tool"
+      ],
+      "command": "uvx",
+      "disabled": true
+    },
+    "github.com/Garoth/sleep-mcp": {
+      "args": [
+        "/Users/sardonyx0827/.mcphub/servers/sleep-mcp/build/index.js"
+      ],
+      "timeout": 300000,
+      "custom_instructions": {
+        "text": "A Model Context Protocol (MCP) server that provides a simple sleep/wait tool. Useful for adding delays between operations, such as waiting between API calls or testing eventually consistent systems.",
+        "disabled": false
+      },
+      "env": [
+        
+      ],
+      "disabled_resources": [
+        
+      ],
+      "disabled_tools": [
+        
+      ],
+      "command": "node",
+      "disabled": false
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/github": {
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "custom_instructions": {
+        "text": "GitHub API integration for file operations, repository management, search functionality, and more.",
+        "disabled": false
+      },
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      },
+      "disabled_resources": [
+        
+      ],
+      "disabled_tools": [
+        
+      ],
+      "command": "npx",
+      "disabled": true
+    },
+    "Zapier MCP": {
+      "url": "https://actions.zapier.com/mcp/sk-ak-1UgkAJxoP9TEkJSsS2lW4obBgh/sse",
+      "disabled": true
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
+      "args": [
+        "mcp-server-git"
+      ],
+      "custom_instructions": {
+        "text": "Git repository interaction and automation tools",
+        "disabled": false
+      },
+      "env": [
+        
+      ],
+      "disabled_resources": [
+        
+      ],
+      "disabled_tools": [
+        
+      ],
+      "command": "uvx",
+      "disabled": true
     }
   }
 }

@@ -82,7 +82,7 @@ require("nvim-tree").setup({
   view = {
     relativenumber = true,
     width = 30,
-    --float = { enable = true },
+    float = { enable = true },
     --side = "left",
   },
   renderer = {
