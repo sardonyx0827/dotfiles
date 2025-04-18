@@ -706,6 +706,7 @@ local plugins = {
         -- Change the default chat adapter
         chat = {
           adapter = "copilot",
+          -- model = "claude-3.7-sonnet",
           tools = {
             ["mcp"] = {
               -- Prevent mcphub from loading before needed
