@@ -66,3 +66,14 @@ function _claude_toggle()
 end
 vim.api.nvim_set_keymap("n", "<leader>tc", "<cmd>lua _claude_toggle()<CR>", { noremap = true, silent = true, desc = "claude code - CUI tool" })
 
+-- codex (OpenAI)
+local toggle_codex = Terminal:new({
+  cmd = "codex",
+  direction = "float",
+  hidden = true
+})
+
+function _codex_toggle()
+  toggle_codex:toggle()
+end
+vim.api.nvim_set_keymap("n", "<leader>tx", "<cmd>lua _codex_toggle()<CR>", { noremap = true, silent = true, desc = "codex (OpenAI) - CUI tool" })
