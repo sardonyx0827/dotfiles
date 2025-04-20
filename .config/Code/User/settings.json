@@ -486,5 +486,6 @@
     ],
     "github.copilot.nextEditSuggestions.enabled": true,
     "chat.agent.enabled": true,
+    "vim.showMarksInGutter": true,
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }
