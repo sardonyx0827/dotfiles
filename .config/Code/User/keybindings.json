@@ -104,7 +104,6 @@
         "key": "cmd+x",
         "command": "workbench.action.closeActiveEditor"
     },
-
     // explorer actions
     // create new file
     {
@@ -200,5 +199,17 @@
         "key": "ctrl+i",
         "command": "-inlineChat.start",
         "when": "editorFocus && inlineChatHasProvider && !editorReadonly"
+    },
+    // open file and close explorer
+    {
+        "key": "l",
+        "command": "runCommands",
+        "args": {
+            "commands": [
+                "explorer.openAndPassFocus",
+                "workbench.action.toggleSidebarVisibility"
+            ]
+        },
+        "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus"
     }
 ]
