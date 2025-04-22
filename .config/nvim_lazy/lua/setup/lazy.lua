@@ -761,8 +761,8 @@ local plugins = {
       },
       gemini = {
         -- endpoint = "https://gemini.googleapis.com",
-        -- model = "gemini-2.5-pro-exp-03-25",
-        model = "gemini-2.0-flash",
+        -- model = "gemini-2.5-pro-preview-03-25",
+        model = "gemini-2.5-flash-preview-04-17",
         api_key_name = "GEMINI_API_KEY",
         temperature = 0,
         max_tokens = 8192,
@@ -770,6 +770,16 @@ local plugins = {
       ollama = {
         endpoint = "http://127.0.0.1:11434", -- Note that there is no /v1 at the end.
         model = "gemma3:4b",
+      },
+      openai = {
+        endpoint = "https://api.openai.com/v1",
+        api_key_name = "OPENAI_API_KEY",
+        model = "o4-mini", -- your desired model (or use gpt-4o, etc.)
+        -- model = "gpt-4o", -- your desired model (or use gpt-4o, etc.)
+        timeout = 30000, -- Timeout in milliseconds, increase this for reasoning models
+        temperature = 0,
+        max_completion_tokens = 8192, -- Increase this to include reasoning tokens (for reasoning models)
+        --reasoning_effort = "medium", -- low|medium|high, only used for reasoning models
       },
       vendors = {
         openrouter = {
