@@ -1,3 +1,5 @@
+-- command line position when using lualine
+vim.opt.cmdheight = 0
 require("lualine").setup {
   options = {
     icons_enabled = true,
