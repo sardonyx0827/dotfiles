@@ -749,8 +749,9 @@ local plugins = {
     opts = {
       provider = "copilot",
       copilot = {
-        -- model = 'claude-3.7-sonnet',
+        model = 'claude-3.7-sonnet',
         max_tokens = 8192,
+        disable_auto_insert = true,
       },
       claude = {
         endpoint = "https://api.anthropic.com",
