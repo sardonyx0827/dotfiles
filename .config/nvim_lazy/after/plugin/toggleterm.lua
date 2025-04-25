@@ -77,3 +77,15 @@ function _codex_toggle()
   toggle_codex:toggle()
 end
 vim.api.nvim_set_keymap("n", "<leader>tx", "<cmd>lua _codex_toggle()<CR>", { noremap = true, silent = true, desc = "codex (OpenAI) - CUI tool" })
+
+-- aider
+local toggle_aider = Terminal:new({
+  cmd = "aider --model gemini/gemini-2.5-flash-preview-04-17 --no-auto-commits",
+  direction = "float",
+  hidden = true
+})
+
+function _aider_toggle()
+  toggle_aider:toggle()
+end
+vim.api.nvim_set_keymap("n", "<leader>tg", "<cmd>lua _aider_toggle()<CR>", { noremap = true, silent = true, desc = "aider - CUI tool" })
