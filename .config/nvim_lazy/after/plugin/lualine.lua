@@ -1,9 +1,33 @@
 -- command line position when using lualine
 vim.opt.cmdheight = 0
+local my_transparent_theme = {
+  normal = {
+    a = { fg = '#7aa2f7', bg = 'None', gui = 'bold' }, -- 例: 端のセクションは色付き
+    b = { fg = '#c0caf5', bg = 'None' },
+    c = { fg = '#a9b1d6', bg = 'None' },
+    x = { fg = '#a9b1d6', bg = 'None' },
+    y = { fg = '#c0caf5', bg = 'None' },
+    z = { fg = '#7aa2f7', bg = 'None' }, -- 例: 端のセクションは色付き
+  },
+  inactive = {
+    a = { fg = '#545c7e', bg = 'None', gui = 'bold' },
+    b = { fg = '#727a9a', bg = 'None' },
+    c = { fg = '#727a9a', bg = 'None' },
+    x = { fg = '#727a9a', bg = 'None' },
+    y = { fg = '#727a9a', bg = 'None' },
+    z = { fg = '#545c7e', bg = 'None' },
+  },
+  -- insert, visual, replace, command モードなども同様に定義可能
+  insert = { a = { fg = '#1a1b26', bg = '#9ece6a', gui = 'bold' } },
+  visual = { a = { fg = '#1a1b26', bg = '#ff9e64', gui = 'bold' } },
+  replace = { a = { fg = '#1a1b26', bg = '#f7768e', gui = 'bold' } },
+  command = { a = { fg = '#1a1b26', bg = '#e0af68', gui = 'bold' } },
+}
 require("lualine").setup {
   options = {
     icons_enabled = true,
-    theme = "auto",
+    -- theme = "auto",
+    theme = my_transparent_theme,
     --color = { bg = "none" },
     component_separators = { left = "", right = "" },
     section_separators = { left = "", right = "" },
@@ -78,10 +102,3 @@ require("lualine").setup {
   extensions = {}
 }
 
--- set highlights
---vim.api.nvim_set_hl(0, "lualine_a_normal", { bg = "none" })
---vim.api.nvim_set_hl(0, "lualine_b_normal", { bg = "none" })
---vim.api.nvim_set_hl(0, "lualine_c_normal", { bg = "none" })
---vim.api.nvim_set_hl(0, "lualine_x_normal", { bg = "none" })
---vim.api.nvim_set_hl(0, "lualine_y_normal", { bg = "none" })
---vim.api.nvim_set_hl(0, "lualine_z_normal", { bg = "none" })

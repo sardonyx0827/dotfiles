@@ -1,4 +1,9 @@
-vim.keymap.set("n", "<M-0>", ":colorscheme ", { noremap = true })
+local set_hl_with_transparent_statusline = function()
+  require('telescope.builtin').colorscheme({ enable_preview = true }) -- Use Telescope to select colorscheme
+  vim.cmd("autocmd ColorScheme * lua vim.api.nvim_set_hl(0, 'StatusLine', { blend = 0 })")
+end
+-- vim.keymap.set("n", "<M-0>", ":colorscheme ", { noremap = true })
+vim.keymap.set("n", "<M-0>", set_hl_with_transparent_statusline, { noremap = true })
 
 local function set_random_color_scheme(color_schemes)
 
@@ -55,4 +60,4 @@ vim.api.nvim_set_hl(0, "Normal", { bg = "none" })
 vim.api.nvim_set_hl(0, "NormalNC", { bg = "none" })
 vim.api.nvim_set_hl(0, "NormalFloat", { bg = "none" })
 vim.api.nvim_set_hl(0, "FloatBorder", { bg = "none" })
-
+vim.api.nvim_set_hl(0, "StatusLine", { blend=0 })
