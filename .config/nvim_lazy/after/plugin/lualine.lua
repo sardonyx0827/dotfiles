@@ -2,12 +2,12 @@
 vim.opt.cmdheight = 0
 local my_transparent_theme = {
   normal = {
-    a = { fg = '#7aa2f7', bg = 'None', gui = 'bold' }, -- 例: 端のセクションは色付き
+    a = { fg = '#7aa2f7', bg = 'None', gui = 'bold' },
     b = { fg = '#c0caf5', bg = 'None' },
     c = { fg = '#a9b1d6', bg = 'None' },
     x = { fg = '#a9b1d6', bg = 'None' },
     y = { fg = '#c0caf5', bg = 'None' },
-    z = { fg = '#7aa2f7', bg = 'None' }, -- 例: 端のセクションは色付き
+    z = { fg = '#7aa2f7', bg = 'None' },
   },
   inactive = {
     a = { fg = '#545c7e', bg = 'None', gui = 'bold' },
@@ -17,11 +17,10 @@ local my_transparent_theme = {
     y = { fg = '#727a9a', bg = 'None' },
     z = { fg = '#545c7e', bg = 'None' },
   },
-  -- insert, visual, replace, command モードなども同様に定義可能
-  insert = { a = { fg = '#1a1b26', bg = '#9ece6a', gui = 'bold' } },
-  visual = { a = { fg = '#1a1b26', bg = '#ff9e64', gui = 'bold' } },
-  replace = { a = { fg = '#1a1b26', bg = '#f7768e', gui = 'bold' } },
-  command = { a = { fg = '#1a1b26', bg = '#e0af68', gui = 'bold' } },
+  insert = { a = { fg = '#9ece6a', bg = 'None', gui = 'bold' } },
+  visual = { a = { fg = '#ff9e64', bg = 'None', gui = 'bold' } },
+  replace = { a = { fg = '#f7768e', bg = 'None', gui = 'bold' } },
+  command = { a = { fg = '#e0af68', bg = 'None', gui = 'bold' } },
 }
 require("lualine").setup {
   options = {
