@@ -167,6 +167,11 @@ alias nvim_attach="nvim --remote-ui --server localhost:22222"
 # change directory to workspace
 alias cdw="cd ~/work"
 
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init --path)"
+eval "$(pyenv init -)"
+
 # history
 HISTFILE=~/.zsh_history
 HISTSIZE=100000
