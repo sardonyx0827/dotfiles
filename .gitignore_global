@@ -169,3 +169,6 @@ dist
 # python env
 Pipfile
 __pycache__
+
+# git
+.git/
