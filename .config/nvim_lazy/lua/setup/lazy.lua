@@ -717,8 +717,8 @@ local plugins = {
         chat = {
           adapter = "copilot",
           -- adapter = "gemini",
-
-          -- model = "claude-3.7-sonnet",
+          -- model = "Gemini-2.5-flash",
+          model = "claude-3.7-sonnet",
           tools = {
             ["mcp"] = {
               -- Prevent mcphub from loading before needed

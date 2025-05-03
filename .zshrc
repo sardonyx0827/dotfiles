@@ -126,17 +126,18 @@ sshs () {
     ssh "$t"
   fi
 }
-fd () {
-  echo $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
+cf() {
+  selected_file=$(fzf --preview 'cat {}')
+  if [ -n "$selected_file" ]; then
+    cd "$(dirname "$selected_file")"
+  fi
 }
-fcd () {
-  cd $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
-}
-ff () {
-  echo $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
-}
-fvi () {
-  nvim $(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf)
+vf() {
+  selected_file=$(fzf --preview 'cat {}')
+  if [ -n "$selected_file" ]; then
+    cd "$(dirname "$selected_file")"
+    nvim "$selected_file"
+  fi
 }
 
 # download web contents
