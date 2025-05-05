@@ -331,19 +331,6 @@ local plugins = {
       { "<leader>u", "<cmd>lua require('undotree').toggle()<cr>" },
     },
   },
-  {
-    "Hajime-Suzuki/vuffers.nvim",
-    dependencies = { "nvim-tree/nvim-web-devicons" },
-    config = function()
-      require("vuffers").setup({
-      })
-    end,
-    keys = {
-      { "<leader>vu",  "<cmd>lua require('vuffers').toggle()<cr>" },
-      { "<leader>vsa", "<cmd>lua require('vuffers').sort({ type = 'filename', direction = 'asc' })<cr>" },
-      { "<leader>vsd", "<cmd>lua require('vuffers').sort({ type = 'filename', direction = 'desc' })<cr>" },
-    },
-  },
   -- lsp settings
   {
     'VonHeikemen/lsp-zero.nvim',
@@ -685,6 +672,13 @@ local plugins = {
         service = "serveo.net"
       })
     end
+  },
+  {
+    'windwp/nvim-autopairs',
+    event = "InsertEnter",
+    config = true
+    -- use opts = {} for passing setup options
+    -- this is equivalent to setup({}) function
   },
   -- **********************************
   -- AI solutions
