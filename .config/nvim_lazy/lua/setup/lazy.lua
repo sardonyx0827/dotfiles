@@ -704,8 +704,8 @@ local plugins = {
       mode = "newbuffer", -- newbuffer or split, default: newbuffer
       -- model = 'claude-3.5-sonnet',
       model = 'gpt-4o',
-      show_help = "no",   -- Show help text for CopilotChatInPlace, default: yes
-      debug = false,      -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
+      show_help = "no", -- Show help text for CopilotChatInPlace, default: yes
+      debug = false,    -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
       language = "Japanese",
       prompts = prompts,
       auto_follow_cursor = false, -- Don't follow the cursor after getting response
@@ -826,9 +826,9 @@ local plugins = {
       openai = {
         endpoint = "https://api.openai.com/v1",
         api_key_name = "OPENAI_API_KEY",
-        model = "o4-mini", -- your desired model (or use gpt-4o, etc.)
+        model = "o4-mini",            -- your desired model (or use gpt-4o, etc.)
         -- model = "gpt-4o", -- your desired model (or use gpt-4o, etc.)
-        timeout = 30000, -- Timeout in milliseconds, increase this for reasoning models
+        timeout = 30000,              -- Timeout in milliseconds, increase this for reasoning models
         temperature = 0,
         max_completion_tokens = 8192, -- Increase this to include reasoning tokens (for reasoning models)
         --reasoning_effort = "medium", -- low|medium|high, only used for reasoning models
@@ -865,6 +865,9 @@ local plugins = {
         "rename_dir",
         "delete_dir",
         "bash",
+      },
+      selector = {
+        exclude_auto_select = { "NvimTree" },
       },
     },
     -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
@@ -908,6 +911,26 @@ local plugins = {
         ft = { "markdown", "Avante" },
       },
     },
+    keys = {
+      {
+        "<leader>a+",
+        function()
+          local tree_ext = require("avante.extensions.nvim_tree")
+          tree_ext.add_file()
+        end,
+        desc = "Select file in NvimTree",
+        ft = "NvimTree",
+      },
+      {
+        "<leader>a-",
+        function()
+          local tree_ext = require("avante.extensions.nvim_tree")
+          tree_ext.remove_file()
+        end,
+        desc = "Deselect file in NvimTree",
+        ft = "NvimTree",
+      },
+    },
   },
   {
     "ravitemer/mcphub.nvim",
@@ -933,7 +956,7 @@ local plugins = {
     end,
   },
   {
-  "joshuavial/aider.nvim",
+    "joshuavial/aider.nvim",
     opts = {
       -- your configuration comes here
       -- if you don't want to use the default settings
