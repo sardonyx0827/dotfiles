@@ -813,7 +813,7 @@ local plugins = {
       },
       gemini = {
         -- endpoint = "https://gemini.googleapis.com",
-        -- model = "gemini-2.5-pro-preview-03-25",
+        -- model = "gemini-2.5-pro-preview-05-06",
         model = "gemini-2.5-flash-preview-04-17",
         api_key_name = "GEMINI_API_KEY",
         temperature = 0,

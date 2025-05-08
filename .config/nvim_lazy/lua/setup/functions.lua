@@ -146,3 +146,26 @@ local function pwd_command()
 end
 vim.keymap.set("n", "<leader>ws", pwd_command, {desc = "Put cwd result", noremap = true})
 
+
+---------------------------------------------------------
+-- copy lsp diagnostics to clipboard
+---------------------------------------------------------
+local function copy_lsp_diagnostics()
+  local diagnostics = vim.diagnostic.get(0)
+  -- sort diagnostics by line number
+  table.sort(diagnostics, function(a, b)
+    return a.lnum < b.lnum
+  end)
+  local lines = {}
+  for _, diagnostic in ipairs(diagnostics) do
+    table.insert(lines, string.format("Line %d: %s: %s", diagnostic.lnum + 1, diagnostic.message, diagnostic.source))
+  end
+  if #lines > 0 then
+    vim.fn.setreg("+", table.concat(lines, "\n"))
+    print("Copied LSP diagnostics to clipboard.")
+  else
+    print("No LSP diagnostics found.")
+  end
+end
+vim.keymap.set("n", "<leader>cl", copy_lsp_diagnostics, {desc = "Copy LSP diagnostics to clipboard", noremap = true})
+
