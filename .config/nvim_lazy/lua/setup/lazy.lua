@@ -712,13 +712,13 @@ local plugins = {
     },
     config = function(_, opts)
       local chat = require("CopilotChat")
-      local select = require("CopilotChat.select")
+      -- local select = require("CopilotChat.select")
       -- Use unnamed register for the selection
-      opts.selection = select.unnamed
+      -- opts.selection = select.unnamed
       chat.setup(opts)
       vim.api.nvim_create_user_command("CopilotChatInline", function(args)
         chat.ask(args.args, {
-          selection = select.visual,
+          -- selection = select.visual,
           window = {
             title = "CopilotChatInline",
             layout = "float",
@@ -799,7 +799,7 @@ local plugins = {
     opts = {
       provider = "copilot",
       copilot = {
-        -- model = 'claude-3.7-sonnet',
+        model = 'claude-3.7-sonnet',
         -- disable_auto_insert = true,
         -- disable_tools = true, -- disable tools!
         max_tokens = 8192,
