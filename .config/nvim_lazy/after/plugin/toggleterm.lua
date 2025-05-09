@@ -81,7 +81,7 @@ vim.api.nvim_set_keymap("n", "<leader>tx", "<cmd>lua _codex_toggle()<CR>", { nor
 -- aider
 local toggle_aider = Terminal:new({
   -- cmd = "aider --model gemini/gemini-2.5-pro-preview-03-25 --weak-model gemini/gemini-2.5-flash-preview-04-17 --no-auto-commits",
-  cmd = "aider --model gemini/gemini-2.5-flash-preview-04-17 --no-auto-commits",
+  cmd = "aider --model gemini/gemini-2.5-flash-preview-04-17 --no-auto-commits --auto-test",
   direction = "float",
   hidden = true
 })
