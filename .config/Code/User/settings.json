@@ -350,7 +350,12 @@
             "commands": [
                 "editor.action.commentLine"
             ]
-        }
+        },
+        {
+            // use black hole register when pasting
+            "before": ["p"],
+            "after": ["\"", "_", "d", "P"]
+        },
     ],
 
     "vim.insertModeKeyBindingsNonRecursive": [
