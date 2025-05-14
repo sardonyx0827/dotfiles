@@ -31,5 +31,10 @@ autocmd({ "BufWritePre" }, {
   command = [[%s/\s\+$//e]],
 })
 
+autocmd({ "WinEnter", "FocusGained", "BufEnter" }, {
+  pattern = "*",
+  command = "checktime",
+})
+
 vim.g.netrw_liststyle = 3
 vim.g.netrw_winsize = 80
