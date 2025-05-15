@@ -1,3 +1,6 @@
+--- @diagnostic disable: undefined-global
+--- @diagnostic disable: lowercase-global
+--- @diagnostic disable: duplicate-set-field
 require("toggleterm").setup{
   -- 'vertical' | 'horizontal' | 'tab' | 'float'
   direction = 'float'

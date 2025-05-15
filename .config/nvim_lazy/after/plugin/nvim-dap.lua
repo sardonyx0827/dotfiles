@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 -- requirements: apt install python3 python3.x-venv, pip3 install debugpy
 local dap = require('dap')
 dap.adapters = {

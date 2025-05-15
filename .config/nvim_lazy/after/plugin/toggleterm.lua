@@ -1,3 +1,6 @@
+--- @diagnostic disable: undefined-global
+--- @diagnostic disable: duplicate-set-field
+--- @diagnostic disable: lowercase-global
 function _G.set_terminal_keymaps()
 
   local opts = { buffer = 0 }

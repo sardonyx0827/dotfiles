@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 vim.keymap.set("n", "<leader>zz", function()
   require("zen-mode").setup {
     window = {

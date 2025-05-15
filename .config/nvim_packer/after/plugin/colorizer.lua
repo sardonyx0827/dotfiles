@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 require('colorizer').setup(config, {
   RRGGBBAA = true;
   rgb_fn = true;

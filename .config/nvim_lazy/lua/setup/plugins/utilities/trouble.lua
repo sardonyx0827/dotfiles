@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-doc-name
 -- find Trouble in my code
 return {
   "folke/trouble.nvim",

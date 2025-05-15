@@ -1,3 +1,5 @@
+--- @diagnostic disable:unknown-diag-code
+--- @diagnostic disable: different-requires
 require('hlargs').setup {
   color = '#ef9123',
   highlight = {},

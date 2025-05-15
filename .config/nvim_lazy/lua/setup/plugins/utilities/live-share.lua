@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 -- Live Share
 return {
   "azratul/live-share.nvim",

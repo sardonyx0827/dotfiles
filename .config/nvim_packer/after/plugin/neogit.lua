@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 local neogit = require("neogit")
 
 neogit.setup {

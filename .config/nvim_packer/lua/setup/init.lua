@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 require("setup.set")
 require("setup.remap")
 

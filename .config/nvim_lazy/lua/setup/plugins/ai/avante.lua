@@ -1,3 +1,4 @@
+--- @diagnostic disable: different-requires
 return {
   "yetone/avante.nvim",
   event = "VeryLazy",

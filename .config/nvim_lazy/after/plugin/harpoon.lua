@@ -1,3 +1,5 @@
+--- @diagnostic disable: undefined-global
+--- @diagnostic disable: different-requires
 local harpoon = require("harpoon")
 -- REQUIRED
 harpoon:setup()

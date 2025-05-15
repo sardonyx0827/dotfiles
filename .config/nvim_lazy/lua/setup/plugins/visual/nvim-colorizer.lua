@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 -- A high-performance color highlighter. show color in code, like #ffffff
 return {
   "norcalli/nvim-colorizer.lua",

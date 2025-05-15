@@ -1,3 +1,5 @@
+--- @diagnostic disable: undefined-global
+--- @diagnostic disable: different-requires
 -- command line position when using lualine
 vim.opt.cmdheight = 0
 local my_transparent_theme = {

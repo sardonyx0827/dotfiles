@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 -- DAP for Debugging
 return {
   'mfussenegger/nvim-dap',

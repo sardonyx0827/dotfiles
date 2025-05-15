@@ -1,3 +1,5 @@
+--- @diagnostic disable: undefined-global
+--- @diagnostic disable: different-requires
 require('vscode').setup({
   disable_background = true
 })

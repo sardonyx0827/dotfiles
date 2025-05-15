@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-doc-name
 return {
   "folke/snacks.nvim",
   priority = 1000,

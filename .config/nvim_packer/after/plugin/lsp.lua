@@ -1,3 +1,5 @@
+--- @diagnostic disable: undefined-global
+--- @diagnostic disable: different-requires
 local lsp = require("lsp-zero")
 
 lsp.preset("recommended")
@@ -43,7 +45,7 @@ lsp.set_preferences({
   }
 })
 
-lsp.on_attach(function(client, bufnr)
+lsp.on_attach(function(_, bufnr)
   local opts = { buffer = bufnr, remap = false }
 
   -- jump to definition

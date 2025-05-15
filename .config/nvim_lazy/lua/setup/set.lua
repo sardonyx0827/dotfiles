@@ -1,3 +1,4 @@
+--- @diagnostic disable: undefined-global
 vim.opt.nu = true
 vim.opt.relativenumber = true
 
