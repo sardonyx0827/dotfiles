@@ -41,7 +41,7 @@ return {
             local is_text = require("float-preview.utils").is_text(path)
             return size < 5 and is_text
           end,
-          post_open = function(bufnr)
+          post_open = function(_)
             return true
           end,
         },

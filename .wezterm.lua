@@ -9,10 +9,10 @@ end
 config.use_ime = true
 -- Acceptable values are SteadyBlock, BlinkingBlock, SteadyUnderline, BlinkingUnderline, SteadyBar, and BlinkingBar.
 config.default_cursor_style = 'BlinkingBlock'
--- font
---config.font = wezterm.font("Ubuntu Mono", {weight="Medium", stretch="Normal", style="Normal"})
+-- font (macos: brew install --cask font-ubuntu-mono)
+config.font = wezterm.font("Ubuntu Mono", {weight="Medium", stretch="Normal", style="Normal"})
 -- font-size (default: 12)
-config.font_size = 12
+config.font_size = 14
 -- window (default: "TITLE | RESIZE")
 --config.window_decorations = "TITLE"
 -- remove tab bar
