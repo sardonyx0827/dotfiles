@@ -18,3 +18,10 @@
 	sslVerify = false
 [credential]
 	helper = osxkeychain
+[merge]
+  tool = nvimdiff
+[mergetool]
+  prompt = false
+  keepBackup = false
+[mergetool "nvimdiff"]
+  layout = "LOCAL,BASE,REMOTE / MERGED"
