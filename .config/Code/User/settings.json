@@ -451,7 +451,7 @@
     "window.enableMenuBarMnemonics": false,
     "continue.enableTabAutocomplete": false,
     "[typescriptreact]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+        "editor.defaultFormatter": "vscode.typescript-language-features"
     },
     "continue.showInlineTip": false,
     "[javascript]": {
@@ -492,5 +492,6 @@
     "github.copilot.nextEditSuggestions.enabled": true,
     "chat.agent.enabled": true,
     "vim.showMarksInGutter": true,
+    "git.confirmSync": false,
     //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }
