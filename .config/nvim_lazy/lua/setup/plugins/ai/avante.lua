@@ -5,48 +5,41 @@ return {
   version = false,   -- Never set this value to "*"! Never!
   opts = {
     provider = "copilot",
-    copilot = {
-      -- model = 'claude-3.7-sonnet',
-      -- disable_auto_insert = true,
-      -- disable_tools = true, -- disable tools!
-      model = 'gpt-4.1',
-      max_tokens = 8192,
-    },
-    claude = {
-      endpoint = "https://api.anthropic.com",
-      model = "claude-3-7-sonnet-20250219",
-      api_key_name = "ANTHROPIC_API_KEY",
-      temperature = 0,
-      max_tokens = 8192,
-    },
-    gemini = {
-      -- endpoint = "https://gemini.googleapis.com",
-      -- model = "gemini-2.5-pro-preview-05-06",
-      model = "gemini-2.5-flash-preview-04-17",
-      api_key_name = "GEMINI_API_KEY",
-      temperature = 0,
-      max_tokens = 8192,
-    },
-    ollama = {
-      endpoint = "http://127.0.0.1:11434",   -- Note that there is no /v1 at the end.
-      model = "gemma3:4b",
-    },
-    openai = {
-      endpoint = "https://api.openai.com/v1",
-      api_key_name = "OPENAI_API_KEY",
-      model = "o4-mini",              -- your desired model (or use gpt-4o, etc.)
-      -- model = "gpt-4o", -- your desired model (or use gpt-4o, etc.)
-      timeout = 30000,                -- Timeout in milliseconds, increase this for reasoning models
-      temperature = 0,
-      max_completion_tokens = 8192,   -- Increase this to include reasoning tokens (for reasoning models)
-      --reasoning_effort = "medium", -- low|medium|high, only used for reasoning models
-    },
-    vendors = {
-      openrouter = {
-        __inherited_from = 'openai',
-        endpoint = 'https://openrouter.ai/api/v1',
-        api_key_name = "OPENROUTER_API_KEY",
-        model = 'anthropic/claude-3.7-sonnet',
+    providers = {
+      copilot = {
+        -- model = 'claude-3.7-sonnet',
+        -- disable_auto_insert = true,
+        -- disable_tools = true, -- disable tools!
+        model = 'gpt-4.1',
+      },
+      claude = {
+        endpoint = "https://api.anthropic.com",
+        model = "claude-3-7-sonnet-20250219",
+        api_key_name = "ANTHROPIC_API_KEY",
+      },
+      gemini = {
+        -- endpoint = "https://gemini.googleapis.com",
+        -- model = "gemini-2.5-pro-preview-05-06",
+        model = "gemini-2.5-flash-preview-04-17",
+        api_key_name = "GEMINI_API_KEY",
+      },
+      ollama = {
+        endpoint = "http://127.0.0.1:11434",   -- Note that there is no /v1 at the end.
+        model = "gemma3:4b",
+      },
+      openai = {
+        endpoint = "https://api.openai.com/v1",
+        api_key_name = "OPENAI_API_KEY",
+        model = "o4-mini",              -- your desired model (or use gpt-4o, etc.)
+        -- model = "gpt-4o", -- your desired model (or use gpt-4o, etc.)
+        timeout = 30000,                -- Timeout in milliseconds, increase this for reasoning models
+        --reasoning_effort = "medium", -- low|medium|high, only used for reasoning models
+      },
+        openrouter = {
+          __inherited_from = 'openai',
+          endpoint = 'https://openrouter.ai/api/v1',
+          api_key_name = "OPENROUTER_API_KEY",
+          model = 'anthropic/claude-3.7-sonnet',
       },
     },
     behaviour = {
