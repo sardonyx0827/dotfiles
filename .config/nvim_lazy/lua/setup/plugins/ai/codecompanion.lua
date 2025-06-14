@@ -22,7 +22,7 @@ return {
       chat = {
         adapter = "copilot",
         -- adapter = "gemini",
-        -- model = "Gemini-2.5-flash",
+        model = "gpt-4.1",
         tools = {
           ["mcp"] = {
             -- Prevent mcphub from loading before needed
