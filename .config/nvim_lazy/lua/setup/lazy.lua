@@ -26,8 +26,7 @@ local plugins = {
   require("setup.plugins.colorscheme.onedark"),
   require("setup.plugins.colorscheme.vscode"),
   -- visual
-  -- disable because waiting for update lualine.nvim statuslune bug fix
-  -- require("setup.plugins.visual.startup"),
+  require("setup.plugins.visual.startup"),
   require("setup.plugins.visual.nvim-treesitter"),
   require("setup.plugins.visual.playground"),
   require("setup.plugins.visual.rainbow-delimiters"),

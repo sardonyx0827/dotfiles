@@ -1,4 +1,22 @@
--- command line position when using lualine
+-- 追加の自動コマンドでさらに確実にする場合
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "dashboard", "alpha", "startify" },
+  callback = function()
+    vim.opt_local.laststatus = 0
+  end,
+})
+
+-- ダッシュボードから他のバッファに移動した時にstatuslineを復元
+vim.api.nvim_create_autocmd("BufEnter", {
+  callback = function()
+    local ft = vim.bo.filetype
+    local disabled_fts = { "dashboard", "alpha", "startify" }
+
+    if not vim.tbl_contains(disabled_fts, ft) then
+      vim.opt.laststatus = 3  -- globalstatusを有効にする
+    end
+  end,
+})-- command line position when using lualine
 vim.opt.cmdheight = 0
 -- Show Statusline
 local my_transparent_theme = {
