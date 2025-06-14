@@ -1,4 +1,6 @@
--- 追加の自動コマンドでさらに確実にする場合
+--- @diagnostic disable: undefined-global
+-- Prevent lualine from showing in dashboard-like filetypes by setting laststatus to 0 locally.
+-- This is necessary because lualine's global statusline setting does not apply to special buffers like dashboard.
 vim.api.nvim_create_autocmd("FileType", {
   pattern = { "dashboard", "alpha", "startify" },
   callback = function()
@@ -6,17 +8,19 @@ vim.api.nvim_create_autocmd("FileType", {
   end,
 })
 
--- ダッシュボードから他のバッファに移動した時にstatuslineを復元
+-- Restore global statusline (laststatus=3) when leaving dashboard-like filetypes.
 vim.api.nvim_create_autocmd("BufEnter", {
   callback = function()
     local ft = vim.bo.filetype
     local disabled_fts = { "dashboard", "alpha", "startify" }
 
     if not vim.tbl_contains(disabled_fts, ft) then
-      vim.opt.laststatus = 3  -- globalstatusを有効にする
+      vim.opt.laststatus = 3
     end
   end,
-})-- command line position when using lualine
+})
+
+-- command line position when using lualine
 vim.opt.cmdheight = 0
 -- Show Statusline
 local my_transparent_theme = {
