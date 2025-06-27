@@ -8,6 +8,6 @@ tmux list-panes -F '#{pane_id} #{pane_current_command}' | while read -r PANE_ID 
     # 実行中のコマンドが 'nvim' でない場合
     if [[ "$COMMAND_NAME" != "nvim" ]]; then
         # send-keys でコマンドを送信
-        tmux send-keys -t "$PANE_ID" "$COMMAND"
+        tmux send-keys -t "$PANE_ID" "$COMMAND" Enter
     fi
 done
