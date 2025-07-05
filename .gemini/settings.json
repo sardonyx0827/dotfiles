@@ -1,0 +1,15 @@
+{
+  "selectedAuthType": "oauth-personal",
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@executeautomation/playwright-mcp-server"
+      ]
+    }
+  },
+  "preferredEditor": "vim",
+  "theme": "Default",
+  "usageStatisticsEnabled": false
+}

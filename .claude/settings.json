@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "Bash(sudo:*)",
+      "Bash(rm -rf:*)",
+      "Read(id_rsa)",
+      "Read(**/*token*)",
+      "Read(**/*key*)",
+      "Write(**/secrets/**)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(nc:*)",
+      "Bash(psql:*)",
+      "Bash(mysql:*)",
+      "Bash(mongod:*)"
+    ]
+  }
+}
