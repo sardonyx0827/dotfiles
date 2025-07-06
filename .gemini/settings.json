@@ -11,5 +11,6 @@
   },
   "preferredEditor": "vim",
   "theme": "Default",
-  "usageStatisticsEnabled": false
+  "usageStatisticsEnabled": false,
+  "contextFileName": ["CLAUDE.md","GEMINI.md"]
 }
