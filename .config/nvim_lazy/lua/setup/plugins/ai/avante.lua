@@ -7,20 +7,20 @@ return {
     provider = "copilot",
     providers = {
       copilot = {
-        -- model = 'claude-3.7-sonnet',
+        -- model = 'claude-sonnet-4',
         -- disable_auto_insert = true,
         -- disable_tools = true, -- disable tools!
         model = 'gpt-4.1',
       },
       claude = {
         endpoint = "https://api.anthropic.com",
-        model = "claude-3-7-sonnet-20250219",
+        model = "claude-sonnet-4-20250514",
         api_key_name = "ANTHROPIC_API_KEY",
       },
       gemini = {
         -- endpoint = "https://gemini.googleapis.com",
         -- model = "gemini-2.5-pro-preview-05-06",
-        model = "gemini-2.5-flash-preview-04-17",
+        model = "gemini-2.5-flash",
         api_key_name = "GEMINI_API_KEY",
       },
       ollama = {
@@ -39,7 +39,7 @@ return {
           __inherited_from = 'openai',
           endpoint = 'https://openrouter.ai/api/v1',
           api_key_name = "OPENROUTER_API_KEY",
-          model = 'anthropic/claude-3.7-sonnet',
+          model = 'anthropic/claude-sonnet-4-20250514',
       },
     },
     behaviour = {
