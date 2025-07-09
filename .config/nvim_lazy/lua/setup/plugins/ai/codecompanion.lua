@@ -54,7 +54,9 @@ return {
           "gemini-2.0-flash-001",
         },
       },
+    },
+    opts = {
+      language = "Japanese",
     }
-
   }
 }
