@@ -1,6 +1,4 @@
 --- @diagnostic disable: undefined-global
-vim.keymap.set("n", "<c-l>", ":Copilot panel<CR>", { silent = true })
-
 -- Copilot Chat - Keymaps
 vim.keymap.set("n", "<leader>cc", ":CopilotChatOpen<CR>", { desc = "Copilot Chat" })
 vim.keymap.set("v", "<leader>cc", "y:CopilotChatOpen<CR>", { desc = "Copilot Chat - selected" })
