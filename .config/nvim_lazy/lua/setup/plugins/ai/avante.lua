@@ -66,6 +66,8 @@ return {
       "rename_dir",
       "delete_dir",
       "bash",
+      "web_search",
+      "fetch"
     },
     selector = {
       exclude_auto_select = { "NvimTree" },
