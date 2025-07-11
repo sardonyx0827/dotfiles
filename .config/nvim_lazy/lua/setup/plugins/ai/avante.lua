@@ -7,10 +7,10 @@ return {
     provider = "copilot",
     providers = {
       copilot = {
-        model = 'claude-sonnet-4',
+        -- model = 'claude-sonnet-4',
         -- disable_auto_insert = true,
         -- disable_tools = true, -- disable tools!
-        -- model = 'gpt-4.1',
+        model = 'gpt-4.1',
       },
       claude = {
         endpoint = "https://api.anthropic.com",
