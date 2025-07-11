@@ -67,7 +67,10 @@ return {
       "delete_dir",
       "bash",
       "web_search",
-      "fetch"
+      "fetch",
+      "python",
+      "git_diff",
+      "git_commit",
     },
     selector = {
       exclude_auto_select = { "NvimTree" },
