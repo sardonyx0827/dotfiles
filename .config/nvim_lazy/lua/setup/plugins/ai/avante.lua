@@ -18,8 +18,6 @@ return {
         api_key_name = "ANTHROPIC_API_KEY",
       },
       gemini = {
-        -- endpoint = "https://gemini.googleapis.com",
-        -- model = "gemini-2.5-pro-preview-05-06",
         model = "gemini-2.5-flash",
         api_key_name = "GEMINI_API_KEY",
       },
@@ -31,9 +29,7 @@ return {
         endpoint = "https://api.openai.com/v1",
         api_key_name = "OPENAI_API_KEY",
         model = "o4-mini",              -- your desired model (or use gpt-4o, etc.)
-        -- model = "gpt-4o", -- your desired model (or use gpt-4o, etc.)
         timeout = 30000,                -- Timeout in milliseconds, increase this for reasoning models
-        --reasoning_effort = "medium", -- low|medium|high, only used for reasoning models
       },
         openrouter = {
           __inherited_from = 'openai',
@@ -48,11 +44,11 @@ return {
       enable_cursor_planning_mode = true,
       support_paste_from_clipboard = true,
     },
-    system_prompt = function()   -- LLMが常に最新のMCPサーバーの状態を持つように関数として定義 [6]
+    system_prompt = function()   -- Define as a function so the LLM always has the latest MCP server state [6]
       local hub = require("mcphub").get_hub_instance()
       return hub:get_active_servers_prompt()
     end,
-    custom_tools = function()   -- mcphubがロードされる前にrequireされるのを防ぐために関数を使用 [6]
+    custom_tools = function()   -- Use a function to prevent requiring mcphub before it's loaded [6]
       return { require("mcphub.extensions.avante").mcp_tool() }
     end,
     disabled_tools = {
