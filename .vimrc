@@ -145,11 +145,6 @@ Plug 'vim-scripts/slimv.vim'
 Plug 'vim-perl/vim-perl'
 Plug 'c9s/perlomni.vim'
 
-" php
-"" PHP Bundle
-Plug 'phpactor/phpactor', {'for': 'php', 'do': 'composer install --no-dev -o'}
-Plug 'stephpy/vim-php-cs-fixer'
-
 " python
 "" Python Bundle
 Plug 'davidhalter/jedi-vim'
