@@ -52,83 +52,120 @@ return {
     'AndreM222/copilot-lualine'
   },
   config = function()
-  require("lualine").setup {
-    options = {
-      icons_enabled = true,
-      -- theme = "auto",
-      theme = my_transparent_theme,
-      --color = { bg = "none" },
-      component_separators = { left = "", right = "" },
-      section_separators = { left = "", right = "" },
-      disabled_filetypes = {
-        statusline = {},
-        winbar = {},
-      },
-      ignore_focus = {},
-      always_divide_middle = true,
-      globalstatus = true,
-      refresh = {
-        statusline = 1000,
-        tabline = 1000,
-        winbar = 1000,
-      }
-    },
-    sections = {
-      lualine_a = { "mode" },
-      lualine_b = { "branch", "diff", "diagnostics" },
-      lualine_c = { "filename",
-        {
-          require("noice").api.statusline.mode.get,
-          cond = require("noice").api.statusline.mode.has,
-          color = { fg = "#ff9e64" },
+    require("lualine").setup {
+      options = {
+        icons_enabled = true,
+        -- theme = "auto",
+        theme = my_transparent_theme,
+        --color = { bg = "none" },
+        component_separators = { left = "", right = "" },
+        section_separators = { left = "", right = "" },
+        disabled_filetypes = {
+          statusline = {},
+          winbar = {},
+        },
+        ignore_focus = {},
+        always_divide_middle = true,
+        globalstatus = true,
+        refresh = {
+          statusline = 1000,
+          tabline = 1000,
+          winbar = 1000,
         }
       },
-      lualine_x = {
-        {
-          'copilot',
-          -- Default values
-          symbols = {
-            status = {
-              icons = {
-                enabled = " ",
-                sleep = " ",   -- auto-trigger disabled
-                disabled = " ",
-                unknown = " ",
-                warning = " ",
+      sections = {
+        lualine_a = { "mode" },
+        lualine_b = { "branch", "diff", "diagnostics" },
+        lualine_c = { "filename",
+          {
+            require("noice").api.statusline.mode.get,
+            cond = require("noice").api.statusline.mode.has,
+            color = { fg = "#ff9e64" },
+          }
+        },
+        lualine_x = {
+          {
+            'copilot',
+            -- Default values
+            symbols = {
+              status = {
+                icons = {
+                  enabled = " ",
+                  sleep = " ", -- auto-trigger disabled
+                  disabled = " ",
+                  unknown = " ",
+                  warning = " ",
+                },
+                hl = {
+                  enabled = "#50FA7B",
+                  sleep = "#AEB7D0",
+                  disabled = "#6272A4",
+                  warning = "#FFB86C",
+                  unknown = "#FF5555"
+                }
               },
-              hl = {
-                enabled = "#50FA7B",
-                sleep = "#AEB7D0",
-                disabled = "#6272A4",
-                warning = "#FFB86C",
-                unknown = "#FF5555"
-              }
+              spinners = require("copilot-lualine.spinners").dots,
+              spinner_color = "#6272A4"
             },
-            spinners = require("copilot-lualine.spinners").dots,
-            spinner_color = "#6272A4"
+            show_colors = true,
+            show_loading = true
           },
-          show_colors = true,
-          show_loading = true
-        },
-        {
-          require('mcphub.extensions.lualine')
-        },
-        "encoding", "fileformat", "filetype" },
-      lualine_y = { "progress" },
-      lualine_z = { "location" }
-    },
-    inactive_sections = {
-      lualine_a = {},
-      lualine_b = {},
-      lualine_c = { "filename" },
-      lualine_x = { "location" },
-      lualine_y = {},
-      lualine_z = {}
-    },
-    tabline = {},
-    winbar = {},
-    inactive_winbar = {},
-    extensions = {}
-  }
-    end
+          {
+            function()
+              -- Check if MCPHub is loaded
+              if not vim.g.loaded_mcphub then
+                return "󰐻 -"
+              end
+
+              local count = vim.g.mcphub_servers_count or 0
+              local status = vim.g.mcphub_status or "stopped"
+              local executing = vim.g.mcphub_executing
+
+              -- Show "-" when stopped
+              if status == "stopped" then
+                return "󰐻 -"
+              end
+
+              -- Show spinner when executing, starting, or restarting
+              if executing or status == "starting" or status == "restarting" then
+                local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+                local frame = math.floor(vim.loop.now() / 100) % #frames + 1
+                return "󰐻 " .. frames[frame]
+              end
+
+              return "󰐻 " .. count
+            end,
+            color = function()
+              if not vim.g.loaded_mcphub then
+                return { fg = "#6c7086" }         -- Gray for not loaded
+              end
+
+              local status = vim.g.mcphub_status or "stopped"
+              if status == "ready" or status == "restarted" then
+                return { fg = "#50fa7b" }         -- Green for connected
+              elseif status == "starting" or status == "restarting" then
+                return { fg = "#ffb86c" }         -- Orange for connecting
+              else
+                return { fg = "#ff5555" }         -- Red for error/stopped
+              end
+            end,
+          },
+          "encoding", "fileformat", "filetype" },
+        lualine_y = { "progress" },
+        lualine_z = { "location" }
+      },
+      inactive_sections = {
+        lualine_a = {},
+        lualine_b = {},
+        lualine_c = { "filename" },
+        lualine_x = { "location" },
+        lualine_y = {},
+        lualine_z = {}
+      },
+      tabline = {},
+      winbar = {},
+      inactive_winbar = {},
+      extensions = {}
+    }
+  end
 }
