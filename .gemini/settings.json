@@ -12,5 +12,9 @@
   "preferredEditor": "vim",
   "theme": "Default",
   "usageStatisticsEnabled": false,
-  "contextFileName": ["CLAUDE.md","GEMINI.md"]
+  "contextFileName": [
+    "CLAUDE.md",
+    "GEMINI.md"
+  ],
+  "vimMode": false
 }
