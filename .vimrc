@@ -442,6 +442,26 @@ let NERDTreeShowHidden = 1
 nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
 nnoremap <silent> <leader>e :NERDTreeFocusToggle<CR>
 
+" NERDTreeでlキー: ファイルなら開いてNERDTreeを閉じ、ディレクトリなら展開
+augroup NERDTreeCustomMappings
+  autocmd!
+  autocmd FileType nerdtree call s:NERDTree_l_mapping()
+augroup END
+
+function! s:NERDTree_l_mapping()
+  nnoremap <buffer> l :call <SID>NERDTreeOpenOrExpand()<CR>
+endfunction
+
+function! s:NERDTreeOpenOrExpand()
+  let node = g:NERDTreeFileNode.GetSelected()
+  if node.path.isDirectory
+    execute "normal o"
+  else
+    execute "normal \r"
+    NERDTreeClose
+  endif
+endfunction
+
 " show nerdtree default
 let g:nerdtree_tabs_open_on_console_startup=1
 
