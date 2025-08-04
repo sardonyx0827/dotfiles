@@ -1,6 +1,29 @@
 {
+  "mcpServers": {
+    "claude_code": {
+      "args": [
+        "/Users/sardonyx0827/.npm-global/bin/claude",
+        "mcp",
+        "serve"
+      ],
+      "command": "/usr/local/bin/node",
+      "env": []
+    },
+    "playwright": {
+      "args": [
+        "@playwright/mcp@latest"
+      ],
+      "command": "npx"
+    }
+  },
   "nativeMCPServers": {
     "neovim": {
+      "custom_instructions": {
+        "disabled": false,
+        "text": ""
+      },
+      "disabled": false,
+      "disabled_resources": [],
       "disabled_tools": [
         "delete_item",
         "execute_command",
@@ -11,28 +34,7 @@
         "read_file",
         "replace_in_file",
         "write_file"
-      ],
-      "disabled": false,
-      "disabled_resources": [
-        
-      ],
-      "custom_instructions": {
-        "text": "",
-        "disabled": false
-      }
-    }
-  },
-  "mcpServers": {
-    "claude_code": {
-      "args": [
-        "/Users/sardonyx0827/.npm-global/bin/claude",
-        "mcp",
-        "serve"
-      ],
-      "env": [
-        
-      ],
-      "command": "/usr/local/bin/node"
+      ]
     }
   }
 }
