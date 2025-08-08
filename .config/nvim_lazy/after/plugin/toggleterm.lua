@@ -69,6 +69,18 @@ function _claude_toggle()
 end
 vim.api.nvim_set_keymap("n", "<leader>tc", "<cmd>lua _claude_toggle()<CR>", { noremap = true, silent = true, desc = "claude code - CUI tool" })
 
+-- gemini cli
+local toggle_gemini = Terminal:new({
+	cmd = "gemini",
+	direction = "float",
+	hidden = true
+})
+
+function _gemini_toggle()
+	toggle_gemini:toggle()
+end
+vim.api.nvim_set_keymap("n", "<leader>tg", "<cmd>lua _gemini_toggle()<CR>", { noremap = true, silent = true, desc = "gemini cli - CUI tool" })
+
 -- codex (OpenAI)
 local toggle_codex = Terminal:new({
   cmd = "codex",
@@ -81,15 +93,3 @@ function _codex_toggle()
 end
 vim.api.nvim_set_keymap("n", "<leader>tx", "<cmd>lua _codex_toggle()<CR>", { noremap = true, silent = true, desc = "codex (OpenAI) - CUI tool" })
 
--- aider
-local toggle_aider = Terminal:new({
-  -- cmd = "aider --model gemini/gemini-2.5-pro-preview-03-25 --weak-model gemini/gemini-2.5-flash-preview-04-17 --no-auto-commits",
-  cmd = "aider --model gemini/gemini-2.5-flash-preview-04-17 --no-auto-commits --auto-test",
-  direction = "float",
-  hidden = true
-})
-
-function _aider_toggle()
-  toggle_aider:toggle()
-end
-vim.api.nvim_set_keymap("n", "<leader>tg", "<cmd>lua _aider_toggle()<CR>", { noremap = true, silent = true, desc = "aider - CUI tool" })

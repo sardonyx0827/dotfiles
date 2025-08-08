@@ -73,6 +73,7 @@ local plugins = {
   require("setup.plugins.utilities.remote-sshfs"),
   require("setup.plugins.utilities.remote-nvim"),
   require("setup.plugins.utilities.live-share"),
+
   -- **********************************
   -- AI solutions
   -- **********************************
@@ -81,7 +82,7 @@ local plugins = {
   require("setup.plugins.ai.codecompanion"),
   require("setup.plugins.ai.avante"),
   require("setup.plugins.ai.mcphub"),
-  require("setup.plugins.ai.aider"),
+
   -- **********************************
   -- others
   -- **********************************
