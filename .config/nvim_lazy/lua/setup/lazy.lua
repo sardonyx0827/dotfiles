@@ -26,7 +26,6 @@ local plugins = {
   require("setup.plugins.colorscheme.onedark"),
   require("setup.plugins.colorscheme.vscode"),
   -- visual
-  -- require("setup.plugins.visual.startup"),
   require("setup.plugins.visual.nvim-treesitter"),
   require("setup.plugins.visual.playground"),
   require("setup.plugins.visual.rainbow-delimiters"),
@@ -70,9 +69,6 @@ local plugins = {
   -- others
   require("setup.plugins.utilities.which-key"),
   require("setup.plugins.utilities.hop"),
-  require("setup.plugins.utilities.remote-sshfs"),
-  require("setup.plugins.utilities.remote-nvim"),
-  require("setup.plugins.utilities.live-share"),
 
   -- **********************************
   -- AI solutions
@@ -82,11 +78,6 @@ local plugins = {
   require("setup.plugins.ai.codecompanion"),
   require("setup.plugins.ai.avante"),
   require("setup.plugins.ai.mcphub"),
-
-  -- **********************************
-  -- others
-  -- **********************************
-  require("setup.plugins.others.blackjack"),
 }
 
 local lazy = require("lazy")
