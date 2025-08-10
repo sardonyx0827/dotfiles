@@ -13,22 +13,33 @@ vim.keymap.set({"n", "v"}, "<C-h>",
     end,
     {desc = "CopilotChat - Prompt actions" })
 
--- jump to next error/warn and fix with Copilot Chat
+-- jump to next error and prompt AI for fix
 local function quick_fix_next_error_with_ai()
-
   local diagnostics = vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})
   if #diagnostics == 0 then
     print("No errors found.")
     return
   end
 
-  -- jump to next error/warn
+  -- jump to next error
   vim.diagnostic.jump({ count = 1, float = true, severity = vim.diagnostic.severity.ERROR})
-  vim.cmd("CopilotChatFix")
 
+  -- get current cursor position
+  local pos = vim.api.nvim_win_get_cursor(0)
+  local line_nr = pos[1]
+  local buf = vim.api.nvim_get_current_buf()
+  local line_text = vim.api.nvim_buf_get_lines(buf, line_nr-1, line_nr, false)[1]
+
+  -- get diagnostics at cursor
+  local cursor_diags = vim.diagnostic.get(buf, {lnum = line_nr-1, severity = vim.diagnostic.severity.ERROR})
+  local diag_msg = cursor_diags[1] and cursor_diags[1].message or "No diagnostic message."
+
+  -- prompt AI plugin (例: CopilotChatPrompt)
+  local prompt = string.format("#buffer\nこのコード行にエラーがあります: '%s'\nエラー内容: %s\n修正案を提案してください。", line_text, diag_msg)
+  vim.cmd({cmd = "CopilotChat", args = {prompt}})
 end
 
-vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and fix with CChat"})
+vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to Next Error and prompt AI for fix"})
 
 -- file selection in chat
 local function copilot_file_selection()
