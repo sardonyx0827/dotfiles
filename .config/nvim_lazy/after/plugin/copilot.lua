@@ -7,12 +7,6 @@ vim.keymap.set("v", "<C-M-i>", "y:CopilotChat ", { desc = "Copilot Chat - select
 vim.keymap.set("n", "<leader>cs", "{V}y:CopilotChat ", { desc = "Copilot Chat - yank surround" })
 vim.keymap.set("n", "<leader>cm", ":CopilotChatCommit<CR>", { desc = "Copilot Chat - Write commit message for the change with commitizen convention" })
 
-vim.keymap.set({"n", "v"}, "<C-h>",
-    function()
-      local actions = require("CopilotChat.actions") require("CopilotChat.integrations.telescope").pick(actions.prompt_actions())
-    end,
-    {desc = "CopilotChat - Prompt actions" })
-
 -- jump to next error and prompt AI for fix
 local function quick_fix_next_error_with_ai()
   local diagnostics = vim.diagnostic.get(0, {severity = vim.diagnostic.severity.ERROR})
