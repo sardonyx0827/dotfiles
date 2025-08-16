@@ -37,8 +37,8 @@ return {
     -- opts.selection = select.unnamed
     chat.setup(opts)
     vim.api.nvim_create_user_command("CopilotChatInline", function(args)
-      chat.ask(args.args, {
-        -- selection = select.visual,
+      chat.open({
+        model = "gpt-4.1",
         window = {
           title = "CopilotChatInline",
           layout = "float",
