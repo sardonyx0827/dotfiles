@@ -3,8 +3,7 @@ return {
   dependencies = {
     "nvim-lua/plenary.nvim",
   },
-  -- cmd = "MCPHub",                            -- lazy load by default
-  build = "npm install -g mcp-hub@latest",   -- Installs globally
+  build = "npm install -g mcp-hub@latest", -- Installs globally
   config = function()
     require("mcphub").setup({
       auto_approve = true,

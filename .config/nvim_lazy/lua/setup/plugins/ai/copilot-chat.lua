@@ -21,14 +21,14 @@ return {
     "nvim-telescope/telescope.nvim"
   },
   opts = {
-    mode = "newbuffer",   -- newbuffer or split, default: newbuffer
+    mode = "newbuffer", -- newbuffer or split, default: newbuffer
     -- model = 'claude-3.5-sonnet',
     model = 'gpt-4.1',
-    show_help = "no",   -- Show help text for CopilotChatInPlace, default: yes
-    debug = false,      -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
+    show_help = "no", -- Show help text for CopilotChatInPlace, default: yes
+    debug = false, -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
     language = "Japanese",
     prompts = prompts,
-    auto_follow_cursor = false,   -- Don't follow the cursor after getting response
+    auto_follow_cursor = false, -- Don't follow the cursor after getting response
   },
   config = function(_, opts)
     local chat = require("CopilotChat")

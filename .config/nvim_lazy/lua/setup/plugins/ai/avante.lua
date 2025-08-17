@@ -2,7 +2,7 @@
 return {
   "yetone/avante.nvim",
   event = "VeryLazy",
-  version = false,   -- Never set this value to "*"! Never!
+  version = false, -- Never set this value to "*"! Never!
   opts = {
     provider = "copilot",
     providers = {
@@ -22,20 +22,20 @@ return {
         api_key_name = "GEMINI_API_KEY",
       },
       ollama = {
-        endpoint = "http://127.0.0.1:11434",   -- Note that there is no /v1 at the end.
+        endpoint = "http://127.0.0.1:11434", -- Note that there is no /v1 at the end.
         model = "gemma3:4b",
       },
       openai = {
         endpoint = "https://api.openai.com/v1",
         api_key_name = "OPENAI_API_KEY",
-        model = "o4-mini",              -- your desired model (or use gpt-4o, etc.)
-        timeout = 30000,                -- Timeout in milliseconds, increase this for reasoning models
+        model = "o4-mini", -- your desired model (or use gpt-4o, etc.)
+        timeout = 30000,   -- Timeout in milliseconds, increase this for reasoning models
       },
-        openrouter = {
-          __inherited_from = 'openai',
-          endpoint = 'https://openrouter.ai/api/v1',
-          api_key_name = "OPENROUTER_API_KEY",
-          model = 'anthropic/claude-sonnet-4-20250514',
+      openrouter = {
+        __inherited_from = 'openai',
+        endpoint = 'https://openrouter.ai/api/v1',
+        api_key_name = "OPENROUTER_API_KEY",
+        model = 'anthropic/claude-sonnet-4-20250514',
       },
     },
     behaviour = {
@@ -44,11 +44,11 @@ return {
       enable_cursor_planning_mode = true,
       support_paste_from_clipboard = true,
     },
-    system_prompt = function()   -- Define as a function so the LLM always has the latest MCP server state [6]
+    system_prompt = function() -- Define as a function so the LLM always has the latest MCP server state [6]
       local hub = require("mcphub").get_hub_instance()
       return hub:get_active_servers_prompt()
     end,
-    custom_tools = function()   -- Use a function to prevent requiring mcphub before it's loaded [6]
+    custom_tools = function() -- Use a function to prevent requiring mcphub before it's loaded [6]
       return { require("mcphub.extensions.avante").mcp_tool() }
     end,
     -- disabled_tools = {
@@ -81,12 +81,12 @@ return {
     "nvim-lua/plenary.nvim",
     "MunifTanjim/nui.nvim",
     --- The below dependencies are optional,
-    "echasnovski/mini.pick",           -- for file_selector provider mini.pick
-    "nvim-telescope/telescope.nvim",   -- for file_selector provider telescope
-    "hrsh7th/nvim-cmp",                -- autocompletion for avante commands and mentions
-    "ibhagwan/fzf-lua",                -- for file_selector provider fzf
-    "nvim-tree/nvim-web-devicons",     -- or echasnovski/mini.icons
-    "zbirenbaum/copilot.lua",          -- for providers='copilot'
+    "echasnovski/mini.pick",         -- for file_selector provider mini.pick
+    "nvim-telescope/telescope.nvim", -- for file_selector provider telescope
+    "hrsh7th/nvim-cmp",              -- autocompletion for avante commands and mentions
+    "ibhagwan/fzf-lua",              -- for file_selector provider fzf
+    "nvim-tree/nvim-web-devicons",   -- or echasnovski/mini.icons
+    "zbirenbaum/copilot.lua",        -- for providers='copilot'
     {
       -- support for image pasting
       "HakonHarnes/img-clip.nvim",

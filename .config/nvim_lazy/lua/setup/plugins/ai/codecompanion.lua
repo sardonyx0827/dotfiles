@@ -7,16 +7,6 @@ return {
   },
   opts = {
     language = "Japanese",
-    -- adapters = {
-    --   gemini = function()
-    --     return require("codecompanion.adapters").extend("gemini", {
-    --       env = {
-    --         -- 環境変数のAPIキーを設定
-    --         api_key = vim.env.GEMINI_API_KEY,
-    --       },
-    --     })
-    --   end,
-    -- },
     strategies = {
       -- Change the default chat adapter
       chat = {
