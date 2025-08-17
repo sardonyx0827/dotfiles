@@ -23,7 +23,7 @@ return {
   opts = {
     mode = "newbuffer", -- newbuffer or split, default: newbuffer
     -- model = 'claude-3.5-sonnet',
-    model = 'gpt-4.1',
+    model = "gpt-5-mini",
     show_help = "no", -- Show help text for CopilotChatInPlace, default: yes
     debug = false, -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
     language = "Japanese",
@@ -38,7 +38,7 @@ return {
     chat.setup(opts)
     vim.api.nvim_create_user_command("CopilotChatInline", function(args)
       chat.open({
-        model = "gpt-4.1",
+        model = "gpt-5-mini",
         window = {
           title = "CopilotChatInline",
           layout = "float",
