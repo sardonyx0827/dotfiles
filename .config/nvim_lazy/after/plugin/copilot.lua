@@ -1,7 +1,9 @@
 --- @diagnostic disable: undefined-global
 -- Copilot Chat - Keymaps
-vim.keymap.set("n", "<leader>cc", ":CopilotChatOpen<CR>", { desc = "Copilot Chat" })
-vim.keymap.set("v", "<leader>cc", "y:CopilotChatOpen<CR>", { desc = "Copilot Chat - selected" })
+vim.keymap.set("n", "<leader>cc", ":CopilotChatOpen<CR>", { desc = "Copilot Chat - Open"})
+vim.keymap.set("v", "<leader>cc", "y:CopilotChatOpen<CR>", { desc = "Copilot Chat - Open with selected" })
+vim.keymap.set("n", "<leader>cC", ":CopilotChatClose<CR>", { desc = "Copilot Chat - Close" })
+vim.keymap.set("v", "<leader>cC", ":CopilotChatClose<CR>", { desc = "Copilot Chat - Close" })
 vim.keymap.set("n", "<C-M-i>", "ggVGy:CopilotChat ", { desc = "Copilot Chat - select all" })
 vim.keymap.set("v", "<C-M-i>", "y:CopilotChat ", { desc = "Copilot Chat - selected" })
 vim.keymap.set("n", "<leader>cs", "{V}y:CopilotChat ", { desc = "Copilot Chat - yank surround" })
