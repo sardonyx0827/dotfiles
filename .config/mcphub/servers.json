@@ -14,6 +14,22 @@
         "@playwright/mcp@latest"
       ],
       "command": "npx"
+    },
+    "serena": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/oraios/serena",
+        "serena-mcp-server",
+        "--context",
+        "ide-assistant",
+        "--project",
+        ".",
+        "--port",
+        "32000"
+      ],
+      "env": {}
     }
   },
   "nativeMCPServers": {
