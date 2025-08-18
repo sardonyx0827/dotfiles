@@ -22,7 +22,6 @@
         "serena-mcp-server",
         "--context",
         "ide-assistant",
-        "--project",
         "--port",
         "32000"
       ],
