@@ -16,8 +16,6 @@
       "command": "npx"
     },
     "serena": {
-      "type": "stdio",
-      "command": "uvx",
       "args": [
         "--from",
         "git+https://github.com/oraios/serena",
@@ -25,11 +23,12 @@
         "--context",
         "ide-assistant",
         "--project",
-        ".",
         "--port",
         "32000"
       ],
-      "env": {}
+      "command": "uvx",
+      "env": [],
+      "type": "stdio"
     }
   },
   "nativeMCPServers": {
