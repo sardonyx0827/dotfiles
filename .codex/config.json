@@ -1,0 +1,10 @@
+{
+  "model": "gemini-2.5-flash-preview-04-17",
+  "provider": "Gemini",
+  "approvalMode": "full-auto",
+  "history": {
+    "maxSize": 1000,
+    "saveHistory": true,
+    "sensitivePatterns": []
+  }
+}
