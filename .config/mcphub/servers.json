@@ -23,7 +23,7 @@
         "--context",
         "ide-assistant",
         "--port",
-        "32000"
+        "32323"
       ],
       "command": "uvx",
       "env": [],
