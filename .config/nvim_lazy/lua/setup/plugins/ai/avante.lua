@@ -10,7 +10,8 @@ return {
         -- model = 'claude-sonnet-4',
         -- disable_auto_insert = true,
         -- disable_tools = true, -- disable tools!
-        model = 'gpt-5-mini',
+        model = "gpt-4.1",
+        -- model = "gpt-5-mini",
       },
       claude = {
         endpoint = "https://api.anthropic.com",
