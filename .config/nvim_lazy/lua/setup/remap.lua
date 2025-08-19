@@ -46,8 +46,8 @@ vim.keymap.set('n', '<C-Right>', '1<C-w>>', { noremap = true, silent = true})
 -- make the window smaller horizontally by pressing shift and -
 vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true})
 -- jump next/prev buffer
-vim.keymap.set("n", "<C-l>", ":bnext<CR>", {desc = "next buffer"})
-vim.keymap.set("n", "<C-h>", ":bprev<CR>", {desc = "previous buffer"})
+vim.keymap.set("n", "<C-l>", ":bnext<CR>", { noremap = true, silent = true})
+vim.keymap.set("n", "<C-h>", ":bprev<CR>", { noremap = true, silent = true})
 -- change directory to current file
 vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", {desc = "change directory to current file"})
 vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", {desc = "change up directory"})
