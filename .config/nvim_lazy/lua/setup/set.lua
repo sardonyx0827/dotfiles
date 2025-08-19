@@ -39,3 +39,6 @@ vim.opt.cursorline = true
 
 vim.cmd([[au FileType * set fo-=c fo-=r fo-=o]])
 vim.cmd([[ let g:netrw_bufsettings = 'noma nomod nu nowrap ro nobl' ]])
+
+vim.g.netrw_liststyle = 3
+vim.g.netrw_winsize = 80

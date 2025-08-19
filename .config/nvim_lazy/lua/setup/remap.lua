@@ -58,4 +58,3 @@ vim.keymap.set("i", "<C-l>", "<C-o>l")
 
 -- keep last yanked when pasting
 vim.keymap.set("v", "p", "\"_dP", {desc = "keep last yanked when pasting"})
-

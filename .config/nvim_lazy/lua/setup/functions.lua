@@ -169,4 +169,3 @@ local function copy_lsp_diagnostics()
   end
 end
 vim.keymap.set("n", "<leader>cl", copy_lsp_diagnostics, {desc = "Copy LSP diagnostics to clipboard", noremap = true})
-
