@@ -273,6 +273,7 @@ let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyze
 syntax on
 set ruler
 set number
+set relativenumber
 
 let no_buffers_menu=1
 colorscheme onedark
@@ -463,10 +464,10 @@ function! s:NERDTreeOpenOrExpand()
 endfunction
 
 " show nerdtree default
-let g:nerdtree_tabs_open_on_console_startup=1
+let g:nerdtree_tabs_open_on_console_startup=0
 
 " set cursor position in new tab(or file) when launch Vim
-autocmd VimEnter * NERDTree | wincmd p
+autocmd VimEnter * wincmd p
 
 "*****************************************************************************
 "" Terminal
@@ -640,11 +641,22 @@ endfunction
 " nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
 nmap <leader>sf :FZF<CR>
 
-" snippets
-" let g:UltiSnipsExpandTrigger="<tab>"
-" let g:UltiSnipsJumpForwardTrigger="<tab>"
-" let g:UltiSnipsJumpBackwardTrigger="<c-b>"
-" let g:UltiSnipsEditSplit="vertical"
+" vimgrep search and copen(use vimgrep instead of grep)
+function! s:vimgrep_search(pattern)
+  execute 'lcd ' . expand('%:p:h')
+  let files = systemlist("find . -type d \\( -name .git -o -name node_modules -o -name build \\) -prune -o -type f -print")
+  if empty(files)
+    echo "検索対象ファイルがありません"
+    return
+  endif
+  execute 'vimgrep /' . a:pattern . '/gj ' . join(files)
+  if len(getqflist()) > 0
+    copen
+  else
+    echo "検索結果がありません"
+  endif
+endfunction
+nmap <leader>gr :<C-u>call <SID>vimgrep_search(input('Grep Search: '))<CR>
 
 " ale
 let g:ale_linters = {}
@@ -751,10 +763,10 @@ imap <C-k> <Plug>(copilot-previous)
 " save buffer
 noremap <silent> <C-s> :w<CR>
 
+
 "*****************************************************************************
 "" Custom configs
 "*****************************************************************************
-
 " c
 autocmd FileType c setlocal tabstop=4 shiftwidth=4 expandtab
 autocmd FileType cpp setlocal tabstop=4 shiftwidth=4 expandtab
