@@ -213,6 +213,11 @@
         "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus"
     },
     {
+        "key": "e",
+        "command": "list.expand",
+        "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus"
+    },
+    {
         "key": "shift+enter",
         "command": "workbench.action.terminal.sendSequence",
         "args": {
