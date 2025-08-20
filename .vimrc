@@ -646,14 +646,14 @@ function! s:vimgrep_search(pattern)
   execute 'lcd ' . expand('%:p:h')
   let files = systemlist("find . -type d \\( -name .git -o -name node_modules -o -name build \\) -prune -o -type f -print")
   if empty(files)
-    echo "検索対象ファイルがありません"
+    echo "No target files found"
     return
   endif
   execute 'vimgrep /' . a:pattern . '/gj ' . join(files)
   if len(getqflist()) > 0
     copen
   else
-    echo "検索結果がありません"
+    echo "No search results found"
   endif
 endfunction
 nmap <leader>gr :<C-u>call <SID>vimgrep_search(input('Grep Search: '))<CR>
