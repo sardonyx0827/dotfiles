@@ -287,6 +287,24 @@
                 "d",
                 "w"
             ]
+        },{
+            "before": [
+                "<C-h>"
+            ],
+            // vim easy motion
+            "after": [
+                "g",
+                "T"
+            ]
+        },{
+            "before": [
+                "<C-l>"
+            ],
+            // vim easy motion
+            "after": [
+                "g",
+                "t"
+            ]
         }
     ],
 
