@@ -1,6 +1,5 @@
 {
-  "model": "gemini-2.5-flash-preview-04-17",
-  "provider": "Gemini",
+  "model": "gpt-5",
   "approvalMode": "full-auto",
   "history": {
     "maxSize": 1000,
