@@ -457,21 +457,15 @@
         "markdown": true,
         "scminput": true
     },
-    //"workbench.editor.showTabs": "single",
     "window.customMenuBarAltFocus": false,
     "window.titleBarStyle": "custom",
     "workbench.activityBar.location": "top",
     "editor.minimap.enabled": false,
     "explorer.confirmDragAndDrop": false,
-    "CodeGPT.apiKey": "Google AI Studio",
-    "CodeGPT.query.language": "Japanese",
-    "CodeGPT.Autocomplete.enabled": false,
     "window.enableMenuBarMnemonics": false,
-    "continue.enableTabAutocomplete": false,
     "[typescriptreact]": {
         "editor.defaultFormatter": "vscode.typescript-language-features"
     },
-    "continue.showInlineTip": false,
     "[javascript]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
@@ -497,5 +491,4 @@
     "chat.agent.enabled": true,
     "vim.showMarksInGutter": true,
     "git.confirmSync": false,
-    //"continue.remoteConfigServerUrl": "http://localhost:11434/api/codegemma",
 }

@@ -90,10 +90,10 @@
         "key": "ctrl+m",
         "command": "-editor.action.toggleTabFocusMode"
     },
-    // open copilot chat side window
+    // toggle copilot chat side window
     {
         "key": "ctrl+shift+i",
-        "command": "workbench.panel.chat.view.copilot.focus"
+        "command": "workbench.panel.chat",
     },
     // delete opened buffer
     {
