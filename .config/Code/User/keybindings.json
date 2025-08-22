@@ -188,7 +188,8 @@
     },
     {
         "key": "ctrl+s",
-        "command": "workbench.action.files.save"
+        "command": "workbench.action.files.save",
+        "when": "editorTextFocus && !editorReadonly"
     },
     {
         "key": "ctrl+c",
@@ -210,12 +211,12 @@
                 "workbench.action.toggleSidebarVisibility"
             ]
         },
-        "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus"
+        "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus && !explorerResourceIsFolder"
     },
     {
-        "key": "e",
+        "key": "l",
         "command": "list.expand",
-        "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus"
+        "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus && explorerResourceIsFolder"
     },
     {
         "key": "shift+enter",
