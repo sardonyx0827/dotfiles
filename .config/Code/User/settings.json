@@ -386,22 +386,6 @@
                 "interactiveEditor.start"
             ]
         },{
-        //     "before": [
-        //         "<C-j>"
-        //     ],
-        //     // Copilot suggestion(next)
-        //     "commands": [
-        //         "editor.action.inlineSuggest.showNext"
-        //     ]
-        // },{
-        //     "before": [
-        //         "<C-k>"
-        //     ],
-        //     // Copilot suggestion(previous)
-        //     "commands": [
-        //         "editor.action.inlineSuggest.showPrevious"
-        //     ]
-        // },{
             // move cursor
             "before": [
                 "<C-h>"
