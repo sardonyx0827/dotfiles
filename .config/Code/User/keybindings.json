@@ -95,6 +95,10 @@
         "key": "ctrl+shift+i",
         "command": "workbench.panel.chat",
     },
+    {
+        "key": "ctrl+shift+o",
+        "command": "claude-code.runClaude",
+    },
     // delete opened buffer
     {
         "key": "alt+x",

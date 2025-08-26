@@ -25,6 +25,15 @@
                 "workbench.panel.chat.view.copilot.focus"
             ]
         },{
+            "before": [
+                "<leader>",
+                "t",
+                "c"
+            ],
+            "commands": [
+                "claude-code.runClaude"
+            ],
+        },{
             // Chat: Open Copilot Edits
             "before": [
                 "<leader>",
