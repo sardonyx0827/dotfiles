@@ -99,6 +99,10 @@
         "key": "ctrl+shift+o",
         "command": "claude-code.runClaude",
     },
+    {
+        "key": "ctrl+a ctrl+n",
+        "command": "claude-code.runClaude",
+    },
     // delete opened buffer
     {
         "key": "alt+x",
