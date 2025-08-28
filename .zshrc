@@ -1,6 +1,14 @@
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
+## Go
 export PATH=/home/sardonyx0827/go/bin:$PATH
+export PATH=~/.npm-global/bin:$PATH
+export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
+## PHP
+export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"
+export PATH="/opt/homebrew/opt/php@8.4/sbin:$PATH"
+export LDFLAGS="-L/opt/homebrew/opt/php@8.0/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/php@8.0/include"
 
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
@@ -16,6 +24,7 @@ export LESS="-i -M -R -x4"
 ZSH_THEME="kennethreitz" # 1
 #ZSH_THEME="gallois" # 2
 #ZSH_THEME="eastwood" # 3
+#ZSH_THEME="agnoster" # 4
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
@@ -101,7 +110,7 @@ source $ZSH/oh-my-zsh.sh
 # else
 #   export EDITOR='mvim'
 # fi
-
+export EDITOR=nvim
 # Compilation flags
 # export ARCHFLAGS="-arch x86_64"
 
@@ -116,7 +125,7 @@ source $ZSH/oh-my-zsh.sh
 
 # create work container on docker
 cdi () {
-  gnome-terminal -- bash -c "cd ~/work/github/first_boot_setup/docker/; bash create_docker_image.sh"
+  wezterm start -- bash -c "cd ~/work/github/first_boot_setup/docker/; bash create_docker_image.sh"
 }
 
 # using fzf
@@ -126,14 +135,14 @@ sshs () {
     ssh "$t"
   fi
 }
-cf() {
-  selected_file=$(fzf --preview 'cat {}')
+cf () {
+  selected_file=$(find . -type d -name "*" ! -regex ".*/node_modules/.*" ! -regex ".*/.git/.*" | fzf --extended)
   if [ -n "$selected_file" ]; then
-    cd "$(dirname "$selected_file")"
+    cd "$selected_file"
   fi
 }
-vf() {
-  selected_file=$(fzf --preview 'cat {}')
+vf () {
+  selected_file=$(fzf --extended --preview 'bat --style=numbers --color=always {}')
   if [ -n "$selected_file" ]; then
     cd "$(dirname "$selected_file")"
     nvim "$selected_file"
@@ -159,19 +168,32 @@ alias view="nvim -R"
 
 # use gh copilots
 eval "$(gh copilot alias -- zsh)"
-alias suggest="gh copilot suggest"
+alias ghs="gh copilot suggest"
 
 # or 'docker exec MyContainer nvim --headless --listen 0.0.0.0:22222'
 alias nvim_listen="nvim --headless --listen 0.0.0.0:22222"
 alias nvim_attach="nvim --remote-ui --server localhost:22222"
 
 # change directory to workspace
-alias cdw="cd ~/work"
+alias cw="cd ~/work"
 
+# ollama commands
+alias dsollama="cd ~/work/sandbox/ollama/ && docker compose up -d && cd -"
+alias deollama="cd ~/work/sandbox/ollama/ && docker compose down && cd -"
+
+# vibe kanban
+alias kanban="npx vibe-kanban"
+
+# gimp
+alias gimp="/Applications/GIMP.app/Contents/MacOS/gimp"
+
+# python environment
 export PYENV_ROOT="$HOME/.pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
 eval "$(pyenv init --path)"
 eval "$(pyenv init -)"
+
+eval "$(fzf --zsh)"
 
 # history
 HISTFILE=~/.zsh_history
@@ -201,3 +223,22 @@ bindkey '^]' autosuggest-accept
 bindkey '^n' autosuggest-accept
 
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+# The following lines have been added by Docker Desktop to enable Docker CLI completions.
+fpath=(/Users/sardonyx0827/.docker/completions $fpath)
+autoload -Uz compinit
+compinit
+# End of Docker CLI completions
+
+# yazi settings
+function y() {
+	local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+	yazi "$@" --cwd-file="$tmp"
+	if cwd="$(command cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
+		builtin cd -- "$cwd"
+	fi
+	rm -f -- "$tmp"
+}
+
+# gemini cli
+alias push='gemini -y -p "pushして"'
+
