@@ -1,6 +1,12 @@
 {
   "selectedAuthType": "oauth-personal",
   "mcpServers": {
+    "claude_code": {
+      "command": "/usr/local/bin/node",
+      "args": [
+        "/Users/sardonyx0827/.npm-global/bin/claude", "mcp", "serve"
+      ]
+    },
     "playwright": {
       "command": "npx",
       "args": [
