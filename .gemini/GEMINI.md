@@ -42,20 +42,3 @@
 
 ## 6. 実行時チェック
 - 起動後 `/status` でワークスペース/権限を確認し、必要に応じて設定を提案する。
-
-## 7. ルーティング方針
-  ### モデル役割分担
-  - Claude（フロントエンド専任）
-    対象：UI/React/Next.js/Tailwind/Storybook/アクセシビリティ/デザインレビュー等
-    実行形態：Gemini が claude code を実行して指示を転送
-  - GPT / Gemini（バックエンド専任）
-    対象：API/DB/ORM/ジョブ/認証/監視/CI/CD/テスト/インフラ設計等
-    実行形態：Gemini が codex を実行して指示を転送
-  - Gemini（ルーター兼エグゼキュータ）
-    役割：要求の分類・各モデル CLI への委譲・実コマンドの最終実行主体
-
-  ### CLI 呼び分け規約（Gemini から実行）
-  - Claude への転送：claude -p "<prompt>"
-  - Codex への転送：codex exec --full-auto "<prompt>"
-  - Gemini への転送：gemini -y -p "<prompt>"
-  注：上記は概念表記。実環境の CLI に合わせてパス・オプションを調整すること。
