@@ -47,16 +47,12 @@
   ### モデル役割分担
   - Claude（フロントエンド専任）
     対象：UI/React/Next.js/Tailwind/Storybook/アクセシビリティ/デザインレビュー等
-    実行形態：Gemini が claude CLI を実行して指示を転送
-    MCP：ファイル/Git/ブラウザ等のツール接続は Claude 側のみに許可
-    注意：Claude からの直接コマンド実行は行わない（権限を与えない）
+    実行形態：Gemini が claude code を実行して指示を転送
   - GPT / Gemini（バックエンド専任）
     対象：API/DB/ORM/ジョブ/認証/監視/CI/CD/テスト/インフラ設計等
-    実行形態：Gemini が gpt または gemini CLI を実行して指示を転送
-    選択基準：タスク内容により GPT と Gemini を使い分け（後述のルーティング方針）
+    実行形態：Gemini が codex を実行して指示を転送
   - Gemini（ルーター兼エグゼキュータ）
     役割：要求の分類・各モデル CLI への委譲・実コマンドの最終実行主体
-    ポリシー：ホワイトリスト制御／タイムアウト／サンドボックス／DRY-RUN を標準適用
 
   ### CLI 呼び分け規約（Gemini から実行）
   - Claude への転送：claude -p "<prompt>"
