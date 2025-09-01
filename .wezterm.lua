@@ -21,5 +21,8 @@ config.warn_about_missing_glyphs = false
 config.hide_tab_bar_if_only_one_tab = true
 -- background_opacity (no bg image)
 config.window_background_opacity = 0.8
-
+-- input backslash (macos: option + ¥ -> \)
+config.keys = {
+  {key="¥", mods="OPT", action=wezterm.action.SendString("\\")},
+}
 return config
