@@ -45,18 +45,6 @@ function _docker_toggle()
 end
 vim.api.nvim_set_keymap("n", "<leader>td", "<cmd>lua _docker_toggle()<CR>", { noremap = true, silent = true, desc = "docker - CUI tool" })
 
--- todo (pip install dooit)
-local dooit = Terminal:new({
-	cmd = "dooit",
-	direction = "float",
-	hidden = true
-})
-
-function _dooit_toggle()
-	dooit:toggle()
-end
-vim.api.nvim_set_keymap("n", "<leader>to", "<cmd>lua _dooit_toggle()<CR>", { noremap = true, silent = true, desc = "toggle dooit - CUI tool" })
-
 -- claude code
 local toggle_claude = Terminal:new({
 	cmd = "claude",
@@ -91,5 +79,5 @@ local toggle_codex = Terminal:new({
 function _codex_toggle()
   toggle_codex:toggle()
 end
-vim.api.nvim_set_keymap("n", "<leader>tx", "<cmd>lua _codex_toggle()<CR>", { noremap = true, silent = true, desc = "codex (OpenAI) - CUI tool" })
+vim.api.nvim_set_keymap("n", "<leader>to", "<cmd>lua _codex_toggle()<CR>", { noremap = true, silent = true, desc = "codex (OpenAI) - CUI tool" })
 
