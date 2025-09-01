@@ -1,9 +1,5 @@
 projects = { "/Users/sardonyx0827/work/github/hmc-homepage" = { trust_level = "trusted" } , "/Users/sardonyx0827/work/github/dotfiles/.config/nvim_lazy" = { trust_level = "trusted" } , "/Users/sardonyx0827/work/github/hmc-source" = { trust_level = "trusted" } , "/Users/sardonyx0827/work/github/dotfiles" = { trust_level = "trusted" } }
 
-[mcp_servers.claude_code]
-command = "/usr/local/bin/node"
-args = [ "/Users/sardonyx0827/.npm-global/bin/claude", "mcp", "serve" ]
-env = {}
 [mcp_servers.playwright]
 command = "npx"
 args = [ "@playwright/mcp@latest" ]
