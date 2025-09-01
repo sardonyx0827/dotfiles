@@ -23,6 +23,7 @@ config.hide_tab_bar_if_only_one_tab = true
 config.window_background_opacity = 0.8
 -- input backslash (macos: option + ¥ -> \)
 config.keys = {
-  {key="¥", mods="OPT", action=wezterm.action.SendString("\\")},
+  {key="¥", mods="", action=wezterm.action.SendString("\\")},
+  {key="¥", mods="OPT", action=wezterm.action.SendString("¥")},
 }
 return config
