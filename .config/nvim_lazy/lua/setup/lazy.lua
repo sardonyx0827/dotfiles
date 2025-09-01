@@ -78,6 +78,7 @@ local plugins = {
   require("setup.plugins.ai.codecompanion"),
   require("setup.plugins.ai.avante"),
   require("setup.plugins.ai.mcphub"),
+  require("setup.plugins.ai.claudecode")
 }
 
 local lazy = require("lazy")
