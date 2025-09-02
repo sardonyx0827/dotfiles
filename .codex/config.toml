@@ -1,5 +1,12 @@
 projects = { "/Users/sardonyx0827/work/github/hmc-homepage" = { trust_level = "trusted" } , "/Users/sardonyx0827/work/github/dotfiles/.config/nvim_lazy" = { trust_level = "trusted" } , "/Users/sardonyx0827/work/github/hmc-source" = { trust_level = "trusted" } , "/Users/sardonyx0827/work/github/dotfiles" = { trust_level = "trusted" } }
 
+model_reasoning_effort = "high"
+hide_agent_reasoning = true
+network_access = true
+
+[tools]
+web_search = true
+
 [mcp_servers.playwright]
 command = "npx"
 args = [ "@playwright/mcp@latest" ]
