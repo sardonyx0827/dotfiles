@@ -44,9 +44,16 @@
 - 起動後 `/status` でワークスペース/権限を確認し、必要に応じて設定を提案する。
 
 ## 7. 多角的な検討
-必要に応じて、あるいは指示を受けた場合は、claudeコマンドを実行して、他のAIモデルの意見を参考にすること。
+必要に応じて、あるいは指示を受けた場合は、claudeコマンドまたはcodexコマンドを実行して、他のAIモデルの意見を参考にすること。
+claudeはメインの思考に使用し、codexは補助的に使用する。
+claudeはUI/UXを検討作成し、codexは処理部分を検討作成する。
+
 `claude`コマンドの使用例：
 ```
 claude -p "<your question or task here>"
 ```
 
+`codex`コマンドの使用例：
+```
+codex exec --skip-git-repo-check "<your question or task here>"
+```

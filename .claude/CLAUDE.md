@@ -44,6 +44,6 @@
 必要に応じて、あるいは指示を受けた場合は、codexコマンドを実行して、他のAIモデルの意見を参考にすること。
 `codex`コマンドの使用例：
 ```
-codex exec "<your question or task here>"
+codex exec --skip-git-repo-check "<your question or task here>"
 ```
 
