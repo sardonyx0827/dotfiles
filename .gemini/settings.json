@@ -21,6 +21,13 @@
         "--project",
         "/Users/sardonyx0827/work/sandbox"
       ]
+    },
+    "github": {
+      "httpUrl": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "<GITHUB_ACCESS_TOKEN>"
+      },
+      "timeout": 5000
     }
   },
   "preferredEditor": "vim",
