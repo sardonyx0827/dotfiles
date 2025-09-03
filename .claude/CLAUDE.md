@@ -41,9 +41,15 @@
 - 起動後 `/status` でワークスペース/権限を確認し、必要に応じて設定を提案する。
 
 ## 6. 多角的な検討
-必要に応じて、あるいは指示を受けた場合は、codexコマンドを実行して、他のAIモデルの意見を参考にすること。
+必要に応じて、あるいは指示を受けた場合は、codexコマンドまたはgeminiコマンドを実行して、他のAIモデルの意見を参考にすること。
+codexは深い洞察を提供し、geminiはコストパフォーマンスと速度に優れる。
 `codex`コマンドの使用例：
 ```
 codex exec --skip-git-repo-check "<your question or task here>"
+```
+
+`gemini`コマンドの使用例：
+```
+gemini -y -p "<your question or task here>"
 ```
 

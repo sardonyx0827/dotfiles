@@ -44,9 +44,16 @@
 - 起動後 `/status` でワークスペース/権限を確認し、必要に応じて設定を提案する。
 
 ## 7. 多角的な検討
-必要に応じて、あるいは指示を受けた場合は、claudeコマンドを実行して、他のAIモデルの意見を参考にすること。
+必要に応じて、あるいは指示を受けた場合は、claudeコマンドまたはgeminiコマンドを実行して、他のAIモデルの意見を参考にすること。
+claudeは深い洞察を提供し、geminiはコストパフォーマンスと速度に優れる。
+
 `claude`コマンドの使用例：
 ```
 claude -p "<your question or task here>"
+```
+
+`gemini`コマンドの使用例：
+```
+gemini -y -p "<your question or task here>"
 ```
 
