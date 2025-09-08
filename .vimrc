@@ -267,7 +267,7 @@ let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyze
 "   "diagnostic.enable": false
 " }
 
-set undodir=~/.vim/undodir
+set undodir=~/.vim/undodir_vim
 set undofile
 
 
@@ -280,7 +280,7 @@ set number
 set relativenumber
 
 let no_buffers_menu=1
-colorscheme onedark
+colorscheme slate
 
 if has('nvim')
   " Better command line completion
