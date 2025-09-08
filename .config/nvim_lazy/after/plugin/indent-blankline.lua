@@ -20,6 +20,10 @@ hooks.register(hooks.type.HIGHLIGHT_SETUP, function()
   vim.api.nvim_set_hl(0, "RainbowGreen",  { fg = "#98C379" })
   vim.api.nvim_set_hl(0, "RainbowViolet", { fg = "#C678DD" })
   vim.api.nvim_set_hl(0, "RainbowCyan",   { fg = "#56B6C2" })
+  vim.api.nvim_set_hl(0, "IblIndent",     { fg = "#F65656", bg = "NONE" })
+  vim.api.nvim_set_hl(0, "IblWhitespace", { fg = "#Ff3f3f", bg = "NONE" })
+  vim.api.nvim_set_hl(0, "IblScope",      { fg = "#Fa7a7a", bg = "NONE" })
 end)
 
 require("ibl").setup { indent = { highlight = highlight, char = "▏" } }
+
