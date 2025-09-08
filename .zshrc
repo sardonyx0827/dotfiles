@@ -239,6 +239,14 @@ function y() {
 	rm -f -- "$tmp"
 }
 
+# ai tools
+## update
+function update_ai_tools() {
+  ~/work/github/dotfiles/update_ai_tools.sh
+}
+
 # gemini cli
 alias push='gemini -y -p "pushして"'
+alias pullrequests='gemini -y -p "pr作成して"'
+alias explain='gemini -y -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
 
