@@ -246,8 +246,8 @@ function update_ai_tools() {
 }
 
 # gemini cli
-alias push='gemini -y -p "pushして"'
-alias pullrequests='gemini -y -p "pr作成して"'
-alias explain='gemini -y -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
-alias commit='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
+alias ai_git_push='gemini -y -p "pushして"'
+alias ai_generate_commit_message='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
+alias ai_create_pull_request='gemini -y -p "pr作成して"'
+alias ai_explain_current_content='gemini -y -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
 
