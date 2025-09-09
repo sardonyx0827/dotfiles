@@ -45,18 +45,6 @@ function _docker_toggle()
 end
 vim.api.nvim_set_keymap("n", "<leader>td", "<cmd>lua _docker_toggle()<CR>", { noremap = true, silent = true, desc = "docker - CUI tool" })
 
--- claude code
--- local toggle_claude = Terminal:new({
--- 	cmd = "claude",
--- 	direction = "float",
--- 	hidden = true
--- })
---
--- function _claude_toggle()
--- 	toggle_claude:toggle()
--- end
--- vim.api.nvim_set_keymap("n", "<leader>tc", "<cmd>lua _claude_toggle()<CR>", { noremap = true, silent = true, desc = "claude code - CUI tool" })
-
 -- gemini cli
 local toggle_gemini = Terminal:new({
 	cmd = "gemini",

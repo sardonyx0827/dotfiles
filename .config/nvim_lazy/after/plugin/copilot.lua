@@ -32,7 +32,7 @@ local function quick_fix_next_error_with_ai()
   local cursor_diags = vim.diagnostic.get(buf, {lnum = line_nr-1, severity = vim.diagnostic.severity.ERROR})
   local diag_msg = cursor_diags[1] and cursor_diags[1].message or "No diagnostic message."
 
-  -- prompt AI plugin (例: CopilotChatPrompt)
+  -- prompt AI plugin (CopilotChatPrompt)
   local prompt = string.format("#buffer\nこのコード行にエラーがあります: '%s'\nエラー内容: %s\n修正案を提案してください。", line_text, diag_msg)
   vim.cmd({cmd = "CopilotChat", args = {prompt}})
 end
@@ -41,7 +41,7 @@ vim.keymap.set("n", "<leader>qf", quick_fix_next_error_with_ai, {desc="Jump to N
 
 -- file selection in chat
 local function copilot_file_selection()
-  -- telescopeでworkspaceのファイルを選択して、選択したファイルのパスを変数に格納
+  -- Use Telescope to select a file in the workspace and store the selected file path in a variable
   local actions = require("telescope.actions")
   local action_state = require("telescope.actions.state")
 
@@ -55,10 +55,10 @@ local function copilot_file_selection()
         local selection = action_state.get_selected_entry()
         local file_name = selection.path
         print("Selected file: " .. file_name)
-        -- ここでfile_nameを使って必要な処理を行います
+        -- Perform necessary processing with file_name here
         print(file_name)
         vim.api.nvim_put({ "> #file:" .. file_name }, "c", true, true)
-        -- 最後に改行を追加
+        -- Add a newline at the end
         vim.api.nvim_put({ "" }, "l", true, true)
       end)
       return true

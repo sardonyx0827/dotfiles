@@ -52,23 +52,6 @@ return {
     custom_tools = function() -- Use a function to prevent requiring mcphub before it's loaded [6]
       return { require("mcphub.extensions.avante").mcp_tool() }
     end,
-    -- disabled_tools = {
-    --   "list_files",
-    --   "search_files",
-    --   "read_file",
-    --   "create_file",
-    --   "rename_file",
-    --   "delete_file",
-    --   "create_dir",
-    --   "rename_dir",
-    --   "delete_dir",
-    --   "bash",
-    --   "web_search",
-    --   "fetch",
-    --   "python",
-    --   "git_diff",
-    --   "git_commit",
-    -- },
     selector = {
       exclude_auto_select = { "NvimTree" },
     },

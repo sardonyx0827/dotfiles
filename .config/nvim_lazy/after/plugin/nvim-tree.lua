@@ -1,8 +1,4 @@
 --- @diagnostic disable: undefined-global
--- disable netrw at the very start of your init.lua
---vim.g.loaded_netrw = 1
---vim.g.loaded_netrwPlugin = 1
-
 -- is nvim-tree already opened?
 local function is_opend()
 
@@ -43,16 +39,11 @@ local function toggle_tree_focus()
 
 end
 
-
---vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>", { noremap = true, silent = true, desc = "Toggle NvimTree" })
 vim.keymap.set("n", "<leader>e", toggle_tree_focus, { noremap = true, silent = true, desc = "NvimTree - Toggle and focus" })
 vim.keymap.set("n", "<leader>te", ":lua require('nvim-tree.api').tree.expand_all()<CR>", { noremap = true, silent = true, desc = "NvimTree - expand all" })
 
 -- set termguicolors to enable highlight groups
 vim.opt.termguicolors = true
-
--- set bg color
---vim.api.nvim_set_hl(0, "NvimTreeNormal", { bg = "none" })
 
 local function move_l()
   vim.cmd("wincmd l")
