@@ -12,7 +12,7 @@ else
   let curl_exists=expand('curl')
 endif
 
-let g:vim_bootstrap_langs = "c,elixir,go,haskell,html,javascript,lisp,lua,perl,python,ruby,rust,typescript"
+let g:vim_bootstrap_langs = "c,elixir,go,haskell,html,javascript,lisp,lua,perl,python,ruby,typescript"
 let g:vim_bootstrap_editor = "vim"
 let g:vim_bootstrap_theme = "onedark"
 let g:vim_bootstrap_frams = ""
@@ -99,26 +99,9 @@ Plug 'github/copilot.vim'
 "*****************************************************************************
 "" Custom bundles
 "*****************************************************************************
-" coc
-Plug 'neoclide/coc.nvim', {'branch': 'release'}
-
-" c
-Plug 'vim-scripts/c.vim', {'for': ['c', 'cpp']}
-Plug 'ludwig/split-manpage.vim'
-
-" elixir
-Plug 'elixir-lang/vim-elixir'
-Plug 'carlosgaldino/elixir-snippets'
-
 " go
 "" Go Lang Bundle
 Plug 'fatih/vim-go', {'do': ':GoInstallBinaries'}
-
-" haskell
-"" Haskell Bundle
-Plug 'eagletmt/neco-ghc'
-Plug 'dag/vim2hs'
-Plug 'pbrisbin/vim-syntax-shakespeare'
 
 " html
 "" HTML Bundle
@@ -131,39 +114,15 @@ Plug 'mattn/emmet-vim'
 "" Javascript Bundle
 Plug 'jelera/vim-javascript-syntax'
 
-" lisp
-"" Lisp Bundle
-Plug 'vim-scripts/slimv.vim'
-
 " lua
 "" Lua Bundle
-"Plug 'xolox/vim-lua-ftplugin'
-"Plug 'xolox/vim-lua-inspect'
-
-" perl
-"" Perl Bundle
-Plug 'vim-perl/vim-perl'
-Plug 'c9s/perlomni.vim'
+Plug 'xolox/vim-lua-ftplugin'
+Plug 'xolox/vim-lua-inspect'
 
 " python
 "" Python Bundle
 Plug 'davidhalter/jedi-vim'
 Plug 'raimon49/requirements.txt.vim', {'for': 'requirements'}
-
-" ruby
-Plug 'tpope/vim-rails'
-Plug 'tpope/vim-rake'
-Plug 'tpope/vim-projectionist'
-Plug 'thoughtbot/vim-rspec'
-Plug 'ecomba/vim-ruby-refactoring', {'tag': 'main'}
-
-" rust
-" Vim racer
-Plug 'rust-lang/rust.vim'
-Plug 'racer-rust/vim-racer'
-
-" Rust.vim
-Plug 'rust-lang/rust.vim'
 
 " Async.vim
 Plug 'prabirshrestha/async.vim'
@@ -180,10 +139,6 @@ Plug 'prabirshrestha/asyncomplete-lsp.vim'
 " typescript
 Plug 'leafgarland/typescript-vim'
 Plug 'HerringtonDarkholme/yats.vim'
-
-" vuejs
-Plug 'posva/vim-vue'
-Plug 'leafOfTree/vim-vue-plugin'
 
 "*****************************************************************************
 "*****************************************************************************
@@ -255,17 +210,6 @@ let g:session_command_aliases = 1
 set autochdir
 " no indent on/off when paste text from clipboard
 set pastetoggle=<F9>
-
-" coc-vim
-" set file type for tsx when file is opend first time
-autocmd BufNewFile,BufRead *.tsx let b:tsx_ext_found = 1
-autocmd BufNewFile,BufRead *.tsx set filetype=typescript.tsx
-let g:coc_global_extensions = [ 'coc-tsserver', 'coc-eslint8', 'coc-rust-analyzer', 'coc-react-refactor', 'coc-xml', 'coc-yaml', 'coc-translator', 'coc-sh', 'coc-lua', 'coc-json', 'coc-jedi', 'coc-diagnostic', 'coc-css', 'coc-prettier', 'coc-fzf-preview', 'coc-lists' ]
-" MEMO :CocConfig (kill prettier)
-" {
-"   "languageserver": {},
-"   "diagnostic.enable": false
-" }
 
 set undodir=~/.vim/undodir_vim
 set undofile
@@ -726,10 +670,10 @@ nmap <C-j> <C-x>
 nnoremap <Leader>o :.Gbrowse<CR>
 
 " no new line when hit the enter key
-inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
-
-" cocList shortcut
-nnoremap <silent> <leader>cl <cmd>CocList<CR>
+" inoremap <silent><expr> <CR> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
+"
+" " cocList shortcut
+" nnoremap <silent> <leader>cl <cmd>CocList<CR>
 
 
 " check documentation on cursor
@@ -741,24 +685,24 @@ function! ChoseAction(actions) abort
   return len(result) ? result[0].value : ""
 endfunction
 
-function! CocJumpAction() abort
-  let actions = [
-        \ {"text": "(s)plit", "value": "split"},
-        \ {"text": "(v)slit", "value": "vsplit"},
-        \ {"text": "(t)ab", "value": "tabedit"},
-        \ ]
-  return ChoseAction(actions)
-endfunction
-nnoremap <silent> <C-t> :<C-u>call CocActionAsync('jumpDefinition', CocJumpAction())<CR>
+" function! CocJumpAction() abort
+"   let actions = [
+"         \ {"text": "(s)plit", "value": "split"},
+"         \ {"text": "(v)slit", "value": "vsplit"},
+"         \ {"text": "(t)ab", "value": "tabedit"},
+"         \ ]
+"   return ChoseAction(actions)
+" endfunction
+" nnoremap <silent> <C-t> :<C-u>call CocActionAsync('jumpDefinition', CocJumpAction())<CR>
 
-nnoremap <silent><leader>cd  :call <SID>show_documentation()<CR>
-function! s:show_documentation()
-	if (index(['vim','help'], &filetype) >= 0)
-		execute 'h '.expand('<cword>')
-  elseif CocAction('hasProvider', 'hover')
-		call CocActionAsync('doHover')
-	endif
-endfunction
+" nnoremap <silent><leader>cd  :call <SID>show_documentation()<CR>
+" function! s:show_documentation()
+" 	if (index(['vim','help'], &filetype) >= 0)
+" 		execute 'h '.expand('<cword>')
+"   elseif CocAction('hasProvider', 'hover')
+" 		call CocActionAsync('doHover')
+" 	endif
+" endfunction
 
 "" select next suggestion with GitHub copilot
 imap <C-j> <Plug>(copilot-next)
@@ -916,10 +860,6 @@ else
   packadd! matchit
 endif
 
-" rust
-" Vim racer
-au FileType rust nmap gs <Plug>(rust-def-split)
-au FileType rust nmap gx <Plug>(rust-def-vertical)
 
 " typescript
 let g:yats_host_keyword = 1
