@@ -244,12 +244,19 @@ function y() {
 function update_ai_tools() {
   ~/work/github/dotfiles/update_ai_tools.sh
 }
-
-# gemini cli
+## gemini cli
 alias push='gemini -y -p "pushして"'
 alias commit_message='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
 alias pull_request='gemini -y -p "pr作成して"'
 alias explain='gemini -y -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
 function translate() {
   gemini -y -p  "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
+}
+## codex cli
+alias push_codex='codex exec --full-auto "pushして"'
+alias commit_message_codex='codex exec --full-auto "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
+alias pull_request_codex='codex exec --full-auto "pr作成して"'
+alias explain_codex='codex exec --skip-git-repo-check "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
+function translate_codex() {
+  codex exec --skip-git-repo-check "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
 }
