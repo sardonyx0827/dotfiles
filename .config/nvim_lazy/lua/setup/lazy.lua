@@ -75,7 +75,6 @@ local plugins = {
   -- **********************************
   require("setup.plugins.ai.copilot"),
   require("setup.plugins.ai.copilot-chat"),
-  require("setup.plugins.ai.codecompanion"),
   require("setup.plugins.ai.avante"),
   require("setup.plugins.ai.mcphub"),
   require("setup.plugins.ai.claudecode")

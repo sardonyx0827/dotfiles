@@ -6,9 +6,7 @@ vim.keymap.set("n", "<leader>cC", ":CopilotChatClose<CR>", { desc = "Copilot Cha
 vim.keymap.set("v", "<leader>cC", ":CopilotChatClose<CR>", { desc = "Copilot Chat - Close" })
 vim.keymap.set("n", "<C-M-i>", "ggVGy:CopilotChat ", { desc = "Copilot Chat - select all" })
 vim.keymap.set("v", "<C-M-i>", "y:CopilotChat ", { desc = "Copilot Chat - selected" })
-vim.keymap.set("n", "<leader>cs", "{V}y:CopilotChat ", { desc = "Copilot Chat - yank surround" })
 vim.keymap.set("n", "<leader>cm", ":CopilotChatCommit<CR>", { desc = "Copilot Chat - Write commit message for the change with commitizen convention" })
-vim.keymap.set({ "n", "v" }, "<leader>ci", ":CopilotChatInline<CR>", { desc = "Copilot Chat - Inline" })
 vim.keymap.set({ "n", "v" }, "<C-c>", ":CopilotChatInline<CR>", { desc = "Copilot Chat - Inline" })
 
 -- jump to next error and prompt AI for fix
