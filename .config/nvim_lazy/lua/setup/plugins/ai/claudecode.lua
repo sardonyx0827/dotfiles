@@ -3,13 +3,12 @@ return {
   dependencies = { "folke/snacks.nvim" },
   config = true,
   keys = {
-    { "<leader>a", nil, desc = "AI/Claude Code" },
     { "<leader>cc", "<cmd>ClaudeCode<cr>", mode="n", desc = "Toggle Claude" },
     { "<leader>cc", "<cmd>ClaudeCodeSend<cr>", mode = "v", desc = "Send to Claude" },
     { "<leader>cC", "<cmd>ClaudeCodeClose<cr>", desc = "Close Claude" },
     { "<leader>cc", "<cmd>ClaudeCodeClose<cr>", mode = "v", desc = "Close Claude" },
     {
-      "<leader>ac",
+      "<leader>ca",
       "<cmd>ClaudeCodeTreeAdd<cr>",
       desc = "Add file to Claude",
       ft = { "NvimTree", "neo-tree", "oil", "minifiles" },
