@@ -48,9 +48,9 @@ local my_transparent_theme = {
 return {
   "nvim-lualine/lualine.nvim",
   event = "VeryLazy",
-  dependencies = {
-    'AndreM222/copilot-lualine'
-  },
+  -- dependencies = {
+  --   'AndreM222/copilot-lualine'
+  -- },
   config = function()
     require("lualine").setup {
       options = {
@@ -84,32 +84,32 @@ return {
           }
         },
         lualine_x = {
-          {
-            'copilot',
-            -- Default values
-            symbols = {
-              status = {
-                icons = {
-                  enabled = " ",
-                  sleep = " ", -- auto-trigger disabled
-                  disabled = " ",
-                  unknown = " ",
-                  warning = " ",
-                },
-                hl = {
-                  enabled = "#50FA7B",
-                  sleep = "#AEB7D0",
-                  disabled = "#6272A4",
-                  warning = "#FFB86C",
-                  unknown = "#FF5555"
-                }
-              },
-              spinners = require("copilot-lualine.spinners").dots,
-              spinner_color = "#6272A4"
-            },
-            show_colors = true,
-            show_loading = true
-          },
+          -- {
+          --   'copilot',
+          --   -- Default values
+          --   symbols = {
+          --     status = {
+          --       icons = {
+          --         enabled = " ",
+          --         sleep = " ", -- auto-trigger disabled
+          --         disabled = " ",
+          --         unknown = " ",
+          --         warning = " ",
+          --       },
+          --       hl = {
+          --         enabled = "#50FA7B",
+          --         sleep = "#AEB7D0",
+          --         disabled = "#6272A4",
+          --         warning = "#FFB86C",
+          --         unknown = "#FF5555"
+          --       }
+          --     },
+          --     spinners = require("copilot-lualine.spinners").dots,
+          --     spinner_color = "#6272A4"
+          --   },
+          --   show_colors = true,
+          --   show_loading = true
+          -- },
           {
             function()
               -- Check if MCPHub is loaded

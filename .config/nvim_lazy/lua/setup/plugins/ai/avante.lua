@@ -4,14 +4,10 @@ return {
   event = "VeryLazy",
   version = false, -- Never set this value to "*"! Never!
   opts = {
-    provider = "copilot",
+    provider = "gemini",
     providers = {
       copilot = {
-        -- model = 'claude-sonnet-4',
-        -- disable_auto_insert = true,
-        -- disable_tools = true, -- disable tools!
         model = "gpt-4.1",
-        -- model = "gpt-5-mini",
       },
       claude = {
         endpoint = "https://api.anthropic.com",
