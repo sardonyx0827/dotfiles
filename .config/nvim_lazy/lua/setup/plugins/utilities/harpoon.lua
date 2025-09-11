@@ -4,7 +4,17 @@ return {
   branch = "harpoon2",
   lazy = true,
   keys = {
-    { "<C-e>", mode = "n", },
+    { "<C-e>", mode = "n" },
+    { "<leader>ha", mode = "n" },
+    { "<M-1>", mode = "n" },
+    { "<M-2>", mode = "n" },
+    { "<M-3>", mode = "n" },
+    { "<M-4>", mode = "n" },
+    { "<M-5>", mode = "n" },
+    { "<M-6>", mode = "n" },
+    { "<M-7>", mode = "n" },
+    { "<M-8>", mode = "n" },
+    { "<M-9>", mode = "n" }
   },
   config = function()
     local harpoon = require("harpoon")
