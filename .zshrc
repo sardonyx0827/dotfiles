@@ -253,9 +253,6 @@ function translate() {
   gemini -y -p  "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
 }
 ## claude cli
-alias push_claude='claude -p "pushして"'
-alias commit_message_claude='claude -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
-alias pull_request_claude='claude -p "pr作成して"'
 alias explain_claude='claude -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
 function translate_claude() {
   claude -p "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
