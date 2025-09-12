@@ -17,7 +17,8 @@
       "Read(node_modules/**)",
       "Read(.git/**)",
       "Read(build/**)",
-      "Read(dist/**)"
+      "Read(dist/**)",
+      "Read(out/**)"
     ]
   },
   "env": {
