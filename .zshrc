@@ -255,5 +255,5 @@ function translate() {
 ## claude cli
 alias explain_claude='claude -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
 function translate_claude() {
-  claude -p "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
+  claude --model "sonnet" -p "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
 }
