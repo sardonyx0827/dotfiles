@@ -1,6 +1,11 @@
 {
   "permissions": {
-    "allow": [],
+    "allow": [
+      "mcp__playwright__playwright_screenshot",
+      "mcp__playwright__playwright_click",
+      "mcp__playwright__playwright_console_logs",
+      "mcp__playwright__playwright_navigate"
+    ],
     "deny": [
       "Bash(sudo:*)",
       "Bash(rm -rf:*)",
