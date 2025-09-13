@@ -2,7 +2,7 @@ return {
   "zbirenbaum/copilot.lua",
   event = "InsertEnter",
   cmd = "Copilot",
-  -- copilot_model = "claude-3.5-sonnet",
+  copilot_model = "gpt-5-mini",
   copilot_language = "Japanese",
   config = function()
     require("copilot").setup({
