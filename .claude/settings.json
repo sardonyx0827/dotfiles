@@ -15,10 +15,15 @@
       "Bash(mysql:*)",
       "Bash(mongod:*)",
       "Read(node_modules/**)",
+      "Read(./node_modules/**)",
       "Read(.git/**)",
+      "Read(./.git/**)",
       "Read(build/**)",
+      "Read(./build/**)",
       "Read(dist/**)",
-      "Read(out/**)"
+      "Read(./dist/**)",
+      "Read(out/**)",
+      "Read(./.next/**)"
     ]
   },
   "env": {
