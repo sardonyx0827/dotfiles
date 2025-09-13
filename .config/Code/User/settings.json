@@ -469,7 +469,12 @@
     "security.promptForRemoteFileProtocolHandling": false,
     "cline.preferredLanguage": "Japanese - 日本語",
     "git.openRepositoryInParentFolders": "never",
-    "chat.mcp.discovery.enabled": true,
+    "chat.mcp.discovery.enabled": {
+        "claude-desktop": true,
+        "windsurf": true,
+        "cursor-global": true,
+        "cursor-workspace": true
+    },
     "remote.defaultExtensionsIfInstalledLocally": [
         "GitHub.copilot",
         "GitHub.copilot-chat",
