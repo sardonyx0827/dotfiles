@@ -172,3 +172,10 @@ __pycache__
 
 # git
 .git/
+
+# claude code
+.claude/
+# gemini cli
+.gemini/
+# codex(openai)
+.codex/
