@@ -75,6 +75,5 @@ gemini -y -p "<your question or task here>"
 
 # MCP Documentation
 @MCP_Context7.md
-@MCP_Morphllm.md
 @MCP_Playwright.md
 @MCP_Serena.md

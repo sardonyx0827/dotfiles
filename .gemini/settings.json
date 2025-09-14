@@ -28,6 +28,24 @@
         "Authorization": "Bearer <GITHUB_ACCESS_TOKEN>"
       },
       "timeout": 5000
+    },
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "env": {}
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {}
     }
   },
   "preferredEditor": "vim",
