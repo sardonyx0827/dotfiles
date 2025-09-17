@@ -46,6 +46,13 @@
         "@upstash/context7-mcp"
       ],
       "env": {}
+    },
+    "codex": {
+      "type": "stdio",
+      "command": "codex",
+      "args": [
+        "mcp"
+      ]
     }
   },
   "preferredEditor": "vim",
