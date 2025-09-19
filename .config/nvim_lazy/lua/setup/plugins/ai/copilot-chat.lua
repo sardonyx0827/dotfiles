@@ -26,7 +26,7 @@ return {
     model = "gpt-4.1",
     -- model = "gpt-5-mini",
     show_help = "no", -- Show help text for CopilotChatInPlace, default: yes
-    debug = false, -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
+    debug = false,    -- Enable or disable debug mode, the log file will be in ~/.local/state/nvim/CopilotChat.nvim.log
     language = "Japanese",
     prompts = prompts,
     auto_follow_cursor = false, -- Don't follow the cursor after getting response

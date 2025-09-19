@@ -4,10 +4,10 @@ require("dapui").setup({
   layouts = {
     {
       elements = {
-        { id = "watches", size = 0.20 },
-        { id = "stacks", size = 0.20 },
+        { id = "watches",     size = 0.20 },
+        { id = "stacks",      size = 0.20 },
         { id = "breakpoints", size = 0.20 },
-        { id = "scopes", size = 0.40 },
+        { id = "scopes",      size = 0.40 },
       },
       size = 64,
       position = "right",
@@ -22,4 +22,5 @@ require("dapui").setup({
     },
   },
 })
-vim.api.nvim_set_keymap('n', '<leader>du', ':lua require("dapui").toggle()<CR>', { silent = true, desc= "Toggle DAP UI - Debug Windows." })
+vim.api.nvim_set_keymap('n', '<leader>du', ':lua require("dapui").toggle()<CR>',
+  { silent = true, desc = "Toggle DAP UI - Debug Windows." })

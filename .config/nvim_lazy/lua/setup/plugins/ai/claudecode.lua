@@ -3,7 +3,7 @@ return {
   dependencies = { "folke/snacks.nvim" },
   config = true,
   keys = {
-    { "<leader>cc", "<cmd>ClaudeCode<cr>", mode="n", desc = "Toggle Claude" },
+    { "<leader>cc", "<cmd>ClaudeCode<cr>",     mode = "n", desc = "Toggle Claude" },
     { "<leader>cc", "<cmd>ClaudeCodeSend<cr>", mode = "v", desc = "Send to Claude" },
     {
       "<leader>ca",
@@ -13,6 +13,6 @@ return {
     },
     -- Diff management
     { "<leader>da", "<cmd>ClaudeCodeDiffAccept<cr>", desc = "Accept diff" },
-    { "<leader>dd", "<cmd>ClaudeCodeDiffDeny<cr>", desc = "Deny diff" },
+    { "<leader>dd", "<cmd>ClaudeCodeDiffDeny<cr>",   desc = "Deny diff" },
   },
 }

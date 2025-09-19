@@ -2,7 +2,7 @@
 vim.g.mapleader = ","
 
 -- Explorer
-vim.keymap.set("n", "<leader>p", ":Ex<CR>", {desc = "open file explorer"})
+vim.keymap.set("n", "<leader>p", ":Ex<CR>", { desc = "open file explorer" })
 -- In visual mode, shift text left and reselect
 vim.keymap.set("v", "<", "<gv")
 -- In visual mode, shift text right and reselect
@@ -28,31 +28,31 @@ vim.keymap.set("n", "<C-s>", function()
   vim.cmd("w")
 end)
 -- In normal mode, rename text in this file
-vim.keymap.set("n", "<leader>rn", [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>]], {desc = "rename text in this file"})
+vim.keymap.set("n", "<leader>rn", [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>]],
+  { desc = "rename text in this file" })
 -- vimgrep and open quickfix window
 vim.keymap.set("n", "<leader>vg", function()
   vim.cmd("vimgrep /" .. vim.fn.input("Grep For > ") .. "/ **/*")
   vim.cmd("copen")
-end, {desc = "vimgrep and open quickfix window"})
+end, { desc = "vimgrep and open quickfix window" })
 
 -- window
 -- make the window biger vertically
-vim.keymap.set('n', '<C-up>', '1<C-w>+', { noremap = true, silent = true})
+vim.keymap.set('n', '<C-up>', '1<C-w>+', { noremap = true, silent = true })
 -- make the window smaller vertically
-vim.keymap.set('n', '<C-Down>', '1<C-w>-', { noremap = true, silent = true})
+vim.keymap.set('n', '<C-Down>', '1<C-w>-', { noremap = true, silent = true })
 -- make the window bigger horizontally by pressing shift and =
-vim.keymap.set('n', '<C-Right>', '1<C-w>>', { noremap = true, silent = true})
+vim.keymap.set('n', '<C-Right>', '1<C-w>>', { noremap = true, silent = true })
 -- make the window smaller horizontally by pressing shift and -
-vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true})
+vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true })
 -- jump next/prev buffer
-vim.keymap.set("n", "<C-l>", ":bnext<CR>", { noremap = true, silent = true})
-vim.keymap.set("n", "<C-h>", ":bprev<CR>", { noremap = true, silent = true})
+vim.keymap.set("n", "<C-l>", ":bnext<CR>", { noremap = true, silent = true })
+vim.keymap.set("n", "<C-h>", ":bprev<CR>", { noremap = true, silent = true })
 -- change directory to current file
-vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", {desc = "change directory to current file"})
-vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", {desc = "change up directory"})
+vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", { desc = "change directory to current file" })
+vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", { desc = "change up directory" })
 -- move cursor in insert mode
 vim.keymap.set("i", "<C-j>", "<C-o>gj")
 vim.keymap.set("i", "<C-k>", "<C-o>gk")
 vim.keymap.set("i", "<C-h>", "<C-o>h")
 vim.keymap.set("i", "<C-l>", "<C-o>l")
-

@@ -5,15 +5,17 @@ local lsp_zero = require('lsp-zero')
 lsp_zero.on_attach(function(_, bufnr)
   -- see :help lsp-zero-keybindings
   -- to learn the available actions
-  lsp_zero.default_keymaps({buffer = bufnr})
+  lsp_zero.default_keymaps({ buffer = bufnr })
   -- jump to definition
-  vim.keymap.set("n", "<C-t>", function() vim.lsp.buf.definition() end, { buffer = bufnr, remap = false, desc = "jump to definition" })
+  vim.keymap.set("n", "<C-t>", function() vim.lsp.buf.definition() end,
+    { buffer = bufnr, remap = false, desc = "jump to definition" })
   -- show definition in a split
-  vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end, { buffer = bufnr, remap = false, desc = "show definition" })
+  vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end,
+    { buffer = bufnr, remap = false, desc = "show definition" })
   -- vim.keymap.set("n", "<leader>ca", function() vim.lsp.buf.code_action() end, { buffer = bufnr, remap = false, desc = "code action" })
-  vim.keymap.set("n", "<leader>ff", function() vim.lsp.buf.format { async = true } end, { buffer = bufnr, remap = false, desc = "format this file" })
-  vim.keymap.set("n", "<leader>ra", function() vim.lsp.buf.rename() end, {desc = "rename all file in workspace"})
-
+  vim.keymap.set("n", "<leader>ff", function() vim.lsp.buf.format { async = true } end,
+    { buffer = bufnr, remap = false, desc = "format this file" })
+  vim.keymap.set("n", "<leader>ra", function() vim.lsp.buf.rename() end, { desc = "rename all file in workspace" })
 end)
 
 require('mason').setup({})
@@ -57,7 +59,7 @@ local cmp_action = lsp_zero.cmp_action()
 -- default configuration for cmp
 --local cmp_format = lsp_zero.cmp_format()
 require('luasnip.loaders.from_vscode').lazy_load()
-vim.opt.completeopt = {'menu', 'menuone', 'noselect'}
+vim.opt.completeopt = { 'menu', 'menuone', 'noselect' }
 
 local lspkind = require('lspkind')
 
@@ -66,8 +68,8 @@ cmp.setup({
   formatting = {
     format = lspkind.cmp_format({
       -- options: 'text', 'text_symbol', 'symbol_text', 'symbol'
-      mode = 'symbol', -- show only symbol annotations
-      maxwidth = 100, -- prevent the popup from showing more than provided characters (e.g 50 will not show more than 50 characters)
+      mode = 'symbol',       -- show only symbol annotations
+      maxwidth = 100,        -- prevent the popup from showing more than provided characters (e.g 50 will not show more than 50 characters)
       ellipsis_char = '...', -- when popup menu exceed maxwidth, the truncated part would show ellipsis_char instead (must define maxwidth first)
       symbol_map = {
         Copilot = "",
@@ -111,25 +113,25 @@ cmp.setup({
   window = {
     --documentation = cmp.config.window.bordered(),
     completion = {
-        border = "rounded",
-        winhighlight = "Normal:CmpNormal",
+      border = "rounded",
+      winhighlight = "Normal:CmpNormal",
     },
     documentation = {
-        border = "rounded",
-        winhighlight = "Normal:CmpDocNormal",
+      border = "rounded",
+      winhighlight = "Normal:CmpDocNormal",
     }
   },
   sources = {
-    {name = "copilot"},
-    {name = 'path'},
-    {name = 'nvim_lsp'},
-    {name = 'nvim_lua'},
-    {name = 'buffer', keyword_length = 3},
-    {name = 'luasnip', keyword_length = 2},
+    { name = "copilot" },
+    { name = 'path' },
+    { name = 'nvim_lsp' },
+    { name = 'nvim_lua' },
+    { name = 'buffer',  keyword_length = 3 },
+    { name = 'luasnip', keyword_length = 2 },
   },
   mapping = cmp.mapping.preset.insert({
     -- confirm completion item
-    ['<Tab>'] = cmp.mapping.confirm({select = false}),
+    ['<Tab>'] = cmp.mapping.confirm({ select = false }),
     -- toggle completion menu
     ['<C-e>'] = cmp_action.toggle_completion(),
     -- tab complete

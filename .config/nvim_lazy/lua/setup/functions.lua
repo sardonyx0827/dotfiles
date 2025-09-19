@@ -10,7 +10,8 @@ local create_file_path_list_from_current_dir = function()
 
   print("execute command: " .. cmd)
 end
-vim.keymap.set("n", "<leader>lb", create_file_path_list_from_current_dir, { desc = 'create file path list from current directory' })
+vim.keymap.set("n", "<leader>lb", create_file_path_list_from_current_dir,
+  { desc = 'create file path list from current directory' })
 
 
 ---------------------------------------------------------
@@ -21,7 +22,6 @@ vim.keymap.set("n", "<leader>lb", create_file_path_list_from_current_dir, { desc
 -- and execute this command ":.!sh"
 -- then, execute this command ":lua load_buffers_from_file_list()"
 local load_buffers_from_file_list = function()
-
   local buf = vim.api.nvim_get_current_buf()
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
@@ -33,8 +33,8 @@ local load_buffers_from_file_list = function()
 
     for _, opened_bufnr in ipairs(opened_buffer_list) do
       if opened_bufnr == tmp_bufnr then
-      is_opened = true
-      break
+        is_opened = true
+        break
       end
     end
 
@@ -58,7 +58,6 @@ vim.keymap.set("n", "<leader>bl", load_buffers_from_file_list, { desc = 'load bu
 ---------------------------------------------------------
 -- Function to move to the next or previous code block
 local function move_to_codeblock(direction)
-
   -- Check if the direction argument is valid
   if direction ~= "next" and direction ~= "prev" then
     print("Invalid direction argument. It should be either 'next' or 'prev'.")
@@ -90,20 +89,19 @@ local function move_to_codeblock(direction)
 
   -- Set the cursor position or print a message if no code block is found
   if between_line ~= limit then
-    vim.api.nvim_win_set_cursor(0, {between_line, 0})
+    vim.api.nvim_win_set_cursor(0, { between_line, 0 })
   else
     print(message)
-    vim.api.nvim_win_set_cursor(0, {current_line_number, 0})
-
+    vim.api.nvim_win_set_cursor(0, { current_line_number, 0 })
   end
-
 end
-vim.keymap.set("n", "<leader><leader>n", function() move_to_codeblock("next") end, {desc = "move to next codeblock text", noremap = true})
-vim.keymap.set("n", "<leader><leader>p", function() move_to_codeblock("prev") end, {desc = "move to prev codeblock text", noremap = true})
+vim.keymap.set("n", "<leader><leader>n", function() move_to_codeblock("next") end,
+  { desc = "move to next codeblock text", noremap = true })
+vim.keymap.set("n", "<leader><leader>p", function() move_to_codeblock("prev") end,
+  { desc = "move to prev codeblock text", noremap = true })
 
 -- This function is used to select the text within a code block in a markdown file.
 local function select_codeblock_text()
-
   local cursor_position = vim.api.nvim_win_get_cursor(0)[1]
   local current_line_number = vim.api.nvim_win_get_cursor(0)[1]
   local max_line = vim.api.nvim_buf_line_count(0)
@@ -127,25 +125,24 @@ local function select_codeblock_text()
 
   -- if start_line and end_line are found, select the text
   if start_line and end_line then
-    vim.api.nvim_win_set_cursor(0, {start_line, 0})
+    vim.api.nvim_win_set_cursor(0, { start_line, 0 })
     vim.cmd("normal! V")
-    vim.api.nvim_win_set_cursor(0, {end_line, 0})
+    vim.api.nvim_win_set_cursor(0, { end_line, 0 })
   else
     print("No code block found. Please move to a codeblock and try again.")
-    vim.api.nvim_win_set_cursor(0, {cursor_position, 0})
+    vim.api.nvim_win_set_cursor(0, { cursor_position, 0 })
   end
-
 end
-vim.keymap.set("n", "<leader><leader>s", select_codeblock_text, {desc = "Select codeblock text", noremap = true})
+vim.keymap.set("n", "<leader><leader>s", select_codeblock_text, { desc = "Select codeblock text", noremap = true })
 
 ---------------------------------------------------------
 -- PWD command
 ---------------------------------------------------------
 local function pwd_command()
   local pwd = vim.fn.getcwd()
-  vim.api.nvim_put({pwd}, 'l', true, true)
+  vim.api.nvim_put({ pwd }, 'l', true, true)
 end
-vim.keymap.set("n", "<leader>ws", pwd_command, {desc = "Put cwd result", noremap = true})
+vim.keymap.set("n", "<leader>ws", pwd_command, { desc = "Put cwd result", noremap = true })
 
 
 ---------------------------------------------------------
@@ -168,4 +165,4 @@ local function copy_lsp_diagnostics()
     print("No LSP diagnostics found.")
   end
 end
-vim.keymap.set("n", "<leader>cl", copy_lsp_diagnostics, {desc = "Copy LSP diagnostics to clipboard", noremap = true})
+vim.keymap.set("n", "<leader>cl", copy_lsp_diagnostics, { desc = "Copy LSP diagnostics to clipboard", noremap = true })

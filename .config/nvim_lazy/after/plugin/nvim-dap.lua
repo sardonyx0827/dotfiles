@@ -7,7 +7,7 @@ dap.adapters = {
     port = '${port}',
     executable = {
       command = vim.fn.stdpath('data') .. '/mason/packages/debugpy/debugpy-adapter',
-      args = {'--port', '${port}'}
+      args = { '--port', '${port}' }
     }
   },
   node_debug2_adapter = {
@@ -20,7 +20,7 @@ dap.adapters = {
     port = '${port}',
     executable = {
       command = vim.fn.stdpath('data') .. '/mason/packages/codelldb/extension/adapter/codelldb',
-      args = {'--port', '${port}'}
+      args = { '--port', '${port}' }
     }
   },
 }
@@ -78,11 +78,12 @@ else
   require('dap-python').setup()
 end
 
-vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true, desc= "Toggle Breakpoint." })
-vim.api.nvim_set_keymap('n', '<leader>bc', ':lua require("dap").clear_breakpoints()<CR>', { silent = true, desc= "Clear All Breakpoint." })
+vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true, desc = "Toggle Breakpoint." })
+vim.api.nvim_set_keymap('n', '<leader>bc', ':lua require("dap").clear_breakpoints()<CR>',
+  { silent = true, desc = "Clear All Breakpoint." })
 vim.api.nvim_set_keymap('n', '<F5>', ':DapContinue<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F10>', ':DapStepOver<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F11>', ':DapStepInto<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F12>', ':DapStepOut<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<S-F5>', '<cmd>lua require("dap").disconnect({ terminateDebuggee = true })<CR>'
-  ..'<cmd>lua require("dap").close()<CR>', { silent = true })
+  .. '<cmd>lua require("dap").close()<CR>', { silent = true })

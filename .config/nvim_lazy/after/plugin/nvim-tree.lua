@@ -1,7 +1,6 @@
 --- @diagnostic disable: undefined-global
 -- is nvim-tree already opened?
 local function is_opend()
-
   local wins = vim.api.nvim_list_wins()
 
   for _, w in ipairs(wins) do
@@ -12,11 +11,9 @@ local function is_opend()
   end
 
   return false
-
 end
 -- if nvim-tree is already opened, focus it
 local function focus_tree()
-
   local wins = vim.api.nvim_list_wins()
 
   for _, w in ipairs(wins) do
@@ -26,21 +23,20 @@ local function focus_tree()
       return
     end
   end
-
 end
 local function toggle_tree_focus()
-
   if is_opend() then
     focus_tree()
     vim.cmd("NvimTreeFocus")
   else
     vim.cmd("NvimTreeOpen")
   end
-
 end
 
-vim.keymap.set("n", "<leader>e", toggle_tree_focus, { noremap = true, silent = true, desc = "NvimTree - Toggle and focus" })
-vim.keymap.set("n", "<leader>te", ":lua require('nvim-tree.api').tree.expand_all()<CR>", { noremap = true, silent = true, desc = "NvimTree - expand all" })
+vim.keymap.set("n", "<leader>e", toggle_tree_focus,
+  { noremap = true, silent = true, desc = "NvimTree - Toggle and focus" })
+vim.keymap.set("n", "<leader>te", ":lua require('nvim-tree.api').tree.expand_all()<CR>",
+  { noremap = true, silent = true, desc = "NvimTree - expand all" })
 
 -- set termguicolors to enable highlight groups
 vim.opt.termguicolors = true
@@ -49,7 +45,6 @@ local function move_l()
   vim.cmd("wincmd l")
 end
 local function tree_on_attach(bufnr)
-
   local api = require "nvim-tree.api"
   local function opts(desc)
     return { desc = "nvim-tree: " .. desc, buffer = bufnr, noremap = true, silent = true, nowait = true }
@@ -65,7 +60,6 @@ local function tree_on_attach(bufnr)
   vim.keymap.set('n', '<C-h>', api.tree.change_root_to_parent, opts('Up'))
   --vim.keymap.set('n', '<leader>e', api.tree.close, opts('Close'))
   vim.keymap.set('n', '<leader>e', move_l, opts('Close'))
-
 end
 
 --setup with some options
@@ -210,20 +204,17 @@ local command = {
 }
 
 local function createTreeActions()
-
   for _, cmd in pairs(command) do
     table.insert(menuCommand, { name = cmd[3], handler = cmd[2] })
   end
-
 end
 
 createTreeActions()
-vim.keymap.set("n", "<leader>ta", actionsMenu, {desc = "NvimTree - action menu"})
+vim.keymap.set("n", "<leader>ta", actionsMenu, { desc = "NvimTree - action menu" })
 
 local M = {}
 
 function M.on_attach(bufnr)
-
   local opts = function(desc)
     return { desc = "nvim-tree: " .. desc, buffer = bufnr, nowait = true }
   end
@@ -232,7 +223,6 @@ function M.on_attach(bufnr)
       vim.keymap.set("n", cmd[1], cmd[2], opts(cmd[3]))
     end
   end
-
 end
 
 return M

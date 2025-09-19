@@ -8,21 +8,12 @@
     "vim.normalModeKeyBindingsNonRecursive": [
         {
             "before": [
-                "<C-c>"
-            ],
-            // CopilotChat inline editor
-            "commands": [
-                "interactiveEditor.start"
-            ]
-        },{
-            "before": [
                 "<leader>",
                 "c",
                 "c"
             ],
-            // CopilotChat
             "commands": [
-                "workbench.panel.chat.view.copilot.focus"
+                "claude-code.runClaude"
             ]
         },{
             "before": [
@@ -33,16 +24,6 @@
             "commands": [
                 "claude-code.runClaude"
             ],
-        },{
-            // Chat: Open Copilot Edits
-            "before": [
-                "<leader>",
-                "c",
-                "e"
-            ],
-            "commands": [
-                "workbench.action.chat.openEditSession"
-            ]
         },{
             "before": [
                 "<leader>",
@@ -263,18 +244,6 @@
         },{
             "before": [
                 "<leader>",
-                "q",
-                "f",
-            ],
-            // quick fix(using Copilot)
-            "commands": [
-                "editor.action.marker.nextInFiles",
-                // "interactiveEditor.start",
-                "editor.action.quickFix",
-            ]
-        },{
-            "before": [
-                "<leader>",
                 "w",
                 "w",
             ],
@@ -320,21 +289,12 @@
     "vim.visualModeKeyBindingsNonRecursive": [
         {
             "before": [
-                "<C-c>"
-            ],
-            // CopilotChat inline editor
-            "commands": [
-                "interactiveEditor.start"
-            ]
-        },{
-            "before": [
                 "<leader>",
                 "c",
                 "c"
             ],
-            // CopilotChat inline editor
             "commands": [
-                "workbench.panel.chat.view.copilot.focus"
+                "claude-code.runClaude"
             ]
         },{
             "before": [
@@ -382,14 +342,6 @@
 
     "vim.insertModeKeyBindingsNonRecursive": [
         {
-            "before": [
-                "<C-c>"
-            ],
-            // CopilotChat inline editor
-            "commands": [
-                "interactiveEditor.start"
-            ]
-        },{
             // move cursor
             "before": [
                 "<C-h>"
@@ -484,4 +436,5 @@
     "chat.agent.enabled": true,
     "vim.showMarksInGutter": true,
     "git.confirmSync": false,
+    "workbench.colorTheme": "Rosé Pine",
 }
