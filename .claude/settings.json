@@ -1,10 +1,13 @@
 {
   "permissions": {
     "allow": [
+      "Bash(grep:*)",
+      "Bash(rg:*)",
       "mcp__playwright__playwright_screenshot",
       "mcp__playwright__playwright_click",
       "mcp__playwright__playwright_console_logs",
       "mcp__playwright__playwright_navigate",
+      "mcp__serena__activate_project",
       "mcp__serena__list_dir",
       "mcp__codex__codex"
     ],
@@ -39,5 +42,6 @@
   "statusLine": {
     "type": "command",
     "command": "bash ~/.claude/statusline-command.sh"
-  }
+  },
+  "includeCoAuthoredBy": false
 }
