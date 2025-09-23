@@ -43,5 +43,14 @@
     "type": "command",
     "command": "bash ~/.claude/statusline-command.sh"
   },
-  "includeCoAuthoredBy": false
+  "includeCoAuthoredBy": false,
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "Write|Edit|MultiEdit",
+      "hooks": [{
+        "type": "command",
+        "command": "~/.claude/hooks/auto-format.sh"
+      }]
+    }]
+  }
 }
