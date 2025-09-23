@@ -9,7 +9,17 @@
       "mcp__playwright__playwright_navigate",
       "mcp__serena__activate_project",
       "mcp__serena__list_dir",
-      "mcp__codex__codex"
+      "mcp__codex__codex",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git checkout:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh:*)"
     ],
     "deny": [
       "Bash(sudo:*)",

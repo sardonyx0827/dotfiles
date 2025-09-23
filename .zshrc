@@ -252,8 +252,78 @@ alias explain='gemini -y -p "現在のディレクトリにあるコンテンツ
 function translate() {
   gemini -y -p  "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
 }
+
 ## claude cli
-alias explain_claude='claude -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
-function translate_claude() {
-  claude --model "sonnet" -p "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
+alias c='claude'
+### use claude commands
+function mc() {
+  case $1 in
+    explain)
+      shift
+      claude --model "sonnet" -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください。mcpを利用してはいけません。"
+      ;;
+    translate)
+      shift
+      claude --model "sonnet" -p "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
+      ;;
+    execute)
+      shift
+      claude --model "sonnet" -p "$*"
+      ;;
+    cli)
+      shift
+      claude "$*"
+      ;;
+    push)
+      shift
+      claude --model "sonnet" -p "pushして"
+      ;;
+    commit_message)
+      shift
+      claude --model "sonnet" -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。mcpを使用してはいけません。"
+      ;;
+    pull_request)
+      shift
+      claude --model "sonnet" -p "pr作成して。mcpを使用してはいけません。"
+      ;;
+    *)
+      echo "Usage: mc(my_claude) {explain|translate|cx|c} [arguments...]"
+      return 1
+      ;;
+  esac
 }
+_mc() {
+  local context state line
+  _arguments \
+    '1:command:->commands' \
+    '*::args:->args'
+  case $state in
+    commands)
+      local -a commands
+      commands=(
+        'explain:現在のディレクトリの内容を分析してプロジェクトの概要を説明'
+        'translate:日本語⇔英語の相互翻訳を実行'
+        'execute:Claude Sonnetモデルでプロンプトを実行'
+        'cli:標準のClaudeコマンドを実行'
+        'push:変更のコミットメッセージを生成してpushする'
+        'commit_message:変更のcommitメッセージを生成'
+        'pull_request:変更のpull requestを生成'
+      )
+      _describe 'mc commands' commands
+      ;;
+    args)
+      case $words[2] in
+        translate|execute|cli)
+          _message "プロンプトまたは翻訳したいテキストを入力"
+          ;;
+        explain)
+          _message "引数は不要です(現在のディレクトリを分析)"
+          ;;
+        push)
+          _message "引数は不要です(変更のcommitとpush)"
+          ;;
+      esac
+      ;;
+  esac
+}
+compdef _mc mc
