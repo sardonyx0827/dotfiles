@@ -112,7 +112,7 @@ design_workflow:
 
 ```
 Claude 3回失敗 →
-"/sc:codex --escalate" +
+"/codex:codex --escalate" +
 "問題: authentication middleware でのtoken validation失敗
 試行1: JWT decode logic 修正 → まだ失敗
 試行2: middleware order 変更 → まだ失敗
@@ -127,7 +127,7 @@ Claude → Codex戦略の実装 + 検証
 
 ```
 Claude implementation →
-"/sc:codex --review --focus architecture" +
+"/codex:codex --review --focus architecture" +
 "実装したマイクロサービス architecture:
 - API Gateway + 3 services
 - Event-driven communication
@@ -141,7 +141,7 @@ Claude → 提案の評価 + 必要に応じて実装
 
 ```
 Complex Feature Request →
-"/sc:codex --delegate --breakdown" +
+"/codex:codex --delegate --breakdown" +
 "要求: Real-time collaborative editing system
 制約: 10万concurrent users, <100ms latency
 技術スタック: Node.js, WebSocket, Redis"

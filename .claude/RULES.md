@@ -179,13 +179,13 @@ Actionable rules for enhanced Claude Code framework operation.
 - **Automatic Escalation**: After 3+ failed attempts, automatically delegate to Codex MCP
 - **Strategic Analysis**: Use Codex MCP for architecture decisions, specification discussions
 - **Quality Review**: Delegate code review to Codex MCP for critical system components
-- **Framework Integration**: Use `/sc:codex` command for structured Codex interaction
+- **Framework Integration**: Use `/codex:codex` command for structured Codex interaction
 - **Context Preservation**: Always provide comprehensive context including failure history
 - **Validation Required**: Test and validate all Codex recommendations before implementation
 - **Documentation**: Document architectural decisions and rationale from Codex sessions
 - **Cross-Agent Coordination**: Coordinate Codex insights with specialized task agents
 
-✅ **Right**: 3 failures → `/sc:codex --debug --attempts 3` with full context
+✅ **Right**: 3 failures → `/codex:codex --debug --attempts 3` with full context
 ❌ **Wrong**: Continuing manual attempts after repeated failures
 
 ## SuperClaude Command Integration
@@ -200,7 +200,7 @@ Actionable rules for enhanced Claude Code framework operation.
 - **Efficient Workflows**: Chain commands for end-to-end task completion
 - **Quality Gates**: Validate outputs from SuperClaude commands before proceeding
 
-✅ **Right**: `/sc:analyze @system --think-hard → /sc:codex --architecture → /sc:implement`
+✅ **Right**: `/sc:analyze @system --think-hard → /codex:codex --architecture → /sc:implement`
 ❌ **Wrong**: Using basic analysis for complex architectural decisions
 
 ## File Organization
