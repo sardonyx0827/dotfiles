@@ -6,10 +6,11 @@
   },
   "components": {
     "agents": {
-      "agents_count": 15,
+      "agents_count": 16,
       "agents_list": [
         "backend-architect.md",
         "business-panel-experts.md",
+        "codex-delegator.md",
         "devops-architect.md",
         "frontend-architect.md",
         "learning-guide.md",
@@ -64,9 +65,7 @@
     }
   },
   "framework": {
-    "components": [
-      "core"
-    ],
+    "components": ["core"],
     "description": "AI-enhanced development framework for Claude Code",
     "installation_type": "global",
     "name": "SuperClaude",
@@ -75,11 +74,7 @@
   "mcp": {
     "auto_update": false,
     "enabled": true,
-    "servers": [
-      "sequential-thinking",
-      "context7",
-      "playwright"
-    ]
+    "servers": ["sequential-thinking", "context7", "playwright"]
   },
   "superclaude": {
     "auto_update": false,
