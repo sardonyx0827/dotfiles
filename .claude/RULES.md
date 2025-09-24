@@ -176,7 +176,7 @@ Actionable rules for enhanced Claude Code framework operation.
 
 **Priority**: 🔴 **Triggers**: Complex failures, strategic decisions, multi-domain problems
 
-- **Automatic Escalation**: After 3+ failed attempts, automatically delegate to Codex MCP
+- **Automatic Escalation**: After 1+ failed attempts, automatically delegate to Codex MCP
 - **Strategic Analysis**: Use Codex MCP for architecture decisions, specification discussions
 - **Quality Review**: Delegate code review to Codex MCP for critical system components
 - **Framework Integration**: Use `/codex:codex` command for structured Codex interaction
@@ -185,7 +185,7 @@ Actionable rules for enhanced Claude Code framework operation.
 - **Documentation**: Document architectural decisions and rationale from Codex sessions
 - **Cross-Agent Coordination**: Coordinate Codex insights with specialized task agents
 
-✅ **Right**: 3 failures → `/codex:codex --debug --attempts 3` with full context
+✅ **Right**: 1 failures → `/codex:codex --debug --attempts 1` with full context
 ❌ **Wrong**: Continuing manual attempts after repeated failures
 
 ## SuperClaude Command Integration

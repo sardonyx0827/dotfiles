@@ -16,7 +16,7 @@ Advanced problem-solving through Codex MCP delegation with intelligent escalatio
 /codex:codex <prompt>                    # Basic Codex delegation
 /codex:codex @file.py --strategy         # Strategic code analysis
 /codex:codex --spec "requirements"       # Specification discussion
-/codex:codex --debug --attempts 3        # Post-failure escalation
+/codex:codex --debug --attempts 1        # Post-failure escalation
 /codex:codex --review @code.js           # Code review request
 /codex:codex --architecture "system"     # Architecture design
 ```
@@ -25,7 +25,7 @@ Advanced problem-solving through Codex MCP delegation with intelligent escalatio
 
 ### 🔴 Critical Escalation (Auto-triggered)
 
-- Bug fixes failed 3+ times → Automatic escalation
+- Bug fixes failed 1+ times → Automatic escalation
 - Complex system failures requiring advanced analysis
 - Performance issues beyond standard optimization
 
@@ -107,8 +107,8 @@ Advanced problem-solving through Codex MCP delegation with intelligent escalatio
 ### Bug Fix Escalation
 
 ```bash
-# After 3 failed attempts at fixing authentication bug
-/codex:codex --debug --attempts 3 "Authentication middleware failing with token validation"
+# After 1 failed attempts at fixing authentication bug
+/codex:codex --debug --attempts 1 "Authentication middleware failing with token validation"
 
 Output:
 【タスク種別】: バグ修正
@@ -121,7 +121,7 @@ Output:
 ### Specification Discussion
 
 ```bash
-/sc:codex --spec "real-time notification system with offline support"
+/codex:codex --spec "real-time notification system with offline support"
 
 Output:
 【タスク種別】: 仕様検討

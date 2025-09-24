@@ -12,7 +12,7 @@
 
 ## Choose When
 
-- **Over native Claude**: 3回以上の失敗後、複雑な設計判断、専門的レビュー要求時
+- **Over native Claude**: 修正失敗後、複雑な設計判断、専門的レビュー要求時
 - **For strategic decisions**: アーキテクチャ設計、仕様策定、技術選択の判断
 - **For quality assurance**: コードレビュー、潜在的バグ特定、改善提案
 - **For delegation**: 複雑タスクのサブタスク分解と専門エージェント割り当て
@@ -30,7 +30,7 @@
 ### Bug Fix Escalation
 
 ```yaml
-trigger: "3回以上の失敗"
+trigger: "バグ修正の失敗"
 claude_role: "失敗履歴の整理と問題の詳細化"
 codex_role: "高度な debugging と根本原因分析"
 handoff: "失敗詳細 + これまでの試行内容 → Codex"
@@ -39,7 +39,7 @@ handoff: "失敗詳細 + これまでの試行内容 → Codex"
 ### Architecture Design
 
 ```yaml
-trigger: "複雑なシステム設計要求"
+trigger: "システム設計要求"
 claude_role: "要件整理とタスク分解"
 codex_role: "アーキテクチャ設計と技術選択"
 handoff: "要件 + 制約条件 → Codex"
@@ -65,19 +65,12 @@ handoff: "具体的実装指示 → Codex"
 
 ## Integration with SuperClaude Framework
 
-### Command Integration
-
-- **Automatic Escalation**: `/codex:codex --escalate --attempts 3` (失敗時の自動エスカレーション)
-- **Strategic Analysis**: `/codex:codex --architecture --requirements @doc.md`
-- **Code Review**: `/codex:codex --review --code @implementation/`
-- **Task Delegation**: `/codex:codex --delegate --subtasks @complex_task.md`
-
 ### Workflow Patterns
 
 ```yaml
 escalation_workflow:
   phase_1: "Claude による初期実装試行"
-  phase_2: "失敗カウントが3に到達"
+  phase_2: "処理の失敗"
   phase_3: "自動的に Codex MCP エスカレーション"
   phase_4: "Codex による高度な問題解決"
   phase_5: "Claude による結果統合と検証"
@@ -111,14 +104,7 @@ design_workflow:
 ### Bug Fix Escalation
 
 ```
-Claude 3回失敗 →
-"/codex:codex --escalate" +
-"問題: authentication middleware でのtoken validation失敗
-試行1: JWT decode logic 修正 → まだ失敗
-試行2: middleware order 変更 → まだ失敗
-試行3: async/await パターン変更 → まだ失敗
-エラー: [詳細なエラーログ]"
-
+Claude 失敗 → Codex
 Codex response → 根本原因特定 + 修正戦略
 Claude → Codex戦略の実装 + 検証
 ```
@@ -126,13 +112,6 @@ Claude → Codex戦略の実装 + 検証
 ### Architecture Review
 
 ```
-Claude implementation →
-"/codex:codex --review --focus architecture" +
-"実装したマイクロサービス architecture:
-- API Gateway + 3 services
-- Event-driven communication
-- Database per service pattern"
-
 Codex response → アーキテクチャ分析 + 改善提案
 Claude → 提案の評価 + 必要に応じて実装
 ```
@@ -140,12 +119,6 @@ Claude → 提案の評価 + 必要に応じて実装
 ### Strategic Delegation
 
 ```
-Complex Feature Request →
-"/codex:codex --delegate --breakdown" +
-"要求: Real-time collaborative editing system
-制約: 10万concurrent users, <100ms latency
-技術スタック: Node.js, WebSocket, Redis"
-
 Codex response → サブタスク分解 + 専門エージェント配置
 Claude → 各サブタスクの調整 + 統合
 ```

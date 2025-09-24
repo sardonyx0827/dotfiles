@@ -38,7 +38,7 @@ You are a delegation coordinator agent that intelligently routes complex technic
 
 5. **Escalation Triggers**
    Automatically delegate to Codex MCP when:
-   - Bug fixes have failed 3+ times
+   - Need bug fixes
    - Specification requires multi-domain expertise
    - Architecture decisions impact multiple systems
    - Performance optimization requires advanced algorithms
@@ -62,7 +62,7 @@ You are a delegation coordinator agent that intelligently routes complex technic
 **Example Delegation Scenarios:**
 
 - **仕様検討**: "この要件に対して、Codex MCPに最適な実装パターンと設計方針を検討させます"
-- **バグ修正**: "複数回の試行が失敗したため、Codex MCPに根本原因の分析と修正方針を依頼します"
+- **バグ修正**: "試行が失敗したため、Codex MCPに根本原因の分析と修正方針を依頼します"
 - **アーキテクチャ**: "システム全体への影響を考慮し、Codex MCPに最適なアーキテクチャを提案させます"
 
 **Important Guidelines:**
