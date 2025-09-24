@@ -4,63 +4,63 @@
 
 ## Triggers
 
-- バグ修正が1回以上失敗した場合のエスカレーション
-- 複雑なアーキテクチャ設計や仕様策定が必要な場合
-- 作成済みコードのレビューや改善提案が必要な場合
-- タスクの複雑性が高く、複数の専門エージェントによる検討が必要な場合
-- 重要な機能の追加・編集で多角的な検討が必要な場合
+- Escalation when bug fixes fail one or more times
+- Architecture design or specification development requirements
+- Review or improvement proposals for existing code
+- Tasks requiring specialized agent consideration
+- Feature addition/editing requiring multi-angle consideration
 
 ## Choose When
 
-- **Over native Claude**: 修正失敗後、複雑な設計判断、専門的レビュー要求時
-- **For strategic decisions**: アーキテクチャ設計、仕様策定、技術選択の判断
-- **For quality assurance**: コードレビュー、潜在的バグ特定、改善提案
-- **For delegation**: 複雑タスクのサブタスク分解と専門エージェント割り当て
-- **Not for simple tasks**: 基本的なコード修正、単純な実装、通常の開発作業
+- **Over native Claude**: After fix failures, complex design decisions, specialized review requests
+- **For strategic decisions**: Architecture design, specification development, technology selection
+- **For quality assurance**: Code review, potential bug identification, improvement proposals
+- **For delegation**: Task decomposition and specialized agent assignment
+- **Not for simple tasks**: Basic code fixes, simple implementation, routine development work
 
 ## Works Best With
 
-- **Sequential**: Sequential が問題を構造化 → Codex が解決戦略を策定
-- **Serena**: Serena がプロジェクト context を提供 → Codex が architectural analysis
-- **Context7**: Context7 が framework patterns → Codex が implementation strategy
-- **Business Panel**: Business requirements → Codex が technical implementation roadmap
+- **Sequential**: Sequential structures problems → Codex develops solution strategies
+- **Serena**: Serena provides project context → Codex performs architectural analysis
+- **Context7**: Context7 provides framework patterns → Codex develops implementation strategy
+- **Business Panel**: Business requirements → Codex creates technical implementation roadmap
 
 ## Delegation Patterns
 
 ### Bug Fix Escalation
 
 ```yaml
-trigger: "バグ修正の失敗"
-claude_role: "失敗履歴の整理と問題の詳細化"
-codex_role: "高度な debugging と根本原因分析"
-handoff: "失敗詳細 + これまでの試行内容 → Codex"
+trigger: "Bug fix failure"
+claude_role: "Organize failure history and problem details"
+codex_role: "Advanced debugging and root cause analysis"
+handoff: "Failure details + previous attempt content → Codex"
 ```
 
 ### Architecture Design
 
 ```yaml
-trigger: "システム設計要求"
-claude_role: "要件整理とタスク分解"
-codex_role: "アーキテクチャ設計と技術選択"
-handoff: "要件 + 制約条件 → Codex"
+trigger: "System design request"
+claude_role: "Requirements organization and task breakdown"
+codex_role: "Architecture design and technology selection"
+handoff: "Requirements + constraints → Codex"
 ```
 
 ### Code Review
 
 ```yaml
-trigger: "重要機能の品質保証"
-claude_role: "初期実装とレビュー依頼"
-codex_role: "詳細レビューと改善提案"
-handoff: "実装コード + レビュー観点 → Codex"
+trigger: "Quality assurance for critical features"
+claude_role: "Initial implementation and review request"
+codex_role: "Detailed review and improvement proposals"
+handoff: "Implementation code + review perspective → Codex"
 ```
 
 ### Task Decomposition
 
 ```yaml
-trigger: "複雑タスクの専門分野別分割"
-claude_role: "全体計画とタスク統合"
-codex_role: "専門エージェントとしての実装"
-handoff: "具体的実装指示 → Codex"
+trigger: "Complex task specialization and division"
+claude_role: "Overall planning and task integration"
+codex_role: "Implementation as specialized agent"
+handoff: "Specific implementation instructions → Codex"
 ```
 
 ## Integration with SuperClaude Framework
@@ -69,64 +69,64 @@ handoff: "具体的実装指示 → Codex"
 
 ```yaml
 escalation_workflow:
-  phase_1: "Claude による初期実装試行"
-  phase_2: "処理の失敗"
-  phase_3: "自動的に Codex MCP エスカレーション"
-  phase_4: "Codex による高度な問題解決およびコーディング"
-  phase_5: "Claude による結果統合と検証"
+  phase_1: "Initial implementation attempt by Claude"
+  phase_2: "Processing failure"
+  phase_3: "Automatic Codex MCP escalation"
+  phase_4: "Advanced problem solving and coding by Codex"
+  phase_5: "Result integration and validation by Claude"
 
 escalation_workflow:
-  phase_1: "Claude による初期修正試行"
-  phase_2: "修正後の動作確認時にエラー発生"
-  phase_3: "自動的に Codex MCP エスカレーション"
-  phase_4: "Codex による高度な問題解決およびコーディング"
-  phase_5: "Claude による結果統合と検証"
+  phase_1: "Initial fix attempt by Claude"
+  phase_2: "Error occurrence during post-fix verification"
+  phase_3: "Automatic Codex MCP escalation"
+  phase_4: "Advanced problem solving and coding by Codex"
+  phase_5: "Result integration and validation by Claude"
 
 design_workflow:
-  phase_1: "Claude による要件分析"
-  phase_2: "Codex による architecture design"
-  phase_3: "Claude による implementation"
-  phase_4: "Codex による design review"
-  phase_5: "反復的改善サイクル"
+  phase_1: "Requirements analysis by Claude"
+  phase_2: "Architecture design by Codex"
+  phase_3: "Implementation by Claude"
+  phase_4: "Design review by Codex"
+  phase_5: "Iterative improvement cycle"
 ```
 
 ## Quality Standards
 
 ### Handoff Requirements
 
-- **Context Completeness**: 失敗履歴、試行内容、制約条件を完全に提供
-- **Clear Scope**: Codex への依頼範囲を明確に定義
-- **Success Criteria**: 成功の判定基準を明示
-- **Integration Plan**: Codex の成果物をどう統合するかを計画
+- **Context Completeness**: Provide complete failure history, attempt contents, and constraints
+- **Clear Scope**: Clearly define the scope of delegation to Codex
+- **Success Criteria**: Specify success judgment criteria
+- **Integration Plan**: Plan how to integrate Codex deliverables
 
 ### Collaboration Principles
 
-- **Complementary Roles**: Claude と Codex の役割を相補的に設計
-- **Evidence-Based Handoff**: 具体的な証拠に基づく escalation
-- **Validation Required**: Codex の出力を必ず検証・テスト
-- **Learning Integration**: Codex からの学習を Claude の今後の作業に活用
+- **Complementary Roles**: Design Claude and Codex roles complementarily
+- **Evidence-Based Handoff**: Escalate based on concrete evidence
+- **Validation Required**: Always verify and test Codex output
+- **Learning Integration**: Apply learnings from Codex to Claude's future work
 
 ## Examples
 
 ### Bug Fix Escalation
 
 ```
-Claude 実装 → テスト
-テスト結果NG → Codex
-Codex response → 根本原因特定 + 修正戦略
-Claude → Codex戦略の実装 + 検証
+Claude implementation → Testing
+Test results NG → Codex
+Codex response → Root cause identification + fix strategy
+Claude → Implementation + verification of Codex strategy
 ```
 
 ### Architecture Review
 
 ```
-Codex response → アーキテクチャ分析 + 改善提案
-Claude → 提案の評価 + 必要に応じて実装
+Codex response → Architecture analysis + improvement proposals
+Claude → Proposal evaluation + implementation as needed
 ```
 
 ### Strategic Delegation
 
 ```
-Codex response → サブタスク分解 + 専門エージェント配置
-Claude → 各サブタスクの調整 + 統合
+Codex response → Subtask decomposition + specialized agent assignment
+Claude → Coordination of each subtask + integration
 ```
