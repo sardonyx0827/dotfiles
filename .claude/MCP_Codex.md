@@ -4,7 +4,7 @@
 
 ## Triggers
 
-- バグ修正が3回以上失敗した場合のエスカレーション
+- バグ修正が1回以上失敗した場合のエスカレーション
 - 複雑なアーキテクチャ設計や仕様策定が必要な場合
 - 作成済みコードのレビューや改善提案が必要な場合
 - タスクの複雑性が高く、複数の専門エージェントによる検討が必要な場合
@@ -72,7 +72,14 @@ escalation_workflow:
   phase_1: "Claude による初期実装試行"
   phase_2: "処理の失敗"
   phase_3: "自動的に Codex MCP エスカレーション"
-  phase_4: "Codex による高度な問題解決"
+  phase_4: "Codex による高度な問題解決およびコーディング"
+  phase_5: "Claude による結果統合と検証"
+
+escalation_workflow:
+  phase_1: "Claude による初期修正試行"
+  phase_2: "修正後の動作確認時にエラー発生"
+  phase_3: "自動的に Codex MCP エスカレーション"
+  phase_4: "Codex による高度な問題解決およびコーディング"
   phase_5: "Claude による結果統合と検証"
 
 design_workflow:
@@ -104,7 +111,8 @@ design_workflow:
 ### Bug Fix Escalation
 
 ```
-Claude 失敗 → Codex
+Claude 実装 → テスト
+テスト結果NG → Codex
 Codex response → 根本原因特定 + 修正戦略
 Claude → Codex戦略の実装 + 検証
 ```
