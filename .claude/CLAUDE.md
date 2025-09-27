@@ -72,4 +72,3 @@
 @MCP_Playwright.md
 @MCP_Serena.md
 @MCP_Sequential.md
-@MCP_Codex.md
