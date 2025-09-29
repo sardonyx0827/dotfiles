@@ -173,3 +173,6 @@ __pycache__
 # git
 .git/
 
+# serena
+.serena/
+

@@ -11,6 +11,9 @@
       "mcp__serena__list_dir",
       "mcp__serena__get_current_config",
       "mcp__serena__get_symbols_overview",
+      "mcp__serena__check_onboarding_performed",
+      "mcp__serena__onboarding",
+      "mcp__serena__write_memory",
       "mcp__sequential-thinking__sequentialthinking",
       "mcp__codex__codex",
       "mcp__codex__codex-reply",
@@ -23,6 +26,9 @@
       "Bash(git checkout:*)",
       "Bash(git branch:*)",
       "Bash(git fetch:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npm run lint)",
+      "Bash(npm run lint:*)",
       "Bash(gh:*)"
     ],
     "deny": [
