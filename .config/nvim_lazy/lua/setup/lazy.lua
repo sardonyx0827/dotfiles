@@ -64,7 +64,7 @@ local plugins = {
   require("setup.plugins.utilities.nvim-cmp"),
   require("setup.plugins.utilities.none-ls"),
   -- debugging
-  require("setup.plugins.utilities.nvim-dap"),
+  -- require("setup.plugins.utilities.nvim-dap"),
   require("setup.plugins.utilities.vim-fugitive"),
   -- others
   require("setup.plugins.utilities.which-key"),
