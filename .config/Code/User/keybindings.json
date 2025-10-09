@@ -227,6 +227,17 @@
         "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus && explorerResourceIsFolder"
     },
     {
+        "key": "l",
+        "command": "runCommands",
+        "args": {
+            "commands": [
+                "search.action.openResult",
+                "workbench.action.toggleSidebarVisibility"
+            ]
+        },
+        "when": "searchViewletVisible && !inputFocus && hasSearchResult && listFocus"
+    },
+    {
         "key": "shift+enter",
         "command": "workbench.action.terminal.sendSequence",
         "args": {
