@@ -13,7 +13,7 @@
                 "c"
             ],
             "commands": [
-                "claude-code.runClaude"
+                "claude-vscode.editor.open"
             ]
         },{
             "before": [
@@ -22,7 +22,7 @@
                 "c"
             ],
             "commands": [
-                "claude-code.runClaude"
+                "claude-vscode.editor.open"
             ],
         },{
             "before": [
