@@ -24,6 +24,25 @@
             "commands": [
                 "claude-vscode.editor.open"
             ],
+
+        }, {
+            "before": [
+                "<leader>",
+                "d",
+                "a"
+            ],
+            "commands": [
+                "claude-vscode.acceptProposedDiff"
+            ]
+        }, {
+            "before": [
+                "<leader>",
+                "d",
+                "d"
+            ],
+            "commands": [
+                "claude-vscode.rejectProposedDiff"
+            ]
         },{
             "before": [
                 "<leader>",
