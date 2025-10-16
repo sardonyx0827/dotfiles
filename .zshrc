@@ -264,7 +264,7 @@ function mc() {
       ;;
     translate)
       shift
-      claude --model "sonnet" -p "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
+      claude --model "haiku" -p "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
       ;;
     execute)
       shift
@@ -276,11 +276,11 @@ function mc() {
       ;;
     push)
       shift
-      claude --model "sonnet" -p "pushして"
+      claude --model "haiku" -p "pushして"
       ;;
     commit_message)
       shift
-      claude --model "sonnet" -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。mcpを使用してはいけません。"
+      claude --model "haiku" -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。mcpを使用してはいけません。"
       ;;
     pull_request)
       shift
