@@ -20,8 +20,8 @@ export LESS="-i -M -R -x4"
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
-#ZSH_THEME="risto" # fish like
-ZSH_THEME="kennethreitz" # 1
+ZSH_THEME="px-rose-pine"
+# ZSH_THEME="kennethreitz" # 1
 #ZSH_THEME="gallois" # 2
 #ZSH_THEME="eastwood" # 3
 #ZSH_THEME="agnoster" # 4
