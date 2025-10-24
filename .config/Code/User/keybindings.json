@@ -191,26 +191,30 @@
         "command": "workbench.action.focusFirstEditorGroup"
     },
     {
+        // focus text editor
         "key": "cmd+f",
         "command": "workbench.action.focusFirstEditorGroup"
     },
     {
+        // save file
         "key": "ctrl+s",
         "command": "workbench.action.files.save",
         "when": "editorTextFocus && !editorReadonly"
     },
     {
+        // copilot chat inline
         "key": "ctrl+c",
         "command": "inlineChat.start",
         "when": "editorFocus && inlineChatHasProvider && !editorReadonly"
     },
     {
+        // copilot chat inline
         "key": "ctrl+i",
         "command": "-inlineChat.start",
         "when": "editorFocus && inlineChatHasProvider && !editorReadonly"
     },
-    // open file and close explorer
     {
+        // open file and close explorer
         "key": "l",
         "command": "runCommands",
         "args": {
@@ -222,11 +226,13 @@
         "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus && !explorerResourceIsFolder"
     },
     {
+        // expand folder in explorer
         "key": "l",
         "command": "list.expand",
         "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus && explorerResourceIsFolder"
     },
     {
+        // open search result and close sidebar
         "key": "l",
         "command": "runCommands",
         "args": {
@@ -238,6 +244,7 @@
         "when": "searchViewletVisible && !inputFocus && hasSearchResult && listFocus"
     },
     {
+        // insert line break in terminal
         "key": "shift+enter",
         "command": "workbench.action.terminal.sendSequence",
         "args": {
@@ -246,13 +253,21 @@
         "when": "terminalFocus"
     },
     {
+        // move to next in quick open
         "key": "ctrl+n",
         "command": "workbench.action.quickOpenNavigateNext",
         "when": "inQuickOpen"
     },
     {
+        // move to previous in quick open
         "key": "ctrl+p",
         "command": "workbench.action.quickOpenNavigatePrevious",
         "when": "inQuickOpen"
+    },
+    {
+        // move to search results
+        "key": "ctrl+j",
+        "command": "search.action.focusSearchList",
+        "when": "searchViewletVisible"
     }
 ]

@@ -72,27 +72,14 @@
                 "workbench.action.quickOpen"
             ]
         },{
-            // "before": [
-            //     "<leader>",
-            //     "g",
-            //     "r",
-            // ],
-            // // find in files
-            // "commands": [
-            //     "workbench.action.findInFiles"
-            // ]
-
-            // extension periscope
             "before": [
                 "<leader>",
                 "g",
-                "r"
+                "r",
             ],
+            // find in files
             "commands": [
-            {
-                "command": "periscope.search",
-                "when": "editorTextFocus"
-            }
+                "workbench.action.findInFiles"
             ]
         },{
             "before": [
