@@ -238,7 +238,8 @@
         "args": {
             "commands": [
                 "search.action.openResult",
-                "workbench.action.toggleSidebarVisibility"
+                "workbench.action.toggleSidebarVisibility",
+                "extension.vim_escape"
             ]
         },
         "when": "searchViewletVisible && !inputFocus && hasSearchResult && listFocus"
