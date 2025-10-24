@@ -70,6 +70,7 @@ Plug 'editor-bootstrap/vim-bootstrap-updater'
 Plug 'tpope/vim-rhubarb'
 " my cool color theme.
 Plug 'joshdick/onedark.vim'
+Plug 'rose-pine/vim'
 " preview markdown
 Plug 'skanehira/preview-markdown.vim'
 
@@ -224,7 +225,7 @@ set number
 set relativenumber
 
 let no_buffers_menu=1
-colorscheme slate
+colorscheme rosepine
 
 if has('nvim')
   " Better command line completion
@@ -344,6 +345,7 @@ au BufEnter * match ExtraWhitespace /\s\+$/
 au InsertEnter * match ExtraWhitespace /\s\+\%#\@<!$/
 au InsertLeave * match ExtraWhiteSpace /\s\+$/
 
+
 "*****************************************************************************
 "" Abbreviations
 "*****************************************************************************
@@ -417,6 +419,13 @@ let g:nerdtree_tabs_open_on_console_startup=0
 " set cursor position in new tab(or file) when launch Vim
 autocmd VimEnter * wincmd p
 
+" show buffer list
+nnoremap <silent> <leader>ll <cmd>Buffers<CR>
+" jump to next buffer
+nnoremap <silent> <C-l> :bnext<CR>
+nnoremap <silent> <C-h> :blast<CR>
+
+
 "*****************************************************************************
 "" Terminal
 "*****************************************************************************
@@ -473,11 +482,13 @@ else
   nnoremap <silent> <leader>sh :terminal<CR>
 endif
 
+
 "*****************************************************************************
 "" Commands
 "*****************************************************************************
 " remove trailing whitespaces
 command! FixWhitespace :%s/\s\+$//e
+
 
 "*****************************************************************************
 "" Functions
@@ -489,6 +500,7 @@ if !exists('*s:setupWrapping')
     set textwidth=79
   endfunction
 endif
+
 
 "*****************************************************************************
 "" Autocmd Rules
@@ -519,6 +531,7 @@ augroup vimrc-make-cmake
 augroup END
 
 set autoread
+
 
 "*****************************************************************************
 "" Mappings
@@ -569,8 +582,6 @@ if executable('rg')
 endif
 
 cnoremap <C-P> <C-R>=expand("%:p:h") . "/" <CR>
-nnoremap <silent> <leader>b :Buffers<CR>
-" nnoremap <silent> <leader>e :FZF -m<CR>
 "Recovery commands from history through FZF
 nmap <leader>y :History:<CR>
 " execute my ":Files" command by fzf from current dir
@@ -645,12 +656,6 @@ noremap <leader>c :bd<CR>
 
 "" Clean search (highlight)
 nnoremap <silent> <leader><space> :noh<cr>
-
-"" Switching windows
-noremap <C-j> <C-w>j
-noremap <C-k> <C-w>k
-noremap <C-l> <C-w>l
-noremap <C-h> <C-w>h
 
 "" Vmap for maintain Visual Mode after shifting > and <
 vmap < <gv
@@ -838,6 +843,7 @@ endif
 " typescript
 let g:yats_host_keyword = 1
 
+
 "*****************************************************************************
 "" local config
 "*****************************************************************************
@@ -851,6 +857,7 @@ else
     source ~/.vimrc.local
   endif
 endif
+
 
 "*****************************************************************************
 "" tests
