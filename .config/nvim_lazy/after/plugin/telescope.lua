@@ -1,6 +1,7 @@
 --- @diagnostic disable: undefined-global
 local builtin = require("telescope.builtin")
 vim.keymap.set("n", "<leader>sf", builtin.find_files, { desc = "Find Files" })
+vim.keymap.set("n", "<leader>sg", builtin.git_files, { desc = "Search Git Files" })
 vim.keymap.set("n", "<leader>gf", builtin.git_files, { desc = "Git Files" })
 vim.keymap.set("n", "<leader>gs", builtin.git_status, { desc = "Git Status" })
 vim.keymap.set("n", "<leader>of", builtin.oldfiles, { desc = "Old Files" })

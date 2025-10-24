@@ -94,7 +94,7 @@ require("nvim-tree").setup({
   },
   filters = {
     dotfiles = false,
-    custom = { "node_modules", ".git", ".DS_Store" },
+    custom = { "node_modules", ".DS_Store" },
   },
   update_focused_file = {
     enable = true
