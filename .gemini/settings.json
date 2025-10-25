@@ -1,5 +1,10 @@
 {
-  "selectedAuthType": "oauth-personal",
+  "context": {
+    "fileName": [
+      "CLAUDE.md",
+      "GEMINI.md"
+    ]
+  },
   "mcpServers": {
     "playwright": {
       "command": "npx",
@@ -55,13 +60,22 @@
       ]
     }
   },
-  "preferredEditor": "vim",
-  "theme": "Default",
-  "usageStatisticsEnabled": false,
-  "contextFileName": [
-    "CLAUDE.md",
-    "GEMINI.md"
-  ],
-  "vimMode": false,
-  "model": "gemini-2.5-flash"
+  "model": {
+    "name": "gemini-2.5-flash"
+  },
+  "general": {
+    "preferredEditor": "vim",
+    "vimMode": false
+  },
+  "security": {
+    "auth": {
+      "selectedType": "oauth-personal"
+    }
+  },
+  "ui": {
+    "theme": "Default"
+  },
+  "privacy": {
+    "usageStatisticsEnabled": false
+  }
 }
