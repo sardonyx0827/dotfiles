@@ -1,8 +1,6 @@
 --- @diagnostic disable: undefined-global
 vim.g.mapleader = ","
 
--- Explorer
-vim.keymap.set("n", "<leader>p", ":Ex<CR>", { desc = "open file explorer" })
 -- In visual mode, shift text left and reselect
 vim.keymap.set("v", "<", "<gv")
 -- In visual mode, shift text right and reselect
