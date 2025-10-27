@@ -76,7 +76,8 @@ local plugins = {
   -- AI solutions
   -- **********************************
   require("setup.plugins.ai.copilot"),
-  require("setup.plugins.ai.claudecode")
+  require("setup.plugins.ai.claudecode"),
+  require("setup.plugins.ai.sidekick")
 }
 
 local lazy = require("lazy")
