@@ -7,6 +7,8 @@ echo "# codex"
 npm update -g @openai/codex
 echo "# gemini cli"
 npm upgrade -g @google/gemini-cli
+echo "# github copilot cli"
+npm install -g @github/copilot
 
 echo "-----------------------------------"
 echo "Updated versions:"
@@ -17,3 +19,5 @@ echo "# codex"
 codex --version
 echo "# gemini cli"
 gemini --version
+echo "# github copilot cli"
+copilot --version
