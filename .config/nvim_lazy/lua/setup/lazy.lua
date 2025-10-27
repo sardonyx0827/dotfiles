@@ -69,6 +69,8 @@ local plugins = {
   -- others
   require("setup.plugins.utilities.which-key"),
   require("setup.plugins.utilities.hop"),
+  -- quickfix
+  require("setup.plugins.utilities.vim-qfedit"),
 
   -- **********************************
   -- AI solutions
