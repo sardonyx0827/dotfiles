@@ -34,6 +34,10 @@ vim.keymap.set("n", "<leader>vg", function()
   vim.cmd("copen")
 end, { desc = "vimgrep and open quickfix window" })
 
+-- edit block, add String to each line
+vim.keymap.set("v", "<leader>eb", [[:s/\(\w.*\)/\1<Left><Left>]],
+  { desc = "edit block, add String to each line" })
+
 -- window
 -- make the window biger vertically
 vim.keymap.set('n', '<C-up>', '1<C-w>+', { noremap = true, silent = true })
