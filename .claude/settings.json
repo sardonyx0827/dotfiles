@@ -80,5 +80,6 @@
   },
   "enabledPlugins": {
     "document-skills@anthropic-agent-skills": true
-  }
+  },
+  "alwaysThinkingEnabled": false
 }
