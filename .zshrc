@@ -247,6 +247,7 @@ function update_ai_tools() {
 ## gemini cli
 alias push='gemini -y -p "pushして"'
 alias commit_message='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
+alias commit='gemini -y -p "commitして"'
 alias pull_request='gemini -y -p "pr作成して"'
 alias explain='gemini -y -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
 function translate() {
@@ -277,6 +278,10 @@ function mc() {
     push)
       shift
       claude --model "haiku" -p "pushして"
+      ;;
+    commit)
+      shift
+      claude --model "haiku" -p "commitして"
       ;;
     commit_message)
       shift
