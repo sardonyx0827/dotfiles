@@ -9,6 +9,8 @@ lsp_zero.on_attach(function(_, bufnr)
   -- jump to definition
   vim.keymap.set("n", "<C-t>", function() vim.lsp.buf.definition() end,
     { buffer = bufnr, remap = false, desc = "jump to definition" })
+  vim.keymap.set("n", "gd", function() vim.lsp.buf.definition() end,
+    { buffer = bufnr, remap = false, desc = "jump to definition" })
   -- show definition in a split
   vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end,
     { buffer = bufnr, remap = false, desc = "show definition" })
