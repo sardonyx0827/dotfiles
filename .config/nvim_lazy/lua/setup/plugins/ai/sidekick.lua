@@ -75,7 +75,7 @@ return {
       desc = "Sidekick Toggle Claude",
     },
     {
-      "<leader>al", ':Sidekick nes update<CR>', desc = "Sidekick Toggle Llama2",
+      "<leader>al", ':Sidekick nes update<CR>', desc = "Sidekick NES Update",
     }
   },
 }
