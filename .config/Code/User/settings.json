@@ -439,7 +439,6 @@
     "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
     "window.customTitleBarVisibility": "auto",
     "security.promptForRemoteFileProtocolHandling": false,
-    "cline.preferredLanguage": "Japanese - 日本語",
     "git.openRepositoryInParentFolders": "never",
     "chat.mcp.discovery.enabled": {
         "claude-desktop": true,
