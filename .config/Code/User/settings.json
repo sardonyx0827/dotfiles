@@ -455,5 +455,6 @@
     "chat.agent.enabled": true,
     "vim.showMarksInGutter": true,
     "git.confirmSync": false,
+    "workbench.secondarySideBar.defaultVisibility": "hidden",
     // "workbench.colorTheme": "Tokyo Night",
 }
