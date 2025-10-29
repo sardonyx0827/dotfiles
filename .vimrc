@@ -115,11 +115,6 @@ Plug 'mattn/emmet-vim'
 "" Javascript Bundle
 Plug 'jelera/vim-javascript-syntax'
 
-" lua
-"" Lua Bundle
-Plug 'xolox/vim-lua-ftplugin'
-Plug 'xolox/vim-lua-inspect'
-
 " python
 "" Python Bundle
 Plug 'davidhalter/jedi-vim'
@@ -843,7 +838,11 @@ endif
 " typescript
 let g:yats_host_keyword = 1
 
-
+" Trim trailing whitespace on save
+augroup TrimWhitespace
+  autocmd!
+  autocmd BufWritePre * :%s/\s\+$//e
+augroup END
 "*****************************************************************************
 "" local config
 "*****************************************************************************

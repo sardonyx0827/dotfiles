@@ -401,6 +401,7 @@
     "workbench.startupEditor": "none",
     "terminal.integrated.defaultProfile.linux": "zsh",
     "terminal.integrated.defaultProfile.osx": "zsh",
+    "files.trimTrailingWhitespace": true,
     "extensions.experimental.affinity": {
         "asvetliakov.vscode-neovim": 1
     },
