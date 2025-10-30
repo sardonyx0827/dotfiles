@@ -85,31 +85,46 @@ return {
         },
         lualine_x = {
           {
-            'copilot',
-            -- Default values
-            symbols = {
-              status = {
-                icons = {
-                  enabled = " ",
-                  sleep = " ", -- auto-trigger disabled
-                  disabled = " ",
-                  unknown = " ",
-                  warning = " ",
-                },
-                hl = {
-                  enabled = "#50FA7B",
-                  sleep = "#AEB7D0",
-                  disabled = "#6272A4",
-                  warning = "#FFB86C",
-                  unknown = "#FF5555"
-                }
-              },
-              spinners = require("copilot-lualine.spinners").dots,
-              spinner_color = "#6272A4"
-            },
-            show_colors = true,
-            show_loading = true
+            function()
+              return " "
+            end,
+            color = function()
+              local status = require("sidekick.status").get()
+              if status then
+                return status.kind == "Error" and "DiagnosticError" or status.busy and "DiagnosticWarn" or "Special"
+              end
+            end,
+            cond = function()
+              local status = require("sidekick.status")
+              return status.get() ~= nil
+            end,
           },
+          -- {
+          --   'copilot',
+          --   -- Default values
+          --   symbols = {
+          --     status = {
+          --       icons = {
+          --         enabled = " ",
+          --         sleep = " ", -- auto-trigger disabled
+          --         disabled = " ",
+          --         unknown = " ",
+          --         warning = " ",
+          --       },
+          --       hl = {
+          --         enabled = "#50FA7B",
+          --         sleep = "#AEB7D0",
+          --         disabled = "#6272A4",
+          --         warning = "#FFB86C",
+          --         unknown = "#FF5555"
+          --       }
+          --     },
+          --     spinners = require("copilot-lualine.spinners").dots,
+          --     spinner_color = "#6272A4"
+          --   },
+          --   show_colors = true,
+          --   show_loading = true
+          -- },
           -- {
           --   function()
           --     -- Check if MCPHub is loaded
