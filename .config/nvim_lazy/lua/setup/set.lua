@@ -45,7 +45,7 @@ vim.g.netrw_liststyle = 3
 vim.g.netrw_winsize = 80
 
 
-vim.opt.listchars = { tab = "»·", trail = "·", extends = "…", precedes = "…" }
+vim.opt.listchars = { tab = ">·", trail = "·", extends = "…", precedes = "…" }
 
 -- listchars の色（前景色のみ）
 vim.api.nvim_set_hl(0, "Whitespace", { fg = "#Fb7280", bg = "NONE" })
@@ -61,3 +61,12 @@ vim.api.nvim_create_autocmd("ColorScheme", {
     vim.api.nvim_set_hl(0, "SpecialKey", { fg = "#Faa0a6", bg = "NONE" })
   end,
 })
+
+-- go lang has no tabs
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "make", "go" },
+  callback = function()
+    vim.opt_local.expandtab = false
+  end,
+})
+
