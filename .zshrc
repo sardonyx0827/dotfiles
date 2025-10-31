@@ -328,6 +328,15 @@ _mc() {
         push)
           _message "引数は不要です(変更のcommitとpush)"
           ;;
+        commit)
+          _message "引数は不要です(変更のcommit)"
+          ;;
+        commit_message)
+          _message "引数は不要です(commit messageの生成)"
+          ;;
+        pull_request)
+          _message "引数は不要です(pull requestの生成)"
+          ;;
       esac
       ;;
   esac
