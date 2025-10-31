@@ -50,6 +50,10 @@
 
 [lua-shield]: https://img.shields.io/badge/Lua-2C2D72?style=for-the-badge&logo=lua&logoColor=white
 [lua-url]: https://www.lua.org/
+[vimlang-shield]: https://img.shields.io/badge/Vimscript-019733?style=for-the-badge&logo=vim&logoColor=white
+[vimlang-url]: https://www.vim.org/
+[shellscript-shield]: https://img.shields.io/badge/Shell_Script-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white
+[shellscript-url]: https://www.gnu.org/software/bash/
 
 ### シェル & ターミナル
 
@@ -81,6 +85,8 @@
 ### プログラミング言語
 
 [![Lua][lua-shield]][lua-url]
+[![Vimscript][vimlang-shield]][vimlang-url]
+[![Shell Script][shellscript-shield]][shellscript-url]
 
 ## 📁 ファイル構成
 
