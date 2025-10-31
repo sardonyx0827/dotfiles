@@ -311,6 +311,7 @@ _mc() {
         'execute:Claude Sonnetモデルでプロンプトを実行'
         'cli:標準のClaudeコマンドを実行'
         'push:変更のコミットメッセージを生成してpushする'
+        'commit:変更のコミットメッセージを生成してcommitする'
         'commit_message:変更のcommitメッセージを生成'
         'pull_request:変更のpull requestを生成'
       )
