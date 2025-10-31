@@ -25,6 +25,8 @@
 [vimplug-url]: https://github.com/junegunn/vim-plug
 [lazy-shield]: https://img.shields.io/badge/lazy.nvim-57A143?style=for-the-badge&logo=neovim&logoColor=white
 [lazy-url]: https://github.com/folke/lazy.nvim
+[vscode-shield]: https://img.shields.io/badge/VS_Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white
+[vscode-url]: https://code.visualstudio.com/
 
 <!-- Git -->
 
@@ -62,6 +64,7 @@
 [![Neovim][neovim-shield]][neovim-url]
 [![vim-plug][vimplug-shield]][vimplug-url]
 [![lazy.nvim][lazy-shield]][lazy-url]
+[![vsCode][vscode-shield]][vscode-url]
 
 ### バージョン管理
 
@@ -265,7 +268,7 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
 ### Vim (.vimrc)
 
 - **プラグインマネージャー**: vim-plug
-- **テーマ**: onedark
+- **テーマ**: rosepine
 - **主要プラグイン**:
   - NERDTree: ファイルエクスプローラー
   - vim-fugitive: Git統合
@@ -276,6 +279,7 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
 ### Neovim (.config/nvim_lazy/)
 
 - **プラグインマネージャー**: lazy.nvim
+- **テーマ**: rosepine
 - **モダンなNeovim設定**: Luaベース
 - **LSP対応**: 言語サーバープロトコル統合
 
@@ -357,7 +361,8 @@ tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペ
 このdotfilesは **Rose Pine** カラーテーマをベースにしています。
 
 - **Zsh**: px-rose-pine テーマ
-- **Vim**: onedark テーマ
+- **Vim**: rosepine テーマ
+- **Neovim**: rosepine テーマ
 - **tmux**: カスタムカラー設定（Rose Pine風）
 
 ## 📝 カスタマイズ
