@@ -154,11 +154,27 @@ local function copy_lsp_diagnostics()
   table.sort(diagnostics, function(a, b)
     return a.lnum < b.lnum
   end)
-  local lines = {}
+
+  -- get relative file path
+  local filepath = vim.fn.expand("%:.")
+
+  local lines = { "Can you help me fix the diagnostics in @" .. filepath .. "?" }
   for _, diagnostic in ipairs(diagnostics) do
-    table.insert(lines, string.format("Line %d: %s: %s", diagnostic.lnum + 1, diagnostic.message, diagnostic.source))
+    local severity_map = {
+      [vim.diagnostic.severity.ERROR] = "ERROR",
+      [vim.diagnostic.severity.WARN] = "WARN",
+      [vim.diagnostic.severity.INFO] = "INFO",
+      [vim.diagnostic.severity.HINT] = "HINT"
+    }
+    local severity = severity_map[diagnostic.severity] or "UNKNOWN"
+    local line = diagnostic.lnum + 1
+    local col_start = diagnostic.col + 1
+    local col_end = diagnostic.end_col and (diagnostic.end_col + 1) or col_start
+
+    table.insert(lines, string.format("[%s] %s @%s :L%d:C%d-C%d",
+      severity, diagnostic.message, filepath, line, col_start, col_end))
   end
-  if #lines > 0 then
+  if #diagnostics > 0 then
     vim.fn.setreg("+", table.concat(lines, "\n"))
     print("Copied LSP diagnostics to clipboard.")
   else
