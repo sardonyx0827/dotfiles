@@ -274,7 +274,7 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
 ### Vim (.vimrc)
 
 - **プラグインマネージャー**: vim-plug
-- **テーマ**: rosepine
+- **テーマ**: Rose Pine
 - **主要プラグイン**:
   - NERDTree: ファイルエクスプローラー
   - vim-fugitive: Git統合
@@ -285,7 +285,7 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
 ### Neovim (.config/nvim_lazy/)
 
 - **プラグインマネージャー**: lazy.nvim
-- **テーマ**: rosepine
+- **テーマ**: Rose Pine
 - **モダンなNeovim設定**: Luaベース
 - **LSP対応**: 言語サーバープロトコル統合
 
@@ -366,10 +366,10 @@ tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペ
 
 このdotfilesは **Rose Pine** カラーテーマをベースにしています。
 
-- **Zsh**: px-rose-pine テーマ
-- **Vim**: rosepine テーマ
-- **Neovim**: rosepine テーマ
-- **tmux**: カスタムカラー設定（Rose Pine風）
+- **Zsh**: px-rose-pine
+- **Vim**: rose-pine/vim
+- **Neovim**: rose-pine/neovim
+- **tmux**: rose-pine/tmux
 
 ## 📝 カスタマイズ
 
