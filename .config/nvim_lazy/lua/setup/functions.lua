@@ -178,6 +178,10 @@ local function copy_lsp_diagnostics()
     local content = table.concat(lines, "\n")
     vim.fn.setreg("+", content)
     vim.fn.setreg('"', content)
+    -- Copy to tmux buffer if running in tmux
+    if vim.env.TMUX then
+      vim.fn.system("tmux load-buffer -", content)
+    end
     print("Copied LSP diagnostics to clipboard.")
   else
     print("No LSP diagnostics found.")
@@ -230,6 +234,10 @@ local function copy_all_lsp_diagnostics()
     local content = table.concat(lines, "\n")
     vim.fn.setreg("+", content)
     vim.fn.setreg('"', content)
+    -- Copy to tmux buffer if running in tmux
+    if vim.env.TMUX then
+      vim.fn.system("tmux load-buffer -", content)
+    end
     print("Copied all LSP diagnostics to clipboard.")
   else
     print("No LSP diagnostics found.")
@@ -259,6 +267,10 @@ _G.get_file_line_info_visual = function(start_line, end_line)
   end
   vim.fn.setreg("+", content)
   vim.fn.setreg('"', content)
+  -- Copy to tmux buffer if running in tmux
+  if vim.env.TMUX then
+    vim.fn.system("tmux load-buffer -", content)
+  end
   print("Copied file and line info to clipboard.")
 end
 
