@@ -9,7 +9,7 @@ return {
   -- },
   event = "InsertEnter",
   cmd = "Copilot",
-  copilot_model = "gpt-5-mini",
+  copilot_model = "gpt-4.1",
   copilot_language = "Japanese",
   config = function()
     require("copilot").setup({
