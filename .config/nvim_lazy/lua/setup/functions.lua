@@ -183,7 +183,7 @@ local function copy_lsp_diagnostics()
     print("No LSP diagnostics found.")
   end
 end
-vim.keymap.set("n", "<leader><leader>c", copy_lsp_diagnostics, { desc = "Copy LSP diagnostics to clipboard", noremap = true })
+vim.keymap.set("n", "<leader><leader>d", copy_lsp_diagnostics, { desc = "Copy LSP diagnostics to clipboard", noremap = true })
 
 
 ---------------------------------------------------------
@@ -236,3 +236,31 @@ local function copy_all_lsp_diagnostics()
   end
 end
 vim.keymap.set("n", "<leader><leader>a", copy_all_lsp_diagnostics, { desc = "Copy all LSP diagnostics to clipboard", noremap = true })
+
+---------------------------------------------------------
+-- get file and line info visual selection
+---------------------------------------------------------
+_G.get_file_line_info_visual = function(start_line, end_line)
+  if not start_line or not end_line or start_line == 0 or end_line == 0 then
+    print("No visual selection found.")
+    return
+  end
+
+  if start_line > end_line then
+    start_line, end_line = end_line, start_line
+  end
+
+  local filepath = vim.fn.expand("%:.")
+  local content
+  if start_line == end_line then
+    content = string.format("@%s#L%d", filepath, start_line)
+  else
+    content = string.format("@%s#L%d-%d", filepath, start_line, end_line)
+  end
+  vim.fn.setreg("+", content)
+  vim.fn.setreg('"', content)
+  print("Copied file and line info to clipboard.")
+end
+
+vim.keymap.set("x", "<leader><leader>c", ":<C-u>lua get_file_line_info_visual(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"))<CR>",
+  { desc = "Get file and line info from visual selection", noremap = true, silent = true })
