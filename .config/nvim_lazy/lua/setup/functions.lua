@@ -146,7 +146,7 @@ vim.keymap.set("n", "<leader>ws", pwd_command, { desc = "Put cwd result", norema
 
 
 ---------------------------------------------------------
--- copy lsp diagnostics to clipboard
+-- copy lsp diagnostics to clipboard for ai assistance
 ---------------------------------------------------------
 local function copy_lsp_diagnostics()
   local diagnostics = vim.diagnostic.get(0)
@@ -175,10 +175,64 @@ local function copy_lsp_diagnostics()
       severity, diagnostic.message, filepath, line, col_start, col_end))
   end
   if #diagnostics > 0 then
-    vim.fn.setreg("+", table.concat(lines, "\n"))
+    local content = table.concat(lines, "\n")
+    vim.fn.setreg("+", content)
+    vim.fn.setreg('"', content)
     print("Copied LSP diagnostics to clipboard.")
   else
     print("No LSP diagnostics found.")
   end
 end
-vim.keymap.set("n", "<leader>cl", copy_lsp_diagnostics, { desc = "Copy LSP diagnostics to clipboard", noremap = true })
+vim.keymap.set("n", "<leader><leader>c", copy_lsp_diagnostics, { desc = "Copy LSP diagnostics to clipboard", noremap = true })
+
+
+---------------------------------------------------------
+-- copy all lsp diagnostics to clipboard for ai assistance
+---------------------------------------------------------
+local function copy_all_lsp_diagnostics()
+  local lines = { "Can you help me fix the following diagnostics in my project?" }
+  local buffers = vim.api.nvim_list_bufs()
+
+  for _, bufnr in ipairs(buffers) do
+    -- Skip invalid or deleted buffers
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
+      -- get relative file path
+      local filepath = vim.api.nvim_buf_get_name(bufnr)
+      -- Skip unnamed buffers
+      if filepath ~= "" then
+        local relative_path = vim.fn.fnamemodify(filepath, ":.")
+        local diagnostics = vim.diagnostic.get(bufnr)
+        if #diagnostics > 0 then
+          -- sort diagnostics by line number
+          table.sort(diagnostics, function(a, b)
+            return a.lnum < b.lnum
+          end)
+          for _, diagnostic in ipairs(diagnostics) do
+            local severity_map = {
+              [vim.diagnostic.severity.ERROR] = "ERROR",
+              [vim.diagnostic.severity.WARN] = "WARN",
+              [vim.diagnostic.severity.INFO] = "INFO",
+              [vim.diagnostic.severity.HINT] = "HINT"
+            }
+            local severity = severity_map[diagnostic.severity] or "UNKNOWN"
+            local line = diagnostic.lnum + 1
+            local col_start = diagnostic.col + 1
+            local col_end = diagnostic.end_col and (diagnostic.end_col + 1) or col_start
+            table.insert(lines, string.format("[%s] %s @%s :L%d:C%d-C%d",
+              severity, diagnostic.message, relative_path, line, col_start, col_end))
+          end
+        end
+      end
+    end
+  end
+
+  if #lines > 1 then
+    local content = table.concat(lines, "\n")
+    vim.fn.setreg("+", content)
+    vim.fn.setreg('"', content)
+    print("Copied all LSP diagnostics to clipboard.")
+  else
+    print("No LSP diagnostics found.")
+  end
+end
+vim.keymap.set("n", "<leader><leader>a", copy_all_lsp_diagnostics, { desc = "Copy all LSP diagnostics to clipboard", noremap = true })
