@@ -110,22 +110,16 @@
 ├── .vimrc                          # Vim設定
 ├── .wezterm.lua                    # WezTerm設定
 ├── .zshrc                          # Zsh設定
+├── install.sh                      # クロスプラットフォーム対応インストールスクリプト
 ├── tmux_send_to_all_except_nvim.sh # tmuxユーティリティ
 └── update_ai_tools.sh              # AIツール更新スクリプト
 ```
 
 ## 🚀 セットアップ
 
-### 前提条件
+### 自動インストール（推奨）
 
-以下のツールがインストールされている必要があります：
-
-- [Homebrew](https://brew.sh/) (macOS)
-- [Git](https://git-scm.com/)
-- [Zsh](https://www.zsh.org/)
-- [Node.js & npm](https://nodejs.org/) (AIツール用)
-
-### インストール手順
+**対応プラットフォーム**: macOS、Ubuntu/Debian、Windows (WSL/Git Bash)
 
 1. **リポジトリのクローン**
 
@@ -134,7 +128,170 @@ git clone https://github.com/yourusername/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 ```
 
-2. **シンボリックリンクの作成**
+2. **自動インストールスクリプトの実行**
+
+```bash
+./install.sh
+```
+
+このスクリプトは以下を自動的に行います：
+
+- プラットフォームの検出（macOS/Ubuntu/Windows）
+- 必要なパッケージのインストール
+  - macOS: Homebrew経由でVim、Neovim、tmux、WezTermなど
+  - Ubuntu: APT経由でVim、Neovim、tmux、WezTermなど
+- Oh My Zshとプラグインのインストール
+- vim-plugのインストール
+- Node.jsとnpmのセットアップ
+- フォントのインストール
+- 設定ファイルのシンボリックリンク作成（既存ファイルは自動バックアップ）
+- デフォルトシェルをZshに変更
+
+3. **AIツールのインストール（オプション）**
+
+スクリプト実行中にAIツールのインストールを選択できます。
+
+4. **ターミナルの再起動**
+
+```bash
+# インストール完了後、ターミナルを再起動
+```
+
+5. **Neovimのセットアップ完了**
+
+```bash
+# Neovimを開いてlazy.nvimプラグインを自動インストール
+nvim
+```
+
+> **📝 注意**: プラットフォーム固有の詳細な手順やトラブルシューティングについては、[INSTALL_PLATFORM.md](INSTALL_PLATFORM.md)を参照してください。
+
+### 手動インストール
+
+自動インストールが利用できない場合や、個別にカスタマイズしたい場合は以下の手順を実行してください。
+
+#### 前提条件
+
+- [Git](https://git-scm.com/)
+- [Homebrew](https://brew.sh/) (macOS) または APT (Ubuntu/Debian)
+
+#### 手順
+
+<details>
+<summary>1. リポジトリのクローン</summary>
+
+```bash
+git clone https://github.com/yourusername/dotfiles.git ~/dotfiles
+cd ~/dotfiles
+```
+
+</details>
+
+<details>
+<summary>2. パッケージマネージャーのセットアップ</summary>
+
+**macOS:**
+
+```bash
+# Homebrewのインストール（未インストールの場合）
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+**Ubuntu/Debian:**
+
+```bash
+sudo apt-get update
+```
+
+</details>
+
+<details>
+<summary>3. 必要なパッケージのインストール</summary>
+
+**macOS:**
+
+```bash
+brew install git zsh vim neovim tmux curl wget
+brew install --cask wezterm
+brew tap homebrew/cask-fonts
+brew install --cask font-ubuntu-mono font-hack-nerd-font
+```
+
+**Ubuntu/Debian:**
+
+```bash
+sudo apt-get install -y git zsh vim neovim tmux curl wget build-essential xsel
+
+# WezTerm
+curl -fsSL https://apt.fury.io/wez/gpg.key | sudo gpg --yes --dearmor -o /usr/share/keyrings/wezterm-fury.gpg
+echo 'deb [signed-by=/usr/share/keyrings/wezterm-fury.gpg] https://apt.fury.io/wez/ * *' | sudo tee /etc/apt/sources.list.d/wezterm.list
+sudo apt-get update
+sudo apt-get install -y wezterm
+
+# フォント
+sudo apt-get install -y fonts-ubuntu fonts-hack
+```
+
+</details>
+
+<details>
+<summary>4. Node.jsのインストール</summary>
+
+**macOS:**
+
+```bash
+brew install node
+```
+
+**Ubuntu/Debian:**
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+**共通:**
+
+```bash
+# npm グローバルディレクトリの設定
+mkdir -p ~/.npm-global
+npm config set prefix '~/.npm-global'
+```
+
+</details>
+
+<details>
+<summary>5. Oh My Zshのインストール</summary>
+
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+
+# zsh-autosuggestions
+git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions
+
+# zsh-syntax-highlighting
+git clone https://github.com/zsh-users/zsh-syntax-highlighting ~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting
+```
+
+</details>
+
+<details>
+<summary>6. vim-plugのインストール</summary>
+
+```bash
+# Vim用
+curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
+    https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+
+# Neovim用
+curl -fLo ~/.config/nvim/autoload/plug.vim --create-dirs \
+    https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+```
+
+</details>
+
+<details>
+<summary>7. シンボリックリンクの作成</summary>
 
 ```bash
 # Zsh設定
@@ -165,61 +322,41 @@ ln -sf ~/dotfiles/.codex ~/.codex
 
 # Gemini設定
 ln -sf ~/dotfiles/.gemini ~/.gemini
-```
 
-3. **Oh My Zshのインストール**
-
-```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-
-# カスタムテーマのシンボリックリンク
+# Oh My Zsh カスタムテーマ
 ln -sf ~/dotfiles/.oh-my-zsh/custom ~/.oh-my-zsh/custom
 ```
 
-4. **必要なツールのインストール**
+</details>
+
+<details>
+<summary>8. Vimプラグインのインストール</summary>
 
 ```bash
-# Homebrewパッケージ
-brew install vim neovim tmux
-
-# WezTerm
-brew install --cask wezterm
-
-# フォント
-brew install --cask font-ubuntu-mono
-
-# Node.js グローバルパッケージ用ディレクトリ
-mkdir -p ~/.npm-global
-npm config set prefix '~/.npm-global'
-```
-
-5. **Vimプラグインのインストール**
-
-```bash
-# vim-plugのインストール
-curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
-    https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-
-# Neovim用
-curl -fLo ~/.config/nvim/autoload/plug.vim --create-dirs \
-    https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-
-# Vimプラグインのインストール
 vim +PlugInstall +qall
 ```
 
-6. **Neovim (lazy.nvim) のセットアップ**
+</details>
+
+<details>
+<summary>9. デフォルトシェルの変更</summary>
 
 ```bash
-# Neovimを開いてlazy.nvimが自動インストールされるのを待つ
-nvim
+chsh -s $(which zsh)
 ```
 
-7. **シェルの再読み込み**
+</details>
+
+<details>
+<summary>10. ターミナルの再起動とNeovimセットアップ</summary>
 
 ```bash
-source ~/.zshrc
+# ターミナルを再起動後
+nvim  # lazy.nvimが自動的にプラグインをインストール
 ```
+
+</details>
+</details>
 
 ## 🤖 AI開発ツールのセットアップ
 
