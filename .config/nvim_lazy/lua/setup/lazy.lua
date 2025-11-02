@@ -16,70 +16,42 @@ vim.opt.rtp:prepend(lazypath)
 
 vim.g.mapleader = ","
 
-local plugins = {
-  -- **********************************
-  -- visual settings
-  -- **********************************
-  -- colorscheme
-  require("setup.plugins.colorscheme.rose-pine"),
-  require("setup.plugins.colorscheme.tokyonight"),
-  require("setup.plugins.colorscheme.onedark"),
-  require("setup.plugins.colorscheme.vscode"),
-  -- visual
-  require("setup.plugins.visual.nvim-treesitter"),
-  require("setup.plugins.visual.playground"),
-  require("setup.plugins.visual.rainbow-delimiters"),
-  require("setup.plugins.visual.nvim-colorizer"),
-  require("setup.plugins.visual.lualine"),
-  require("setup.plugins.visual.vim-illuminate"),
-  require("setup.plugins.visual.indent-blankline"),
-  require("setup.plugins.visual.hlargs"),
-  require("setup.plugins.visual.gitsigns"),
-  require("setup.plugins.visual.noice"),
-  require("setup.plugins.visual.snacks"),
-  require("setup.plugins.visual.zen-mode"),
+-- Auto-load all plugin configurations
+local function load_plugins()
+  local plugins = {}
+  local plugin_path = vim.fn.stdpath("config") .. "/lua/setup/plugins"
 
-  -- **********************************
-  -- utilities
-  -- **********************************
-  -- explorer
-  require("setup.plugins.utilities.nvim-tree"),
-  require("setup.plugins.utilities.harpoon"),
-  -- programming
-  require("setup.plugins.utilities.telescope"),
-  require("setup.plugins.utilities.trouble"),
-  require("setup.plugins.utilities.undotree"),
-  require("setup.plugins.utilities.comment"),
-  require("setup.plugins.utilities.toggleterm"),
-  require("setup.plugins.utilities.nvim-autopairs"),
-  require("setup.plugins.utilities.nvim-surround"),
-  -- git
-  require("setup.plugins.utilities.neogit"),
-  require("setup.plugins.utilities.blame"),
-  -- lsp
-  require("setup.plugins.utilities.lsp-zero"),
-  require("setup.plugins.utilities.mason"),
-  require("setup.plugins.utilities.mason-lspconfig"),
-  require("setup.plugins.utilities.nvim-lspconfig"),
-  require("setup.plugins.utilities.nvim-cmp"),
-  require("setup.plugins.utilities.none-ls"),
-  -- debugging
-  require("setup.plugins.utilities.nvim-dap"),
-  require("setup.plugins.utilities.vim-fugitive"),
-  -- others
-  require("setup.plugins.utilities.which-key"),
-  require("setup.plugins.utilities.hop"),
-  -- quickfix
-  require("setup.plugins.utilities.vim-qfedit"),
+  -- Helper function to scan directory recursively
+  local function scan_dir(dir)
+    local handle = vim.loop.fs_scandir(dir)
+    if not handle then return end
 
-  -- **********************************
-  -- AI solutions
-  -- **********************************
-  require("setup.plugins.ai.copilot"),
-  require("setup.plugins.ai.avante"),
-  require("setup.plugins.ai.claudecode"),
-  require("setup.plugins.ai.sidekick")
-}
+    while true do
+      local name, type = vim.loop.fs_scandir_next(handle)
+      if not name then break end
+
+      local full_path = dir .. "/" .. name
+
+      if type == "directory" then
+        scan_dir(full_path)
+      elseif type == "file" and name:match("%.lua$") then
+        -- Convert file path to module path
+        local module = full_path:gsub(vim.fn.stdpath("config") .. "/lua/", "")
+                                 :gsub("%.lua$", "")
+                                 :gsub("/", ".")
+        local ok, plugin = pcall(require, module)
+        if ok and plugin then
+          table.insert(plugins, plugin)
+        end
+      end
+    end
+  end
+
+  scan_dir(plugin_path)
+  return plugins
+end
+
+local plugins = load_plugins()
 
 local lazy = require("lazy")
 local opts = {}
