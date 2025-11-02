@@ -73,9 +73,6 @@ return {
       "<leader>ac",
       function() require("sidekick.cli").toggle({ name = "claude", focus = true }) end,
       desc = "Sidekick Toggle Claude",
-    },
-    {
-      "<leader>al", ':Sidekick nes update<CR>', desc = "Sidekick NES Update",
     }
   },
 }
