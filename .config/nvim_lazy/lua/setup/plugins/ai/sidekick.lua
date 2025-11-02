@@ -43,18 +43,18 @@ return {
     {
       "<leader>ad",
       function() require("sidekick.cli").close() end,
-      desc = "Detach a CLI Session",
+      desc = "Sidekick Detach a CLI Session",
     },
     {
       "<leader>at",
       function() require("sidekick.cli").send({ msg = "{this}" }) end,
       mode = { "x", "n" },
-      desc = "Send This",
+      desc = "Sidekick Send This",
     },
     {
       "<leader>af",
       function() require("sidekick.cli").send({ msg = "{file}" }) end,
-      desc = "Send File",
+      desc = "Sidekick Send File",
     },
     {
       "<leader>av",
