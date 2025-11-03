@@ -146,7 +146,7 @@ vim.keymap.set("n", "<leader>ws", pwd_command, { desc = "Put cwd result", norema
 
 
 ---------------------------------------------------------
--- copy lsp diagnostics to clipboard for ai assistance
+-- [AI solution] copy lsp diagnostics to clipboard for ai assistance
 ---------------------------------------------------------
 local function copy_lsp_diagnostics()
   local diagnostics = vim.diagnostic.get(0)
@@ -191,7 +191,7 @@ vim.keymap.set("n", "<leader><leader>d", copy_lsp_diagnostics, { desc = "Copy LS
 
 
 ---------------------------------------------------------
--- copy all lsp diagnostics to clipboard for ai assistance
+-- [AI solution] copy all lsp diagnostics to clipboard for ai assistance
 ---------------------------------------------------------
 local function copy_all_lsp_diagnostics()
   local lines = { "Can you help me fix the following diagnostics in my project?" }
@@ -246,7 +246,7 @@ end
 vim.keymap.set("n", "<leader><leader>a", copy_all_lsp_diagnostics, { desc = "Copy all LSP diagnostics to clipboard", noremap = true })
 
 ---------------------------------------------------------
--- get file and line info visual selection
+-- [AI solution] get file and line info visual selection
 ---------------------------------------------------------
 _G.get_file_line_info_visual = function(start_line, end_line)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then
