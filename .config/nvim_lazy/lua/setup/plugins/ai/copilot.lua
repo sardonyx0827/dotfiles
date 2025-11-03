@@ -1,12 +1,6 @@
 --- @diagnostic disable: undefined-global
 return {
   "zbirenbaum/copilot.lua",
-  -- dependencies = {
-  --   "copilotlsp-nvim/copilot-lsp",
-  --   init = function()
-  --     vim.g.copilot_nes_debounce = 500
-  --   end,
-  -- },
   event = "InsertEnter",
   cmd = "Copilot",
   copilot_model = "gpt-4.1",
@@ -43,7 +37,6 @@ return {
           ratio = 0.5
         },
       },
-      --panel = { enabled = false },
       filetypes = {
         yaml = true,
         markdown = true,
@@ -52,14 +45,6 @@ return {
         gitrebase = true,
         hgcommit = true,
       },
-      -- nes = {
-      --   enabled = true,
-      --   keymap = {
-      --     accept_and_goto = "<leader>p",
-      --     accept = false,
-      --     dismiss = "<Esc>",
-      --   },
-      -- },
     })
   end
 }

@@ -52,9 +52,9 @@ return {
       exclude_auto_select = { "NvimTree" },
     },
     mappings = {
-      ask = "<leader>cp",
+      ask = "<leader>av",
       edit = "<leader>ae",
-      refresh = "<leader>refresh",
+      refresh = "<leader>ar",
     },
   },
   -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
