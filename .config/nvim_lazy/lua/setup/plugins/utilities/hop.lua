@@ -1,6 +1,6 @@
 --- @diagnostic disable: undefined-global
 return {
-  'phaazon/hop.nvim',
+  'smoka7/hop.nvim',
   version = 'v2',
   config = function()
     vim.keymap.set("n", '<leader><leader>hw', ':HopWord<CR>',

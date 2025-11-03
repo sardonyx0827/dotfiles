@@ -37,8 +37,8 @@ local function load_plugins()
       elseif type == "file" and name:match("%.lua$") then
         -- Convert file path to module path
         local module = full_path:gsub(vim.fn.stdpath("config") .. "/lua/", "")
-                                 :gsub("%.lua$", "")
-                                 :gsub("/", ".")
+                                :gsub("%.lua$", "")
+                                :gsub("/", ".")
         local ok, plugin = pcall(require, module)
         if ok and plugin then
           table.insert(plugins, plugin)
