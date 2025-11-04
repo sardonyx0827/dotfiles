@@ -3,16 +3,16 @@ return {
   dependencies = { "folke/snacks.nvim" },
   config = true,
   keys = {
-    { "<leader>cc", "<cmd>ClaudeCode<cr>",     mode = "n", desc = "Toggle Claude" },
-    { "<leader>cc", "<cmd>ClaudeCodeSend<cr>", mode = "v", desc = "Send to Claude" },
+    { "<leader>cc", "<cmd>ClaudeCode<cr>",     mode = "n", desc = "ClaudeCode - Toggle Claude" },
+    { "<leader>cc", "<cmd>ClaudeCodeSend<cr>", mode = "v", desc = "ClaudeCode - Send to Claude" },
     {
       "<leader>ca",
       "<cmd>ClaudeCodeTreeAdd<cr>",
-      desc = "Add file to Claude",
+      desc = "ClaudeCode - Add file to Claude",
       ft = { "NvimTree", "neo-tree", "oil", "minifiles" },
     },
     -- Diff management
-    { "<leader>da", "<cmd>ClaudeCodeDiffAccept<cr>", desc = "Accept diff" },
-    { "<leader>dd", "<cmd>ClaudeCodeDiffDeny<cr>",   desc = "Deny diff" },
+    { "<leader>da", "<cmd>ClaudeCodeDiffAccept<cr>", desc = "ClaudeCode - Accept diff" },
+    { "<leader>dd", "<cmd>ClaudeCodeDiffDeny<cr>",   desc = "ClaudeCode - Deny diff" },
   },
 }
