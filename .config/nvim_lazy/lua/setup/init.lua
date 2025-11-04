@@ -13,6 +13,7 @@ function R(name)
   require("plenary.reload").reload_module(name)
 end
 
+-- Highlight yanked text(Blink on yank)
 autocmd("TextYankPost", {
   group = yank_group,
   pattern = "*",
@@ -24,12 +25,14 @@ autocmd("TextYankPost", {
   end,
 })
 
+-- Trim trailing whitespace on save
 autocmd({ "BufWritePre" }, {
   group = setupGroup,
   pattern = "*",
   command = [[%s/\s\+$//e]],
 })
 
+-- Check if file changed when its buffer is entered or focus is gained
 autocmd({ "WinEnter", "FocusGained", "BufEnter" }, {
   pattern = "*",
   command = "checktime",
