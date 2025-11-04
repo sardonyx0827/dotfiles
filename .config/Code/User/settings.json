@@ -456,5 +456,6 @@
     "vim.showMarksInGutter": true,
     "git.confirmSync": false,
     "workbench.secondarySideBar.defaultVisibility": "hidden",
+    "workbench.colorTheme": "Rosé Pine",
     // "workbench.colorTheme": "Tokyo Night",
 }
