@@ -100,10 +100,6 @@ Plug 'github/copilot.vim'
 "*****************************************************************************
 "" Custom bundles
 "*****************************************************************************
-" go
-"" Go Lang Bundle
-Plug 'fatih/vim-go', {'do': ':GoInstallBinaries'}
-
 " html
 "" HTML Bundle
 Plug 'hail2u/vim-css3-syntax'
@@ -117,9 +113,6 @@ Plug 'jelera/vim-javascript-syntax'
 
 " Async.vim
 Plug 'prabirshrestha/async.vim'
-
-" Vim lsp
-Plug 'prabirshrestha/vim-lsp'
 
 " Asyncomplete.vim
 Plug 'prabirshrestha/asyncomplete.vim'
