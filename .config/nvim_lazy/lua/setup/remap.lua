@@ -9,8 +9,6 @@ vim.keymap.set("n", "<leader>p", vim.cmd.Ex)
 vim.keymap.set("v", "<", "<gv")
 -- In visual mode, shift text right and reselect
 vim.keymap.set("v", ">", ">gv")
--- In normal mode, join lines and return to initial position
-vim.keymap.set("n", "J", "mzJ`z")
 -- In normal mode, scroll down half a page and center
 vim.keymap.set("n", "<C-d>", "<C-d>zz")
 -- In normal mode, scroll up half a page and center
