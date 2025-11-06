@@ -355,6 +355,7 @@ let Grep_Skip_Dirs = '.git node_modules'
 " netrw
 let g:netrw_liststyle=3
 let g:netrw_keepdir = 0
+nnoremap <silent> <leader>p :Explore<CR>
 
 " NERDTree configuration
 " do chdir when change root
@@ -613,9 +614,7 @@ if has('unnamedplus')
   set clipboard=unnamed,unnamedplus
 endif
 
-noremap YY "+y<CR>
-noremap <leader>p "+gP<CR>
-noremap XX "+x<CR>
+" noremap <leader>p "+gP<CR>
 
 if has('macunix')
   " pbcopy for OSX copy/paste
