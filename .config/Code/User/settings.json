@@ -188,8 +188,8 @@
             ],
             // instead of Buffers
             "commands": [
-                "workbench.files.action.focusOpenEditorsView"
-            ]
+                "workbench.action.showAllEditors"
+            ],
         },{
             "before": [
                 "<leader>",
@@ -198,7 +198,7 @@
             ],
             // instead of Buffers
             "commands": [
-                "workbench.files.action.focusOpenEditorsView"
+                "workbench.action.showAllEditors"
             ]
         },{
             "before": [
@@ -208,7 +208,7 @@
             ],
             // instead of Buffers
             "commands": [
-                "workbench.files.action.focusOpenEditorsView"
+                "workbench.action.showAllEditors"
             ]
         },{
             "before": [

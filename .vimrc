@@ -14,7 +14,6 @@ endif
 
 let g:vim_bootstrap_langs = "c,go,html,javascript,lua,python,typescript"
 let g:vim_bootstrap_editor = "vim"
-let g:vim_bootstrap_theme = "onedark"
 let g:vim_bootstrap_frams = ""
 
 if !filereadable(vimplug_exists)
