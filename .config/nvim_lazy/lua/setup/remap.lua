@@ -37,6 +37,9 @@ end, { desc = "vimgrep and open quickfix window" })
 vim.keymap.set("v", "<leader>eb", [[:s/\(\w.*\)/\1<Left><Left>]],
   { desc = "edit block, add String to each line" })
 
+--insert tab character in insert mode
+vim.keymap.set('i', '<C-t>', '<C-v><Tab>', { noremap = true, silent = true })
+
 -- window
 -- make the window biger vertically
 vim.keymap.set('n', '<C-up>', '1<C-w>+', { noremap = true, silent = true })
