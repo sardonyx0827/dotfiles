@@ -144,6 +144,20 @@ local function pwd_command()
 end
 vim.keymap.set("n", "<leader>ws", pwd_command, { desc = "Put cwd result", noremap = true })
 
+---------------------------------------------------------
+-- Copy file full path
+---------------------------------------------------------
+local function copy_file_full_path()
+  local filepath = vim.fn.expand("%:p")
+  vim.fn.setreg("+", filepath)
+  vim.fn.setreg('"', filepath)
+  -- Copy to tmux buffer if running in tmux
+  if vim.env.TMUX then
+    vim.fn.system("tmux load-buffer -", filepath)
+  end
+  print("Copied file full path to clipboard: " .. filepath)
+end
+vim.keymap.set("n", "<leader>cp", copy_file_full_path, { desc = "Copy file full path to clipboard", noremap = true })
 
 ---------------------------------------------------------
 -- [AI solution] copy lsp diagnostics to clipboard for ai assistance
