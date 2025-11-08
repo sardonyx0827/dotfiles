@@ -5,6 +5,9 @@
     "vim.incsearch": true,
     "vim.leader": ",",
     "vim.useCtrlKeys": true,
+    "vim.easymotion": true,
+    "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
+    "vim.showMarksInGutter": true,
     "vim.normalModeKeyBindingsNonRecursive": [
         {
             "before": [
@@ -397,6 +400,40 @@
             ]
         }
     ],
+    "vim.statusBarColorControl": true,
+    "vim.statusBarColors.normal": [
+        "#005f5f",
+        "#ffffff"
+    ],
+    "vim.statusBarColors.insert": [
+        "#0f5f0f",
+        "#ffffff"
+    ],
+    "vim.statusBarColors.visual": [
+        "#86592d",
+        "#ffffff"
+    ],
+    "vim.statusBarColors.visualblock": [
+        "#86592d",
+        "#ffffff"
+    ],
+    "vim.statusBarColors.visualline": [
+        "#86592d",
+        "#ffffff"
+    ],
+    "vim.statusBarColors.commandlineinprogress": [
+        "#007acc",
+        "#ffffff"
+    ],
+    "workbench.colorCustomizations": {
+        "statusBar.background": "#005f5f",
+        "statusBar.noFolderBackground": "#005f5f",
+        "statusBar.debuggingBackground": "#005f5f",
+        "statusBar.foreground": "#ffffff",
+        "statusBar.debuggingBorder": "#191724",
+        "statusBar.debuggingForeground": "#ffffff"
+    },
+
     // editor settings
     "workbench.startupEditor": "none",
     "terminal.integrated.defaultProfile.linux": "zsh",
@@ -435,8 +472,6 @@
     },
     "editor.tabSize": 2,
     "github.copilot.chat.localeOverride": "ja",
-    "vim.easymotion": true,
-    "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
     "window.customTitleBarVisibility": "auto",
     "security.promptForRemoteFileProtocolHandling": false,
     "git.openRepositoryInParentFolders": "never",
@@ -453,10 +488,10 @@
     ],
     "github.copilot.nextEditSuggestions.enabled": true,
     "chat.agent.enabled": true,
-    "vim.showMarksInGutter": true,
     "git.confirmSync": false,
     "workbench.secondarySideBar.defaultVisibility": "hidden",
     "workbench.editor.showTabs": "none",
     "workbench.colorTheme": "Rosé Pine",
     // "workbench.colorTheme": "Tokyo Night",
+    "window.restoreWindows": "none"
 }
