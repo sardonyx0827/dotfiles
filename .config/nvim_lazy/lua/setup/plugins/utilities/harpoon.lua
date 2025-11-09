@@ -6,15 +6,15 @@ return {
   keys = {
     { "<C-e>",      mode = "n" },
     { "<leader>ha", mode = "n" },
-    { "<leader>1",      mode = "n" },
-    { "<M-2>",      mode = "n" },
-    { "<M-3>",      mode = "n" },
-    { "<M-4>",      mode = "n" },
-    { "<M-5>",      mode = "n" },
-    { "<M-6>",      mode = "n" },
-    { "<M-7>",      mode = "n" },
-    { "<M-8>",      mode = "n" },
-    { "<M-9>",      mode = "n" }
+    { "<leader>1",  mode = "n" },
+    { "<leader>2",  mode = "n" },
+    { "<leader>3",  mode = "n" },
+    { "<leader>4",  mode = "n" },
+    { "<leader>5",  mode = "n" },
+    { "<leader>6",  mode = "n" },
+    { "<leader>7",  mode = "n" },
+    { "<leader>8",  mode = "n" },
+    { "<leader>9",  mode = "n" },
   },
   config = function()
     local harpoon = require("harpoon")
