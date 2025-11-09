@@ -493,5 +493,6 @@
     "workbench.editor.showTabs": "none",
     "workbench.colorTheme": "Rosé Pine",
     // "workbench.colorTheme": "Tokyo Night",
-    "window.restoreWindows": "none"
+    "window.restoreWindows": "none",
+    "workbench.iconTheme": "material-icon-theme"
 }
