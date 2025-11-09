@@ -491,8 +491,8 @@
     "git.confirmSync": false,
     "workbench.secondarySideBar.defaultVisibility": "hidden",
     "workbench.editor.showTabs": "none",
-    "workbench.colorTheme": "Rosé Pine",
-    // "workbench.colorTheme": "Tokyo Night",
+    // "window.density.editorTabHeight": "compact",
     "window.restoreWindows": "none",
-    "workbench.iconTheme": "material-icon-theme"
+    "workbench.iconTheme": "material-icon-theme",
+    "workbench.colorTheme": "Rosé Pine",
 }
