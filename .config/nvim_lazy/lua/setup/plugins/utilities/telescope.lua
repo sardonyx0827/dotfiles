@@ -6,10 +6,13 @@ return {
   config = function()
     require("telescope").setup({
       defaults = {
-        file_ignore_patterns = { "node_modules", "vendor", "dist", "build" },
+        file_ignore_patterns = { "node_modules", "vendor", "dist", "build", "^.git/" },
       },
       pickers = {
         show_all_buffers = true,
+        find_files = {
+          hidden = true,
+        },
         live_grep = {
           --theme = "dropdown",
           additional_args = function()
