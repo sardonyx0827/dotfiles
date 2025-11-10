@@ -359,6 +359,15 @@
             "commands": [
                 "editor.action.commentLine"
             ]
+        },{
+            "before": [
+                "<C-w>",
+                "q",
+            ],
+            "commands": [
+                // close editor
+                "workbench.action.closeActiveEditor"
+            ]
         },
     ],
 
