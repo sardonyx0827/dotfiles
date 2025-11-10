@@ -434,52 +434,17 @@
         "statusBar.debuggingForeground": "#000000"
     },
 
-    // editor settings
-    "workbench.startupEditor": "none",
-    "terminal.integrated.defaultProfile.linux": "zsh",
-    "terminal.integrated.defaultProfile.osx": "zsh",
-    "files.trimTrailingWhitespace": true,
-    "extensions.experimental.affinity": {
-        "asvetliakov.vscode-neovim": 1
+    // Github Copilot settings
+    "github.copilot.chat.localeOverride": "ja",
+    "github.copilot.advanced": {},
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
-    "indentRainbow.indicatorStyle": "light",
-    "vscode_vibrancy.opacity": 1.7,
-    "vscode_vibrancy.refreshInterval": 10000,
-    "glassit.alpha": 255,
-    "editor.lineNumbers": "relative",
-    "git.autofetch": true,
     "github.copilot.enable": {
         "*": true,
         "plaintext": true,
         "markdown": true,
         "scminput": true
-    },
-    "window.customMenuBarAltFocus": false,
-    "window.titleBarStyle": "custom",
-    "workbench.activityBar.location": "top",
-    "editor.minimap.enabled": false,
-    "explorer.confirmDragAndDrop": false,
-    "window.enableMenuBarMnemonics": false,
-    "[typescriptreact]": {
-        "editor.defaultFormatter": "vscode.typescript-language-features"
-    },
-    "[javascript]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
-    },
-    "github.copilot.advanced": {},
-    "[json]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
-    },
-    "editor.tabSize": 2,
-    "github.copilot.chat.localeOverride": "ja",
-    "window.customTitleBarVisibility": "auto",
-    "security.promptForRemoteFileProtocolHandling": false,
-    "git.openRepositoryInParentFolders": "never",
-    "chat.mcp.discovery.enabled": {
-        "claude-desktop": true,
-        "windsurf": true,
-        "cursor-global": true,
-        "cursor-workspace": true
     },
     "remote.defaultExtensionsIfInstalledLocally": [
         "GitHub.copilot",
@@ -487,12 +452,47 @@
         "GitHub.vscode-pull-request-github"
     ],
     "github.copilot.nextEditSuggestions.enabled": true,
+    "chat.mcp.discovery.enabled": {
+        "claude-desktop": true,
+        "windsurf": true,
+        "cursor-global": true,
+        "cursor-workspace": true
+    },
     "chat.agent.enabled": true,
-    "git.confirmSync": false,
+    // editor settings
+    "workbench.startupEditor": "none",
+    "workbench.activityBar.location": "top",
     "workbench.secondarySideBar.defaultVisibility": "hidden",
-    // "workbench.editor.showTabs": "none",
+    "files.trimTrailingWhitespace": true,
+    "indentRainbow.indicatorStyle": "light",
+    "vscode_vibrancy.opacity": 1.7,
+    "vscode_vibrancy.refreshInterval": 10000,
+    "editor.lineNumbers": "relative",
+    "editor.tabSize": 2,
+    "editor.minimap.enabled": false,
+    "window.customMenuBarAltFocus": false,
+    "window.titleBarStyle": "custom",
+    "explorer.confirmDragAndDrop": false,
+    "window.enableMenuBarMnemonics": false,
     "window.density.editorTabHeight": "compact",
     "window.restoreWindows": "none",
+    "window.customTitleBarVisibility": "auto",
+    "security.promptForRemoteFileProtocolHandling": false,
+    // git
+    "git.autofetch": true,
+    "git.openRepositoryInParentFolders": "never",
+    "git.confirmSync": false,
+    // formatting
+    "[typescriptreact]": {
+        "editor.defaultFormatter": "vscode.typescript-language-features"
+    },
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    // terminal
+    "terminal.integrated.defaultProfile.linux": "zsh",
+    "terminal.integrated.defaultProfile.osx": "zsh",
+    // themes
     "workbench.iconTheme": "material-icon-theme",
     "workbench.colorTheme": "Rosé Pine",
 }
