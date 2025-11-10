@@ -173,7 +173,7 @@
         "command": "git.push",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
-    // push (fetch)
+    // fetch (git)
     {
         "key": "ctrl+f",
         "command": "git.fetch",
