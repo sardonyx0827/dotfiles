@@ -292,10 +292,22 @@
         "key": "ctrl+w l",
         "command": "workbench.panel.chat.view.copilot.focus",
         "when": "!inChatInput && !chatViewFocus && editorTextFocus"
-    },{
-        // close copilot side panel
+    },
+    {
+        // close primary sidebar
         "key": "ctrl+w q",
-        "command": "workbench.action.toggleAuxiliaryBar",
-        "when": "inChatInput || chatViewFocus"
+        "command": "workbench.action.toggleSidebarVisibility",
+        "when": "sideBarVisible && sideBarFocus"
+    },
+    {
+        // close secondary sidebar
+        "key": "ctrl+w q",
+        "command": "workbench.action.closeAuxiliaryBar",
+        "when": "auxiliaryBarVisible && auxiliaryBarFocus"
+    },
+    {
+        // close active editor
+        "key": "ctrl+w q",
+        "command": "workbench.action.closeActiveEditor"
     }
 ]
