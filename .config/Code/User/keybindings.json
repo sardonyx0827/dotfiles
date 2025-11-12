@@ -145,54 +145,61 @@
     },
     // stage all changes (git)
     {
-        "key": "shift+s",
+        "key": "ctrl+g shift+s",
         "command": "git.stageAll",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
     // stage changes (git)
     {
-        "key": "ctrl+s",
+        "key": "ctrl+g s",
         "command": "git.stage",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
     // unstage changes (git)
     {
-        "key": "ctrl+u",
+        "key": "ctrl+g u",
         "command": "git.unstageAll",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
     // commit (git)
     {
-        "key": "ctrl+c",
+        "key": "ctrl+g c",
         "command": "git.commitStaged",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
     // push (git)
     {
-        "key": "shift+p",
+        "key": "ctrl+g P",
         "command": "git.push",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
     // fetch (git)
     {
-        "key": "ctrl+f",
+        "key": "ctrl+g f",
         "command": "git.fetch",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
     // pull (git)
     {
-        "key": "ctrl+p",
+        "key": "ctrl+g p",
         "command": "git.pull",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
+    // focus editor from scm input box
+    {
+        "key": "ctrl+w l",
+        "command": "workbench.action.focusActiveEditorGroup",
+        "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
+    },
+    // focus scm input box from editor
+    {
+        "key": "ctrl+w h",
+        "command": "workbench.view.scm",
+        "when": "editorTextFocus"
     },
     // focus text editor
     {
         "key": "alt+f",
-        "command": "workbench.action.focusFirstEditorGroup"
-    },
-    {
-        // focus text editor
-        "key": "cmd+f",
         "command": "workbench.action.focusFirstEditorGroup"
     },
     {
