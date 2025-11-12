@@ -274,9 +274,16 @@
         // move to editor from right side panels
         "key": "ctrl+w h",
         "command": "workbench.action.focusActiveEditorGroup",
+        "when": "inChatInput || chatViewFocus"
     },{
         // move to right side panels from editor
         "key": "ctrl+w l",
         "command": "workbench.panel.chat.view.copilot.focus",
+        "when": "!inChatInput && !chatViewFocus && editorTextFocus"
+    },{
+        // close copilot side panel
+        "key": "ctrl+w q",
+        "command": "workbench.action.toggleAuxiliaryBar",
+        "when": "inChatInput || chatViewFocus"
     }
 ]
