@@ -21,13 +21,21 @@
         },{
             "before": [
                 "<leader>",
+                "c",
+                "o"
+            ],
+            "commands": [
+                "workbench.panel.chat"
+            ]
+        },{
+            "before": [
+                "<leader>",
                 "a",
                 "a"
             ],
             "commands": [
                 "claude-vscode.editor.open"
             ],
-
         }, {
             "before": [
                 "<leader>",
@@ -317,6 +325,15 @@
             ],
             "commands": [
                 "claude-code.runClaude"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "c",
+                "o"
+            ],
+            "commands": [
+                "workbench.panel.chat"
             ]
         },{
             "before": [

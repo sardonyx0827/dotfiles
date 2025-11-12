@@ -52,8 +52,8 @@ return {
       exclude_auto_select = { "NvimTree" },
     },
     mappings = {
-      ask = "<leader>av",
-      edit = "<leader>ae",
+      ask = "<leader>co",
+      edit = "<leader>ce",
       refresh = "<leader>ar",
     },
   },
