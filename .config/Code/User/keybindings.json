@@ -327,7 +327,7 @@
         // close editor
         "key": "ctrl+w q",
         "command": "workbench.action.closeActiveEditor",
-        "when": "activeEditor"
+        "when": "activeEditor && editorLangId && !sideBarFocus && !auxiliaryBarFocus"
     },
     {
         // close terminal
