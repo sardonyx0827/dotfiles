@@ -169,7 +169,7 @@
     },
     // push (git)
     {
-        "key": "ctrl+g P",
+        "key": "ctrl+g shift+p",
         "command": "git.push",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
