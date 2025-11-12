@@ -306,8 +306,9 @@
         "when": "auxiliaryBarVisible && auxiliaryBarFocus"
     },
     {
-        // close active editor
+        // close editor(claude code chat window, otherwise)
         "key": "ctrl+w q",
-        "command": "workbench.action.closeActiveEditor"
+        "command": "workbench.action.closeActiveEditor",
+        "when": "activeEditor && !editorLangId && !sideBarFocus && !auxiliaryBarFocus"
     }
 ]
