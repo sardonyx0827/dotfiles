@@ -161,6 +161,11 @@
         "command": "git.unstageAll",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
     },
+    // generate commit message (git)
+    {
+        "key": "ctrl+g m",
+        "command": "github.copilot.git.generateCommitMessage"
+    },
     // commit (git)
     {
         "key": "ctrl+g c",
