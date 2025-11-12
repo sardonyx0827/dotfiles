@@ -291,7 +291,19 @@
         // move to right side panels from editor
         "key": "ctrl+w l",
         "command": "workbench.panel.chat.view.copilot.focus",
-        "when": "!inChatInput && !chatViewFocus && editorTextFocus"
+        "when": "!inChatInput && !chatViewFocus && editorTextFocus && auxiliaryBarVisible"
+    },
+    {
+        // movi to right editor group
+        "key": "ctrl+w l",
+        "command": "workbench.action.focusNextGroup",
+        "when": "editorTextFocus && !auxiliaryBarVisible"
+    },
+    {
+        // move to left editor group
+        "key": "ctrl+w h",
+        "command": "workbench.action.focusPreviousGroup",
+        "when": "editorTextFocus"
     },
     {
         // close primary sidebar
@@ -310,5 +322,17 @@
         "key": "ctrl+w q",
         "command": "workbench.action.closeActiveEditor",
         "when": "activeEditor && !editorLangId && !sideBarFocus && !auxiliaryBarFocus"
+    },
+    {
+        // close editor
+        "key": "ctrl+w q",
+        "command": "workbench.action.closeActiveEditor",
+        "when": "activeEditor"
+    },
+    {
+        // close terminal
+        "key": "ctrl+w q",
+        "command": "workbench.action.terminal.kill",
+        "when": "terminalFocus"
     }
 ]
