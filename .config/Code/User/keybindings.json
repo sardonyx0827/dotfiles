@@ -330,6 +330,12 @@
         "when": "activeEditor && editorLangId && !sideBarFocus && !auxiliaryBarFocus"
     },
     {
+        // close explorer
+        "key": "q",
+        "command": "workbench.action.toggleSidebarVisibility",
+        "when": "filesExplorerFocus"
+    },
+    {
         // close terminal
         "key": "ctrl+w q",
         "command": "workbench.action.terminal.kill",
