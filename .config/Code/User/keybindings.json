@@ -13,6 +13,12 @@
         // instead of ESC
         "key": "ctrl+[",
         "command": "extension.vim_escape",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "ctrl+[",
+        "command": "workbench.action.blur",
+        "when": "!editorFocus"
     },
     {
         // instead of undotree
