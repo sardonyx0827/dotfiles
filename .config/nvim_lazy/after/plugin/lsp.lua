@@ -18,6 +18,7 @@ lsp_zero.on_attach(function(_, bufnr)
   vim.keymap.set("n", "<leader>ff", function() vim.lsp.buf.format { async = true } end,
     { buffer = bufnr, remap = false, desc = "format this file" })
   vim.keymap.set("n", "<leader>ra", function() vim.lsp.buf.rename() end, { desc = "rename all file in workspace" })
+  vim.keymap.set('n', '<leader>ca', vim.lsp.buf.code_action, { desc = 'code action' })
 end)
 
 require('mason').setup({})
