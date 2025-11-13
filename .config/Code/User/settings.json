@@ -330,7 +330,7 @@
             "before": [
                 "<leader>",
                 "c",
-                "o"
+                "e"
             ],
             "commands": [
                 "workbench.panel.chat"
