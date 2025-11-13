@@ -10,6 +10,16 @@
         "when": "editorTextFocus"
     },
     {
+        "key": "ctrl+m",
+        "command": "workbench.action.acceptSelectedQuickOpenItem",
+        "when": "inQuickOpen"
+    },
+    {
+        "key": "ctrl+m",
+        "command": "list.select",
+        "when": "listFocus && !inputFocus"
+    },
+    {
         // instead of ESC
         "key": "ctrl+[",
         "command": "extension.vim_escape",
