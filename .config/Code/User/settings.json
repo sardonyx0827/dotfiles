@@ -299,7 +299,7 @@
             "before": [
                 "<C-h>"
             ],
-            // vim easy motion
+            // switch to left tab
             "after": [
                 "g",
                 "T"
@@ -308,7 +308,7 @@
             "before": [
                 "<C-l>"
             ],
-            // vim easy motion
+            // switch to right tab
             "after": [
                 "g",
                 "t"
