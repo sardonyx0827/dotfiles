@@ -136,13 +136,23 @@ end
 vim.keymap.set("n", "<leader><leader>s", select_codeblock_text, { desc = "Select codeblock text", noremap = true })
 
 -- copy last codeblock text to clipboard
-local function copy_last_codeblock_text_to_clipboard()
-  vim.cmd('normal! G')
-  move_to_codeblock("prev")
+local function copy_last_codeblock_text_to_clipboard(part)
+  if part == nil then
+    part = "last"
+  end
+  if string.match(part, "last") then
+    vim.cmd('normal! G')
+    move_to_codeblock("prev")
+  else
+    vim.cmd('normal! gg')
+    move_to_codeblock("next")
+  end
   select_codeblock_text()
   vim.cmd('normal! "+y')
 end
-vim.keymap.set("n", "<leader><leader>l", copy_last_codeblock_text_to_clipboard,
+vim.keymap.set("n", "<leader><leader>f", function() copy_last_codeblock_text_to_clipboard("first") end,
+  { desc = "Copy first codeblock text to clipboard", noremap = true })
+vim.keymap.set("n", "<leader><leader>l", function() copy_last_codeblock_text_to_clipboard("last") end,
   { desc = "Copy last codeblock text to clipboard", noremap = true })
 
 ---------------------------------------------------------
