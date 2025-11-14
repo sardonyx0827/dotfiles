@@ -417,7 +417,6 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
   - vim-fugitive: Git統合
   - vim-airline: ステータスライン
   - fzf: ファジーファインダー
-- **対応言語**: C, Elixir, Go, Haskell, HTML, JavaScript, Lisp, Lua, Perl, Python, Ruby, TypeScript
 
 ### Neovim (.config/nvim_lazy/)
 
