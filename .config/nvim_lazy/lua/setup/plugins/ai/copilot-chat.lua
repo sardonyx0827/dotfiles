@@ -7,7 +7,7 @@ return {
     build = "make tiktoken",
     opts = {
       -- See Configuration section for options
-      model = 'gpt-4.1',
+      model = 'gpt-5-mini',
 
     },
   },

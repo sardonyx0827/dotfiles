@@ -135,6 +135,16 @@ local function select_codeblock_text()
 end
 vim.keymap.set("n", "<leader><leader>s", select_codeblock_text, { desc = "Select codeblock text", noremap = true })
 
+-- copy last codeblock text to clipboard
+local function copy_last_codeblock_text_to_clipboard()
+  vim.cmd('normal! G')
+  move_to_codeblock("prev")
+  select_codeblock_text()
+  vim.cmd('normal! "+y')
+end
+vim.keymap.set("n", "<leader><leader>l", copy_last_codeblock_text_to_clipboard,
+  { desc = "Copy last codeblock text to clipboard", noremap = true })
+
 ---------------------------------------------------------
 -- PWD command
 ---------------------------------------------------------
