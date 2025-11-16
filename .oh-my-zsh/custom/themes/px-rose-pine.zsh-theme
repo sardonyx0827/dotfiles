@@ -13,7 +13,6 @@
 
 # ROSE PINE PALETTE
 # Referenced here (https://rosepinetheme.com/palette.html#rose-pine)
-# RP_BASE='#191724'
 RP_BASE='#26233A'
 RP_OVERLAY='#26233A'
 RP_LOVE='#EB6F92'
@@ -37,7 +36,7 @@ typeset -aHg AGNOSTER_PROMPT_SEGMENTS=(
 # A few utility functions to make it easy and re-usable to draw segmented prompts
 CURRENT_BG='NONE'
 if [[ -z "$PRIMARY_FG" ]]; then
-	PRIMARY_FG=$RP_BASE # Orig. Value was black, but rose pine likes it a bit lighter
+  PRIMARY_FG=$RP_BASE # Orig. Value was black, but rose pine likes it a bit lighter
 fi
 
 # Characters
@@ -116,7 +115,7 @@ prompt_git() {
 #### PX-Note: Original Value was blue $PRIMARY_FG (Format = ...Background...Foreground...) but rose pine likes softer colors
 # Dir: current working directory
 prompt_dir() {
-	prompt_segment $RP_OVERLAY $RP_IRIS ' %1~ '
+  prompt_segment $RP_OVERLAY $RP_IRIS ' %1~ '
 }
 
 # Status:
@@ -130,7 +129,7 @@ prompt_status() {
   [[ $UID -eq 0 ]] && symbols+="%{%F{$RP_GOLD}%}$LIGHTNING" # Orig. Value: yellow
   [[ $(jobs -l | wc -l) -gt 0 ]] && symbols+="%{%F{$RP_FOAM}%}$GEAR" # Orig. value. cyan
 
-	#### PX-Note: Original value was...$PRIMARY_FG default...
+  #### PX-Note: Original value was...$PRIMARY_FG default...
   [[ -n "$symbols" ]] && prompt_segment $RP_BASE default " $symbols "
 }
 
