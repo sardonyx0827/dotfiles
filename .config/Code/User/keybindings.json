@@ -299,6 +299,12 @@
         "command": "search.action.focusSearchList",
         "when": "searchViewletVisible"
     },{
+        // move to search box from search results
+        "key": "ctrl+k",
+        "command": "workbench.action.findInFiles",
+        "when": "searchViewletVisible"
+
+    },{
         // move to editor from right side panels
         "key": "ctrl+w h",
         "command": "workbench.action.focusActiveEditorGroup",
