@@ -295,6 +295,18 @@
                 "d",
                 "w"
             ]
+        },{
+            "before": [
+                "<leader>",
+                "s",
+                "s"
+            ],
+            // vim easy motion
+            "after": [
+                "leader",
+                "leader",
+                "/"
+            ]
         }
     ],
 
