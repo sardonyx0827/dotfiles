@@ -312,7 +312,7 @@
             "before": [
                 "<leader>",
                 "c",
-                "e"
+                "o"
             ],
             "commands": [
                 "workbench.panel.chat"
