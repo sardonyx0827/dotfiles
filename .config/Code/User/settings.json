@@ -295,24 +295,6 @@
                 "d",
                 "w"
             ]
-        },{
-            "before": [
-                "<C-h>"
-            ],
-            // switch to left tab
-            "after": [
-                "g",
-                "T"
-            ]
-        },{
-            "before": [
-                "<C-l>"
-            ],
-            // switch to right tab
-            "after": [
-                "g",
-                "t"
-            ]
         }
     ],
 

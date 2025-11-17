@@ -33,7 +33,8 @@
     {
         // instead of undotree
         "key": "ctrl+shift+t",
-        "command": "timeline.focus"
+        "command": "timeline.focus",
+        "when": "editorTextFocus"
     },
     {
         // find and replace in current file
@@ -369,5 +370,15 @@
         "key": "ctrl+w q",
         "command": "workbench.action.terminal.kill",
         "when": "terminalFocus"
+    },
+    {
+        // move to right tab
+        "key": "ctrl+l",
+        "command": "workbench.action.nextEditor"
+    },
+    {
+        // move to left tab
+        "key": "ctrl+h",
+        "command": "workbench.action.previousEditor"
     }
 ]
