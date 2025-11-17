@@ -150,7 +150,14 @@
     {
         // open with vertical split window
         "key": "ctrl+v",
-        "command": "explorer.openToSide",
+        "command": "runCommands",
+        "args": {
+            "commands": [
+                "explorer.openToSide",
+                "workbench.action.toggleSidebarVisibility",
+                "extension.vim_escape"
+            ]
+        },
         "when": "explorerViewletFocus && foldersViewVisible && !inputFocus"
     },
     {
