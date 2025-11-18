@@ -422,5 +422,13 @@
         // window size decrease height
         "key": "ctrl+left",
         "command": "workbench.action.decreaseViewSize",
+    },
+    {
+        "key": "ctrl+up",
+        "command": "workbench.action.increaseViewHeight"
+    },
+    {
+        "key": "ctrl+down",
+        "command": "workbench.action.decreaseViewHeight"
     }
 ]
