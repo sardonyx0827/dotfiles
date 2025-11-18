@@ -324,10 +324,16 @@
         "when": "!inChatInput && !chatViewFocus && editorTextFocus && auxiliaryBarVisible"
     },
     {
-        // movi to right editor group
+        // move to right editor group
         "key": "ctrl+w l",
         "command": "workbench.action.focusNextGroup",
         "when": "editorTextFocus && !auxiliaryBarVisible"
+    },
+    {
+        // move to left editor group from right side panels
+        "key": "ctrl+w h",
+        "command": "workbench.action.focusPreviousGroup",
+        "when": "!editorTextFocus"
     },
     {
         // move to left editor group
@@ -380,5 +386,17 @@
         // move to left tab
         "key": "ctrl+h",
         "command": "workbench.action.previousEditor"
+    },
+    {
+        // switch editor group 1 to 2
+        "key": "ctrl+w shift+l",
+        "command": "workbench.action.moveActiveEditorGroupRight",
+        "when": "editorTextFocus"
+    },
+    {
+        // switch editor group 2 to 1
+        "key": "ctrl+w shift+h",
+        "command": "workbench.action.moveActiveEditorGroupLeft",
+        "when": "editorTextFocus"
     }
 ]
