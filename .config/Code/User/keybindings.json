@@ -412,5 +412,15 @@
         "key": "ctrl+w shift+k",
         "command": "workbench.action.moveActiveEditorGroupUp",
         "when": "editorTextFocus"
+    },
+    {
+        // window size increase height
+        "key": "ctrl+right",
+        "command": "workbench.action.increaseViewSize",
+    },
+    {
+        // window size decrease height
+        "key": "ctrl+left",
+        "command": "workbench.action.decreaseViewSize",
     }
 ]
