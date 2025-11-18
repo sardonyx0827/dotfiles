@@ -436,6 +436,7 @@
             ]
         }
     ],
+
     "vim.statusBarColorControl": true,
     "vim.statusBarColors.normal": [
         "#7aa2f7",

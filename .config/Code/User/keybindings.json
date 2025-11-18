@@ -311,7 +311,6 @@
         "key": "ctrl+k",
         "command": "workbench.action.findInFiles",
         "when": "searchViewletVisible"
-
     },{
         // move to editor from right side panels
         "key": "ctrl+w h",
