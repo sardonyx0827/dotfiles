@@ -458,9 +458,6 @@ if has('nvim')
   tnoremap <silent> <C-W>J      <cmd>call <SID>TermExec('wincmd J')<CR>
   tnoremap <silent> <C-W>K      <cmd>call <SID>TermExec('wincmd K')<CR>
   tnoremap <silent> <C-W>L      <cmd>call <SID>TermExec('wincmd L')<CR>
-  " Move Tab
-  tnoremap <silent> <C-W>gt     <cmd>call <SID>TermExec('tabn')<CR>
-  tnoremap <silent> <C-W>gT     <cmd>call <SID>TermExec('tabp')<CR>
 else
   nnoremap <silent> <leader>sh :terminal<CR>
 endif
@@ -530,16 +527,8 @@ nnoremap <leader>ss :SaveSession<Space>
 nnoremap <leader>sd :DeleteSession<CR>
 nnoremap <leader>sc :CloseSession<CR>
 
-"" Tabs
-nnoremap <Tab> gt
-nnoremap <S-Tab> gT
-nnoremap <silent> <S-t> :tabnew<CR>
-
 "" Set working directory
 nnoremap <leader>. :lcd %:p:h<CR>
-
-"" Opens a tab edit command with the path of the currently edited file filled
-noremap <Leader>te :tabe <C-R>=expand("%:p:h") . "/" <CR>
 
 "" fzf.vim
 set wildmode=list:longest,list:full
