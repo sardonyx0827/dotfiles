@@ -445,6 +445,18 @@
         "#e0af68",
         "#000000"
     ],
+    "vim.statusBarColors.searchinprogressmode": [
+        "#007acc",
+        "#ffffff"
+    ],
+    "vim.statusBarColors.easymotioninputmode": [
+        "#907acc",
+        "#ffffff"
+    ],
+    "vim.statusBarColors.easymotionmode": [
+        "#907acc",
+        "#ffffff"
+    ],
     "workbench.colorCustomizations": {
         "statusBar.background": "#7aa2f7",
         "statusBar.noFolderBackground": "#7aa2f7",
