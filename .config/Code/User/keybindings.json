@@ -342,6 +342,18 @@
         "when": "editorTextFocus"
     },
     {
+        // move to bottom editor group
+        "key": "ctrl+w j",
+        "command": "workbench.action.focusBelowGroup",
+        "when": "editorTextFocus"
+    },
+    {
+        // move to top editor group
+        "key": "ctrl+w k",
+        "command": "workbench.action.focusAboveGroup",
+        "when": "editorTextFocus"
+    },
+    {
         // close primary sidebar
         "key": "ctrl+w q",
         "command": "workbench.action.toggleSidebarVisibility",
@@ -378,25 +390,27 @@
         "when": "terminalFocus"
     },
     {
-        // move to right tab
-        "key": "ctrl+l",
-        "command": "workbench.action.nextEditor"
-    },
-    {
-        // move to left tab
-        "key": "ctrl+h",
-        "command": "workbench.action.previousEditor"
-    },
-    {
-        // switch editor group 1 to 2
+        // switch editor group Left to Right
         "key": "ctrl+w shift+l",
         "command": "workbench.action.moveActiveEditorGroupRight",
         "when": "editorTextFocus"
     },
     {
-        // switch editor group 2 to 1
+        // switch editor group Right to Left
         "key": "ctrl+w shift+h",
         "command": "workbench.action.moveActiveEditorGroupLeft",
+        "when": "editorTextFocus"
+    },
+    {
+        // switch editor group top to Bottom
+        "key": "ctrl+w shift+j",
+        "command": "workbench.action.moveActiveEditorGroupDown",
+        "when": "editorTextFocus"
+    },
+    {
+        // switch editor group Bottom to top
+        "key": "ctrl+w shift+k",
+        "command": "workbench.action.moveActiveEditorGroupUp",
         "when": "editorTextFocus"
     }
 ]
