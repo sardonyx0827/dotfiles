@@ -221,12 +221,6 @@
         "when": "sideBarFocus"
     },
     {
-        // focus scm input box from editor
-        "key": "ctrl+w h",
-        "command": "workbench.view.scm",
-        "when": "editorTextFocus"
-    },
-    {
         // focus text editor
         "key": "alt+f",
         "command": "workbench.action.focusFirstEditorGroup"
@@ -332,13 +326,6 @@
         // move to left editor group from right side panels
         "key": "ctrl+w h",
         "command": "workbench.action.focusPreviousGroup",
-        "when": "!editorTextFocus"
-    },
-    {
-        // move to left editor group
-        "key": "ctrl+w h",
-        "command": "workbench.action.focusPreviousGroup",
-        "when": "editorTextFocus"
     },
     {
         // move to bottom editor group
