@@ -298,7 +298,7 @@
         },{
             "before": [
                 "<leader>",
-                "s",
+                "j",
                 "s"
             ],
             // vim easy motion
@@ -306,6 +306,18 @@
                 "leader",
                 "leader",
                 "/"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "j",
+                "c"
+            ],
+            // vim easy motion
+            "after": [
+                "leader",
+                "leader",
+                "s"
             ]
         },{
             "before": [
