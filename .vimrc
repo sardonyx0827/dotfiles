@@ -406,7 +406,7 @@ autocmd VimEnter * wincmd p
 nnoremap <silent> <leader>ll <cmd>Buffers<CR>
 " jump to next buffer
 nnoremap <silent> <C-l> :bnext<CR>
-nnoremap <silent> <C-h> :blast<CR>
+nnoremap <silent> <C-h> :bprevious<CR>
 
 
 "*****************************************************************************
