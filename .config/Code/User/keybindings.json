@@ -416,5 +416,11 @@
     {
         "key": "ctrl+down",
         "command": "workbench.action.decreaseViewHeight"
+    },
+    {
+        // close other editor groups
+        "key": "ctrl+w o",
+        "command": "workbench.action.closeEditorsInOtherGroups",
+        "when": "editorTextFocus"
     }
 ]
