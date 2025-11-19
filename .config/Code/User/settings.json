@@ -105,6 +105,16 @@
         },{
             "before": [
                 "<leader>",
+                "g",
+                "d",
+            ],
+            // open git diff
+            "commands": [
+                "workbench.view.scm.diff"
+            ]
+        },{
+            "before": [
+                "<leader>",
                 " ",
             ],
             // disable search highlight
