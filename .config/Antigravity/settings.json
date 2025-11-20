@@ -1,0 +1,609 @@
+{
+    // vim settings
+    "vim.useSystemClipboard": true,
+    "vim.hlsearch": true,
+    "vim.incsearch": true,
+    "vim.leader": ",",
+    "vim.useCtrlKeys": true,
+    "vim.easymotion": true,
+    "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
+    "vim.showMarksInGutter": true,
+    "vim.normalModeKeyBindingsNonRecursive": [
+        {
+            "before": [
+                "<leader>",
+                "c",
+                "c"
+            ],
+            "commands": [
+                "claude-vscode.editor.open"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "c",
+                "o"
+            ],
+            "commands": [
+                "workbench.action.toggleAuxiliaryBar"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "a",
+                "a"
+            ],
+            "commands": [
+                "claude-vscode.editor.open"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "d",
+                "a"
+            ],
+            "commands": [
+                "claude-vscode.acceptProposedDiff"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "d",
+                "d"
+            ],
+            "commands": [
+                "claude-vscode.rejectProposedDiff"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "e"
+            ],
+            // open explorer
+            "commands": [
+                "workbench.view.explorer"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "u"
+            ],
+            // timeline
+            "commands": [
+                "timeline.focus"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "s",
+                "f"
+            ],
+            // find in files
+            "commands": [
+                "workbench.action.quickOpen"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "g",
+                "r"
+            ],
+            // find in files
+            "commands": [
+                "workbench.action.findInFiles"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "g",
+                "c"
+            ],
+            // open source control
+            "commands": [
+                "workbench.view.scm"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "g",
+                "d"
+            ],
+            // open git diff
+            "commands": [
+                "workbench.view.scm.diff"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                " "
+            ],
+            // disable search highlight
+            "commands": [
+                ":noh"
+            ]
+        },
+        {
+            "before": [
+                "u"
+            ],
+            "commands": [
+                "undo"
+            ]
+        },
+        {
+            "before": [
+                "<C-r>"
+            ],
+            "commands": [
+                "redo"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "r",
+                "n"
+            ],
+            // search and replace
+            "commands": [
+                "editor.action.startFindReplaceAction"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "g",
+                "d"
+            ],
+            // git diff on current file
+            "commands": [
+                "git.openChange"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "g",
+                "n"
+            ],
+            // git next change
+            "commands": [
+                "workbench.action.editor.nextChange"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "f",
+                "f"
+            ],
+            // format document
+            "commands": [
+                "editor.action.formatDocument"
+            ]
+        },
+        {
+            "before": [
+                "K"
+            ],
+            // definition preview
+            "commands": [
+                "editor.action.showDefinitionPreviewHover"
+            ]
+        },
+        {
+            "before": [
+                "<C-t>"
+            ],
+            // jump to definition
+            "commands": [
+                "editor.action.revealDefinition"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "b",
+                "f"
+            ],
+            // instead of Buffers
+            "commands": [
+                "workbench.files.action.focusOpenEditorsView"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "l",
+                "s"
+            ],
+            // instead of Buffers
+            "commands": [
+                "workbench.action.showAllEditors"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "s",
+                "l"
+            ],
+            // instead of Buffers
+            "commands": [
+                "workbench.action.showAllEditors"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "l",
+                "l"
+            ],
+            // instead of Buffers
+            "commands": [
+                "workbench.action.showAllEditors"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "x",
+                "p"
+            ],
+            // instead of Buffers
+            "commands": [
+                "workbench.action.files.openFolderInNewWindow"
+            ]
+        },
+        {
+            "before": [
+                "g",
+                "c",
+                "c"
+            ],
+            // toggle comment
+            "commands": [
+                "editor.action.commentLine"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "x",
+                "w"
+            ],
+            // display all problems
+            "commands": [
+                "workbench.actions.view.problems"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "x",
+                "x"
+            ],
+            // display all problems
+            "commands": [
+                "workbench.actions.view.problems"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "x",
+                "n"
+            ],
+            // jump to next problem
+            "commands": [
+                "editor.action.marker.nextInFiles"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "w",
+                "w"
+            ],
+            "commands": [
+                "workbench.action.compareEditor.focusOtherSide"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "j",
+                "j"
+            ],
+            // vim easy motion
+            "after": [
+                "leader",
+                "leader",
+                "leader",
+                "b",
+                "d",
+                "w"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "j",
+                "s"
+            ],
+            // vim easy motion
+            "after": [
+                "leader",
+                "leader",
+                "/"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "j",
+                "c"
+            ],
+            // vim easy motion
+            "after": [
+                "leader",
+                "leader",
+                "s"
+            ]
+        },
+        {
+            "before": [
+                "<C-l>"
+            ],
+            "after": [
+                "g",
+                "t"
+            ]
+        },
+        {
+            "before": [
+                "<C-h>"
+            ],
+            "after": [
+                "g",
+                "T"
+            ]
+        }
+    ],
+    "vim.visualModeKeyBindingsNonRecursive": [
+        {
+            "before": [
+                "<leader>",
+                "c",
+                "c"
+            ],
+            "commands": [
+                "claude-code.runClaude"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "c",
+                "o"
+            ],
+            "commands": [
+                "workbench.panel.chat"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "e"
+            ],
+            // open explorer
+            "commands": [
+                "workbench.view.explorer"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
+                "u"
+            ],
+            // timeline
+            "commands": [
+                "timeline.focus"
+            ]
+        },
+        {
+            "before": [
+                ">"
+            ],
+            "commands": [
+                "editor.action.indentLines"
+            ]
+        },
+        {
+            "before": [
+                "<"
+            ],
+            "commands": [
+                "editor.action.outdentLines"
+            ]
+        },
+        {
+            "before": [
+                "g",
+                "c"
+            ],
+            // toggle comment
+            "commands": [
+                "editor.action.commentLine"
+            ]
+        },
+        {
+            "before": [
+                "<C-w>",
+                "q"
+            ],
+            "commands": [
+                // close editor
+                "workbench.action.closeActiveEditor"
+            ]
+        }
+    ],
+    "vim.insertModeKeyBindingsNonRecursive": [
+        {
+            // move cursor
+            "before": [
+                "<C-h>"
+            ],
+            "after": [
+                "<C-o>",
+                "h"
+            ]
+        },
+        {
+            "before": [
+                "<C-l>"
+            ],
+            "after": [
+                "<C-o>",
+                "l"
+            ]
+        },
+        {
+            "before": [
+                "<C-j>"
+            ],
+            "after": [
+                "<C-o>",
+                "g",
+                "j"
+            ]
+        },
+        {
+            "before": [
+                "<C-k>"
+            ],
+            "after": [
+                "<C-o>",
+                "g",
+                "k"
+            ]
+        }
+    ],
+    "vim.statusBarColorControl": true,
+    "vim.statusBarColors.normal": [
+        "#7aa2f7",
+        "#000000"
+    ],
+    "vim.statusBarColors.insert": [
+        "#9ece6a",
+        "#000000"
+    ],
+    "vim.statusBarColors.visual": [
+        "#ff9e64",
+        "#000000"
+    ],
+    "vim.statusBarColors.visualblock": [
+        "#ff9e64",
+        "#000000"
+    ],
+    "vim.statusBarColors.visualline": [
+        "#ff9e64",
+        "#000000"
+    ],
+    "vim.statusBarColors.commandlineinprogress": [
+        "#e0af68",
+        "#000000"
+    ],
+    "vim.statusBarColors.searchinprogressmode": [
+        "#007acc",
+        "#000000"
+    ],
+    "vim.statusBarColors.easymotioninputmode": [
+        "#907acc",
+        "#000000"
+    ],
+    "vim.statusBarColors.easymotionmode": [
+        "#907acc",
+        "#000000"
+    ],
+    "workbench.colorCustomizations": {
+        "statusBar.background": "#7aa2f7",
+        "statusBar.noFolderBackground": "#7aa2f7",
+        "statusBar.debuggingBackground": "#7aa2f7",
+        "statusBar.foreground": "#000000",
+        "statusBar.debuggingBorder": "#191724",
+        "statusBar.debuggingForeground": "#000000"
+    },
+    // Github Copilot settings
+    "github.copilot.chat.localeOverride": "ja",
+    "github.copilot.advanced": {},
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "github.copilot.enable": {
+        "*": true,
+        "plaintext": true,
+        "markdown": true,
+        "scminput": true
+    },
+    "remote.defaultExtensionsIfInstalledLocally": [
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "GitHub.vscode-pull-request-github"
+    ],
+    "github.copilot.nextEditSuggestions.enabled": true,
+    "chat.mcp.discovery.enabled": {
+        "claude-desktop": true,
+        "cursor-global": true,
+        "cursor-workspace": true
+    },
+    "chat.agent.enabled": true,
+    // editor settings
+    "workbench.startupEditor": "none",
+    "workbench.editor.showTabs": "none",
+    "workbench.secondarySideBar.defaultVisibility": "hidden",
+    "files.trimTrailingWhitespace": true,
+    "indentRainbow.indicatorStyle": "light",
+    "vscode_vibrancy.opacity": 1.7,
+    "vscode_vibrancy.refreshInterval": 10000,
+    "editor.lineNumbers": "relative",
+    "editor.tabSize": 2,
+    "editor.minimap.enabled": false,
+    "window.customMenuBarAltFocus": false,
+    "window.titleBarStyle": "custom",
+    "explorer.confirmDragAndDrop": false,
+    "window.enableMenuBarMnemonics": false,
+    "window.density.editorTabHeight": "compact",
+    "window.restoreWindows": "none",
+    "window.customTitleBarVisibility": "auto",
+    "security.promptForRemoteFileProtocolHandling": false,
+    // git
+    "git.autofetch": true,
+    "git.openRepositoryInParentFolders": "never",
+    "git.confirmSync": false,
+    // formatting
+    "[typescriptreact]": {
+        "editor.defaultFormatter": "vscode.typescript-language-features"
+    },
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    // terminal
+    "terminal.integrated.defaultProfile.linux": "zsh",
+    "terminal.integrated.defaultProfile.osx": "zsh",
+    // themes
+    "workbench.colorTheme": "Gruvbox Dark Hard",
+    "python.languageServer": "Default",
+    "workbench.activityBar.location": "top"
+}
