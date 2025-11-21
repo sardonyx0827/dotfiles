@@ -93,6 +93,16 @@
         {
             "before": [
                 "<leader>",
+                "s",
+                "o"
+            ],
+            "commands": [
+                "workbench.action.gotoSymbol"
+            ]
+        },
+        {
+            "before": [
+                "<leader>",
                 "g",
                 "r"
             ],
