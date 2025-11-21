@@ -25,8 +25,8 @@ return {
   keys = {
     { '<leader>h/', function() Snacks.picker.search_history() end, desc = "Search History" },
     { "<leader>h:", function() Snacks.picker.command_history() end, desc = "Command History" },
-    { "<leader>o",  function() Snacks.picker.lsp_symbols() end, desc = "LSP Symbols" },
-    { "<leader>O", function() Snacks.picker.lsp_workspace_symbols() end, desc = "LSP Workspace Symbols" },
+    { "<leader>so",  function() Snacks.picker.lsp_symbols() end, desc = "LSP Symbols" },
+    { "<leader>sO", function() Snacks.picker.lsp_workspace_symbols() end, desc = "LSP Workspace Symbols" },
     { "<leader>.",  function() Snacks.scratch() end, desc = "Toggle Scratch Buffer" },
     { "]]",         function() Snacks.words.jump(vim.v.count1) end, desc = "Next Reference", mode = { "n", "t" } },
     { "[[",         function() Snacks.words.jump(-vim.v.count1) end, desc = "Prev Reference", mode = { "n", "t" } },
