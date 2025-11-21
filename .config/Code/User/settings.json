@@ -8,6 +8,7 @@
     "vim.easymotion": true,
     "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
     "vim.showMarksInGutter": true,
+
     "vim.normalModeKeyBindingsNonRecursive": [
         {
             "before": [
@@ -468,6 +469,7 @@
         }
     ],
 
+    // vim status bar colors
     "vim.statusBarColorControl": true,
     "vim.statusBarColors.normal": [
         "#7aa2f7",
@@ -539,6 +541,7 @@
         "cursor-workspace": true
     },
     "chat.agent.enabled": true,
+
     // editor settings
     "workbench.startupEditor": "none",
     "workbench.editor.showTabs": "none",
@@ -559,10 +562,12 @@
     "window.restoreWindows": "none",
     "window.customTitleBarVisibility": "auto",
     "security.promptForRemoteFileProtocolHandling": false,
+
     // git
     "git.autofetch": true,
     "git.openRepositoryInParentFolders": "never",
     "git.confirmSync": false,
+
     // formatting
     "[typescriptreact]": {
         "editor.defaultFormatter": "vscode.typescript-language-features"
@@ -570,10 +575,20 @@
     "[javascript]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
+
     // terminal
     "terminal.integrated.defaultProfile.linux": "zsh",
     "terminal.integrated.defaultProfile.osx": "zsh",
+
     // themes
     "workbench.iconTheme": "material-icon-theme",
     "workbench.colorTheme": "Rosé Pine",
+
+    // security
+    "telemetry.telemetryLevel": "off",
+    "telemetry.editStats.enabled": false,
+    "telemetry.feedback.enabled": false,
+    "workbench.enableExperiments": false,
+    "npm.fetchOnlinePackageInfo": false,
+    "settingsSync.keybindingsPerPlatform": false
 }
