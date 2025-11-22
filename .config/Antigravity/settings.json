@@ -615,5 +615,13 @@
     // themes
     "workbench.colorTheme": "Gruvbox Dark Hard",
     "python.languageServer": "Default",
-    "workbench.activityBar.location": "top"
+    "workbench.activityBar.location": "top",
+
+    // security
+    "telemetry.telemetryLevel": "off",
+    "telemetry.editStats.enabled": false,
+    "telemetry.feedback.enabled": false,
+    "workbench.enableExperiments": false,
+    "npm.fetchOnlinePackageInfo": false,
+    "settingsSync.keybindingsPerPlatform": false
 }
