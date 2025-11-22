@@ -422,5 +422,10 @@
         "key": "ctrl+w o",
         "command": "workbench.action.closeEditorsInOtherGroups",
         "when": "editorTextFocus"
+    },{
+        // reload window and extensions
+        "key": "ctrl+r x",
+        "command": "workbench.action.reloadWindow",
+        "when": "sideBarFocus"
     }
 ]
