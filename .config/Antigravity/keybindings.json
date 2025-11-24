@@ -8,147 +8,119 @@
             "text": "\n"
         },
         "when": "editorTextFocus"
-    },
-    {
+    },{
         "key": "ctrl+m",
         "command": "workbench.action.acceptSelectedQuickOpenItem",
         "when": "inQuickOpen"
-    },
-    {
+    },{
         "key": "ctrl+m",
         "command": "list.select",
         "when": "listFocus && !inputFocus"
-    },
-    {
+    },{
         // instead of ESC
         "key": "ctrl+[",
         "command": "extension.vim_escape",
         "when": "editorTextFocus"
-    },
-    {
+    },{
         "key": "ctrl+[",
         "command": "workbench.action.blur",
         "when": "!editorFocus"
-    },
-    {
+    },{
         // instead of undotree
         "key": "ctrl+shift+t",
         "command": "timeline.focus",
         "when": "editorTextFocus"
-    },
-    {
+    },{
         // find and replace in current file
         "key": "ctrl+shift+r",
         "command": "editor.action.startFindReplaceAction",
         "when": "editorFocus || editorIsOpen"
-    },
-    {
+    },{
         "key": "ctrl+h",
         "command": "-editor.action.startFindReplaceAction",
         "when": "editorFocus || editorIsOpen"
-    },
-    {
+    },{
         // show help page
         "key": "ctrl+shift+h",
         "command": "workbench.action.keybindingsReference"
-    },
-    {
+    },{
         "key": "ctrl+k ctrl+r",
         "command": "-workbench.action.keybindingsReference"
-    },
-    {
+    },{
         // // copilot generate
         "key": "ctrl+enter",
         "command": "-github.copilot.generate",
         "when": "editorTextFocus && github.copilot.activated && !inInteractiveInput && !interactiveEditorFocused"
-    },
-    {
+    },{
         // find and replace in workbench
         "key": "ctrl+shift+s",
         "command": "workbench.action.findInFiles"
-    },
-    {
+    },{
         "key": "ctrl+shift+f",
         "command": "-workbench.action.findInFiles"
-    },
-    {
+    },{
         // format document
         "key": "ctrl+shift+f",
         "command": "editor.action.formatDocument",
         "when": "editorHasDocumentFormattingProvider && editorTextFocus && !editorReadonly && !inCompositeEditor"
-    },
-    {
+    },{
         "key": "ctrl+shift+i",
         "command": "-editor.action.formatDocument",
         "when": "editorHasDocumentFormattingProvider && editorTextFocus && !editorReadonly && !inCompositeEditor"
-    },
-    {
+    },{
         // format document none
         "key": "ctrl+shift+f",
         "command": "editor.action.formatDocument.none",
         "when": "editorTextFocus && !editorHasDocumentFormattingProvider && !editorReadonly"
-    },
-    {
+    },{
         "key": "ctrl+shift+i",
         "command": "-editor.action.formatDocument.none",
         "when": "editorTextFocus && !editorHasDocumentFormattingProvider && !editorReadonly"
-    },
-    {
+    },{
         "key": "alt+enter",
         "command": "github.copilot.acceptCursorPanelSolution",
         "when": "github.copilot.activated && github.copilot.panelVisible"
-    },
-    {
+    },{
         "key": "ctrl+/",
         "command": "-github.copilot.acceptCursorPanelSolution",
         "when": "github.copilot.activated && github.copilot.panelVisible"
-    },
-    {
+    },{
         "key": "ctrl+m",
         "command": "-editor.action.toggleTabFocusMode"
-    },
-    {
+    },{
         // toggle copilot chat side window
         "key": "ctrl+shift+i",
         "command": "workbench.panel.chat"
-    },
-    {
+    },{
         "key": "ctrl+shift+o",
         "command": "claude-code.runClaude"
-    },
-    {
+    },{
         "key": "ctrl+a ctrl+n",
         "command": "claude-code.runClaude"
-    },
-    {
+    },{
         // delete opened buffer
         "key": "alt+x",
         "command": "workbench.action.closeActiveEditor"
-    },
-    {
+    },{
         "key": "cmd+x",
         "command": "workbench.action.closeActiveEditor"
-    },
-    // explorer actions
+    },// explorer actions
     {
         // create new file
         "key": "a",
         "command": "explorer.newFile",
         "when": "filesExplorerFocus && foldersViewVisible && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus"
-    },
-    {
+    },{
         // create new dir
         "key": "shift+a",
         "command": "explorer.newFolder",
         "when": "filesExplorerFocus && foldersViewVisible && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus"
-    },
-    {
+    },{
         // rename
         "key": "r",
         "command": "renameFile",
         "when": "filesExplorerFocus && foldersViewVisible && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus"
-    },
-    {
+    },{
         // open with vertical split window
         "key": "ctrl+v",
         "command": "runCommands",
@@ -160,90 +132,75 @@
             ]
         },
         "when": "explorerViewletFocus && foldersViewVisible && !inputFocus"
-    },
-    {
+    },{
         // delete file
         "key": "d",
         "command": "moveFileToTrash",
         "when": "explorerResourceMoveableToTrash && filesExplorerFocus && foldersViewVisible && !explorerResourceReadonly && !inputFocus"
-    },
-    {
+    },{
         // stage all changes (git)
         "key": "ctrl+g shift+s",
         "command": "git.stageAll",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
-    },
-    {
+    },{
         // stage changes (git)
         "key": "ctrl+g s",
         "command": "git.stage",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
-    },
-    {
+    },{
         // unstage changes (git)
         "key": "ctrl+g u",
         "command": "git.unstageAll",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
-    },
-    {
+    },{
         // generate commit message (git)
         "key": "ctrl+g m",
         "command": "antigravity.generateCommitMessage"
-    },
-    {
+    },{
         // commit (git)
         "key": "ctrl+g c",
         "command": "git.commitStaged",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
-    },
-    {
+    },{
         // push (git)
         "key": "ctrl+g shift+p",
         "command": "git.push",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
-    },
-    {
+    },{
         // fetch (git)
         "key": "ctrl+g f",
         "command": "git.fetch",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
-    },
-    {
+    },{
         // pull (git)
         "key": "ctrl+g p",
         "command": "git.pull",
         "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
-    },
-    {
+    },{
         // focus editor from scm input box
         "key": "ctrl+w l",
         "command": "workbench.action.focusActiveEditorGroup",
         "when": "sideBarFocus"
-    },
-    {
+    },{
         // focus text editor
         "key": "alt+f",
         "command": "workbench.action.focusFirstEditorGroup"
-    },
-    {
+    },{
         // save file
         "key": "ctrl+s",
         "command": "workbench.action.files.save",
         "when": "editorTextFocus && !editorReadonly"
-    },
-    {
+    },{
         // copilot chat inline
         "key": "ctrl+c",
         "command": "inlineChat.start",
         "when": "editorFocus && inlineChatHasProvider && !editorReadonly"
-    },
-    {
+    },{
         // copilot chat inline
         "key": "ctrl+i",
         "command": "-inlineChat.start",
         "when": "editorFocus && inlineChatHasProvider && !editorReadonly"
-    },
-    {
+    },{
         // open file and close explorer
         "key": "l",
         "command": "runCommands",
@@ -254,14 +211,12 @@
             ]
         },
         "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus && !explorerResourceIsFolder"
-    },
-    {
+    },{
         // expand folder in explorer
         "key": "l",
         "command": "list.expand",
         "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus && explorerResourceIsFolder"
-    },
-    {
+    },{
         // open search result and close sidebar
         "key": "l",
         "command": "runCommands",
@@ -273,8 +228,7 @@
             ]
         },
         "when": "searchViewletVisible && !inputFocus && hasSearchResult && listFocus"
-    },
-    {
+    },{
         // insert line break in terminal
         "key": "shift+enter",
         "command": "workbench.action.terminal.sendSequence",
@@ -282,20 +236,17 @@
             "text": "\\\r\n"
         },
         "when": "terminalFocus"
-    },
-    {
+    },{
         // move to next in quick open
         "key": "ctrl+n",
         "command": "workbench.action.quickOpenNavigateNext",
         "when": "inQuickOpen"
-    },
-    {
+    },{
         // move to previous in quick open
         "key": "ctrl+p",
         "command": "workbench.action.quickOpenNavigatePrevious",
         "when": "inQuickOpen"
-    },
-    {
+    },{
         // move to search results
         "key": "ctrl+j",
         "command": "search.action.focusSearchList",
@@ -310,109 +261,90 @@
         "key": "ctrl+w h",
         "command": "workbench.action.focusActiveEditorGroup",
         "when": "inChatInput || chatViewFocus"
-    },
-    {
+    },{
         // move to right editor group
         "key": "ctrl+w l",
         "command": "workbench.action.focusNextGroup",
         "when": "editorTextFocus && !auxiliaryBarVisible"
-    },
-    {
+    },{
         // move to left editor group from right side panels
         "key": "ctrl+w h",
         "command": "workbench.action.focusPreviousGroup"
-    },
-    {
+    },{
         // move to bottom editor group
         "key": "ctrl+w j",
         "command": "workbench.action.focusBelowGroup",
         "when": "editorTextFocus"
-    },
-    {
+    },{
         // move to top editor group
         "key": "ctrl+w k",
         "command": "workbench.action.focusAboveGroup",
         "when": "editorTextFocus"
-    },
-    {
+    },{
         // close primary sidebar
         "key": "ctrl+w q",
         "command": "workbench.action.toggleSidebarVisibility",
         "when": "sideBarVisible && sideBarFocus"
-    },
-    {
+    },{
         // close secondary sidebar
         "key": "ctrl+w q",
         "command": "workbench.action.closeAuxiliaryBar",
         "when": "auxiliaryBarVisible && auxiliaryBarFocus"
-    },
-    {
+    },{
         // close editor(claude code chat window, otherwise)
         "key": "ctrl+w q",
         "command": "workbench.action.closeActiveEditor",
         "when": "activeEditor && !editorLangId && !sideBarFocus && !auxiliaryBarFocus"
-    },
-    {
+    },{
         // close editor
         "key": "ctrl+w q",
         "command": "workbench.action.closeActiveEditor",
         "when": "activeEditor && editorLangId && !sideBarFocus && !auxiliaryBarFocus"
-    },
-    {
+    },{
         // close explorer
         "key": "q",
         "command": "workbench.action.toggleSidebarVisibility",
         "when": "filesExplorerFocus"
-    },
-    {
+    },{
         // close terminal
         "key": "ctrl+w q",
         "command": "workbench.action.terminal.kill",
         "when": "terminalFocus"
-    },
-    {
+    },{
         // switch editor group Left to Right
         "key": "ctrl+w shift+l",
         "command": "workbench.action.moveActiveEditorGroupRight",
         "when": "editorTextFocus"
-    },
-    {
+    },{
         // switch editor group Right to Left
         "key": "ctrl+w shift+h",
         "command": "workbench.action.moveActiveEditorGroupLeft",
         "when": "editorTextFocus"
-    },
-    {
+    },{
         // switch editor group top to Bottom
         "key": "ctrl+w shift+j",
         "command": "workbench.action.moveActiveEditorGroupDown",
         "when": "editorTextFocus"
-    },
-    {
+    },{
         // switch editor group Bottom to top
         "key": "ctrl+w shift+k",
         "command": "workbench.action.moveActiveEditorGroupUp",
         "when": "editorTextFocus"
-    },
-    {
+    },{
         // window size increase height
         "key": "ctrl+right",
         "command": "workbench.action.increaseViewSize"
-    },
-    {
+    },{
         // window size decrease height
         "key": "ctrl+left",
         "command": "workbench.action.decreaseViewSize"
-    },
-    {
+    },{
         "key": "ctrl+up",
         "command": "workbench.action.increaseViewHeight"
-    },
-    {
+    },{
         "key": "ctrl+down",
         "command": "workbench.action.decreaseViewHeight"
-    },
-    {
+    },{
         // close other editor groups
         "key": "ctrl+w o",
         "command": "workbench.action.closeEditorsInOtherGroups",
