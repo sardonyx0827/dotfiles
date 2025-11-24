@@ -41,13 +41,13 @@ return {
       enable_cursor_planning_mode = true,
       support_paste_from_clipboard = true,
     },
-    -- system_prompt = function() -- Define as a function so the LLM always has the latest MCP server state [6]
-    --   local hub = require("mcphub").get_hub_instance()
-    --   return hub:get_active_servers_prompt()
-    -- end,
-    -- custom_tools = function() -- Use a function to prevent requiring mcphub before it's loaded [6]
-    --   return { require("mcphub.extensions.avante").mcp_tool() }
-    -- end,
+    system_prompt = function() -- Define as a function so the LLM always has the latest MCP server state [6]
+      local hub = require("mcphub").get_hub_instance()
+      return hub:get_active_servers_prompt()
+    end,
+    custom_tools = function() -- Use a function to prevent requiring mcphub before it's loaded [6]
+      return { require("mcphub.extensions.avante").mcp_tool() }
+    end,
     selector = {
       exclude_auto_select = { "NvimTree" },
     },
