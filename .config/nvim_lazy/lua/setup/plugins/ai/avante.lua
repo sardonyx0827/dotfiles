@@ -53,7 +53,7 @@ return {
     },
     mappings = {
       ask = "<leader>co",
-      edit = "<leader>ce",
+      edit = "<c-c>",
       refresh = "<leader>ar",
     },
   },
