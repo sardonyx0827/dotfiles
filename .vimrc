@@ -373,7 +373,6 @@ nnoremap <silent> <F3> :NERDTreeToggle<CR>
 " show .hidden files
 let NERDTreeShowHidden = 1
 
-nnoremap <silent><C-e> :NERDTreeFocusToggle<CR>
 nnoremap <silent> <leader>e :NERDTreeFocusToggle<CR>
 
 " NERDTreeでlキー: ファイルなら開いてNERDTreeを閉じ、ディレクトリなら展開
