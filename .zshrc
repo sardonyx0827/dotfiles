@@ -277,7 +277,7 @@ function mc() {
       ;;
     push)
       shift
-      claude --model "haiku" -p "pushして"
+      claude --model "haiku" -p "pushして。pull requestを作成してはいけません。"
       ;;
     commit)
       shift
