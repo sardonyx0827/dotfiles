@@ -37,6 +37,8 @@ vim.keymap.set("n", "<leader>e", toggle_tree_focus,
   { noremap = true, silent = true, desc = "NvimTree - Toggle and focus" })
 vim.keymap.set("n", "<leader>te", ":lua require('nvim-tree.api').tree.expand_all()<CR>",
   { noremap = true, silent = true, desc = "NvimTree - expand all" })
+vim.keymap.set("n", "<leader>ct", ":lua require('nvim-tree.api').tree.open({ path = vim.fn.expand('%:p:h') })<CR>",
+  { noremap = true, silent = true, desc = "NvimTree - change directory and open nvim-tree" })
 
 -- set termguicolors to enable highlight groups
 vim.opt.termguicolors = true
