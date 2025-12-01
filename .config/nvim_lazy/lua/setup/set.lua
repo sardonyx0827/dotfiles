@@ -46,7 +46,7 @@ vim.g.netrw_winsize = 80
 
 
 -- Highlight whitespace characters
-vim.opt.listchars = { tab = ">·", trail = "·", extends = "…", precedes = "…" }
+vim.opt.listchars = { tab = "┊ ", trail = "·", extends = "…", precedes = "…" }
 vim.api.nvim_set_hl(0, "Whitespace", { fg = "#Fb7280", bg = "NONE" })
 vim.api.nvim_set_hl(0, "NonText", { fg = "#Faa0a6", bg = "NONE" })
 vim.api.nvim_set_hl(0, "SpecialKey", { fg = "#Faa0a6", bg = "NONE" })
