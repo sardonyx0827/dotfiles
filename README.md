@@ -64,10 +64,10 @@
 
 ### エディタ
 
-[![Vim][vim-shield]][vim-url]
 [![Neovim][neovim-shield]][neovim-url]
-[![vim-plug][vimplug-shield]][vimplug-url]
 [![lazy.nvim][lazy-shield]][lazy-url]
+[![Vim][vim-shield]][vim-url]
+[![vim-plug][vimplug-shield]][vimplug-url]
 [![vsCode][vscode-shield]][vscode-url]
 
 ### バージョン管理
