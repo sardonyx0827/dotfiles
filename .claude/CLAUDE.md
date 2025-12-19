@@ -8,9 +8,8 @@
 - **Git のコミットメッセージは英語**で記述すること（後述の規約に従う）
 
 ## 2. ブラウザ操作（必須）
-- Web ブラウズ／UI 自動化が必要な作業は **MCP の Playwright** のみを使用すること
 - `fetch` / `curl` など **他の手段によるネットワークアクセスは原則禁止**
-  必要な場合は理由を説明し、Playwright MCP で代替できないかを検討する
+必要な場合は理由を説明し、claude-in-chromeを使用すること
 
 ## 3. Git 運用（必須）
   ### 基本的なpush運用
@@ -71,26 +70,6 @@
   - 複数フェーズのタスクでは、各フェーズごとに最適なモデルを選択すること
   - Claude Codeの実行速度の改善を目標としつつ、品質を維持すること
 
-# ═══════════════════════════════════════════════════
-# SuperClaude Framework Components
-# ═══════════════════════════════════════════════════
-
-# Core Framework
-@BUSINESS_PANEL_EXAMPLES.md
-@BUSINESS_SYMBOLS.md
-@FLAGS.md
-@PRINCIPLES.md
-@RULES.md
-
-# Behavioral Modes
-@MODE_Brainstorming.md
-@MODE_Business_Panel.md
-@MODE_Introspection.md
-@MODE_Orchestration.md
-@MODE_Task_Management.md
-@MODE_Token_Efficiency.md
-
-# MCP Documentation
+## MCP Documentation
 @MCP_Context7.md
-@MCP_Playwright.md
 @MCP_Serena.md
