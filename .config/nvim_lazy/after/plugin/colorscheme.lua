@@ -10,8 +10,6 @@ vim.keymap.set("n", "<M-0>", set_hl_with_transparent_statusline, { noremap = tru
 vim.cmd("colorscheme rose-pine-main")
 -- vim.cmd("colorscheme vscode")
 -- vim.cmd("colorscheme tokyonight-night")
--- vim.cmd("colorscheme slate")
--- vim.cmd("colorscheme onedark")
 
 -- clear bg color
 vim.api.nvim_set_hl(0, "Normal", { bg = "none" })
