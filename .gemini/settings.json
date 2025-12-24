@@ -35,7 +35,6 @@
       "timeout": 5000
     },
     "sequential-thinking": {
-      "type": "stdio",
       "command": "npx",
       "args": [
         "-y",
@@ -44,7 +43,6 @@
       "env": {}
     },
     "context7": {
-      "type": "stdio",
       "command": "npx",
       "args": [
         "-y",
