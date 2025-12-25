@@ -613,7 +613,7 @@
     "terminal.integrated.defaultProfile.linux": "zsh",
     "terminal.integrated.defaultProfile.osx": "zsh",
     // themes
-    "workbench.colorTheme": "Gruvbox Dark Hard",
+    "workbench.colorTheme": "Kanagawa Dragon",
     "python.languageServer": "Default",
     "workbench.activityBar.location": "top",
 

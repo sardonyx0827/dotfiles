@@ -589,5 +589,6 @@
     "telemetry.feedback.enabled": false,
     "workbench.enableExperiments": false,
     "npm.fetchOnlinePackageInfo": false,
-    "settingsSync.keybindingsPerPlatform": false
+    "settingsSync.keybindingsPerPlatform": false,
+    "workbench.colorTheme": "Kanagawa Dragon"
 }
