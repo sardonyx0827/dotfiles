@@ -396,7 +396,6 @@ npm install -g @github/copilot
 
 ### Zsh (.zshrc)
 
-- **テーマ**: Rose Pine (`px-rose-pine`)
 - **プラグイン**: Oh My Zsh プラグインシステム
 - **PATH設定**: Go、PHP、Node.js グローバルパッケージ
 - **エイリアス**: 便利なコマンドショートカット
@@ -411,7 +410,6 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
 ### Vim (.vimrc)
 
 - **プラグインマネージャー**: vim-plug
-- **テーマ**: Rose Pine
 - **主要プラグイン**:
   - NERDTree: ファイルエクスプローラー
   - vim-fugitive: Git統合
@@ -421,7 +419,6 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
 ### Neovim (.config/nvim_lazy/)
 
 - **プラグインマネージャー**: lazy.nvim
-- **テーマ**: Rose Pine
 - **モダンなNeovim設定**: Luaベース
 - **LSP対応**: 言語サーバープロトコル統合
 
@@ -497,15 +494,6 @@ tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペ
 # - Gemini CLI
 # - GitHub Copilot CLI
 ```
-
-## 🎨 カラーテーマ
-
-このdotfilesは **Rose Pine** カラーテーマをベースにしています。
-
-- **Zsh**: px-rose-pine
-- **Vim**: rose-pine/vim
-- **Neovim**: rose-pine/neovim
-- **tmux**: rose-pine/tmux
 
 ## 📝 カスタマイズ
 
