@@ -582,7 +582,6 @@
 
     // themes
     "workbench.iconTheme": "material-icon-theme",
-    "workbench.colorTheme": "Rosé Pine",
 
     // security
     "telemetry.telemetryLevel": "off",
