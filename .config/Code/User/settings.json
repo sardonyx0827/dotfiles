@@ -590,5 +590,6 @@
     "workbench.enableExperiments": false,
     "npm.fetchOnlinePackageInfo": false,
     "settingsSync.keybindingsPerPlatform": false,
-    "workbench.colorTheme": "Kanagawa Dragon"
+    "workbench.colorTheme": "Kanagawa Dragon",
+    "editor.smoothScrolling": true
 }
