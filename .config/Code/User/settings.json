@@ -561,6 +561,7 @@
     "window.density.editorTabHeight": "compact",
     "window.restoreWindows": "none",
     "window.customTitleBarVisibility": "auto",
+    "editor.smoothScrolling": true,
     "security.promptForRemoteFileProtocolHandling": false,
 
     // git
@@ -582,6 +583,7 @@
 
     // themes
     "workbench.iconTheme": "material-icon-theme",
+    "workbench.colorTheme": "Kanagawa Dragon",
 
     // security
     "telemetry.telemetryLevel": "off",
@@ -589,7 +591,5 @@
     "telemetry.feedback.enabled": false,
     "workbench.enableExperiments": false,
     "npm.fetchOnlinePackageInfo": false,
-    "settingsSync.keybindingsPerPlatform": false,
-    "workbench.colorTheme": "Kanagawa Dragon",
-    "editor.smoothScrolling": true
+    "settingsSync.keybindingsPerPlatform": false
 }
