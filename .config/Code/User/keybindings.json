@@ -287,6 +287,16 @@
         "command": "workbench.action.focusAboveGroup",
         "when": "editorTextFocus"
     },{
+        // move to terminal when terminal is opened
+        "key": "ctrl+w j",
+        "command": "workbench.action.terminal.focus",
+        "when": "editorTextFocus && terminalIsOpen"
+    },{
+        // move to editor from terminal when terminal is opened
+        "key": "ctrl+w k",
+        "command": "workbench.action.focusActiveEditorGroup",
+        "when" : "terminalFocus"
+    },{
         // close primary sidebar
         "key": "ctrl+w q",
         "command": "workbench.action.toggleSidebarVisibility",
