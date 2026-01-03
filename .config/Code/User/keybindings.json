@@ -297,6 +297,16 @@
         "command": "workbench.action.focusActiveEditorGroup",
         "when" : "terminalFocus"
     },{
+        // open vertical split editor
+        "key": "ctrl+w v",
+        "command": "workbench.action.splitEditorRight",
+        "when": "editorTextFocus"
+    },{
+        // open horizontal split editor
+        "key": "ctrl+w s",
+        "command": "workbench.action.splitEditorDown",
+        "when": "editorTextFocus"
+    },{
         // close primary sidebar
         "key": "ctrl+w q",
         "command": "workbench.action.toggleSidebarVisibility",
