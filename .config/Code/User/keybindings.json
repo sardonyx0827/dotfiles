@@ -298,12 +298,12 @@
         "when" : "terminalFocus"
     },{
         // open vertical split editor
-        "key": "ctrl+w v",
+        "key": "ctrl+w ctrl+v",
         "command": "workbench.action.splitEditorRight",
         "when": "editorTextFocus"
     },{
         // open horizontal split editor
-        "key": "ctrl+w s",
+        "key": "ctrl+w ctrl+s",
         "command": "workbench.action.splitEditorDown",
         "when": "editorTextFocus"
     },{
