@@ -583,7 +583,6 @@
 
     // themes
     "workbench.iconTheme": "material-icon-theme",
-    "workbench.colorTheme": "Kanagawa Dragon",
 
     // security
     "telemetry.telemetryLevel": "off",
@@ -591,5 +590,8 @@
     "telemetry.feedback.enabled": false,
     "workbench.enableExperiments": false,
     "npm.fetchOnlinePackageInfo": false,
-    "settingsSync.keybindingsPerPlatform": false
+    "settingsSync.keybindingsPerPlatform": false,
+    "inlineChat.enableV2": true,
+    "mermaid-chat.enabled": true,
+    "chat.extensionUnification.enabled": false
 }
