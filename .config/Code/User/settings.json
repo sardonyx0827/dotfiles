@@ -593,5 +593,6 @@
     "settingsSync.keybindingsPerPlatform": false,
     "inlineChat.enableV2": true,
     "mermaid-chat.enabled": true,
-    "chat.extensionUnification.enabled": false
+    "chat.extensionUnification.enabled": false,
+    "workbench.colorTheme": "Kanagawa Dragon"
 }
