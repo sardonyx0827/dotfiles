@@ -380,5 +380,15 @@
         "key": "ctrl+r x",
         "command": "workbench.action.reloadWindow",
         "when": "sideBarFocus"
+    },{
+        // jump to next snippet placeholder
+        "key": "ctrl+f",
+        "command": "jumpToNextSnippetPlaceholder",
+        "when": "editorTextFocus && inSnippetMode"
+    },{
+        // jump to previous snippet placeholder
+        "key": "ctrl+b",
+        "command": "jumpToPrevSnippetPlaceholder",
+        "when": "editorTextFocus && inSnippetMode"
     }
 ]
