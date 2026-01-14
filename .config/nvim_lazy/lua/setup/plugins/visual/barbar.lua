@@ -10,6 +10,7 @@ return {
     -- animation = true,
     -- insert_at_start = true,
     -- …etc.
+    insert_at_end = true,
   },
   version = '^1.0.0',   -- optional: only update when a new 1.x version is released
 }

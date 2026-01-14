@@ -52,6 +52,8 @@ vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true })
 -- jump next/prev buffer
 vim.keymap.set("n", "<C-l>", ":bnext<CR>", { noremap = true, silent = true })
 vim.keymap.set("n", "<C-h>", ":bprev<CR>", { noremap = true, silent = true })
+-- close all buffers
+vim.keymap.set("n", "<leader>cb", "<cmd>%bdelete<cr>", { noremap = true, silent = true, desc = "Close All Buffers" })
 -- change directory to current file
 vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", { desc = "change directory to current file" })
 vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", { desc = "change up directory" })
