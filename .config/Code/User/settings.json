@@ -594,5 +594,6 @@
     "inlineChat.enableV2": true,
     "mermaid-chat.enabled": true,
     "chat.extensionUnification.enabled": false,
-    "claudeCode.preferredLocation": "panel"
+    "claudeCode.preferredLocation": "panel",
+    "workbench.colorTheme": "Kanagawa Dragon"
 }
