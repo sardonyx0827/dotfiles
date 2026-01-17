@@ -355,6 +355,15 @@
                 "g",
                 "T"
             ]
+        },{
+            "before": [
+                "<leader>",
+                "q"
+            ],
+            "commands": [
+                // close vscode
+                "workbench.action.quit"
+            ]
         }
     ],
 
@@ -544,7 +553,6 @@
 
     // editor settings
     "workbench.startupEditor": "none",
-    "workbench.editor.showTabs": "none",
     "workbench.activityBar.location": "top",
     "workbench.secondarySideBar.defaultVisibility": "hidden",
     "files.trimTrailingWhitespace": true,
