@@ -390,5 +390,25 @@
         "key": "ctrl+b",
         "command": "jumpToPrevSnippetPlaceholder",
         "when": "editorTextFocus && inSnippetMode"
+    },{
+        "key": "j",
+        "command": "runCommands",
+        "args": {
+            "commands": [
+                "list.focusDown",
+                "filesExplorer.openFilePreserveFocus"
+            ]
+        },
+        "when": "filesExplorerFocus && foldersViewVisible && !inputFocus"
+    },{
+        "key": "k",
+        "command": "runCommands",
+        "args": {
+            "commands": [
+                "list.focusUp",
+                "filesExplorer.openFilePreserveFocus"
+            ]
+        },
+        "when": "filesExplorerFocus && foldersViewVisible && !inputFocus"
     }
 ]
