@@ -571,6 +571,8 @@
     "window.customTitleBarVisibility": "auto",
     "editor.smoothScrolling": true,
     "security.promptForRemoteFileProtocolHandling": false,
+    // Open files from Quick Open in preview mode (true to enable)
+    "workbench.editor.enablePreviewFromQuickOpen": true,
 
     // git
     "git.autofetch": true,
