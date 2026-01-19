@@ -364,6 +364,26 @@
                 // close vscode
                 "workbench.action.quit"
             ]
+        },{
+            "before": [
+                "<leader>",
+                "b",
+                "r"
+            ],
+            "commands": [
+                // close tabs to the right of current buffer
+                "workbench.action.closeEditorsToTheRight"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "b",
+                "o"
+            ],
+            "commands": [
+                // close tabs without current buffer
+                "workbench.action.closeOtherEditors"
+            ]
         }
     ],
 
