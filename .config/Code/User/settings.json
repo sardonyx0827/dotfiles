@@ -570,6 +570,7 @@
         "cursor-workspace": true
     },
     "chat.agent.enabled": true,
+    "chat.extensionUnification.enabled": false,
 
     // editor settings
     "workbench.startupEditor": "none",
@@ -621,9 +622,9 @@
     "workbench.enableExperiments": false,
     "npm.fetchOnlinePackageInfo": false,
     "settingsSync.keybindingsPerPlatform": false,
+
+    // others
     "inlineChat.enableV2": true,
     "mermaid-chat.enabled": true,
-    "chat.extensionUnification.enabled": false,
-    "claudeCode.preferredLocation": "panel",
-    "workbench.colorTheme": "Kanagawa Dragon"
+    "claudeCode.preferredLocation": "panel"
 }
