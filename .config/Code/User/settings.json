@@ -361,8 +361,26 @@
                 "q"
             ],
             "commands": [
-                // close vscode
-                "workbench.action.quit"
+                // close current tab
+                "workbench.action.closeActiveEditor"
+            ]
+        },{
+            "before": [
+                "<leader>",
+                "b",
+                "c"
+            ],
+            "commands": [
+                // close current tab
+                "workbench.action.closeActiveEditor"
+            ]
+        },{
+            "before": [
+                "<C-q>"
+            ],
+            "commands": [
+                // close current tab
+                "workbench.action.closeActiveEditor"
             ]
         },{
             "before": [

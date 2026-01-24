@@ -79,7 +79,7 @@ else
 end
 
 vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true, desc = "Toggle Breakpoint." })
-vim.api.nvim_set_keymap('n', '<leader>bc', ':lua require("dap").clear_breakpoints()<CR>',
+vim.api.nvim_set_keymap('n', '<leader>be', ':lua require("dap").clear_breakpoints()<CR>',
   { silent = true, desc = "Clear All Breakpoint." })
 vim.api.nvim_set_keymap('n', '<F5>', ':DapContinue<CR>', { silent = true })
 vim.api.nvim_set_keymap('n', '<F10>', ':DapStepOver<CR>', { silent = true })
