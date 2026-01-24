@@ -60,6 +60,7 @@ local function tree_on_attach(bufnr)
   vim.keymap.set('n', 'l', api.node.open.edit, opts('Open'))
   vim.keymap.set('n', '<C-l>', api.tree.change_root_to_node, opts('CD'))
   vim.keymap.set('n', '<C-h>', api.tree.change_root_to_parent, opts('Up'))
+  vim.keymap.set('n', '<C-s>', api.node.open.horizontal, opts('Open: horizontal Split'))
   --vim.keymap.set('n', '<leader>e', api.tree.close, opts('Close'))
   vim.keymap.set('n', '<leader>e', move_l, opts('Close'))
 end
@@ -157,7 +158,7 @@ local command = {
   { "<C-r>", fs.rename_sub,                  "Rename: Omit Filename" },
   { "<C-t>", node.open.tab,                  "Open: New Tab" },
   { "<C-v>", node.open.vertical,             "Open: Vertical Split" },
-  { "<C-x>", node.open.horizontal,           "Open: Horizontal Split" },
+  { "<C-s>", node.open.horizontal,           "Open: Horizontal Split" },
   { "<BS>",  node.navigate.parent_close,     "Close Directory" },
   { "<CR>",  node.open.edit,                 "Open" },
   { "<Tab>", node.open.preview,              "Open Preview" },

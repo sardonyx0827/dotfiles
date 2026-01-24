@@ -3,7 +3,7 @@ return {
   lazy = false,
   ---enables autocomplete for opts
   ---@module "auto-session"
-  ---@type AutoSession.Config
+  ---@type { suppressed_dirs: string[] }
   opts = {
     suppressed_dirs = { "~/", "~/Projects", "~/Downloads", "/" },
     -- log_level = 'debug',

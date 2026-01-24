@@ -551,6 +551,7 @@
     "explorer.confirmDragAndDrop": false,
     "window.enableMenuBarMnemonics": false,
     "window.density.editorTabHeight": "compact",
+    // "workbench.editor.showTabs": "none",
     "window.restoreWindows": "none",
     "window.customTitleBarVisibility": "auto",
     "editor.smoothScrolling": true,
