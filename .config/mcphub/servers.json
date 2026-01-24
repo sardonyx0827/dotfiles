@@ -1,14 +1,5 @@
 {
   "mcpServers": {
-    "claude_code": {
-      "args": [
-        "/Users/sardonyx0827/.npm-global/bin/claude",
-        "mcp",
-        "serve"
-      ],
-      "command": "/usr/local/bin/node",
-      "env": []
-    },
     "playwright": {
       "args": [
         "@playwright/mcp@latest"
@@ -38,17 +29,7 @@
       },
       "disabled": false,
       "disabled_resources": [],
-      "disabled_tools": [
-        "delete_item",
-        "execute_command",
-        "execute_lua",
-        "find_files",
-        "list_directory",
-        "move_item",
-        "read_file",
-        "replace_in_file",
-        "write_file"
-      ]
+      "disabled_tools": []
     }
   }
 }
