@@ -459,44 +459,7 @@
         },
     ],
 
-    "vim.insertModeKeyBindingsNonRecursive": [
-        {
-            // move cursor
-            "before": [
-                "<C-h>"
-            ],
-            "after": [
-                "<C-o>",
-                "h"
-            ]
-        },{
-            "before": [
-                "<C-l>"
-            ],
-            "after": [
-                "<C-o>",
-                "l"
-            ]
-        },{
-            "before": [
-                "<C-j>"
-            ],
-            "after": [
-                "<C-o>",
-                "g",
-                "j"
-            ]
-        },{
-            "before": [
-                "<C-k>"
-            ],
-            "after": [
-                "<C-o>",
-                "g",
-                "k"
-            ]
-        }
-    ],
+    "vim.insertModeKeyBindingsNonRecursive": [],
 
     // vim status bar colors
     "vim.statusBarColorControl": true,
@@ -537,9 +500,9 @@
         "#000000"
     ],
     "workbench.colorCustomizations": {
-        "statusBar.background": "#7aa2f7",
-        "statusBar.noFolderBackground": "#7aa2f7",
-        "statusBar.debuggingBackground": "#7aa2f7",
+        "statusBar.background": "#ff9e64",
+        "statusBar.noFolderBackground": "#ff9e64",
+        "statusBar.debuggingBackground": "#ff9e64",
         "statusBar.foreground": "#000000",
         "statusBar.debuggingBorder": "#191724",
         "statusBar.debuggingForeground": "#000000"
