@@ -500,9 +500,9 @@
         "#000000"
     ],
     "workbench.colorCustomizations": {
-        "statusBar.background": "#ff9e64",
-        "statusBar.noFolderBackground": "#ff9e64",
-        "statusBar.debuggingBackground": "#ff9e64",
+        "statusBar.background": "#7aa2f7",
+        "statusBar.noFolderBackground": "#7aa2f7",
+        "statusBar.debuggingBackground": "#7aa2f7",
         "statusBar.foreground": "#000000",
         "statusBar.debuggingBorder": "#191724",
         "statusBar.debuggingForeground": "#000000"

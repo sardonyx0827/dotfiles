@@ -167,8 +167,8 @@ alias vimdiff="nvim -d"
 alias view="nvim -R"
 
 # use gh copilots
-eval "$(gh copilot alias -- zsh)"
-alias ghs="gh copilot suggest"
+# eval "$(gh copilot alias -- zsh)"
+# alias ghs="gh copilot suggest"
 
 # or 'docker exec MyContainer nvim --headless --listen 0.0.0.0:22222'
 alias nvim_listen="nvim --headless --listen 0.0.0.0:22222"
