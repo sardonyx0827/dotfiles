@@ -412,5 +412,27 @@
             ]
         },
         "when": "filesExplorerFocus && foldersViewVisible && !inputFocus"
+    },{
+        // explorer navigation down and preview file
+        "key": "Down",
+        "command": "runCommands",
+        "args": {
+            "commands": [
+                "list.focusDown",
+                "filesExplorer.openFilePreserveFocus"
+            ]
+        },
+        "when": "filesExplorerFocus && foldersViewVisible && !inputFocus"
+    },{
+        // explorer navigation up and preview file
+        "key": "Up",
+        "command": "runCommands",
+        "args": {
+            "commands": [
+                "list.focusUp",
+                "filesExplorer.openFilePreserveFocus"
+            ]
+        },
+        "when": "filesExplorerFocus && foldersViewVisible && !inputFocus"
     }
 ]
