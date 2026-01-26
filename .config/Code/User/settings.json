@@ -552,6 +552,8 @@
     },
     "chat.agent.enabled": true,
     "chat.extensionUnification.enabled": false,
+    "inlineChat.enableV2": true,
+    "mermaid-chat.enabled": true,
 
     // editor settings
     "workbench.startupEditor": "none",
@@ -601,10 +603,8 @@
     "telemetry.feedback.enabled": false,
     "workbench.enableExperiments": false,
     "npm.fetchOnlinePackageInfo": false,
-    "settingsSync.keybindingsPerPlatform": false,
 
     // others
-    "inlineChat.enableV2": true,
-    "mermaid-chat.enabled": true,
+    "settingsSync.keybindingsPerPlatform": false,
     "claudeCode.preferredLocation": "panel"
 }
