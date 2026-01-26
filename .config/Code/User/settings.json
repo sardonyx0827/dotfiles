@@ -529,9 +529,6 @@
     // Github Copilot settings
     "github.copilot.chat.localeOverride": "ja",
     "github.copilot.advanced": {},
-    "[json]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
-    },
     "github.copilot.enable": {
         "*": true,
         "plaintext": true,
@@ -587,6 +584,9 @@
         "editor.defaultFormatter": "vscode.typescript-language-features"
     },
     "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[json]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
 
