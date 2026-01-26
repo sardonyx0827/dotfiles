@@ -3,12 +3,30 @@
 -- create filepath list from current directory
 ---------------------------------------------------------
 local create_file_path_list_from_current_dir = function()
-  local cmd = "find * -type f"
+  local cmd = "find . -type f -print | sed 's|^./||'"
+  -- ignore file path list
+  local ignore_file_list = {
+    ".git/",
+    "node_modules/",
+    "vendor/",
+    "dist/",
+    "build/",
+    "__pycache__/",
+    ".venv/",
+    "env/",
+    ".env/",
+    "venv/",
+    ".venv/",
+  }
+  -- delete ignored file paths
+  for _, ignore_path in ipairs(ignore_file_list) do
+    cmd = cmd .. " | grep -v '^" .. ignore_path .. "'"
+  end
   -- write it down to the current buffer
   vim.cmd("normal! i" .. cmd)
   vim.cmd(".!sh")
 
-  print("execute command: " .. cmd)
+  -- print("execute command: " .. cmd)
 end
 vim.keymap.set("n", "<leader>lb", create_file_path_list_from_current_dir,
   { desc = 'create file path list from current directory' })
