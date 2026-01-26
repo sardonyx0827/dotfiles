@@ -482,48 +482,48 @@
     // vim status bar colors
     "vim.statusBarColorControl": true,
     "vim.statusBarColors.normal": [
-        "#7aa2f7",
-        "#000000"
+        "#181818",
+        "#7aa2f7"
     ],
     "vim.statusBarColors.insert": [
-        "#9ece6a",
-        "#000000"
+        "#181818",
+        "#9ece6a"
     ],
     "vim.statusBarColors.visual": [
-        "#ff9e64",
-        "#000000"
+        "#181818",
+        "#ff9e64"
     ],
     "vim.statusBarColors.visualblock": [
-        "#ff9e64",
-        "#000000"
+        "#181818",
+        "#ff9e64"
     ],
     "vim.statusBarColors.visualline": [
-        "#ff9e64",
-        "#000000"
+        "#181818",
+        "#ff9e64"
     ],
     "vim.statusBarColors.commandlineinprogress": [
-        "#e0af68",
-        "#000000"
+        "#181818",
+        "#e0af68"
     ],
     "vim.statusBarColors.searchinprogressmode": [
-        "#007acc",
-        "#000000"
+        "#181818",
+        "#007acc"
     ],
     "vim.statusBarColors.easymotioninputmode": [
-        "#907acc",
-        "#000000"
+        "#181818",
+        "#907acc"
     ],
     "vim.statusBarColors.easymotionmode": [
-        "#907acc",
-        "#000000"
+        "#181818",
+        "#907acc"
     ],
     "workbench.colorCustomizations": {
-        "statusBar.background": "#7aa2f7",
-        "statusBar.noFolderBackground": "#7aa2f7",
-        "statusBar.debuggingBackground": "#7aa2f7",
-        "statusBar.foreground": "#000000",
+        "statusBar.background": "#181818",
+        "statusBar.noFolderBackground": "#181818",
+        "statusBar.debuggingBackground": "#181818",
+        "statusBar.foreground": "#7aa2f7",
         "statusBar.debuggingBorder": "#191724",
-        "statusBar.debuggingForeground": "#000000"
+        "statusBar.debuggingForeground": "#7aa2f7"
     },
 
     // Github Copilot settings
