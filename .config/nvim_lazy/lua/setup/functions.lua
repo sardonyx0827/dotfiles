@@ -343,23 +343,6 @@ vim.keymap.set("v", "<leader>qf", copy_lsp_diagnostics_and_suggest_fix,
   { desc = "Copy LSP diagnostics to clipboard and suggest fix with Avante", noremap = true })
 
 ---------------------------------------------------------
--- close all buffer and exit nvim
----------------------------------------------------------
-local function close_all_buffers_and_exit()
-  -- Get a list of all buffers
-  local buffers = vim.api.nvim_list_bufs()
-  -- Iterate through the buffers and delete them
-  for _, buf in ipairs(buffers) do
-    if vim.api.nvim_buf_is_loaded(buf) then
-      vim.api.nvim_buf_delete(buf, { force = true })
-    end
-  end
-  -- Exit Neovim
-  vim.cmd("qa")
-end
-vim.keymap.set("n", "<leader>qa", close_all_buffers_and_exit, { noremap = true, silent = true, desc = "Close All Buffers and Exit" })
-
----------------------------------------------------------
 -- close other buffers except current one
 ---------------------------------------------------------
 local function close_other_buffers()
