@@ -627,7 +627,7 @@ nmap <C-k> <C-a>
 nmap <C-j> <C-x>
 
 "" Open current line on GitHub
-nnoremap <Leader>o :.Gbrowse<CR>
+nnoremap <Leader>go :.Gbrowse<CR>
 
 " check documentation on cursor
 " text must contains '()' to detect input and its must be 1 character
