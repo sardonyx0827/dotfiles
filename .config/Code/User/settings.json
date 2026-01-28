@@ -358,15 +358,6 @@
         },{
             "before": [
                 "<leader>",
-                "q"
-            ],
-            "commands": [
-                // close current tab
-                "workbench.action.closeActiveEditor"
-            ]
-        },{
-            "before": [
-                "<leader>",
                 "b",
                 "c"
             ],
