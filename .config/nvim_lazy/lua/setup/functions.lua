@@ -330,19 +330,6 @@ vim.keymap.set("x", "<leader><leader>c", ":<C-u>lua get_file_line_info_visual(vi
   { desc = "Get file and line info from visual selection", noremap = true, silent = true })
 
 ---------------------------------------------------------
--- [AI solution] copy lsp diagnostics to clipboard for ai assistance and use github copilot to suggest fix with avante.nvim
----------------------------------------------------------
-local function copy_lsp_diagnostics_and_suggest_fix()
-  copy_lsp_diagnostics()
-  -- trigger github copilot to suggest fix
-  vim.cmd("AvanteEdit")
-  -- paste the copied diagnostics content
-  vim.cmd('normal! "+gP')
-end
-vim.keymap.set("v", "<leader>qf", copy_lsp_diagnostics_and_suggest_fix,
-  { desc = "Copy LSP diagnostics to clipboard and suggest fix with Avante", noremap = true })
-
----------------------------------------------------------
 -- close other buffers except current one
 ---------------------------------------------------------
 local function close_other_buffers()
