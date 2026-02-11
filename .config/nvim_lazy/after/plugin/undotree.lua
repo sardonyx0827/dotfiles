@@ -215,10 +215,6 @@ function M.open_vimdiff()
     buffer = target_buf, silent = true, noremap = true,
     desc = "undotree vimdiff: close diff tab",
   })
-  vim.keymap.set("n", "<C-w><C-q>", close_if_in_diff_tab, {
-    buffer = target_buf, silent = true, noremap = true,
-    desc = "undotree vimdiff: close diff tab",
-  })
 
   -- Clean up if the scratch buffer is wiped by other means
   vim.api.nvim_create_autocmd("BufWipeout", {
