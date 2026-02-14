@@ -213,6 +213,17 @@
         },
         "when": "explorerViewletVisible && filesExplorerFocus && !inputFocus && !explorerResourceIsFolder"
     },{
+        // open timeline and close sidebar
+        "key": "l",
+        "command": "runCommands",
+        "args": {
+            "commands": [
+                "list.select",
+                "workbench.action.toggleSidebarVisibility"
+            ]
+        },
+        "when": "focusedView == 'timeline' && listFocus && !inputFocus"
+    },{
         // expand folder in explorer
         "key": "l",
         "command": "list.expand",
