@@ -18,7 +18,17 @@ return {
         grep = { hidden = true },
         explorer = {
           hidden = true,
-          auto_close = true
+          auto_close = true,
+          layout = {
+            auto_hide = { "input" },
+          },
+          win = {
+            list = {
+              wo = {
+                relativenumber = true,
+              },
+            },
+          },
         },
       },
     },
