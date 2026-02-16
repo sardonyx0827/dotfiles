@@ -2,7 +2,7 @@
 return {
   "nvim-tree/nvim-tree.lua",
   lazy = false,
-  tag = "nvim-tree-v1.14.0",
+  tag = "nvim-tree-v1.15.0",
   cmd = "NvimTreeToggle",
   dependencies = {
     -- show icons with Nerd Font
