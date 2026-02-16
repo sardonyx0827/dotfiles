@@ -633,5 +633,6 @@
 
     // others
     "settingsSync.keybindingsPerPlatform": false,
-    "claudeCode.preferredLocation": "panel"
+    "claudeCode.preferredLocation": "panel",
+    "workbench.colorTheme": "Kanagawa Dragon"
 }
