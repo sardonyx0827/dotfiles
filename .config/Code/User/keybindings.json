@@ -272,11 +272,11 @@
         // move to editor from right side panels
         "key": "ctrl+w h",
         "command": "workbench.action.focusActiveEditorGroup",
-        "when": "inChatInput || chatViewFocus"
+        "when": "auxiliaryBarFocus"
     },{
         // move to right side panels from editor
         "key": "ctrl+w l",
-        "command": "workbench.panel.chat.view.copilot.focus",
+        "command": "workbench.action.focusAuxiliaryBar",
         "when": "!inChatInput && !chatViewFocus && editorTextFocus && auxiliaryBarVisible"
     },{
         // move to right editor group
@@ -287,6 +287,7 @@
         // move to left editor group from right side panels
         "key": "ctrl+w h",
         "command": "workbench.action.focusPreviousGroup",
+        "when": "editorTextFocus"
     },{
         // move to bottom editor group
         "key": "ctrl+w j",
@@ -330,7 +331,7 @@
     },{
         // close editor(claude code chat window, otherwise)
         "key": "ctrl+w q",
-        "command": "workbench.action.closeActiveEditor",
+        "command": "workbench.action.closeAuxiliaryBar",
         "when": "activeEditor && !editorLangId && !sideBarFocus && !auxiliaryBarFocus"
     },{
         // close editor

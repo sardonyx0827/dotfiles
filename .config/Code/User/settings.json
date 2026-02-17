@@ -17,7 +17,7 @@
                 "c"
             ],
             "commands": [
-                "claude-vscode.editor.open"
+                "claude-vscode.sidebar.open"
             ]
         },{
             "before": [
@@ -26,7 +26,7 @@
                 "o"
             ],
             "commands": [
-                "workbench.action.toggleAuxiliaryBar"
+                "workbench.action.chat.open"
             ]
         },{
             "before": [
@@ -633,5 +633,5 @@
 
     // others
     "settingsSync.keybindingsPerPlatform": false,
-    "claudeCode.preferredLocation": "panel"
+    "claudeCode.preferredLocation": "sidebar"
 }
