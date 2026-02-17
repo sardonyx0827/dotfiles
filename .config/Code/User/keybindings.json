@@ -22,6 +22,11 @@
         "command": "extension.vim_escape",
         "when": "editorTextFocus"
     },{
+        // hide hover
+        "key": "ctrl+[",
+        "command": "editor.action.hideHover",
+        "when": "editorHoverVisible"
+    },{
         "key": "ctrl+[",
         "command": "workbench.action.blur",
         "when": "!editorFocus"
