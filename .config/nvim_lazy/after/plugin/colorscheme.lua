@@ -7,8 +7,8 @@ vim.keymap.set("n", "<M-0>", set_hl_with_transparent_statusline, { noremap = tru
 
 -- default color scheme
 -- vim.cmd("colorscheme rose-pine-main")
-vim.cmd("colorscheme kanagawa-dragon")
--- vim.cmd("colorscheme vscode")
+-- vim.cmd("colorscheme kanagawa-dragon")
+vim.cmd("colorscheme vscode")
 -- vim.cmd("colorscheme tokyonight-night")
 
 -- clear bg color
