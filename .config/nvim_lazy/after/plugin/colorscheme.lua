@@ -63,3 +63,13 @@ vim.api.nvim_create_autocmd('ColorScheme', {
 
 -- Initial execution (call after colorscheme is set)
 vim.defer_fn(set_barbar_transparent, 0)
+
+-- Snacks.nvim specific highlights
+vim.api.nvim_create_autocmd('VimEnter', {
+  callback = function()
+    Snacks.util.set_hl({
+      PickerDir = { link = 'Text' },
+      PickerPathHidden = { link = 'Text' },
+    }, { prefix = 'Snacks' })
+  end,
+})
