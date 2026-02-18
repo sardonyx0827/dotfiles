@@ -84,5 +84,6 @@
   "enabledPlugins": {
     "document-skills@anthropic-agent-skills": true
   },
-  "autoUpdatesChannel": "latest"
+  "autoUpdatesChannel": "latest",
+  "model": "sonnet"
 }

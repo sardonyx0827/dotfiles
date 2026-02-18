@@ -9,31 +9,6 @@ return {
       copilot = {
         model = "gpt-5-mini",
       },
-      claude = {
-        endpoint = "https://api.anthropic.com",
-        model = "claude-sonnet-4-20250514",
-        api_key_name = "ANTHROPIC_API_KEY",
-      },
-      gemini = {
-        model = "gemini-2.5-flash",
-        api_key_name = "GEMINI_API_KEY",
-      },
-      ollama = {
-        endpoint = "http://127.0.0.1:11434", -- Note that there is no /v1 at the end.
-        model = "gemma3:4b",
-      },
-      openai = {
-        endpoint = "https://api.openai.com/v1",
-        api_key_name = "OPENAI_API_KEY",
-        model = "o4-mini", -- your desired model (or use gpt-4o, etc.)
-        timeout = 30000,   -- Timeout in milliseconds, increase this for reasoning models
-      },
-      openrouter = {
-        __inherited_from = 'openai',
-        endpoint = 'https://openrouter.ai/api/v1',
-        api_key_name = "OPENROUTER_API_KEY",
-        model = 'anthropic/claude-sonnet-4-20250514',
-      },
     },
     behaviour = {
       enable_claude_text_editor_tool_mode = true,
