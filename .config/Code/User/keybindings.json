@@ -274,11 +274,6 @@
         "command": "workbench.action.findInFiles",
         "when": "searchViewletVisible"
     },{
-        // move to editor from right side panels
-        "key": "ctrl+w h",
-        "command": "workbench.action.focusActiveEditorGroup",
-        "when": "auxiliaryBarFocus"
-    },{
         // move to right side panels from editor
         "key": "ctrl+w l",
         "command": "workbench.action.focusAuxiliaryBar",
@@ -290,9 +285,9 @@
         "when": "editorTextFocus && !auxiliaryBarVisible"
     },{
         // move to left editor group from right side panels
+        // move to editor from right side panels
         "key": "ctrl+w h",
         "command": "workbench.action.focusPreviousGroup",
-        "when": "editorTextFocus"
     },{
         // move to bottom editor group
         "key": "ctrl+w j",
