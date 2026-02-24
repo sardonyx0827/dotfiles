@@ -1,132 +1,68 @@
 # Codex MCP Server
 
-**Purpose**: Advanced AI collaboration engine for complex code generation, architectural decisions, and strategic analysis
+**Purpose**: OpenAI Codex による高度な問題解決・コード生成エンジン。バグ修正の失敗時のエスカレーション、アーキテクチャ設計、戦略的分析に使用する
+
+## Tools
+
+- `mcp__codex__codex` - 新規セッション開始（`prompt` 必須）
+- `mcp__codex__codex-reply` - 既存セッションの会話継続（`threadId` + `prompt` 必須）
+
+### 主要パラメータ（`mcp__codex__codex`）
+
+| パラメータ        | 説明                   | 値の例                                               |
+| ----------------- | ---------------------- | ---------------------------------------------------- |
+| `prompt`          | 初期プロンプト（必須） | 問題の詳細な記述                                     |
+| `sandbox`         | サンドボックスモード   | `read-only`, `workspace-write`, `danger-full-access` |
+| `approval-policy` | シェルコマンド承認     | `untrusted`, `on-failure`, `on-request`, `never`     |
+| `model`           | モデル指定             | `gpt-5.2`, `gpt-5.2-codex` 等                        |
+| `cwd`             | 作業ディレクトリ       | プロジェクトルートパス                               |
 
 ## Triggers
 
-- Escalation when bug fixes fail one or more times
-- Architecture design or specification development requirements
-- Review or improvement proposals for existing code
-- Tasks requiring specialized agent consideration
-- Feature addition/editing requiring multi-angle consideration
+- バグ修正が1回以上失敗した場合のエスカレーション
+- アーキテクチャ設計・仕様策定が必要な場合
+- 既存コードのレビュー・改善提案が必要な場合
+- Claude 単体では解決困難な複雑タスク
 
 ## Choose When
 
-- **Over native Claude**: After fix failures, complex design decisions, specialized review requests
-- **For strategic decisions**: Architecture design, specification development, technology selection
-- **For quality assurance**: Code review, potential bug identification, improvement proposals
-- **For delegation**: Task decomposition and specialized agent assignment
-- **Not for simple tasks**: Basic code fixes, simple implementation, routine development work
+- **Over native Claude**: 修正の失敗後、複雑な設計判断、専門的レビューが必要な場合
+- **For strategic decisions**: アーキテクチャ設計、技術選定、仕様策定
+- **For quality assurance**: コードレビュー、潜在バグの特定、改善提案
+- **Not for simple tasks**: 基本的なコード修正、単純な実装、ルーティン作業
 
 ## Works Best With
 
-- **Sequential**: Sequential structures problems → Codex develops solution strategies
-- **Serena**: Serena provides project context → Codex performs architectural analysis
-- **Context7**: Context7 provides framework patterns → Codex develops implementation strategy
-- **Business Panel**: Business requirements → Codex creates technical implementation roadmap
+- **Serena**: Serena でプロジェクトコンテキスト取得 → Codex でアーキテクチャ分析
+- **Context7**: Context7 でフレームワークパターン取得 → Codex で実装戦略策定
 
-## Delegation Patterns
+## 会話継続パターン
 
-### Bug Fix Escalation
+Codex は会話型セッションをサポートする。複数ターンのやり取りが必要な場合：
 
-```yaml
-trigger: "Bug fix failure"
-claude_role: "Organize failure history and problem details"
-codex_role: "Advanced debugging and root cause analysis"
-handoff: "Failure details + previous attempt content → Codex"
+1. `mcp__codex__codex` で初回セッションを開始し、レスポンスから `threadId` を取得
+2. `mcp__codex__codex-reply` に `threadId` と追加の `prompt` を渡して会話を継続
+3. 必要に応じて複数回 `codex-reply` を繰り返す
+
+## codex-delegator エージェントとの使い分け
+
+- **`codex-delegator` エージェント（Task tool 経由）**: 仕様検討、バグ修正方針の相談、複雑な技術判断の委譲に使用。Claude が複数回失敗した場合の自動エスカレーションにも対応
+- **直接 MCP ツール呼び出し**: Codex のパラメータ（sandbox、model 等）を細かく制御したい場合、または既存の会話を `codex-reply` で継続したい場合
+
+## エスカレーションフロー
+
 ```
-
-### Architecture Design
-
-```yaml
-trigger: "System design request"
-claude_role: "Requirements organization and task breakdown"
-codex_role: "Architecture design and technology selection"
-handoff: "Requirements + constraints → Codex"
+Claude で実装 → テスト/検証で失敗
+  → 失敗の詳細 + 試行内容を prompt にまとめる
+  → Codex に委譲（根本原因分析 + 修正戦略）
+  → Codex の回答を Claude で実装・検証
 ```
-
-### Code Review
-
-```yaml
-trigger: "Quality assurance for critical features"
-claude_role: "Initial implementation and review request"
-codex_role: "Detailed review and improvement proposals"
-handoff: "Implementation code + review perspective → Codex"
-```
-
-### Task Decomposition
-
-```yaml
-trigger: "Complex task specialization and division"
-claude_role: "Overall planning and task integration"
-codex_role: "Implementation as specialized agent"
-handoff: "Specific implementation instructions → Codex"
-```
-
-## Integration with SuperClaude Framework
-
-### Workflow Patterns
-
-```yaml
-escalation_workflow:
-  phase_1: "Initial implementation attempt by Claude"
-  phase_2: "Processing failure"
-  phase_3: "Automatic Codex MCP escalation"
-  phase_4: "Advanced problem solving and coding by Codex"
-  phase_5: "Result integration and validation by Claude"
-
-escalation_workflow:
-  phase_1: "Initial fix attempt by Claude"
-  phase_2: "Error occurrence during post-fix verification"
-  phase_3: "Automatic Codex MCP escalation"
-  phase_4: "Advanced problem solving and coding by Codex"
-  phase_5: "Result integration and validation by Claude"
-
-design_workflow:
-  phase_1: "Requirements analysis by Claude"
-  phase_2: "Architecture design by Codex"
-  phase_3: "Implementation by Claude"
-  phase_4: "Design review by Codex"
-  phase_5: "Iterative improvement cycle"
-```
-
-## Quality Standards
-
-### Handoff Requirements
-
-- **Context Completeness**: Provide complete failure history, attempt contents, and constraints
-- **Clear Scope**: Clearly define the scope of delegation to Codex
-- **Success Criteria**: Specify success judgment criteria
-- **Integration Plan**: Plan how to integrate Codex deliverables
-
-### Collaboration Principles
-
-- **Complementary Roles**: Design Claude and Codex roles complementarily
-- **Evidence-Based Handoff**: Escalate based on concrete evidence
-- **Validation Required**: Always verify and test Codex output
-- **Learning Integration**: Apply learnings from Codex to Claude's future work
 
 ## Examples
 
-### Bug Fix Escalation
-
 ```
-Claude implementation → Testing
-Test results NG → Codex
-Codex response → Root cause identification + fix strategy
-Claude → Implementation + verification of Codex strategy
-```
-
-### Architecture Review
-
-```
-Codex response → Architecture analysis + improvement proposals
-Claude → Proposal evaluation + implementation as needed
-```
-
-### Strategic Delegation
-
-```
-Codex response → Subtask decomposition + specialized agent assignment
-Claude → Coordination of each subtask + integration
+"バグ修正が2回失敗した"         → Codex（エスカレーション）
+"システム全体の設計を検討したい"   → Codex（アーキテクチャ設計）
+"このコードの品質をレビューして"   → Codex（詳細レビュー + 改善提案）
+"単純なtypoを直して"            → Native Claude（Codex 不要）
 ```

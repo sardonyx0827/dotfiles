@@ -1,12 +1,13 @@
-model = "gpt-5.1-codex-max"
+model = "gpt-5.3-codex"
 
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 hide_agent_reasoning = true
 network_access = true
+personality = "pragmatic"
+web_search = "live"
 
 [features]
 streamable_shell = true          # enable the streamable exec tool
-web_search_request = true        # allow the model to request web searches
 
 [mcp_servers.playwright]
 command = "npx"
