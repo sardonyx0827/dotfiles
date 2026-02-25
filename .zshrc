@@ -256,6 +256,10 @@ function translate() {
 
 ## claude cli
 alias c='claude'
+alias cl='claude'
+## codex cli
+alias co='codex'
+
 ### use claude commands
 function mc() {
   case $1 in
