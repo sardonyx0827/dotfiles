@@ -27,6 +27,9 @@ return {
               wo = {
                 relativenumber = true,
               },
+              keys = {
+                ["/"] = { "/", mode = "n", expr = true, desc = "Vim search" },
+              },
             },
           },
         },
