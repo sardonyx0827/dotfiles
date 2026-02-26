@@ -447,7 +447,7 @@ local function generate_commit_message_with_claude()
           border = "rounded",
           title = string.format(" Commit Message (%s) ", diff_type),
           title_pos = "center",
-          footer = " <CR>:copy  <leader>gc:commit  q:close ",
+          footer = " <CR>:copy  q:close ",
           footer_pos = "center",
         })
 
@@ -472,18 +472,6 @@ local function generate_commit_message_with_claude()
           vim.api.nvim_win_close(win, true)
         end, { buffer = buf, desc = "Close commit message window" })
 
-        -- Commit directly with the message
-        vim.keymap.set("n", "<leader>gc", function()
-          local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-          local msg = table.concat(lines, "\n")
-          vim.api.nvim_win_close(win, true)
-          local commit_result = vim.fn.system({ "git", "commit", "-m", msg })
-          if vim.v.shell_error == 0 then
-            vim.notify("Committed: " .. lines[1])
-          else
-            vim.notify("Commit failed: " .. vim.trim(commit_result), vim.log.levels.ERROR)
-          end
-        end, { buffer = buf, desc = "Commit with this message" })
       end)
     end,
   })
