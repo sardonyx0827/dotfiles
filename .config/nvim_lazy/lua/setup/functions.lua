@@ -372,3 +372,123 @@ end
 vim.keymap.set("n", "<C-q>", close_current_buffer, { noremap = true, silent = true, desc = "Close Current Buffer" })
 vim.keymap.set("n", "<leader>bc", close_current_buffer, { noremap = true, silent = true, desc = "Close Current Buffer" })
 
+---------------------------------------------------------
+-- [AI solution] generate commit message with Claude Code
+---------------------------------------------------------
+local function generate_commit_message_with_claude()
+  local diff = vim.fn.system("git diff --cached")
+  if vim.v.shell_error ~= 0 then
+    vim.notify("Not a git repository.", vim.log.levels.ERROR)
+    return
+  end
+
+  local diff_type = "staged"
+  if diff == "" then
+    diff = vim.fn.system("git diff")
+    diff_type = "unstaged"
+  end
+  if diff == "" then
+    vim.notify("No changes detected.", vim.log.levels.WARN)
+    return
+  end
+
+  vim.notify("Generating commit message with Claude Code...", vim.log.levels.INFO)
+
+  local tmpfile = vim.fn.tempname()
+  vim.fn.writefile(vim.split(diff, "\n"), tmpfile)
+
+  local prompt = "Generate a git commit message for the following diff. "
+    .. "Follow Conventional Commits format (e.g. feat:, fix:, refactor:, docs:, test:, chore:). "
+    .. "Reply ONLY with the commit message, no markdown formatting, no explanation, no surrounding quotes. "
+    .. "Keep the summary line under 50 characters. Add a body separated by a blank line if the change is complex. "
+    .. "Write in English."
+
+  local result_lines = {}
+  local cmd = string.format("cat %s | claude -p %s",
+    vim.fn.shellescape(tmpfile),
+    vim.fn.shellescape(prompt))
+
+  vim.fn.jobstart({ "sh", "-c", cmd }, {
+    stdout_buffered = true,
+    on_stdout = function(_, data)
+      if data then
+        -- Remove trailing empty string from buffered output
+        if #data > 0 and data[#data] == "" then
+          table.remove(data)
+        end
+        result_lines = data
+      end
+    end,
+    on_exit = function(_, exit_code)
+      vim.fn.delete(tmpfile)
+      vim.schedule(function()
+        if exit_code ~= 0 or #result_lines == 0 then
+          vim.notify("Failed to generate commit message.", vim.log.levels.ERROR)
+          return
+        end
+
+        local buf = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, result_lines)
+
+        local max_line_width = 0
+        for _, l in ipairs(result_lines) do
+          max_line_width = math.max(max_line_width, #l)
+        end
+        local width = math.min(math.max(60, max_line_width + 4), vim.o.columns - 4)
+        local height = math.min(#result_lines + 2, vim.o.lines - 4)
+
+        local win = vim.api.nvim_open_win(buf, true, {
+          relative = "editor",
+          width = width,
+          height = height,
+          row = math.floor((vim.o.lines - height) / 2),
+          col = math.floor((vim.o.columns - width) / 2),
+          style = "minimal",
+          border = "rounded",
+          title = string.format(" Commit Message (%s) ", diff_type),
+          title_pos = "center",
+          footer = " <CR>:copy  <leader>gc:commit  q:close ",
+          footer_pos = "center",
+        })
+
+        vim.bo[buf].modifiable = true
+        vim.bo[buf].filetype = "gitcommit"
+
+        -- Accept: copy to clipboard and close
+        vim.keymap.set("n", "<CR>", function()
+          local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+          local msg = table.concat(lines, "\n")
+          vim.fn.setreg("+", msg)
+          vim.fn.setreg('"', msg)
+          if vim.env.TMUX then
+            vim.fn.system("tmux load-buffer -", msg)
+          end
+          vim.api.nvim_win_close(win, true)
+          vim.notify("Commit message copied to clipboard.")
+        end, { buffer = buf, desc = "Accept and copy commit message" })
+
+        -- Close without action
+        vim.keymap.set("n", "q", function()
+          vim.api.nvim_win_close(win, true)
+        end, { buffer = buf, desc = "Close commit message window" })
+
+        -- Commit directly with the message
+        vim.keymap.set("n", "<leader>gc", function()
+          local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+          local msg = table.concat(lines, "\n")
+          vim.api.nvim_win_close(win, true)
+          local commit_result = vim.fn.system({ "git", "commit", "-m", msg })
+          if vim.v.shell_error == 0 then
+            vim.notify("Committed: " .. lines[1])
+          else
+            vim.notify("Commit failed: " .. vim.trim(commit_result), vim.log.levels.ERROR)
+          end
+        end, { buffer = buf, desc = "Commit with this message" })
+      end)
+    end,
+  })
+end
+
+vim.keymap.set("n", "<leader>cm", generate_commit_message_with_claude,
+  { desc = "Generate commit message with Claude Code", noremap = true })
+
