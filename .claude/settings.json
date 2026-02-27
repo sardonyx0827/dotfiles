@@ -121,7 +121,10 @@
   },
   "sandbox": {
     "enabled": true,
-    "excludedCommands": ["docker", "docker-compose"]
+    "excludedCommands": [
+      "docker",
+      "docker-compose"
+    ]
   },
   "autoUpdatesChannel": "latest"
 }
