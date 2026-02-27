@@ -404,7 +404,7 @@ local function generate_commit_message_with_claude()
     .. "Write in English."
 
   local result_lines = {}
-  local cmd = string.format("cat %s | claude -p %s",
+  local cmd = string.format("cat %s | claude --model sonnet -p %s",
     vim.fn.shellescape(tmpfile),
     vim.fn.shellescape(prompt))
 
