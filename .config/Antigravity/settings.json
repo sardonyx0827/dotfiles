@@ -581,7 +581,7 @@
     "chat.agent.enabled": true,
     // editor settings
     "workbench.startupEditor": "none",
-    "workbench.editor.showTabs": "none",
+    // "workbench.editor.showTabs": "none",
     "workbench.secondarySideBar.defaultVisibility": "hidden",
     "files.trimTrailingWhitespace": true,
     "indentRainbow.indicatorStyle": "light",
