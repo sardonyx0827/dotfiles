@@ -633,5 +633,6 @@
 
     // others
     "settingsSync.keybindingsPerPlatform": false,
-    "claudeCode.preferredLocation": "sidebar"
+    "claudeCode.preferredLocation": "sidebar",
+    "workbench.colorTheme": "Rosé Pine"
 }

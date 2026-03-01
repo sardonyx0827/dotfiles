@@ -7,8 +7,8 @@ export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PK
 ## PHP
 export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"
 export PATH="/opt/homebrew/opt/php@8.4/sbin:$PATH"
-export LDFLAGS="-L/opt/homebrew/opt/php@8.0/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/php@8.0/include"
+export LDFLAGS="-L/opt/homebrew/opt/php@8.4/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/php@8.4/include"
 
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
@@ -213,10 +213,6 @@ setopt extended_glob
 setopt braceccl
 # correct command when mistyped
 setopt correct
-
-# completion for gh command. need this solution "gh completion -s zsh > /usr/local/share/zsh/site-functions/_gh"
-autoload -U compinit
-compinit -i
 
 # bind key(Ctrl + ])
 bindkey '^]' autosuggest-accept
