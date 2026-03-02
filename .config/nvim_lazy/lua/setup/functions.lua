@@ -477,6 +477,5 @@ local function generate_commit_message_with_claude()
   })
 end
 
-vim.keymap.set("n", "<leader>cm", generate_commit_message_with_claude,
-  { desc = "Generate commit message with Claude Code", noremap = true })
+vim.keymap.set("n", "<leader>cm", generate_commit_message_with_claude, { desc = "Generate commit message with Claude Code", noremap = true })
 

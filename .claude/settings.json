@@ -177,7 +177,17 @@
     "enabled": true,
     "excludedCommands": [
       "docker",
-      "docker-compose"
+      "docker-compose",
+      "git"
+    ],
+    "allowedNetworkHosts": [
+      "github.com",
+      "api.github.com",
+      "registry.npmjs.org",
+      "pypi.org",
+      "files.pythonhosted.org",
+      "crates.io",
+      "static.crates.io"
     ]
   },
   "autoUpdatesChannel": "latest"
