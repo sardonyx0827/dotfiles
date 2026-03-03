@@ -174,7 +174,7 @@
     "document-skills@anthropic-agent-skills": true
   },
   "sandbox": {
-    "enabled": true,
+    "enabled": false,
     "excludedCommands": [
       "docker",
       "docker-compose",
