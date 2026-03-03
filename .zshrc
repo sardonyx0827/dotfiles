@@ -250,11 +250,15 @@ function translate() {
   gemini -y -p  "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
 }
 
-## claude cli
+## Claude CLI
 alias c='claude'
 alias cl='claude'
-## codex cli
+## Codex CLI
 alias co='codex'
+## GitHub Copilot CLI
+alias cop='copilot'
+## Gemini CLI
+alias ge='gemini'
 
 ### use claude commands
 function mc() {
