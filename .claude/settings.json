@@ -42,7 +42,6 @@
       "Bash(cut:*)",
       "Bash(tr:*)",
       "Bash(touch:*)",
-      "Bash(chmod:*)",
       "Bash(ln:*)",
       "Bash(realpath:*)",
       "Bash(basename:*)",
@@ -59,7 +58,6 @@
       "Bash(whereis:*)",
       "Bash(jq:*)",
       "Bash(gh:*)",
-      "Bash(npm:*)",
       "Bash(node:*)",
       "Bash(next:*)",
       "Bash(npx:*)",
@@ -78,8 +76,6 @@
       "Bash(clippy:*)",
       "Bash(vite:*)",
       "Bash(mkdir:*)",
-      "Bash(python:*)",
-      "Bash(python3:*)",
       "Bash(pip:*)",
       "Bash(pip3:*)",
       "Bash(flake8:*)",
@@ -164,7 +160,16 @@
           }
         ]
       }
-    ]
+    ],
+    "PreToolUse": [
+    {
+      "matcher": "Bash",
+      "hooks": [{
+        "type": "command",
+        "command": "python $HOME/.claude/hooks/codex-review.py"
+      }]
+    }
+  ]
   },
   "statusLine": {
     "type": "command",
