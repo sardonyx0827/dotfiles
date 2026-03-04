@@ -3,7 +3,7 @@ model = "gpt-5.3-codex"
 # model = "openai/gpt-5.3-codex"
 # model_provider = "openrouter"
 
-model_reasoning_effort = "medium"
+model_reasoning_effort = "high"
 hide_agent_reasoning = true
 network_access = true
 personality = "pragmatic"

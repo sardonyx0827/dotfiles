@@ -8,7 +8,7 @@ npm update -g @openai/codex
 echo "# gemini cli"
 npm upgrade -g @google/gemini-cli
 echo "# github copilot cli"
-npm install -g @github/copilot
+copilot update
 
 echo "-----------------------------------"
 echo "Updated versions:"
