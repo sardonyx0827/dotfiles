@@ -20,6 +20,7 @@
       "Task",
       "TodoRead",
       "TodoWrite",
+      "Bash(tmux:*)",
       "Bash(ls:*)",
       "Bash(sed:*)",
       "Bash(awk:*)",
