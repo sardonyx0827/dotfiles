@@ -59,14 +59,15 @@ SAFE_COMMANDS = [
 ]
 command = tool_input.get("command", "")
 # コマンドが安全なものから始まる場合は、Codexのレビューをスキップして許可する(前方一致)
-if any(command.startswith(safe) for safe in SAFE_COMMANDS):
+if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
-                    "permissionDecisionReason": "Safe command, skipped Codex review",
+                    "permissionDecisionReason":
+                        "Safe command, skipped Codex review",
                 }
             }
         )
