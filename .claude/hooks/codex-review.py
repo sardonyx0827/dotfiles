@@ -11,7 +11,6 @@ tool_name = hook_input.get("tool_name", "")
 tool_input = hook_input.get("tool_input", {})
 
 # /tmp/claude_hooks/logs/PreToolUse/Bash/codex-review ディレクトリがなければ作成
-# 現在日時を取得して、/tmp/claude_hooks/logs/PreToolUse/Bash/codex-review/${DATE}.log というファイルにログを保存
 # ログには、ツール名、ツール入力、Codexの出力を保存
 log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/codex-review"
 os.makedirs(log_dir, exist_ok=True)
