@@ -9,6 +9,7 @@ import time
 hook_input = json.loads(sys.stdin.buffer.read())
 tool_name = hook_input.get("tool_name", "")
 tool_input = hook_input.get("tool_input", {})
+command = tool_input.get("command", "")
 
 # /tmp/claude_hooks/logs/PreToolUse/Bash/codex-review ディレクトリがなければ作成
 # ログには、ツール名、ツール入力、Codexの出力を保存
@@ -57,7 +58,6 @@ SAFE_COMMANDS = [
     "vitest",
     "jest",
 ]
-command = tool_input.get("command", "")
 # コマンドが安全なものから始まる場合は、Codexのレビューをスキップして許可する(前方一致)
 if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
     print(
