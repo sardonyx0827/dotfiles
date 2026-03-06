@@ -146,7 +146,8 @@ try:
             .get("parts", [{}])[0]
             .get("text", "")
         )
-except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError) as e:
+except (urllib.error.URLError,
+        TimeoutError, json.JSONDecodeError, KeyError) as e:
     # API エラー時は安全側に倒して許可
     gemini_output = f"ERROR: {e}"
     print(
@@ -155,7 +156,8 @@ except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError) as 
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
-                    "permissionDecisionReason": f"Gemini API error, allowing: {e}",
+                    "permissionDecisionReason":
+                        f"Gemini API error, allowing: {e}",
                 }
             }
         )

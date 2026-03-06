@@ -25,6 +25,7 @@ for f in files[: max(0, excess)]:
 
 # 明らかに安全なコマンドはスキップする
 SAFE_COMMANDS = [
+    "tmux",
     "ls",
     "cat",
     "pwd",
