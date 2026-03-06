@@ -167,7 +167,7 @@
       "matcher": "Bash",
       "hooks": [{
         "type": "command",
-        "command": "python $HOME/.claude/hooks/codex-review.py"
+        "command": "python $HOME/.claude/hooks/claude-review.py"
       }]
     }
   ]
