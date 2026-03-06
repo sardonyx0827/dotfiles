@@ -23,7 +23,7 @@ excess = len(files) - 1000
 for f in files[: max(0, excess)]:
     os.remove(os.path.join(log_dir, f))
 
-# 念の為、明らかに安全なコマンドはスキップする
+# 明らかに安全なコマンドはスキップする
 SAFE_COMMANDS = [
     "ls",
     "cat",
