@@ -82,13 +82,13 @@ if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
 # Gemini API 呼び出し
 api_key = os.environ.get("GEMINI_API_KEY", "")
 if not api_key:
-    # API キーが未設定の場合はレビューをスキップして許可
+    # API キーが未設定の場合はレビューをスキップしてユーザーに確認する
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
-                    "permissionDecision": "allow",
+                    "permissionDecision": "ask",
                     "permissionDecisionReason":
                         "GEMINI_API_KEY not set, skipped review",
                 }
@@ -160,9 +160,9 @@ except (urllib.error.URLError,
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
+                    "permissionDecision": "ask",
                     "permissionDecisionReason":
-                        f"Gemini API error, denying: {e}",
+                        f"Gemini API error: {e}",
                 }
             }
         )
