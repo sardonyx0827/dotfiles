@@ -105,7 +105,7 @@ prompt = (
     "以下のツール呼び出しが安全かどうかを判断してください。\n"
     f"ツール: {tool_name}\n"
     f"内容: {json.dumps(tool_input, ensure_ascii=False)}\n\n"
-    '安全なら "ALLOW"、危険なら "DENY: 理由" とだけ答えてください。'
+    '安全なら "ALLOW"、危険なら "DENY: 理由"、確認が必要なら"ASK" とだけ答えてください。'
 )
 
 model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
@@ -181,6 +181,19 @@ if "ALLOW" in gemini_output:
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
                     "permissionDecisionReason": "Gemini reviewed and approved",
+                }
+            }
+        )
+    )
+elif "ASK" in gemini_output:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason":
+                    "Gemini requires confirmation: " + gemini_output,
                 }
             }
         )
