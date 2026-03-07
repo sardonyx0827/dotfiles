@@ -84,7 +84,7 @@ prompt = f"""
 ツール: {tool_name}
 内容: {json.dumps(tool_input, ensure_ascii=False)}
 
-安全なら "ALLOW"、危険なら "DENY: 理由" とだけ答えてください。
+安全なら "ALLOW"、危険なら "DENY: 理由"、確認が必要なら"ASK" とだけ答えてください。
 """
 
 result = subprocess.run(
@@ -102,6 +102,19 @@ if "ALLOW" in result.stdout:
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
                     "permissionDecisionReason": "Codex reviewed and approved",
+                }
+            }
+        )
+    )
+elif "ASK" in result.stdout:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason":
+                    "Gemini requires confirmation: " + result.stdout,
                 }
             }
         )
