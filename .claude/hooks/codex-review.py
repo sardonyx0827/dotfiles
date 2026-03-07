@@ -94,6 +94,26 @@ result = subprocess.run(
     timeout=30,
 )
 
+# errorがあればユーザーに確認する
+if result.returncode != 0:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason":
+                    "Error during Codex review: " + result.stderr,
+                }
+            }
+        )
+    )
+    with open(log_file, "w") as f:
+        f.write(f"Tool Name: {tool_name}\n")
+        f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
+        f.write(f"Codex Output: ERROR: {result.stderr}\n")
+    sys.exit(0)
+
 if "ALLOW" in result.stdout:
     print(
         json.dumps(
@@ -114,7 +134,7 @@ elif "ASK" in result.stdout:
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
                     "permissionDecisionReason":
-                    "Gemini requires confirmation: " + result.stdout,
+                    "Codex requires confirmation: " + result.stdout,
                 }
             }
         )

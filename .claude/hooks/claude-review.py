@@ -11,8 +11,8 @@ tool_name = hook_input.get("tool_name", "")
 tool_input = hook_input.get("tool_input", {})
 command = tool_input.get("command", "")
 
-# /tmp/claude_hooks/logs/PreToolUse/Bash/codex-review ディレクトリがなければ作成
-# ログには、ツール名、ツール入力、Codexの出力を保存
+# /tmp/claude_hooks/logs/PreToolUse/Bash/claude-review ディレクトリがなければ作成
+# ログには、ツール名、ツール入力、Claudeの出力を保存
 log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/claude-review"
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f"bash_cmd_{int(time.time())}.log")
@@ -59,7 +59,7 @@ SAFE_COMMANDS = [
     "vitest",
     "jest",
 ]
-# コマンドが安全なものから始まる場合は、Codexのレビューをスキップして許可する(前方一致)
+# コマンドが安全なものから始まる場合は、Claudeのレビューをスキップして許可する(前方一致)
 if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
     print(
         json.dumps(
@@ -68,7 +68,7 @@ if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
                     "permissionDecisionReason":
-                        "Safe command, skipped Codex review",
+                        "Safe command, skipped Claude review",
                 }
             }
         )
@@ -76,7 +76,7 @@ if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
     with open(log_file, "w") as f:
         f.write(f"Tool Name: {tool_name}\n")
         f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
-        f.write("Codex Output: SKIP")
+        f.write("Claude Output: SKIP")
     sys.exit(0)
 
 prompt = f"""
@@ -94,6 +94,27 @@ result = subprocess.run(
     timeout=30,
 )
 
+# errorがあればユーザーに確認する
+if result.returncode != 0:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason":
+                        "Error during review, skipped review: "
+                        + result.stderr,
+                }
+            }
+        )
+    )
+    with open(log_file, "w") as f:
+        f.write(f"Tool Name: {tool_name}\n")
+        f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
+        f.write(f"Claude Output: ERROR: {result.stderr}\n")
+    sys.exit(0)
+
 if "ALLOW" in result.stdout:
     print(
         json.dumps(
@@ -101,7 +122,7 @@ if "ALLOW" in result.stdout:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
-                    "permissionDecisionReason": "Codex reviewed and approved",
+                    "permissionDecisionReason": "Claude reviewed and approved",
                 }
             }
         )
@@ -114,7 +135,7 @@ elif "ASK" in result.stdout:
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
                     "permissionDecisionReason":
-                    "Gemini requires confirmation: " + result.stdout,
+                    "Claude requires confirmation: " + result.stdout,
                 }
             }
         )
@@ -136,6 +157,6 @@ else:
 with open(log_file, "w") as f:
     f.write(f"Tool Name: {tool_name}\n")
     f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
-    f.write(f"Codex Output: {result.stdout}\n")
+    f.write(f"Claude Output: {result.stdout}\n")
 
 sys.exit(0)
