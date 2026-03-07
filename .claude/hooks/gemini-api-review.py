@@ -147,17 +147,22 @@ try:
             .get("text", "")
         )
 except (urllib.error.URLError,
-        TimeoutError, json.JSONDecodeError, KeyError) as e:
-    # API エラー時は安全側に倒して許可
+        TimeoutError,
+        ConnectionError,       # ネットワーク断
+        json.JSONDecodeError,
+        IndexError,            # candidates が空配列の場合
+        KeyError
+        ) as e:
+    # API エラー時は拒否
     gemini_output = f"ERROR: {e}"
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
-                    "permissionDecision": "allow",
+                    "permissionDecision": "deny",
                     "permissionDecisionReason":
-                        f"Gemini API error, allowing: {e}",
+                        f"Gemini API error, denying: {e}",
                 }
             }
         )
