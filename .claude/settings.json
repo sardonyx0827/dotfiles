@@ -2,6 +2,7 @@
   "env": {
     "BASH_DEFAULT_TIMEOUT_MS": "600000"
   },
+  "teammateMode": "tmux",
   "attribution": {
     "commit": "",
     "pr": ""
