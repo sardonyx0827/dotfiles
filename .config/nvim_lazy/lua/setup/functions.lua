@@ -447,7 +447,7 @@ local function generate_commit_message_with_claude()
           border = "rounded",
           title = string.format(" Commit Message (%s) ", diff_type),
           title_pos = "center",
-          footer = " <CR>:copy  q:close ",
+          footer = " y:yank  p:paste  q:close ",
           footer_pos = "center",
         })
 
@@ -455,7 +455,7 @@ local function generate_commit_message_with_claude()
         vim.bo[buf].filetype = "gitcommit"
 
         -- Accept: copy to clipboard and close
-        vim.keymap.set("n", "<CR>", function()
+        vim.keymap.set("n", "y", function()
           local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
           local msg = table.concat(lines, "\n")
           vim.fn.setreg("+", msg)
@@ -465,6 +465,20 @@ local function generate_commit_message_with_claude()
           end
           vim.api.nvim_win_close(win, true)
           vim.notify("Commit message copied to clipboard.")
+        end, { buffer = buf, desc = "Accept and copy commit message" })
+
+        -- Accept: copy to clipboard and close and paste
+        vim.keymap.set("n", "p", function()
+          local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+          local msg = table.concat(lines, "\n")
+          vim.fn.setreg("+", msg)
+          vim.fn.setreg('"', msg)
+          if vim.env.TMUX then
+            vim.fn.system("tmux load-buffer -", msg)
+          end
+          vim.api.nvim_win_close(win, true)
+          vim.notify("Commit message copied to clipboard.")
+          vim.cmd("normal! p")
         end, { buffer = buf, desc = "Accept and copy commit message" })
 
         -- Close without action
