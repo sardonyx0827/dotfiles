@@ -37,3 +37,12 @@ autocmd({ "WinEnter", "FocusGained", "BufEnter" }, {
   pattern = "*",
   command = "checktime",
 })
+
+-- Stop insert mode when switching buffers (e.g. when used telescope buffer)
+vim.api.nvim_create_autocmd("BufWinEnter", {
+  callback = function()
+    if vim.bo.buftype == "" then
+      vim.cmd("stopinsert")
+    end
+  end,
+})
