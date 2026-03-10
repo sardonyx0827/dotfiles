@@ -182,7 +182,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $HOME/.claude/hooks/gemini-api-bash-review.py"
+            "command": "python ~/.claude/hooks/gemini-api-bash-review.py"
           }
         ]
       }
