@@ -1,6 +1,7 @@
 # /Users/sardonyx0827/work/github/dotfiles/.claude/hooks/gemini-1pi-review.py
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -59,16 +60,29 @@ SAFE_COMMANDS = [
     "vitest",
     "jest",
 ]
-# コマンドが安全なものから始まる場合は、レビューをスキップして許可する(前方一致)
-if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
+
+
+# コマンドを &&, ||, |, ; で分割し、すべてのサブコマンドが安全か判定する
+# 引用符内の演算子は考慮しない（その場合はGeminiレビューにフォールバック）
+def _split_commands(cmd: str) -> list[str]:
+    """シェル演算子でコマンドを分割する"""
+    return [p.strip() for p in re.split(r"\s*(?:&&|\|\||[|;])\s*", cmd) if p.strip()]
+
+
+def _is_safe_command(cmd: str) -> bool:
+    """単一コマンドがセーフリストに含まれるか判定する"""
+    return any(cmd == safe or cmd.startswith(safe + " ") for safe in SAFE_COMMANDS)
+
+
+sub_commands = _split_commands(command)
+if sub_commands and all(_is_safe_command(c) for c in sub_commands):
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
-                    "permissionDecisionReason":
-                        "Safe command, skipped Gemini review",
+                    "permissionDecisionReason": "Safe command, skipped Gemini review",
                 }
             }
         )
@@ -89,8 +103,7 @@ if not api_key:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
-                    "permissionDecisionReason":
-                        "GEMINI_API_KEY not set, skipped review",
+                    "permissionDecisionReason": "GEMINI_API_KEY not set, skipped review",
                 }
             }
         )
@@ -120,9 +133,7 @@ payload = json.dumps(
         "generationConfig": {
             "maxOutputTokens": 256,
             "temperature": 0.0,
-            "thinkingConfig": {
-                "thinkingLevel": "MINIMAL"
-            },
+            "thinkingConfig": {"thinkingLevel": "MINIMAL"},
         },
     }
 ).encode("utf-8")
@@ -132,10 +143,7 @@ try:
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key
-        },
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -146,13 +154,14 @@ try:
             .get("parts", [{}])[0]
             .get("text", "")
         )
-except (urllib.error.URLError,
-        TimeoutError,
-        ConnectionError,       # ネットワーク断
-        json.JSONDecodeError,
-        IndexError,            # candidates が空配列の場合
-        KeyError
-        ) as e:
+except (
+    urllib.error.URLError,
+    TimeoutError,
+    ConnectionError,  # ネットワーク断
+    json.JSONDecodeError,
+    IndexError,  # candidates が空配列の場合
+    KeyError,
+) as e:
     # API エラー時は拒否
     gemini_output = f"ERROR: {e}"
     print(
@@ -161,8 +170,7 @@ except (urllib.error.URLError,
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
-                    "permissionDecisionReason":
-                        f"Gemini API error: {e}",
+                    "permissionDecisionReason": f"Gemini API error: {e}",
                 }
             }
         )
@@ -192,8 +200,8 @@ elif "ASK" in gemini_output:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
-                    "permissionDecisionReason":
-                    "Gemini requires confirmation: " + gemini_output,
+                    "permissionDecisionReason": "Gemini requires confirmation: "
+                    + gemini_output,
                 }
             }
         )
