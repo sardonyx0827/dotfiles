@@ -194,7 +194,8 @@
     "command": "bash ~/.claude/statusline-command.sh"
   },
   "enabledPlugins": {
-    "document-skills@anthropic-agent-skills": true
+    "document-skills@anthropic-agent-skills": true,
+    "code-review@claude-plugins-official": true
   },
   "sandbox": {
     "enabled": false,
