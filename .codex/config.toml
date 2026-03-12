@@ -1,9 +1,6 @@
-model = "gpt-5.3-codex"
-# model = "anthropic/claude-sonnet-4.6"
-# model = "openai/gpt-5.3-codex"
-# model_provider = "openrouter"
+model = "gpt-5.4"
 
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 hide_agent_reasoning = true
 network_access = true
 personality = "pragmatic"
@@ -11,12 +8,5 @@ web_search = "live"
 
 [features]
 streamable_shell = true          # enable the streamable exec tool
+multi_agent = true
 
-[mcp_servers.playwright]
-command = "npx"
-args = [ "@playwright/mcp@latest" ]
-
-# [model_providers.openrouter]
-# name = "Openrouter"
-# base_url = "https://openrouter.ai/api/v1"
-# env_key = "OPENROUTER_API_KEY"
