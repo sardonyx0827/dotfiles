@@ -17,7 +17,7 @@
 | `prompt` | 初期プロンプト（必須） | 問題の詳細な記述 |
 | `sandbox` | サンドボックスモード | `read-only`, `workspace-write`, `danger-full-access` |
 | `approval-policy` | シェルコマンド承認 | `untrusted`, `on-failure`, `on-request`, `never` |
-| `model` | モデル指定 | タスクに最適な最新モデル |
+| `model` | モデル指定 | 指定しない |
 | `cwd` | 作業ディレクトリ | プロジェクトルートパス |
 
 ### `mcp__codex__codex-reply` パラメータ
