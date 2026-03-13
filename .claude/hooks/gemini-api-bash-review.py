@@ -1,4 +1,4 @@
-# /Users/sardonyx0827/work/github/dotfiles/.claude/hooks/gemini-1pi-review.py
+# /Users/sardonyx0827/work/github/dotfiles/.claude/hooks/gemini-api-review.py
 import json
 import os
 import re
