@@ -186,15 +186,6 @@
             "command": "python ~/.claude/hooks/gemini-api-bash-review.py"
           }
         ]
-      },
-      {
-        "matcher": "mcp__codex__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python ~/.claude/hooks/pre_tool_use_codex_guard.py"
-          }
-        ]
       }
     ]
   },
