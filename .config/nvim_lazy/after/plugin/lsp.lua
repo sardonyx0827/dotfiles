@@ -22,7 +22,6 @@ lsp_zero.on_attach(function(_, bufnr)
 end)
 
 require('mason').setup({})
-local null_ls = require("null-ls")
 require('mason-lspconfig').setup({
   ensure_installed = {},
   handlers = {
@@ -34,6 +33,7 @@ require('mason-lspconfig').setup({
   }
 })
 
+local null_ls = require("null-ls")
 null_ls.setup({
   -- sources = null_sources,
 })
