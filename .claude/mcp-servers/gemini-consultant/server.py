@@ -17,17 +17,53 @@ mcp = FastMCP("gemini-consultant")
 log_file = os.path.expanduser("~/.claude/logs/gemini-consultant.log")
 os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
+MAX_LOG_LINES = 500
 
-def log_summary(tool: str, status: str, detail: str) -> None:
-    short = detail[:80] + "..." if len(detail) > 80 else detail
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {status:5s} | {tool} | {short}\n"
-    with open(log_file, "a") as f:
-        f.write(line)
-    with open(log_file) as f:
-        lines = f.readlines()
-    if len(lines) > 500:
-        with open(log_file, "w") as f:
-            f.writelines(lines[-500:])
+
+def _append_log(lines: list[str]) -> None:
+    """ログファイルに書き込み、上限を超えた分を古い順に削除する。"""
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.writelines(lines)
+
+    with open(log_file, encoding="utf-8") as f:
+        all_lines = f.readlines()
+
+    if len(all_lines) > MAX_LOG_LINES:
+        with open(log_file, "w", encoding="utf-8") as f:
+            f.writelines(all_lines[-MAX_LOG_LINES:])
+
+
+def log_entry(tool: str, status: str, prompt: str, response: str = "") -> None:
+    """
+    プロンプト全文と Gemini レスポンス全文をログに記録する。
+
+    フォーマット:
+        --- [timestamp] STATUS | tool ---
+        [PROMPT]
+        ...プロンプト全文...
+        [RESPONSE]
+        ...レスポンス全文（省略なし）...
+        ---
+    """
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    separator = "-" * 60 + "\n"
+
+    lines = [
+        separator,
+        f"[{timestamp}] {status:5s} | {tool}\n",
+        "[PROMPT]\n",
+        prompt + "\n",
+    ]
+
+    if response:
+        lines += [
+            "[RESPONSE]\n",
+            response + "\n",
+        ]
+
+    lines.append(separator)
+
+    _append_log(lines)
 
 
 # -------------------------------------------------------------------
@@ -106,15 +142,15 @@ def consult_gemini(question: str) -> str:
 
     try:
         result = call_gemini(prompt)
-        log_summary("consult_gemini", "OK", question)
+        log_entry("consult_gemini", "OK", prompt, result)
         notify("Gemini Consultant", f"相談完了: {question[:40]}", 4)
         return result
     except ValueError as e:
-        log_summary("consult_gemini", "ERROR", str(e))
+        log_entry("consult_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIキー未設定", 8)
         return f"Gemini API error: {e}"
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, IndexError, KeyError) as e:
-        log_summary("consult_gemini", "ERROR", str(e))
+        log_entry("consult_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIエラーが発生しました", 10)
         return f"Gemini API error: {e}"
 
