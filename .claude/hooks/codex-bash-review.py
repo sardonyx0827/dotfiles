@@ -1,4 +1,4 @@
-# /Users/sardonyx0827/work/github/dotfiles/.claude/hooks/codex-review.py
+# ~/.claude/hooks/codex-review.py
 import json
 import os
 import subprocess

@@ -1,4 +1,4 @@
-# /Users/sardonyx0827/work/github/dotfiles/.claude/hooks/claude-review.py
+# ~/.claude/hooks/claude-review.py
 import json
 import os
 import subprocess
