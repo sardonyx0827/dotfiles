@@ -90,7 +90,7 @@ def call_gemini(prompt: str, max_tokens: int = 8192) -> str:
     if not api_key:
         raise ValueError("GEMINI_API_KEY not set")
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+    model = os.environ.get("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
         f":generateContent"
