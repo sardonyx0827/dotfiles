@@ -221,5 +221,6 @@
   },
   "autoUpdatesChannel": "latest",
   "voiceEnabled": false,
-  "teammateMode": "tmux"
+  "teammateMode": "tmux",
+  "autoMemoryEnabled": false
 }
