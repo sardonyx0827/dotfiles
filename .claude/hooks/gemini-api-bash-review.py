@@ -1,9 +1,10 @@
 # ~.claude/hooks/gemini-api-review.py
-import json
 import os
-import re
-import subprocess
 import sys
+import re
+import json
+import subprocess
+import platform
 import time
 import urllib.error
 import urllib.request
@@ -52,15 +53,36 @@ def log_summary(decision: str, reason: str) -> None:
 # 通知
 # -------------------------------------------------------------------
 def notify(title: str, message: str, timeout: int = 5) -> None:
-    """osascript で通知センターに通知を送る"""
     try:
-        subprocess.run(
-            ["/usr/bin/osascript", "-e",
-                f'display notification "{message}" with title "{title}"'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=10,
-        )
+        os_name = platform.system()
+
+        if os_name == "Darwin":
+            # macOS: osascript で通知センターに送る
+            subprocess.run(
+                [
+                    "/usr/bin/osascript", "-e",
+                    f'display notification "{message}" with title "{title}"',
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+
+        elif os_name == "Linux":
+            # Linux: notify-send を使う（libnotify が必要）
+            # timeout は notify-send では ミリ秒単位
+            subprocess.run(
+                [
+                    "notify-send",
+                    "--expire-time", str(timeout * 1000),
+                    title,
+                    message,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+
     except Exception:
         pass  # 通知の失敗はメイン処理に影響させない
 
