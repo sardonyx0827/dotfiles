@@ -24,7 +24,7 @@
         "--enable-web-dashboard",
         "false",
         "--project",
-        "/Users/sardonyx0827/work/sandbox"
+        "~/work/sandbox"
       ]
     },
     "github": {
