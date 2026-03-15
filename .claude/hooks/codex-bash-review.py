@@ -67,8 +67,7 @@ if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
-                    "permissionDecisionReason":
-                        "Safe command, skipped Codex review",
+                    "permissionDecisionReason": "Safe command, skipped Codex review",
                 }
             }
         )
@@ -102,8 +101,8 @@ if result.returncode != 0:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
-                    "permissionDecisionReason":
-                    "Error during Codex review: " + result.stderr,
+                    "permissionDecisionReason": "Error during Codex review: "
+                    + result.stderr,
                 }
             }
         )
@@ -133,14 +132,13 @@ elif "ASK" in result.stdout:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
-                    "permissionDecisionReason":
-                    "Codex requires confirmation: " + result.stdout,
+                    "permissionDecisionReason": "Codex requires confirmation: "
+                    + result.stdout,
                 }
             }
         )
     )
 else:
-
     print(
         json.dumps(
             {

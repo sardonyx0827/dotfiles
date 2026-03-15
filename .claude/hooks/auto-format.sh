@@ -72,10 +72,10 @@ case "$EXTENSION" in
 
     # Python
     py)
-        # Black (フォーマッター)
-        if command -v black >/dev/null 2>&1; then
+        # ruff (フォーマッター)
+        if command -v ruff >/dev/null 2>&1; then
             echo "  → Running Black..."
-            black "$FILE_PATH" 2>/dev/null && echo "  ✅ Black completed"
+            ruff format "$FILE_PATH" 2>/dev/null && echo "  ✅ ruff completed"
             FORMATTED=true
         elif command -v autopep8 >/dev/null 2>&1; then
             echo "  → Running autopep8..."

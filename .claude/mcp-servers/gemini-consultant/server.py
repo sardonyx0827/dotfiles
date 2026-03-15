@@ -72,8 +72,11 @@ def log_entry(tool: str, status: str, prompt: str, response: str = "") -> None:
 def notify(title: str, message: str, timeout: int = 5) -> None:
     try:
         subprocess.run(
-            ["/usr/bin/osascript", "-e",
-             f'display notification "{message}" with title "{title}"'],
+            [
+                "/usr/bin/osascript",
+                "-e",
+                f'display notification "{message}" with title "{title}"',
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
@@ -96,13 +99,15 @@ def call_gemini(prompt: str, max_tokens: int = 8192) -> str:
         f":generateContent"
     )
 
-    payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature": 0.0,
-        },
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                "temperature": 0.0,
+            },
+        }
+    ).encode("utf-8")
 
     req = urllib.request.Request(
         url,
@@ -116,11 +121,7 @@ def call_gemini(prompt: str, max_tokens: int = 8192) -> str:
 
     with urllib.request.urlopen(req, timeout=60) as resp:
         body = json.loads(resp.read().decode("utf-8"))
-        parts = (
-            body.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [])
-        )
+        parts = body.get("candidates", [{}])[0].get("content", {}).get("parts", [])
         # parts が複数ある場合（思考モデルなど）もすべて結合して返す
         return "".join(p.get("text", "") for p in parts)
 
@@ -149,7 +150,13 @@ def consult_gemini(question: str) -> str:
         log_entry("consult_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIキー未設定", 8)
         return f"Gemini API error: {e}"
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, IndexError, KeyError) as e:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        IndexError,
+        KeyError,
+    ) as e:
         log_entry("consult_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIエラーが発生しました", 10)
         return f"Gemini API error: {e}"

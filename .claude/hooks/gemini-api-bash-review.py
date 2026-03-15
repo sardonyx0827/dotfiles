@@ -37,8 +37,9 @@ os.makedirs(os.path.dirname(summary_log), exist_ok=True)
 def log_summary(decision: str, reason: str) -> None:
     """結果をサマリーログに1行で追記し、500行超えたらローテーション"""
     short_cmd = command[:80] + "..." if len(command) > 80 else command
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')
-               }] {decision:5s} | {short_cmd} | {reason}\n"
+    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {decision:5s} | {short_cmd} | {
+        reason
+    }\n"
     with open(summary_log, "a") as f:
         f.write(line)
     # ローテーション
@@ -60,7 +61,8 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
             # macOS: osascript で通知センターに送る
             subprocess.run(
                 [
-                    "/usr/bin/osascript", "-e",
+                    "/usr/bin/osascript",
+                    "-e",
                     f'display notification "{message}" with title "{title}"',
                 ],
                 stdout=subprocess.DEVNULL,
@@ -74,7 +76,8 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
             subprocess.run(
                 [
                     "notify-send",
-                    "--expire-time", str(timeout * 1000),
+                    "--expire-time",
+                    str(timeout * 1000),
                     title,
                     message,
                 ],
@@ -91,14 +94,39 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
 # 安全なコマンドのスキップ判定
 # -------------------------------------------------------------------
 SAFE_COMMANDS = [
-    "tmux", "ls", "cat", "pwd", "echo", "printf",
-    "git status", "git log", "git diff", "git branch",
-    "grep", "rg", "find", "head", "tail", "wc",
-    "which", "whereis", "uname", "date", "tree",
-    "jq", "sed", "awk",
-    "npm run", "pnpm run", "yarn run",
-    "tsc", "eslint", "prettier",
-    "pytest", "vitest", "jest",
+    "tmux",
+    "ls",
+    "cat",
+    "pwd",
+    "echo",
+    "printf",
+    "git status",
+    "git log",
+    "git diff",
+    "git branch",
+    "grep",
+    "rg",
+    "find",
+    "head",
+    "tail",
+    "wc",
+    "which",
+    "whereis",
+    "uname",
+    "date",
+    "tree",
+    "jq",
+    "sed",
+    "awk",
+    "npm run",
+    "pnpm run",
+    "yarn run",
+    "tsc",
+    "eslint",
+    "prettier",
+    "pytest",
+    "vitest",
+    "jest",
 ]
 
 
@@ -112,13 +140,17 @@ def _is_safe_command(cmd: str) -> bool:
 
 sub_commands = _split_commands(command)
 if sub_commands and all(_is_safe_command(c) for c in sub_commands):
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "Safe command, skipped Gemini review",
-        }
-    }))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "permissionDecisionReason": "Safe command, skipped Gemini review",
+                }
+            }
+        )
+    )
     with open(log_file, "w") as f:
         f.write(f"Tool Name: {tool_name}\n")
         f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
@@ -133,13 +165,17 @@ if sub_commands and all(_is_safe_command(c) for c in sub_commands):
 # -------------------------------------------------------------------
 api_key = os.environ.get("GEMINI_API_KEY", "")
 if not api_key:
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "ask",
-            "permissionDecisionReason": "GEMINI_API_KEY not set, skipped review",
-        }
-    }))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": "GEMINI_API_KEY not set, skipped review",
+                }
+            }
+        )
+    )
     with open(log_file, "w") as f:
         f.write(f"Tool Name: {tool_name}\n")
         f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
@@ -156,26 +192,24 @@ prompt = (
 )
 
 model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
-url = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
-    f":generateContent"
-)
-payload = json.dumps({
-    "contents": [{"parts": [{"text": prompt}]}],
-    "generationConfig": {
-        "maxOutputTokens": 256,
-        "temperature": 0.0,
-        "thinkingConfig": {"thinkingLevel": "MINIMAL"},
-    },
-}).encode("utf-8")
+url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+payload = json.dumps(
+    {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "maxOutputTokens": 256,
+            "temperature": 0.0,
+            "thinkingConfig": {"thinkingLevel": "MINIMAL"},
+        },
+    }
+).encode("utf-8")
 
 gemini_output = ""
 try:
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json",
-                 "x-goog-api-key": api_key},
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -195,13 +229,17 @@ except (
     KeyError,
 ) as e:
     gemini_output = f"ERROR: {e}"
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "ask",
-            "permissionDecisionReason": f"Gemini API error: {e}",
-        }
-    }))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": f"Gemini API error: {e}",
+                }
+            }
+        )
+    )
     with open(log_file, "w") as f:
         f.write(f"Tool Name: {tool_name}\n")
         f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
@@ -217,35 +255,48 @@ except (
 short_cmd = command[:60] + "..." if len(command) > 60 else command
 
 if "ALLOW" in gemini_output:
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "Gemini reviewed and approved",
-        }
-    }))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "permissionDecisionReason": "Gemini reviewed and approved",
+                }
+            }
+        )
+    )
     log_summary("ALLOW", "approved by Gemini")
     notify("Gemini Review", f"許可: {short_cmd}", 4)
 
 elif "ASK" in gemini_output:
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "ask",
-            "permissionDecisionReason": "Gemini requires confirmation: " + gemini_output,
-        }
-    }))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": "Gemini requires confirmation: "
+                    + gemini_output,
+                }
+            }
+        )
+    )
     log_summary("ASK", gemini_output.strip())
     notify("Gemini Review - 確認が必要", f"{short_cmd}", 15)
 
 else:  # DENY
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": gemini_output,
-        }
-    }))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": gemini_output,
+                }
+            }
+        )
+    )
     log_summary("DENY", gemini_output.strip())
 
 with open(log_file, "w") as f:
