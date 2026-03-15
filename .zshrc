@@ -1,7 +1,7 @@
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 ## Go
-export PATH=/home/sardonyx0827/go/bin:$PATH
+export PATH=~/go/bin:$PATH
 export PATH=~/.npm-global/bin:$PATH
 export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
 ## PHP
@@ -220,7 +220,7 @@ bindkey '^n' autosuggest-accept
 
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 # The following lines have been added by Docker Desktop to enable Docker CLI completions.
-fpath=(/Users/sardonyx0827/.docker/completions $fpath)
+fpath=(~/.docker/completions $fpath)
 autoload -Uz compinit
 compinit
 # End of Docker CLI completions
