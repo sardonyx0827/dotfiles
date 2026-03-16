@@ -251,7 +251,7 @@ except (
         f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
         f.write(f"Gemini Output: {gemini_output}\n")
     log_summary("ERROR", str(e))
-    notify("Gemini Review Error", "APIエラーのため確認が必要です", 10)
+    notify("Gemini Review Error", "APIエラーのため確認が必要です", 8)
     sys.exit(0)
 
 
@@ -289,7 +289,7 @@ elif "ASK" in gemini_output:
         )
     )
     log_summary("ASK", gemini_output.strip())
-    notify("Gemini Review - 確認が必要", f"{short_cmd}", 15)
+    notify("Gemini Review - 確認が必要", f"{short_cmd}", 8)
 
 else:  # DENY
     print(
