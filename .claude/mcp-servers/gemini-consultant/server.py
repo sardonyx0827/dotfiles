@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # ~/.claude/mcp-servers/gemini-consultant/server.py
-
 import json
 import os
 import subprocess
+import platform
 import time
 import urllib.error
 import urllib.request
@@ -71,18 +71,46 @@ def log_entry(tool: str, status: str, prompt: str, response: str = "") -> None:
 # -------------------------------------------------------------------
 def notify(title: str, message: str, timeout: int = 5) -> None:
     try:
-        subprocess.run(
-            [
-                "/usr/bin/osascript",
-                "-e",
-                f'display notification "{message}" with title "{title}"',
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout,
-        )
+        os_name = platform.system()
+
+        if os_name == "Darwin":
+            # macOS: osascript で通知センターに送る
+            subprocess.run(
+                [
+                    "/usr/bin/osascript",
+                    "-e",
+                    f'display notification "{message}" with title "{title}"',
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+
+        elif os_name == "Linux":
+            # Linux: notify-send を使う（libnotify が必要）
+            # timeout は notify-send では ミリ秒単位
+            subprocess.run(
+                [
+                    "notify-send",
+                    "--expire-time",
+                    str(timeout * 1000),
+                    title,
+                    message,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+
+        elif os_name == "Windows":
+            # Windows: Toast通知を送る（Windows 10以降）
+            from win10toast import ToastNotifier
+
+            toaster = ToastNotifier()
+            toaster.show_toast(title, message, duration=timeout)
+
     except Exception:
-        pass
+        pass  # 通知の失敗はメイン処理に影響させない
 
 
 # -------------------------------------------------------------------

@@ -86,6 +86,12 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
                 timeout=timeout,
             )
 
+        elif os_name == "Windows":
+            # Windows: Toast通知を送る（Windows 10以降）
+            from win10toast import ToastNotifier
+            toaster = ToastNotifier()
+            toaster.show_toast(title, message, duration=timeout)
+
     except Exception:
         pass  # 通知の失敗はメイン処理に影響させない
 
