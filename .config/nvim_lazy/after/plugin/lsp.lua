@@ -33,10 +33,10 @@ require('mason-lspconfig').setup({
   }
 })
 
-local null_ls = require("null-ls")
-null_ls.setup({
-  -- sources = null_sources,
-})
+-- local null_ls = require("null-ls")
+-- null_ls.setup({
+--   -- sources = null_sources,
+-- })
 
 lsp_zero.set_sign_icons({
   error = '✘',
