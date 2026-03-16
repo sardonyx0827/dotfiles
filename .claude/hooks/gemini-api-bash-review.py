@@ -139,7 +139,7 @@ SAFE_COMMANDS = [
 # -------------------------------------------------------------------
 # 危険なコマンドの拒否判定
 # -------------------------------------------------------------------
-DENY_COMMANDS = ["curl", "wget", "nc", "ssh", "shred", "dd"]
+DENY_COMMANDS = ["curl", "wget", "nc", "ssh", "shred", "dd", "rm -rf /"]
 
 
 def _split_commands(cmd: str) -> list[str]:
