@@ -89,6 +89,7 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
         elif os_name == "Windows":
             # Windows: Toast通知を送る（Windows 10以降）
             from win10toast import ToastNotifier
+
             toaster = ToastNotifier()
             toaster.show_toast(title, message, duration=timeout)
 
@@ -135,6 +136,11 @@ SAFE_COMMANDS = [
     "jest",
 ]
 
+# -------------------------------------------------------------------
+# 危険なコマンドの拒否判定
+# -------------------------------------------------------------------
+DENY_COMMANDS = ["curl", "wget", "nc", "ssh", "shred", "dd"]
+
 
 def _split_commands(cmd: str) -> list[str]:
     return [p.strip() for p in re.split(r"\s*(?:&&|\|\||[|;])\s*", cmd) if p.strip()]
@@ -144,7 +150,41 @@ def _is_safe_command(cmd: str) -> bool:
     return any(cmd == safe or cmd.startswith(safe + " ") for safe in SAFE_COMMANDS)
 
 
+def _is_deny_command(cmd: str) -> tuple[bool, str]:
+    """危険コマンドに一致するか判定し、(一致したか, 一致したコマンド名) を返す"""
+    for deny in DENY_COMMANDS:
+        if cmd == deny or cmd.startswith(deny + " "):
+            return True, deny
+    return False, ""
+
+
 sub_commands = _split_commands(command)
+
+# --- 危険コマンドの即時拒否 ---
+for sub_cmd in sub_commands:
+    matched, deny_name = _is_deny_command(sub_cmd)
+    if matched:
+        reason = f"Blocked dangerous command: '{deny_name}'"
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                }
+            )
+        )
+        with open(log_file, "w") as f:
+            f.write(f"Tool Name: {tool_name}\n")
+            f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
+            f.write("Gemini Output: DENY (pre-blocked)\n")
+        log_summary("DENY", reason)
+        notify("Gemini Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
+        sys.exit(0)
+
+# --- 安全コマンドのスキップ ---
 if sub_commands and all(_is_safe_command(c) for c in sub_commands):
     print(
         json.dumps(
