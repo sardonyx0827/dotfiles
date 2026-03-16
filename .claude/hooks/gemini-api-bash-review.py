@@ -30,7 +30,7 @@ for f in files[: max(0, excess)]:
     os.remove(os.path.join(log_dir, f))
 
 # サマリーログ（新規: 1ファイルに追記・500行でローテーション）
-summary_log = os.path.expanduser("~/.claude/logs/gemini-review.log")
+summary_log = os.path.expanduser("~/.claude/logs/gemini-bash-review.log")
 os.makedirs(os.path.dirname(summary_log), exist_ok=True)
 
 
