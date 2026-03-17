@@ -333,6 +333,193 @@ install_ai_tools() {
     fi
 }
 
+# Install linters and formatters (used by .claude/hooks/lint.sh and auto-format.sh)
+install_linters_formatters() {
+    print_info "Installing linters and formatters..."
+
+    # --- npm-based tools (cross-platform, requires Node.js) ---
+    if command_exists npm; then
+        local npm_tools=(
+            prettier   # JS/TS/JSON/CSS/HTML/MD/YAML formatter
+            eslint     # JS/TS linter
+            typescript # tsc type checker
+        )
+        for tool in "${npm_tools[@]}"; do
+            if ! command_exists "$tool" && ! npm list -g "$tool" &>/dev/null; then
+                print_info "Installing $tool via npm..."
+                npm install -g "$tool" 2>/dev/null || print_warning "Failed to install $tool"
+            else
+                print_info "$tool already installed"
+            fi
+        done
+    else
+        print_warning "npm not found, skipping npm-based tools"
+    fi
+
+    # --- pip-based tools (cross-platform, requires Python) ---
+    if command_exists pip3 || command_exists pip; then
+        local pip_cmd="pip3"
+        command_exists pip3 || pip_cmd="pip"
+
+        local pip_tools=(
+            ruff     # Python linter + formatter
+            bandit   # Python security linter
+            mypy     # Python type checker
+            autopep8 # Python formatter (fallback)
+            isort    # Python import sorter
+        )
+        for tool in "${pip_tools[@]}"; do
+            if ! command_exists "$tool"; then
+                print_info "Installing $tool via pip..."
+                $pip_cmd install --user "$tool" 2>/dev/null || print_warning "Failed to install $tool"
+            else
+                print_info "$tool already installed"
+            fi
+        done
+    else
+        print_warning "pip not found, skipping Python tools"
+    fi
+
+    # --- Platform-specific tools ---
+    case "$OS" in
+    macos)
+        local brew_tools=(
+            shellcheck   # Shell script linter
+            shfmt        # Shell script formatter
+            cppcheck     # C/C++ linter
+            clang-format # C/C++ formatter (part of llvm)
+            staticcheck  # Go advanced linter
+            checkstyle   # Java linter
+            php-cs-fixer # PHP formatter
+        )
+        for tool in "${brew_tools[@]}"; do
+            if ! brew list "$tool" &>/dev/null; then
+                print_info "Installing $tool via brew..."
+                brew install "$tool" 2>/dev/null || print_warning "Failed to install $tool"
+            else
+                print_info "$tool already installed"
+            fi
+        done
+
+        # google-java-format (brew cask or manual)
+        if ! command_exists google-java-format; then
+            brew install google-java-format 2>/dev/null || print_warning "Failed to install google-java-format"
+        fi
+
+        # Go tools (requires go)
+        if command_exists go; then
+            if ! command_exists goimports; then
+                print_info "Installing goimports..."
+                go install golang.org/x/tools/cmd/goimports@latest 2>/dev/null || print_warning "Failed to install goimports"
+            fi
+        fi
+
+        # Ruby tools
+        if command_exists gem; then
+            if ! command_exists rubocop; then
+                print_info "Installing rubocop via gem..."
+                gem install rubocop 2>/dev/null || print_warning "Failed to install rubocop"
+            fi
+        fi
+
+        # PHP tools
+        if command_exists php && ! command_exists phpstan; then
+            if command_exists composer; then
+                print_info "Installing phpstan via composer..."
+                composer global require phpstan/phpstan 2>/dev/null || print_warning "Failed to install phpstan"
+            fi
+        fi
+        ;;
+
+    ubuntu)
+        print_info "Installing APT-based linter/formatter packages..."
+        sudo apt-get install -y \
+            shellcheck \
+            cppcheck \
+            clang-format \
+            2>/dev/null || print_warning "Some APT packages failed to install"
+
+        # shfmt (snap or go install)
+        if ! command_exists shfmt; then
+            if command_exists snap; then
+                print_info "Installing shfmt via snap..."
+                sudo snap install shfmt 2>/dev/null || print_warning "Failed to install shfmt via snap"
+            elif command_exists go; then
+                print_info "Installing shfmt via go install..."
+                go install mvdan.cc/sh/v3/cmd/shfmt@latest 2>/dev/null || print_warning "Failed to install shfmt"
+            fi
+        fi
+
+        # staticcheck (go install)
+        if command_exists go; then
+            if ! command_exists staticcheck; then
+                print_info "Installing staticcheck..."
+                go install honnef.co/go/tools/cmd/staticcheck@latest 2>/dev/null || print_warning "Failed to install staticcheck"
+            fi
+            if ! command_exists goimports; then
+                print_info "Installing goimports..."
+                go install golang.org/x/tools/cmd/goimports@latest 2>/dev/null || print_warning "Failed to install goimports"
+            fi
+        fi
+
+        # Ruby tools
+        if command_exists gem; then
+            if ! command_exists rubocop; then
+                print_info "Installing rubocop via gem..."
+                gem install rubocop 2>/dev/null || print_warning "Failed to install rubocop"
+            fi
+        fi
+
+        # PHP tools
+        if command_exists php && ! command_exists phpstan; then
+            if command_exists composer; then
+                print_info "Installing phpstan via composer..."
+                composer global require phpstan/phpstan 2>/dev/null || print_warning "Failed to install phpstan"
+            fi
+        fi
+        if ! command_exists php-cs-fixer; then
+            if command_exists composer; then
+                print_info "Installing php-cs-fixer via composer..."
+                composer global require friendsofphp/php-cs-fixer 2>/dev/null || print_warning "Failed to install php-cs-fixer"
+            fi
+        fi
+
+        # checkstyle / google-java-format (manual install if Java available)
+        if command_exists java; then
+            print_info "Java detected. checkstyle and google-java-format may need manual installation."
+            print_info "  checkstyle: https://checkstyle.sourceforge.io/"
+            print_info "  google-java-format: https://github.com/google/google-java-format"
+        fi
+        ;;
+
+    windows)
+        print_warning "Windows detected. Install the following tools manually or via package manager:"
+        echo "  npm tools (cross-platform): prettier, eslint, typescript"
+        echo "  pip tools (cross-platform): ruff, bandit, mypy, autopep8, isort"
+        echo "  Shell: shellcheck (scoop install shellcheck), shfmt (scoop install shfmt)"
+        echo "  C/C++: cppcheck (scoop install cppcheck), clang-format (via LLVM)"
+        echo "  Go: staticcheck, goimports (go install)"
+        echo "  Ruby: rubocop (gem install rubocop)"
+        echo "  PHP: phpstan, php-cs-fixer (composer global require)"
+        echo "  Java: checkstyle, google-java-format"
+
+        # npm/pip tools are still installed above (cross-platform)
+        # Try scoop if available
+        if command_exists scoop; then
+            print_info "Scoop detected, installing available tools..."
+            local scoop_tools=(shellcheck shfmt cppcheck)
+            for tool in "${scoop_tools[@]}"; do
+                if ! command_exists "$tool"; then
+                    scoop install "$tool" 2>/dev/null || print_warning "Failed to install $tool via scoop"
+                fi
+            done
+        fi
+        ;;
+    esac
+
+    print_success "Linters and formatters installation completed"
+}
+
 # Change default shell to zsh
 change_shell() {
     if [ "$SHELL" != "$(which zsh)" ]; then
@@ -376,6 +563,7 @@ main() {
     install_wezterm
     install_fonts
     install_nodejs
+    install_linters_formatters
     install_oh_my_zsh
     install_vim_plug
 
