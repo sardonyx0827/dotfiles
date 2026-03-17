@@ -548,9 +548,9 @@
         "statusBar.background": "#181818",
         "statusBar.noFolderBackground": "#181818",
         "statusBar.debuggingBackground": "#181818",
-        "statusBar.foreground": "#7aa2f7",
+        "statusBar.foreground": "#ff9e64",
         "statusBar.debuggingBorder": "#191724",
-        "statusBar.debuggingForeground": "#7aa2f7"
+        "statusBar.debuggingForeground": "#ff9e64"
     },
 
     // Github Copilot settings
@@ -616,6 +616,9 @@
     "[json]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
+    "[jsonc]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
 
     // terminal
     "terminal.integrated.defaultProfile.linux": "zsh",
@@ -635,9 +638,6 @@
     "settingsSync.keybindingsPerPlatform": false,
     "claudeCode.preferredLocation": "sidebar",
     "workbench.colorTheme": "Rosé Pine",
-    "[jsonc]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
-    },
     "chat.disableAIFeatures": true,
     "claudeCode.selectedModel": "default"
 }
