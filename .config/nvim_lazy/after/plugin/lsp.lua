@@ -21,7 +21,7 @@ lsp_zero.on_attach(function(_, bufnr)
   vim.keymap.set('n', '<leader>ca', vim.lsp.buf.code_action, { desc = 'code action' })
 end)
 
-require('mason').setup({})
+require('mason').setup()
 require('mason-lspconfig').setup({
   ensure_installed = {},
   handlers = {
@@ -32,11 +32,6 @@ require('mason-lspconfig').setup({
     end,
   }
 })
-
--- local null_ls = require("null-ls")
--- null_ls.setup({
---   -- sources = null_sources,
--- })
 
 lsp_zero.set_sign_icons({
   error = '✘',
