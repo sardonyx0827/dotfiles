@@ -637,5 +637,6 @@
     "workbench.colorTheme": "Rosé Pine",
     "[jsonc]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
-    }
+    },
+    "chat.disableAIFeatures": true
 }

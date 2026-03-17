@@ -15,14 +15,6 @@ return {
     },
     { 'rafamadriz/friendly-snippets' },
     { 'onsails/lspkind.nvim' },
-    {
-      "zbirenbaum/copilot-cmp",
-      event = { "InsertEnter", "LspAttach" },
-      fix_pairs = true,
-      config = function()
-        require("copilot_cmp").setup()
-      end
-    },
   },
 
 }
