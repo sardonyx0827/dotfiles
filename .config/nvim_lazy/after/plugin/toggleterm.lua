@@ -29,7 +29,8 @@ vim.keymap.set("n", "<leader>sh6", ":ToggleTerm 6direction=vertical size=80<cr>"
   { desc = "ToggleTerm - toggle session 6" })
 vim.keymap.set("n", "<leader>shf", ":ToggleTerm direction=float<cr>", { desc = "ToggleTerm - toggle session 1" })
 vim.keymap.set("n", "<leader>shb", ":ToggleTerm direction=horizontal<cr>", { desc = "ToggleTerm - toggle session 1" })
-
+vim.keymap.set("n", "<leader>shc", ":ToggleTerm 5direction=vertical size=80<cr>claude<cr>",
+  { desc = "ToggleTerm - toggle session 5 and use claude code" })
 local Terminal = require("toggleterm.terminal").Terminal
 local toggle_docker = Terminal:new({
   cmd = "lazydocker",
@@ -43,6 +44,18 @@ end
 
 vim.api.nvim_set_keymap("n", "<leader>td", "<cmd>lua _docker_toggle()<CR>",
   { noremap = true, silent = true, desc = "docker - CUI tool" })
+
+-- claude code
+local toggle_claude = Terminal:new({
+  cmd = "claude",
+  direction = "float",
+  hidden = true
+})
+function _claude_toggle()
+  toggle_claude:toggle()
+end
+vim.api.nvim_set_keymap("n", "<leader>tc", "<cmd>lua _claude_toggle()<CR>",
+  { noremap = true, silent = true, desc = "claude - CUI tool" })
 
 -- gemini cli
 local toggle_gemini = Terminal:new({
