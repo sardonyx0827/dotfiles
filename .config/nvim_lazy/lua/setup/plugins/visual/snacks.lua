@@ -49,6 +49,6 @@ return {
     { "<leader>.",  function() Snacks.scratch() end, desc = "Toggle Scratch Buffer" },
     { "]]",         function() Snacks.words.jump(vim.v.count1) end, desc = "Next Reference", mode = { "n", "t" } },
     { "[[",         function() Snacks.words.jump(-vim.v.count1) end, desc = "Prev Reference", mode = { "n", "t" } },
-    -- { "<leader>e",  function() Snacks.explorer() end, desc = "Toggle Explorer" },
+    { "<leader>e",  function() Snacks.explorer() end, desc = "Toggle Explorer" },
   }
 }
