@@ -18,7 +18,7 @@ mcp = FastMCP("gemini-consultant")
 # 深い推論が必要な設計相談 → Pro
 # 局所的・高頻度なチェック → Flash
 DEEP_MODEL = os.environ.get("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
-LIGHT_MODEL = os.environ.get("GEMINI_FLASH_MODEL", "gemini-3-flash")
+LIGHT_MODEL = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-latest")
 
 # -------------------------------------------------------------------
 # ログ設定
@@ -166,9 +166,7 @@ def call_gemini(
             with urllib.request.urlopen(req, timeout=90) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
                 parts = (
-                    body.get("candidates", [{}])[0]
-                    .get("content", {})
-                    .get("parts", [])
+                    body.get("candidates", [{}])[0].get("content", {}).get("parts", [])
                 )
                 return "".join(p.get("text", "") for p in parts)
         except (urllib.error.URLError, TimeoutError) as e:
