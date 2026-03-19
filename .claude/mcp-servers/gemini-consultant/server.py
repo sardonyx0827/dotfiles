@@ -50,6 +50,7 @@ def log_entry(tool: str, status: str, prompt: str, response: str = "") -> None:
         --- [timestamp] STATUS | tool ---
         [PROMPT]
         ...プロンプト全文...
+
         [RESPONSE]
         ...レスポンス全文（省略なし）...
         ---
@@ -66,7 +67,7 @@ def log_entry(tool: str, status: str, prompt: str, response: str = "") -> None:
 
     if response:
         lines += [
-            "[RESPONSE]\n",
+            "\n[RESPONSE]\n",
             response + "\n",
         ]
 
