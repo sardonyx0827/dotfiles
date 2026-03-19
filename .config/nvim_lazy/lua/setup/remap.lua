@@ -7,10 +7,21 @@ vim.keymap.set("v", "<", "<gv")
 -- In visual mode, shift text right and reselect
 vim.keymap.set("v", ">", ">gv")
 -- In normal mode, scroll down half a page and center
-vim.keymap.set("n", "<C-d>", "<C-d>zz")
+-- vim.keymap.set("n", "<C-d>", "<C-d>zz")
+vim.keymap.set("n", "<C-d>", function()
+  vim.cmd("normal! \x04")
+  vim.schedule(function()
+    vim.cmd("normal! zz")
+  end)
+end, { desc = "Scroll down and center" })
 -- In normal mode, scroll up half a page and center
-vim.keymap.set("n", "<C-u>", "<C-u>zz")
-
+-- vim.keymap.set("n", "<C-u>", "<C-u>zz")
+vim.keymap.set("n", "<C-u>", function()
+  vim.cmd("normal! \x15")
+  vim.schedule(function()
+    vim.cmd("normal! zz")
+  end)
+end, { desc = "Scroll up and center" })
 -- search
 -- In normal mode, find next match and center
 vim.keymap.set("n", "n", "nzzzv")
