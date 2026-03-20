@@ -12,11 +12,11 @@ local create_file_path_list_from_current_dir = function()
     "dist/",
     "build/",
     "__pycache__/",
-    ".venv/",
     "env/",
     ".env/",
     "venv/",
     ".venv/",
+    ".ruff_cache/",
   }
   -- delete ignored file paths
   for _, ignore_path in ipairs(ignore_file_list) do
