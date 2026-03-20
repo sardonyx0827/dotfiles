@@ -78,3 +78,12 @@ vim.keymap.set("i", "<C-l>", "<C-o>l")
 -- move cursor in command mode
 vim.keymap.set("c", "<C-b>", "<Left>")
 vim.keymap.set("c", "<C-f>", "<Right>")
+
+-- toggle mouse
+vim.keymap.set('n', '<leader>tm', function()
+  if vim.o.mouse == 'a' then
+    vim.opt.mouse = ''
+  else
+    vim.opt.mouse = 'a'
+  end
+end, { desc = 'Toggle mouse' })
