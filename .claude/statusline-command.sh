@@ -29,31 +29,32 @@ SUBTLE='\033[38;2;144;140;170m' # #908caa  補助テキスト
 input=$(cat)
 
 # --- フィールド取得 ---
-cwd=$(echo "$input" | jq -r '.workspace.current_dir      // ""')
-ctx_pct_raw=$(echo "$input" | jq -r '.context_window.used_percentage // 0')
-ctx_pct=$(echo "$ctx_pct_raw" | cut -d. -f1)
-model_raw=$(echo "$input" | jq -r '.model.display_name          // ""')
-session_id=$(echo "$input" | jq -r '.session_id                 // ""')
+cwd=$(echo "$input" | jq -r '.workspace.current_dir // ""')
+ctx_pct_raw=$(echo "$input" | jq -r '.context_window.used_percentage // "null"')
+model_raw=$(echo "$input" | jq -r '.model.display_name // ""')
 
 # --- ディレクトリ表示 (~/... 短縮) ---
 short_dir="${cwd/#$HOME/\~}"
-# 3階層より深い場合は末尾2階層のみ表示
 dir_display=$(echo "$short_dir" | awk -F'/' '{
     if (NF > 3) printf "~/../%s/%s", $(NF-1), $NF
     else        print $0
 }')
 
-# --- コンテキスト使用率の色 ---
-if [ "$ctx_pct" -lt 50 ]; then
-  ctx_color="$FOAM"
-elif [ "$ctx_pct" -lt 80 ]; then
-  ctx_color="$GOLD"
-else
-  ctx_color="$LOVE"
+# --- コンテキスト使用率 ---
+ctx_display=""
+if [ "$ctx_pct_raw" != "null" ] && [ -n "$ctx_pct_raw" ]; then
+  ctx_pct=$(echo "$ctx_pct_raw" | cut -d. -f1)
+  if [ "$ctx_pct" -lt 50 ]; then
+    ctx_color="$FOAM"
+  elif [ "$ctx_pct" -lt 80 ]; then
+    ctx_color="$GOLD"
+  else
+    ctx_color="$LOVE"
+  fi
+  ctx_display="${ctx_color}ctx ${ctx_pct}%${RESET}"
 fi
 
 # --- モデル名の短縮 ---
-# "claude-sonnet-4-6" -> "Sonnet 4.6" など見やすく整形
 model_display=$(echo "$model_raw" |
   sed 's/claude-//I' |
   sed 's/-/ /g' |
@@ -82,15 +83,43 @@ if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
   fi
 fi
 
-# --- セッションコスト (JSONL から集計) ---
-cost_str="-.----"
-if [ -n "$session_id" ]; then
-  # セッション ID を含む JSONL ファイルを探す
-  jsonl_file=$(grep -rl "\"$session_id\"" ~/.claude/projects/ 2>/dev/null | head -1)
-  if [ -n "$jsonl_file" ]; then
-    cost=$(jq -r 'select(.costUSD != null) | .costUSD' "$jsonl_file" 2>/dev/null |
-      awk '{s+=$1} END {printf "%.4f", s+0}')
-    cost_str="\$${cost}"
+# --- コスト (JSON から直接取得) ---
+cost_raw=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
+cost_str=$(awk "BEGIN {printf \"\$%.4f\", $cost_raw}")
+
+# --- レート制限 (5時間ウィンドウ) ---
+# キー名: five_hour / resets_at: Unix タイムスタンプ (整数)
+rate_info=""
+rl_pct_raw=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // "null"' 2>/dev/null)
+rl_resets_ts=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null)
+
+if [ "$rl_pct_raw" != "null" ] && [ -n "$rl_pct_raw" ]; then
+  rl_pct=$(echo "$rl_pct_raw" | cut -d. -f1)
+
+  if [ "$rl_pct" -lt 50 ]; then
+    rl_color="$FOAM"
+  elif [ "$rl_pct" -lt 80 ]; then
+    rl_color="$GOLD"
+  else
+    rl_color="$LOVE"
+  fi
+
+  # Unix タイムスタンプ → ローカル時刻 HH:MM
+  reset_display=""
+  if [ -n "$rl_resets_ts" ]; then
+    if date --version >/dev/null 2>&1; then
+      # GNU date (Linux)
+      reset_display=$(date -d "@${rl_resets_ts}" '+%H:%M' 2>/dev/null)
+    else
+      # BSD date (macOS)
+      reset_display=$(date -r "$rl_resets_ts" '+%H:%M' 2>/dev/null)
+    fi
+  fi
+
+  if [ -n "$reset_display" ]; then
+    rate_info="${rl_color}rl ${rl_pct}% ${RESET}${SUBTLE}↺${reset_display}${RESET}"
+  else
+    rate_info="${rl_color}rl ${rl_pct}% ${RESET}"
   fi
 fi
 
@@ -100,12 +129,12 @@ SEP="${MUTED} | ${RESET}"
 # --- 出力を組み立て ---
 parts=()
 parts+=("${PINE}${dir_display}${RESET}")
-[ -n "$git_info" ] && parts+=("${git_info}")
+[ -n "$git_info" ]    && parts+=("${git_info}")
 parts+=("${ROSE}${model_display}${RESET}")
-parts+=("${ctx_color}ctx ${ctx_pct}%${RESET}")
+[ -n "$ctx_display" ] && parts+=("${ctx_display}")
+[ -n "$rate_info" ]   && parts+=("${rate_info}")
 parts+=("${GOLD}${cost_str}${RESET}")
 
-# 配列を区切り文字で結合
 result=""
 for i in "${!parts[@]}"; do
   [ "$i" -gt 0 ] && result+="$SEP"
