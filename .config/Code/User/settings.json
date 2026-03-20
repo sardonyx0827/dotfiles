@@ -17,7 +17,11 @@
                 "c"
             ],
             "commands": [
-                "claude-vscode.sidebar.open"
+                "workbench.action.createTerminalEditorSide",
+                {
+                    "command": "workbench.action.terminal.sendSequence",
+                    "args": { "text": "claude\n" }
+                }
             ]
         },{
             "before": [
@@ -393,20 +397,20 @@
                 // close tabs without current buffer
                 "workbench.action.closeOtherEditors"
             ]
+        },{
+            "before": [
+                "<leader>",
+                "s",
+                "h"
+            ],
+            "commands": [
+                "workbench.action.createTerminalEditorSide",
+            ]
         }
     ],
 
     "vim.visualModeKeyBindingsNonRecursive": [
         {
-            "before": [
-                "<leader>",
-                "c",
-                "c"
-            ],
-            "commands": [
-                "claude-code.runClaude"
-            ]
-        },{
             "before": [
                 "<leader>",
                 "c",
