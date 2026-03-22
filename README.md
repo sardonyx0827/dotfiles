@@ -43,8 +43,6 @@
 [codex-url]: https://openai.com/
 [gemini-shield]: https://img.shields.io/badge/Gemini-8E75B2?style=for-the-badge&logo=google&logoColor=white
 [gemini-url]: https://ai.google.dev/
-[copilot-shield]: https://img.shields.io/badge/GitHub_Copilot-181717?style=for-the-badge&logo=githubcopilot&logoColor=white
-[copilot-url]: https://github.com/features/copilot
 
 <!-- Languages -->
 
@@ -80,7 +78,6 @@
 [![Claude Code][claude-shield]][claude-url]
 [![Codex][codex-shield]][codex-url]
 [![Gemini][gemini-shield]][gemini-url]
-[![GitHub Copilot][copilot-shield]][copilot-url]
 
 ### プログラミング言語
 
@@ -379,12 +376,6 @@ npm install -g @openai/codex
 npm install -g @google/gemini-cli
 ```
 
-### GitHub Copilot CLI
-
-```bash
-npm install -g @github/copilot
-```
-
 ### 一括更新
 
 ```bash
@@ -492,7 +483,6 @@ tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペ
 # - Claude Code
 # - Codex
 # - Gemini CLI
-# - GitHub Copilot CLI
 ```
 
 ## 📝 カスタマイズ
@@ -589,7 +579,6 @@ nvim  # lazy.nvimが自動的に再インストールされる
 ### AI Tools
 
 - [Claude Code](https://docs.anthropic.com/claude-code)
-- [GitHub Copilot](https://github.com/features/copilot)
 - [Gemini API](https://ai.google.dev/)
 
 ## 📄 ライセンス
