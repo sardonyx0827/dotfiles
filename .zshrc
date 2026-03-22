@@ -160,15 +160,14 @@ alias imgcat="wezterm imgcat"
 # restart ibus
 alias restart_ibus="ibus-daemon -drx"
 
+# typo
+alias sl="ls"
+
 # use nvim
 alias v="nvim"
 alias vim="nvim"
 alias vimdiff="nvim -d"
 alias view="nvim -R"
-
-# use gh copilots
-# eval "$(gh copilot alias -- zsh)"
-# alias ghs="gh copilot suggest"
 
 # or 'docker exec MyContainer nvim --headless --listen 0.0.0.0:22222'
 alias nvim_listen="nvim --headless --listen 0.0.0.0:22222"
@@ -181,9 +180,6 @@ alias cw="cd ~/work"
 alias dsollama="cd ~/work/sandbox/ollama/ && docker compose up -d && cd -"
 alias deollama="cd ~/work/sandbox/ollama/ && docker compose down && cd -"
 
-# vibe kanban
-alias kanban="npx vibe-kanban"
-
 # gimp
 alias gimp="/Applications/GIMP.app/Contents/MacOS/gimp"
 
@@ -192,6 +188,9 @@ export PYENV_ROOT="$HOME/.pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
 eval "$(pyenv init --path)"
 eval "$(pyenv init -)"
+
+# rust environment
+export PATH="$HOME/.cargo/bin:$PATH"
 
 eval "$(fzf --zsh)"
 
@@ -224,16 +223,6 @@ fpath=(~/.docker/completions $fpath)
 autoload -Uz compinit
 compinit
 # End of Docker CLI completions
-
-# yazi settings
-function y() {
-  local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
-  yazi "$@" --cwd-file="$tmp"
-  if cwd="$(command cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
-    builtin cd -- "$cwd"
-  fi
-  rm -f -- "$tmp"
-}
 
 # ai tools
 ## update
