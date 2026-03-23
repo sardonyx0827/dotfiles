@@ -40,7 +40,7 @@
             ],
             "commands": [
                 "claude-vscode.editor.open"
-            ],
+            ]
         }, {
             "before": [
                 "<leader>",
@@ -81,7 +81,7 @@
             "before": [
                 "<leader>",
                 "s",
-                "f",
+                "f"
             ],
             // find in files
             "commands": [
@@ -100,7 +100,7 @@
             "before": [
                 "<leader>",
                 "g",
-                "r",
+                "r"
             ],
             // find in files
             "commands": [
@@ -110,7 +110,7 @@
             "before": [
                 "<leader>",
                 "g",
-                "c",
+                "c"
             ],
             // open source control
             "commands": [
@@ -120,7 +120,7 @@
             "before": [
                 "<leader>",
                 "g",
-                "d",
+                "d"
             ],
             // open git diff
             "commands": [
@@ -129,7 +129,7 @@
         },{
             "before": [
                 "<leader>",
-                " ",
+                " "
             ],
             // disable search highlight
             "commands": [
@@ -137,14 +137,14 @@
             ]
         },{
             "before": [
-                "u",
+                "u"
             ],
             "commands": [
                 "undo"
             ]
         },{
             "before": [
-                "<C-r>",
+                "<C-r>"
             ],
             "commands": [
                 "redo"
@@ -153,7 +153,7 @@
             "before": [
                 "<leader>",
                 "r",
-                "n",
+                "n"
             ],
             // search and replace
             "commands": [
@@ -163,7 +163,7 @@
             "before": [
                 "<leader>",
                 "g",
-                "d",
+                "d"
             ],
             // git diff on current file
             "commands": [
@@ -183,7 +183,7 @@
             "before": [
                 "<leader>",
                 "f",
-                "f",
+                "f"
             ],
             // format document
             "commands": [
@@ -191,7 +191,7 @@
             ]
         },{
             "before": [
-                "K",
+                "K"
             ],
             // definition preview
             "commands": [
@@ -199,7 +199,7 @@
             ]
         },{
             "before": [
-                "<C-t>",
+                "<C-t>"
             ],
             // jump to definition
             "commands": [
@@ -209,7 +209,7 @@
             "before": [
                 "<leader>",
                 "b",
-                "f",
+                "f"
             ],
             // instead of Buffers
             "commands": [
@@ -219,17 +219,17 @@
             "before": [
                 "<leader>",
                 "l",
-                "s",
+                "s"
             ],
             // instead of Buffers
             "commands": [
                 "workbench.action.showAllEditors"
-            ],
+            ]
         },{
             "before": [
                 "<leader>",
                 "s",
-                "l",
+                "l"
             ],
             // instead of Buffers
             "commands": [
@@ -239,7 +239,7 @@
             "before": [
                 "<leader>",
                 "l",
-                "l",
+                "l"
             ],
             // instead of Buffers
             "commands": [
@@ -249,7 +249,7 @@
             "before": [
                 "<leader>",
                 "x",
-                "p",
+                "p"
             ],
             // instead of Buffers
             "commands": [
@@ -259,7 +259,7 @@
             "before": [
                 "g",
                 "c",
-                "c",
+                "c"
             ],
             // toggle comment
             "commands": [
@@ -269,7 +269,7 @@
             "before": [
                 "<leader>",
                 "x",
-                "w",
+                "w"
             ],
             // display all problems
             "commands": [
@@ -279,7 +279,7 @@
             "before": [
                 "<leader>",
                 "x",
-                "x",
+                "x"
             ],
             // display all problems
             "commands": [
@@ -289,7 +289,7 @@
             "before": [
                 "<leader>",
                 "x",
-                "n",
+                "n"
             ],
             // jump to next problem
             "commands": [
@@ -299,7 +299,7 @@
             "before": [
                 "<leader>",
                 "w",
-                "w",
+                "w"
             ],
             "commands": [
                 "workbench.action.compareEditor.focusOtherSide"
@@ -439,14 +439,14 @@
             ]
         },{
             "before": [
-                ">",
+                ">"
             ],
             "commands": [
                 "editor.action.indentLines"
             ]
         },{
             "before": [
-                "<",
+                "<"
             ],
             "commands": [
                 "editor.action.outdentLines"
@@ -454,7 +454,7 @@
         },{
             "before": [
                 "g",
-                "c",
+                "c"
             ],
             // toggle comment
             "commands": [
@@ -463,13 +463,13 @@
         },{
             "before": [
                 "<C-w>",
-                "q",
+                "q"
             ],
             "commands": [
                 // close editor
                 "workbench.action.closeActiveEditor"
             ]
-        },
+        }
     ],
 
     "vim.insertModeKeyBindingsNonRecursive": [
