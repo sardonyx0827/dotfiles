@@ -7,7 +7,7 @@ return {
     provider = "copilot",
     providers = {
       copilot = {
-        model = "gpt-5.4-mini",
+        model = "gpt-5-mini",
       },
     },
     behaviour = {
