@@ -404,7 +404,7 @@
                 "h"
             ],
             "commands": [
-                "workbench.action.createTerminalEditorSide",
+                "workbench.action.createTerminalEditorSide"
             ]
         }
     ],
