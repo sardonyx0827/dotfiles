@@ -95,13 +95,13 @@
     },{
         // toggle copilot chat side window
         "key": "ctrl+shift+i",
-        "command": "workbench.panel.chat",
+        "command": "workbench.panel.chat"
     },{
         "key": "ctrl+shift+o",
-        "command": "claude-code.runClaude",
+        "command": "claude-code.runClaude"
     },{
         "key": "ctrl+a ctrl+n",
-        "command": "claude-code.runClaude",
+        "command": "claude-code.runClaude"
     },{
         // delete opened buffer
         "key": "alt+x",
@@ -287,7 +287,7 @@
         // move to left editor group from right side panels
         // move to editor from right side panels
         "key": "ctrl+w h",
-        "command": "workbench.action.focusPreviousGroup",
+        "command": "workbench.action.focusPreviousGroup"
     },{
         // move to bottom editor group
         "key": "ctrl+w j",
@@ -371,11 +371,11 @@
     },{
         // window size increase height
         "key": "ctrl+right",
-        "command": "workbench.action.increaseViewSize",
+        "command": "workbench.action.increaseViewSize"
     },{
         // window size decrease height
         "key": "ctrl+left",
-        "command": "workbench.action.decreaseViewSize",
+        "command": "workbench.action.decreaseViewSize"
     },{
         "key": "ctrl+up",
         "command": "workbench.action.increaseViewHeight"
