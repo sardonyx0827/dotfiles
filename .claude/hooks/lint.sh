@@ -64,26 +64,35 @@ case "$EXTENSION" in
 
 # JavaScript / TypeScript
 js | jsx | ts | tsx)
-  if command -v eslint >/dev/null 2>&1; then
+  PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
+
+  # ESLint設定ファイルの存在確認
+  HAS_ESLINT_CONFIG=false
+  if [ -n "$PROJECT_ROOT" ]; then
+    for cfg in eslint.config.js eslint.config.mjs eslint.config.cjs .eslintrc .eslintrc.js .eslintrc.json .eslintrc.yml; do
+      [ -f "$PROJECT_ROOT/$cfg" ] && HAS_ESLINT_CONFIG=true && break
+    done
+  fi
+
+  if $HAS_ESLINT_CONFIG && command -v eslint >/dev/null 2>&1; then
     echo "  → Running ESLint..."
-    OUTPUT=$(eslint "$FILE_PATH" 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(eslint "$FILE_PATH" 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[ESLint]\n${OUTPUT}\n"
     else
       echo "  ✅ ESLint passed"
     fi
+  elif ! $HAS_ESLINT_CONFIG; then
+    echo "  ⚠️  ESLint config not found, skipping"
   else
     echo "  ⚠️  ESLint not found"
   fi
 
   # TypeScriptの型チェック（tsconfig.jsonが存在する場合のみ）
   if [[ "$EXTENSION" == "ts" || "$EXTENSION" == "tsx" ]]; then
-    PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
     if [ -n "$PROJECT_ROOT" ] && [ -f "$PROJECT_ROOT/tsconfig.json" ]; then
       if command -v tsc >/dev/null 2>&1; then
         echo "  → Running tsc (type check)..."
-        OUTPUT=$(cd "$PROJECT_ROOT" && tsc --noEmit 2>&1)
-        if [ $? -ne 0 ]; then
+        if ! OUTPUT=$(cd "$PROJECT_ROOT" && tsc --noEmit 2>&1); then
           # 変更ファイルに関連するエラーのみ抽出
           RELATED=$(echo "$OUTPUT" | grep "$BASENAME")
           if [ -n "$RELATED" ]; then
@@ -102,8 +111,7 @@ py)
   # ruff: flake8/isort/pyupgrade互換の高速オールインワンlinter
   if command -v ruff >/dev/null 2>&1; then
     echo "  → Running ruff check..."
-    OUTPUT=$(ruff check "$FILE_PATH" 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(ruff check "$FILE_PATH" 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[ruff]\n${OUTPUT}\n"
     else
       echo "  ✅ ruff passed"
@@ -116,8 +124,7 @@ py)
   if command -v bandit >/dev/null 2>&1; then
     echo "  → Running bandit (security)..."
     # -ll: 中程度以上の重大度のみ報告
-    OUTPUT=$(bandit -ll -q "$FILE_PATH" 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(bandit -ll -q "$FILE_PATH" 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[bandit - security]\n${OUTPUT}\n"
     else
       echo "  ✅ bandit passed"
@@ -135,8 +142,7 @@ py)
   fi
   if $HAS_MYPY_CONFIG && command -v mypy >/dev/null 2>&1; then
     echo "  → Running mypy (type check)..."
-    OUTPUT=$(mypy "$FILE_PATH" --ignore-missing-imports 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(mypy "$FILE_PATH" --ignore-missing-imports 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[mypy]\n${OUTPUT}\n"
     else
       echo "  ✅ mypy passed"
@@ -167,8 +173,7 @@ rs)
 go)
   if command -v go >/dev/null 2>&1; then
     echo "  → Running go vet..."
-    OUTPUT=$(go vet "$FILE_PATH" 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(go vet "$FILE_PATH" 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[go vet]\n${OUTPUT}\n"
     else
       echo "  ✅ go vet passed"
@@ -178,8 +183,7 @@ go)
   # staticcheck: go vet より高度な解析
   if command -v staticcheck >/dev/null 2>&1; then
     echo "  → Running staticcheck..."
-    OUTPUT=$(staticcheck "$FILE_PATH" 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(staticcheck "$FILE_PATH" 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[staticcheck]\n${OUTPUT}\n"
     else
       echo "  ✅ staticcheck passed"
@@ -232,8 +236,7 @@ rb)
   # ここでは修正できなかった残存エラーをClaudeにフィードバック
   if command -v rubocop >/dev/null 2>&1; then
     echo "  → Running rubocop (lint only)..."
-    OUTPUT=$(rubocop --no-color "$FILE_PATH" 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(rubocop --no-color "$FILE_PATH" 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[rubocop]\n${OUTPUT}\n"
     else
       echo "  ✅ rubocop passed"
@@ -248,8 +251,7 @@ php)
   # phpstan: 型推論ベースの高精度静的解析
   if command -v phpstan >/dev/null 2>&1; then
     echo "  → Running phpstan..."
-    OUTPUT=$(phpstan analyse "$FILE_PATH" --no-progress 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(phpstan analyse "$FILE_PATH" --no-progress 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[phpstan]\n${OUTPUT}\n"
     else
       echo "  ✅ phpstan passed"
@@ -257,8 +259,7 @@ php)
   # php -l: 構文チェックのみ（フォールバック）
   elif command -v php >/dev/null 2>&1; then
     echo "  → Running php -l (syntax check)..."
-    OUTPUT=$(php -l "$FILE_PATH" 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(php -l "$FILE_PATH" 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[php syntax]\n${OUTPUT}\n"
     else
       echo "  ✅ php syntax OK"
@@ -272,8 +273,7 @@ php)
 sh | bash)
   if command -v shellcheck >/dev/null 2>&1; then
     echo "  → Running shellcheck..."
-    OUTPUT=$(shellcheck "$FILE_PATH" 2>&1)
-    if [ $? -ne 0 ]; then
+    if ! OUTPUT=$(shellcheck "$FILE_PATH" 2>&1); then
       LINT_ERRORS="${LINT_ERRORS}[shellcheck]\n${OUTPUT}\n"
     else
       echo "  ✅ shellcheck passed"
