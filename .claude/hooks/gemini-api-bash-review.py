@@ -245,6 +245,9 @@ payload = json.dumps(
         "generationConfig": {
             "maxOutputTokens": 256,
             "temperature": 0.0,
+            "thinkingConfig": {
+                "thinkingLevel": "minimal"
+            }
         },
     }
 ).encode("utf-8")
