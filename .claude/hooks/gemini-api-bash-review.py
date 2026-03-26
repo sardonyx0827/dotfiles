@@ -1,10 +1,10 @@
 # ~.claude/hooks/gemini-api-review.py
-import os
-import sys
-import re
 import json
-import subprocess
+import os
 import platform
+import re
+import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -19,7 +19,7 @@ command = tool_input.get("command", "")
 # ログ設定
 # -------------------------------------------------------------------
 # 詳細ログ（既存: コマンドごとに1ファイル）
-log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/gemini-api-review"
+log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/gemini-api-review"  # nosec B108
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f"bash_cmd_{int(time.time())}.log")
 
@@ -237,7 +237,7 @@ prompt = (
     '安全なら "ALLOW"、危険なら "DENY: 理由"、確認が必要なら"ASK" とだけ答えてください。'
 )
 
-model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 payload = json.dumps(
     {
@@ -245,7 +245,6 @@ payload = json.dumps(
         "generationConfig": {
             "maxOutputTokens": 256,
             "temperature": 0.0,
-            "thinkingConfig": {"thinkingLevel": "MINIMAL"},
         },
     }
 ).encode("utf-8")
@@ -258,7 +257,7 @@ try:
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # nosec: B310
         body = json.loads(resp.read().decode("utf-8"))
         gemini_output = (
             body.get("candidates", [{}])[0]
