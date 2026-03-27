@@ -8,6 +8,7 @@
     "pr": ""
   },
   "permissions": {
+    "defaultMode": "auto",
     "allow": [
       "Read",
       "Edit",
@@ -221,6 +222,6 @@
   },
   "autoUpdatesChannel": "latest",
   "voiceEnabled": false,
-  "teammateMode": "tmux",
-  "autoMemoryEnabled": false
+  "autoMemoryEnabled": false,
+  "teammateMode": "tmux"
 }
