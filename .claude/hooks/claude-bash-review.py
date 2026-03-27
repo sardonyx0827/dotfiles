@@ -1,6 +1,7 @@
 # ~/.claude/hooks/claude-review.py
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -13,7 +14,7 @@ command = tool_input.get("command", "")
 
 # /tmp/claude_hooks/logs/PreToolUse/Bash/claude-review ディレクトリがなければ作成
 # ログには、ツール名、ツール入力、Claudeの出力を保存
-log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/claude-review"
+log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/claude-review"  # nosec B108
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f"bash_cmd_{int(time.time())}.log")
 
@@ -59,16 +60,26 @@ SAFE_COMMANDS = [
     "vitest",
     "jest",
 ]
-# コマンドが安全なものから始まる場合は、Claudeのレビューをスキップして許可する(前方一致)
-if any(command.startswith(safe + " ") for safe in SAFE_COMMANDS):
+
+
+def _split_commands(cmd: str) -> list[str]:
+    return [p.strip() for p in re.split(r"\s*(?:&&|\|\||[|;])\s*", cmd) if p.strip()]
+
+
+def _is_safe_command(cmd: str) -> bool:
+    return any(cmd == safe or cmd.startswith(safe + " ") for safe in SAFE_COMMANDS)
+
+
+sub_commands = _split_commands(command)
+# すべてのサブコマンドが安全な場合のみスキップする
+if sub_commands and all(_is_safe_command(c) for c in sub_commands):
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
-                    "permissionDecisionReason":
-                        "Safe command, skipped Claude review",
+                    "permissionDecisionReason": "Safe command, skipped Claude review",
                 }
             }
         )
@@ -102,9 +113,8 @@ if result.returncode != 0:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
-                    "permissionDecisionReason":
-                        "Error during review, skipped review: "
-                        + result.stderr,
+                    "permissionDecisionReason": "Error during review, skipped review: "
+                    + result.stderr,
                 }
             }
         )
@@ -134,14 +144,13 @@ elif "ASK" in result.stdout:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
-                    "permissionDecisionReason":
-                    "Claude requires confirmation: " + result.stdout,
+                    "permissionDecisionReason": "Claude requires confirmation: "
+                    + result.stdout,
                 }
             }
         )
     )
 else:
-
     print(
         json.dumps(
             {
