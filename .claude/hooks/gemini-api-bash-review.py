@@ -238,63 +238,81 @@ prompt = (
 )
 
 model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
-url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-payload = json.dumps(
-    {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": 256,
-            "temperature": 0.0,
-            "thinkingConfig": {
-                "thinkingLevel": "minimal"
-            }
-        },
-    }
-).encode("utf-8")
+model_fallback = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-latest")
 
-gemini_output = ""
-try:
+
+def _build_payload(target_model: str) -> tuple[str, bytes]:
+    """指定モデル用の URL と payload を返す"""
+    target_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
+    data = json.dumps(
+        {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 256,
+                "temperature": 0.0,
+                "thinkingConfig": {"thinkingLevel": "minimal"},
+            },
+        }
+    ).encode("utf-8")
+    return target_url, data
+
+
+def _call_gemini(target_url: str, data: bytes) -> str:
+    """Gemini API を呼び出してテキスト応答を返す"""
     req = urllib.request.Request(
-        url,
-        data=payload,
+        target_url,
+        data=data,
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:  # nosec: B310
         body = json.loads(resp.read().decode("utf-8"))
-        gemini_output = (
+        return (
             body.get("candidates", [{}])[0]
             .get("content", {})
             .get("parts", [{}])[0]
             .get("text", "")
         )
-except (
+
+
+_API_ERRORS = (
     urllib.error.URLError,
     TimeoutError,
     ConnectionError,
     json.JSONDecodeError,
     IndexError,
     KeyError,
-) as e:
-    gemini_output = f"ERROR: {e}"
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "ask",
-                    "permissionDecisionReason": f"Gemini API error: {e}",
+)
+
+gemini_output = ""
+primary_url, primary_payload = _build_payload(model)
+try:
+    gemini_output = _call_gemini(primary_url, primary_payload)
+except _API_ERRORS as primary_err:
+    # フォールバックモデルでリトライ
+    fallback_url, fallback_payload = _build_payload(model_fallback)
+    try:
+        gemini_output = _call_gemini(fallback_url, fallback_payload)
+    except _API_ERRORS as fallback_err:
+        gemini_output = f"ERROR: primary={primary_err}, fallback={fallback_err}"
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "ask",
+                        "permissionDecisionReason": f"Gemini API error (fallback model failed): {fallback_err}",
+                    }
                 }
-            }
+            )
         )
-    )
-    with open(log_file, "w") as f:
-        f.write(f"Tool Name: {tool_name}\n")
-        f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
-        f.write(f"Gemini Output: {gemini_output}\n")
-    log_summary("ERROR", str(e))
-    notify("Gemini Review Error", "APIエラーのため確認が必要です", 8)
-    sys.exit(0)
+        with open(log_file, "w") as f:
+            f.write(f"Tool Name: {tool_name}\n")
+            f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
+            f.write(f"Gemini Output: {gemini_output}\n")
+        log_summary("ERROR", f"primary={primary_err}, fallback={fallback_err}")
+        notify("Gemini Review Error", "APIエラーのため確認が必要です", 8)
+        sys.exit(0)
 
 
 # -------------------------------------------------------------------
