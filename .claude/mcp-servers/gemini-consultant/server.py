@@ -17,7 +17,7 @@ mcp = FastMCP("gemini-consultant")
 # 用途別にモデルを分離
 # 深い推論が必要な設計相談 → Pro
 # 局所的・高頻度なチェック → Flash
-DEEP_MODEL = os.environ.get("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
+DEEP_MODEL = os.environ.get("GEMINI_PRO_MODEL", "gemini-pro-latest")
 LIGHT_MODEL = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-latest")
 
 # -------------------------------------------------------------------
