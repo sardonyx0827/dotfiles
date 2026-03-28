@@ -364,6 +364,7 @@ else:  # DENY
         )
     )
     log_summary("DENY", gemini_output.strip())
+    notify("Gemini Review", f"拒否: {short_cmd}", 8)
 
 with open(log_file, "w") as f:
     f.write(f"Tool Name: {tool_name}\n")
