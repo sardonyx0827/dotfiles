@@ -155,15 +155,23 @@ set backspace=indent,eol,start
 
 "" Tabs. May be overridden by autocmd rules
 set tabstop=2
-set softtabstop=0
+set softtabstop=2
 set shiftwidth=2
 set expandtab
+set smartindent
 
 "" Map leader to ,
 let mapleader=','
 
 "" Enable hidden buffers
 set hidden
+
+"" Disable wrap
+set nowrap
+
+"" Disable swap and backup
+set noswapfile
+set nobackup
 
 "" Searching
 set hlsearch
@@ -172,6 +180,10 @@ set ignorecase
 set smartcase
 
 set fileformats=unix,dos,mac
+
+"" Show whitespace characters
+set list
+set listchars=tab:┊\ ,trail:·,extends:…,precedes:…
 
 if exists('$SHELL')
   set shell=$SHELL
@@ -189,12 +201,11 @@ let g:session_autoload = "no"
 let g:session_autosave = "no"
 let g:session_command_aliases = 1
 
-" change current dir when open any tabs
-set autochdir
-" no indent on/off when paste text from clipboard
-set pastetoggle=<F9>
-
-set undodir=~/.vim/undodir_vim
+if has('nvim')
+  set undodir=~/.vim/undodir
+else
+  set undodir=~/.vim/undodir_vim
+endif
 set undofile
 
 
@@ -205,6 +216,10 @@ syntax on
 set ruler
 set number
 set relativenumber
+set cursorline
+set termguicolors
+set signcolumn=yes
+set updatetime=50
 
 let no_buffers_menu=1
 colorscheme rosepine
@@ -215,7 +230,7 @@ if has('nvim')
 
   " mouse support
 endif
-set mouse=a
+set mouse=
 set mousemodel=popup
 set t_Co=256
 set guioptions=egmrti
@@ -241,9 +256,9 @@ set gcr=a:blinkon0
 
 if has('nvim')
   au TermEnter * setlocal scrolloff=0
-  au TermLeave * setlocal scrolloff=3
+  au TermLeave * setlocal scrolloff=2
 else
-  set scrolloff=3
+  set scrolloff=2
 endif
 
 "" Status bar
@@ -311,21 +326,34 @@ else
   let g:airline_symbols.linenr = ''
 endif
 
-" vim
-" set Colorscheme (clear)
-highlight Normal ctermbg=none
-highlight NonText ctermbg=none
-highlight Terminal ctermbg=none
-highlight Folded ctermbg=none
-highlight LineNr ctermbg=none
-highlight EndOfBuffer ctermbg=none
+" Background transparency (match nvim_lazy colorscheme.lua)
+highlight Normal ctermbg=none guibg=NONE
+highlight NormalNC ctermbg=none guibg=NONE
+highlight NormalFloat ctermbg=none guibg=NONE
+highlight FloatBorder ctermbg=none guibg=NONE
+highlight NonText ctermbg=none guibg=NONE
+highlight Terminal ctermbg=none guibg=NONE
+highlight Folded ctermbg=none guibg=NONE
+highlight LineNr ctermbg=none guibg=NONE
+highlight EndOfBuffer ctermbg=none guibg=NONE
+highlight SignColumn ctermbg=none guibg=NONE
+highlight StatusLine cterm=none gui=none
+highlight TabLineFill cterm=none gui=none
 
-" " set color on tail space
-highlight ExtraWhitespace ctermbg=red guibg=red
-au ColorScheme * highlight ExtraWhitespace guibg=red
-au BufEnter * match ExtraWhitespace /\s\+$/
-au InsertEnter * match ExtraWhitespace /\s\+\%#\@<!$/
-au InsertLeave * match ExtraWhiteSpace /\s\+$/
+" Highlight whitespace characters (match nvim_lazy set.lua)
+highlight Whitespace ctermfg=red guifg=#Fb7280 ctermbg=none guibg=NONE
+highlight NonText ctermfg=red guifg=#Faa0a6 ctermbg=none guibg=NONE
+highlight SpecialKey ctermfg=red guifg=#Faa0a6 ctermbg=none guibg=NONE
+au ColorScheme * highlight Normal ctermbg=none guibg=NONE
+au ColorScheme * highlight NormalNC ctermbg=none guibg=NONE
+au ColorScheme * highlight NormalFloat ctermbg=none guibg=NONE
+au ColorScheme * highlight FloatBorder ctermbg=none guibg=NONE
+au ColorScheme * highlight SignColumn ctermbg=none guibg=NONE
+au ColorScheme * highlight StatusLine cterm=none gui=none
+au ColorScheme * highlight TabLineFill cterm=none gui=none
+au ColorScheme * highlight Whitespace ctermfg=red guifg=#Fb7280 ctermbg=none guibg=NONE
+au ColorScheme * highlight NonText ctermfg=red guifg=#Faa0a6 ctermbg=none guibg=NONE
+au ColorScheme * highlight SpecialKey ctermfg=red guifg=#Faa0a6 ctermbg=none guibg=NONE
 
 
 "*****************************************************************************
@@ -502,14 +530,25 @@ augroup vimrc-wrapping
   autocmd BufRead,BufNewFile *.txt call s:setupWrapping()
 augroup END
 
-"" make/cmake
-augroup vimrc-make-cmake
+"" cmake
+augroup vimrc-cmake
   autocmd!
-  autocmd FileType make setlocal noexpandtab
   autocmd BufNewFile,BufRead CMakeLists.txt setlocal filetype=cmake
 augroup END
 
 set autoread
+
+"" Check if file changed when focus is gained (match nvim_lazy init.lua)
+augroup vimrc-checktime
+  autocmd!
+  autocmd WinEnter,FocusGained,BufEnter * checktime
+augroup END
+
+"" go/make: use tabs instead of spaces (match nvim_lazy set.lua)
+augroup vimrc-go-make
+  autocmd!
+  autocmd FileType make,go setlocal noexpandtab
+augroup END
 
 
 "*****************************************************************************
@@ -620,11 +659,39 @@ vmap > >gv
 vnoremap J :m '>+1<CR>gv=gv
 vnoremap K :m '<-2<CR>gv=gv
 
-"" count up/down. prefix 'C-a' is already used in Tmux
-vnoremap <C-k> <C-a>gv
-vnoremap <C-j> <C-x>gv
-nmap <C-k> <C-a>
-nmap <C-j> <C-x>
+"" rename text in this file (match nvim_lazy remap.lua)
+nnoremap <leader>rn :%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>
+
+"" vimgrep and open quickfix window (match nvim_lazy remap.lua)
+nnoremap <leader>vg :vimgrep /<C-r>=input("Grep For > ")<CR>/ **/*<CR>:copen<CR>
+
+"" edit block, add String to each line
+vnoremap <leader>eb :s/\(\w.*\)/\1<Left><Left>
+
+"" insert tab character in insert mode
+inoremap <C-t> <C-v><Tab>
+
+"" window resize with arrow keys (match nvim_lazy remap.lua)
+nnoremap <silent> <C-Up> 1<C-w>+
+nnoremap <silent> <C-Down> 1<C-w>-
+nnoremap <silent> <C-Right> 1<C-w>>
+nnoremap <silent> <C-Left> 1<C-w><
+
+"" close all buffers
+nnoremap <silent> <leader>cb :%bdelete<CR>
+
+"" move cursor in insert mode (match nvim_lazy remap.lua)
+inoremap <C-j> <C-o>gj
+inoremap <C-k> <C-o>gk
+inoremap <C-h> <C-o>h
+inoremap <C-l> <C-o>l
+
+"" move cursor in command mode
+cnoremap <C-b> <Left>
+cnoremap <C-f> <Right>
+
+"" toggle mouse
+nnoremap <leader>tm :if &mouse ==# 'a' \| set mouse= \| else \| set mouse=a \| endif<CR>
 
 "" Open current line on GitHub
 nnoremap <Leader>go :.Gbrowse<CR>
@@ -637,10 +704,6 @@ function! ChoseAction(actions) abort
   let result = filter(a:actions, { _, v -> v.text =~# printf(".*\(%s\).*", result)})
   return len(result) ? result[0].value : ""
 endfunction
-
-"" select next suggestion with GitHub copilot
-imap <C-j> <Plug>(copilot-next)
-imap <C-k> <Plug>(copilot-previous)
 
 " save buffer
 noremap <silent> <C-s> :w<CR>
@@ -689,8 +752,3 @@ else
     source ~/.vimrc.local
   endif
 endif
-
-
-"*****************************************************************************
-"" tests
-"*****************************************************************************
