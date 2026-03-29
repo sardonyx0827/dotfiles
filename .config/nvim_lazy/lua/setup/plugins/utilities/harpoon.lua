@@ -4,7 +4,7 @@ return {
   branch = "harpoon2",
   lazy = true,
   keys = {
-    { "<C-e>",      mode = "n" },
+    { "<leader>hh", mode = "n" },
     { "<leader>ha", mode = "n" },
     { "<leader>1",  mode = "n" },
     { "<leader>2",  mode = "n" },
@@ -35,7 +35,7 @@ return {
       end,
     })
     vim.keymap.set("n", "<leader>ha", function() harpoon:list():append() end, { desc = 'harpoon append' })
-    vim.keymap.set("n", "<C-e>", function() harpoon.ui:toggle_quick_menu(harpoon:list()) end)
+    vim.keymap.set("n", "<leader>hh", function() harpoon.ui:toggle_quick_menu(harpoon:list()) end)
     for i = 1, 9 do
       vim.keymap.set("n", "<leader>" .. i, function() harpoon:list():select(i) end)
     end
