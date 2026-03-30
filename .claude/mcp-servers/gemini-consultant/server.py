@@ -139,7 +139,7 @@ def call_gemini(
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "maxOutputTokens": max_tokens,
-                "temperature": 0.0,
+                "temperature": 1.0,
             },
         }
     ).encode("utf-8")
