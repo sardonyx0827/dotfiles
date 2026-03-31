@@ -645,9 +645,6 @@ noremap <leader>q :bp<CR>
 noremap <leader>x :bn<CR>
 noremap <leader>w :bn<CR>
 
-"" Close buffer
-noremap <leader>c :bd<CR>
-
 "" Clean search (highlight)
 nnoremap <silent> <leader><space> :noh<cr>
 
@@ -739,6 +736,7 @@ augroup TrimWhitespace
   autocmd!
   autocmd BufWritePre * :%s/\s\+$//e
 augroup END
+
 "*****************************************************************************
 "" local config
 "*****************************************************************************
@@ -752,3 +750,6 @@ else
     source ~/.vimrc.local
   endif
 endif
+
+" close current buffer
+noremap <C-q> :bd<CR>
