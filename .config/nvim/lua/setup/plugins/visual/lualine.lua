@@ -76,7 +76,26 @@ return {
       sections = {
         lualine_a = { "mode" },
         lualine_b = { "branch", "diff", "diagnostics" },
-        lualine_c = { "filename" },
+        lualine_c = { "filename",
+          {
+            require("noice").api.statusline.mode.get,
+            cond = function()
+              if not require("noice").api.statusline.mode.has() then
+                return false
+              end
+              local mode_text = require("noice").api.statusline.mode.get()
+              if mode_text and mode_text:find("recording") then
+                return true
+              end
+              local current_mode = vim.api.nvim_get_mode().mode
+              if current_mode == "n" or current_mode == "nt" then
+                return false
+              end
+              return true
+            end,
+            color = { fg = "#ff9e64" },
+          },
+        },
         lualine_x = {
           {
             'copilot',
