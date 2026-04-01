@@ -1,6 +1,7 @@
 # ~/.claude/hooks/codex-review.py
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -12,19 +13,87 @@ tool_name = hook_input.get("tool_name", "")
 tool_input = hook_input.get("tool_input", {})
 command = tool_input.get("command", "")
 
-# /tmp/claude_hooks/logs/PreToolUse/Bash/codex-review ディレクトリがなければ作成
-# ログには、ツール名、ツール入力、Codexの出力を保存
+# -------------------------------------------------------------------
+# ログ設定
+# -------------------------------------------------------------------
+# 詳細ログ（既存: コマンドごとに1ファイル）
 log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/codex-review"  # nosec B108
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f"bash_cmd_{int(time.time())}.log")
 
-# ログファイルが1000ファイルを超えたら古いものから削除
+# ファイルが1000件を超えたら古いものから削除
 files = sorted(os.listdir(log_dir))
 excess = len(files) - 1000
 for f in files[: max(0, excess)]:
     os.remove(os.path.join(log_dir, f))
 
-# 明らかに安全なコマンドはスキップする
+# サマリーログ（1ファイルに追記・500行でローテーション）
+summary_log = os.path.expanduser("~/.claude/logs/codex-bash-review.log")
+os.makedirs(os.path.dirname(summary_log), exist_ok=True)
+
+
+def log_summary(decision: str, reason: str) -> None:
+    """結果をサマリーログに1行で追記し、500行超えたらローテーション"""
+    short_cmd = command[:80] + "..." if len(command) > 80 else command
+    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {decision:5s} | {short_cmd} | {
+        reason
+    }\n"
+    with open(summary_log, "a") as f:
+        f.write(line)
+    # ローテーション
+    with open(summary_log) as f:
+        lines = f.readlines()
+    if len(lines) > 500:
+        with open(summary_log, "w") as f:
+            f.writelines(lines[-500:])
+
+
+# -------------------------------------------------------------------
+# 通知
+# -------------------------------------------------------------------
+def notify(title: str, message: str, timeout: int = 5) -> None:
+    try:
+        os_name = platform.system()
+
+        if os_name == "Darwin":
+            subprocess.run(
+                [
+                    "/usr/bin/osascript",
+                    "-e",
+                    f'display notification "{message}" with title "{title}"',
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+
+        elif os_name == "Linux":
+            subprocess.run(
+                [
+                    "notify-send",
+                    "--expire-time",
+                    str(timeout * 1000),
+                    title,
+                    message,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+
+        elif os_name == "Windows":
+            from win10toast import ToastNotifier
+
+            toaster = ToastNotifier()
+            toaster.show_toast(title, message, duration=timeout)
+
+    except Exception:
+        pass  # 通知の失敗はメイン処理に影響させない
+
+
+# -------------------------------------------------------------------
+# 安全なコマンドのスキップ判定
+# -------------------------------------------------------------------
 SAFE_COMMANDS = [
     "tmux",
     "ls",
@@ -61,6 +130,11 @@ SAFE_COMMANDS = [
     "jest",
 ]
 
+# -------------------------------------------------------------------
+# 危険なコマンドの拒否判定
+# -------------------------------------------------------------------
+DENY_COMMANDS = ["curl", "wget", "nc", "ssh", "shred", "dd", "rm -rf /"]
+
 
 def _split_commands(cmd: str) -> list[str]:
     return [p.strip() for p in re.split(r"\s*(?:&&|\|\||[|;])\s*", cmd) if p.strip()]
@@ -70,8 +144,41 @@ def _is_safe_command(cmd: str) -> bool:
     return any(cmd == safe or cmd.startswith(safe + " ") for safe in SAFE_COMMANDS)
 
 
+def _is_deny_command(cmd: str) -> tuple[bool, str]:
+    """危険コマンドに一致するか判定し、(一致したか, 一致したコマンド名) を返す"""
+    for deny in DENY_COMMANDS:
+        if cmd == deny or cmd.startswith(deny + " "):
+            return True, deny
+    return False, ""
+
+
 sub_commands = _split_commands(command)
-# すべてのサブコマンドが安全な場合のみスキップする
+
+# --- 危険コマンドの即時拒否 ---
+for sub_cmd in sub_commands:
+    matched, deny_name = _is_deny_command(sub_cmd)
+    if matched:
+        reason = f"Blocked dangerous command: '{deny_name}'"
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                }
+            )
+        )
+        with open(log_file, "w") as f:
+            f.write(f"Tool Name: {tool_name}\n")
+            f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
+            f.write("Codex Output: DENY (pre-blocked)\n")
+        log_summary("DENY", reason)
+        notify("Codex Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
+        sys.exit(0)
+
+# --- 安全コマンドのスキップ ---
 if sub_commands and all(_is_safe_command(c) for c in sub_commands):
     print(
         json.dumps(
@@ -88,6 +195,7 @@ if sub_commands and all(_is_safe_command(c) for c in sub_commands):
         f.write(f"Tool Name: {tool_name}\n")
         f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
         f.write("Codex Output: SKIP")
+    log_summary("SKIP", "safe command")
     sys.exit(0)
 
 prompt = f"""
@@ -123,7 +231,14 @@ if result.returncode != 0:
         f.write(f"Tool Name: {tool_name}\n")
         f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
         f.write(f"Codex Output: ERROR: {result.stderr}\n")
+    log_summary("ERROR", f"Codex error: {result.stderr.strip()}")
+    notify("Codex Review Error", "エラーのため確認が必要です", 8)
     sys.exit(0)
+
+# -------------------------------------------------------------------
+# 判定結果の処理
+# -------------------------------------------------------------------
+short_cmd = command[:60] + "..." if len(command) > 60 else command
 
 if "ALLOW" in result.stdout:
     print(
@@ -137,6 +252,9 @@ if "ALLOW" in result.stdout:
             }
         )
     )
+    log_summary("ALLOW", "approved by Codex")
+    notify("Codex Review", f"許可: {short_cmd}", 4)
+
 elif "ASK" in result.stdout:
     print(
         json.dumps(
@@ -150,7 +268,10 @@ elif "ASK" in result.stdout:
             }
         )
     )
-else:
+    log_summary("ASK", result.stdout.strip())
+    notify("Codex Review - 確認が必要", f"{short_cmd}", 8)
+
+else:  # DENY
     print(
         json.dumps(
             {
@@ -162,6 +283,8 @@ else:
             }
         )
     )
+    log_summary("DENY", result.stdout.strip())
+    notify("Codex Review", f"拒否: {short_cmd}", 8)
 
 with open(log_file, "w") as f:
     f.write(f"Tool Name: {tool_name}\n")
