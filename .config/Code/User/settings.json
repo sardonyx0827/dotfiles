@@ -472,43 +472,7 @@
         }
     ],
 
-    "vim.insertModeKeyBindingsNonRecursive": [
-        {
-            "before":[
-                "<C-j>"
-            ],
-            "after": [
-                "<C-o>",
-                "g",
-                "j"
-            ]
-        },{
-            "before":[
-                "<C-k>"
-            ],
-            "after": [
-                "<C-o>",
-                "g",
-                "k"
-            ]
-        },{
-            "before":[
-                "<C-h>"
-            ],
-            "after": [
-                "<C-o>",
-                "h"
-            ]
-        },{
-            "before":[
-                "<C-l>"
-            ],
-            "after": [
-                "<C-o>",
-                "l"
-            ]
-        }
-    ],
+    "vim.insertModeKeyBindingsNonRecursive": [ ],
 
     // vim status bar colors
     "vim.statusBarColorControl": true,

@@ -54,12 +54,6 @@ vim.keymap.set("n", "<leader>cb", "<cmd>%bdelete<cr>", { noremap = true, silent 
 vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", { desc = "change directory to current file" })
 vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", { desc = "change up directory" })
 
--- move cursor around more easily
--- move cursor in insert mode
-vim.keymap.set("i", "<C-j>", "<C-o>gj")
-vim.keymap.set("i", "<C-k>", "<C-o>gk")
-vim.keymap.set("i", "<C-h>", "<C-o>h")
-vim.keymap.set("i", "<C-l>", "<C-o>l")
 -- move cursor in command mode
 vim.keymap.set("c", "<C-b>", "<Left>")
 vim.keymap.set("c", "<C-f>", "<Right>")
