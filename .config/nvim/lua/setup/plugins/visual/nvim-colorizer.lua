@@ -1,13 +1,14 @@
---- @diagnostic disable: undefined-global
 -- A high-performance color highlighter. show color in code, like #ffffff
 return {
-  "norcalli/nvim-colorizer.lua",
+  "NvChad/nvim-colorizer.lua",
   event = "VeryLazy",
   config = function()
-    require("colorizer").setup(config, {
-      RRGGBBAA = true,
-      rgb_fn = true,
-      hsl_fn = true,
+    require("colorizer").setup({
+      user_default_options = {
+        RRGGBBAA = true,
+        rgb_fn = true,
+        hsl_fn = true,
+      },
     })
   end,
 }
