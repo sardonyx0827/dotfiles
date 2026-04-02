@@ -1,13 +1,11 @@
 -- A high-performance color highlighter. show color in code, like #ffffff
 return {
-  "NvChad/nvim-colorizer.lua",
+  "catgoose/nvim-colorizer.lua",
   event = "VeryLazy",
   config = function()
     require("colorizer").setup({
-      user_default_options = {
-        RRGGBBAA = true,
-        rgb_fn = true,
-        hsl_fn = true,
+      options = {
+        parsers = { css = true, rgb = { enable = false } },
       },
     })
   end,
