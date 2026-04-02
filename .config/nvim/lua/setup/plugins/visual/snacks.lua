@@ -1,5 +1,6 @@
 --- @diagnostic disable: undefined-global
 --- @diagnostic disable: undefined-doc-name
+
 return {
   "folke/snacks.nvim",
   priority = 1000,
@@ -22,6 +23,33 @@ return {
           layout = {
             auto_hide = { "input" },
           },
+          actions = {
+            explorer_diff = function(picker)
+              local selected = picker:selected()
+              if #selected ~= 2 then
+                vim.notify("Select exactly 2 files with <Tab> to diff", vim.log.levels.WARN)
+                return
+              end
+              local paths = {}
+              for i, item in ipairs(selected) do
+                if not item.file then
+                  vim.notify("Please select a file", vim.log.levels.WARN)
+                  return
+                end
+                local p = vim.fn.fnamemodify(item.file, ":p")
+                if vim.fn.isdirectory(p) == 1 then
+                  vim.notify("Cannot diff a directory", vim.log.levels.WARN)
+                  return
+                end
+                paths[i] = p
+              end
+              picker:close()
+              vim.cmd("tabnew " .. vim.fn.fnameescape(paths[1]))
+              vim.cmd("diffthis")
+              vim.cmd("vsplit " .. vim.fn.fnameescape(paths[2]))
+              vim.cmd("diffthis")
+            end,
+          },
           win = {
             list = {
               wo = {
@@ -29,6 +57,7 @@ return {
               },
               keys = {
                 ["/"] = { "/", mode = "n", expr = true, desc = "Vim search" },
+                ["<C-d>"] = { "explorer_diff", mode = "n", desc = "Diff two files" },
               },
             },
           },
