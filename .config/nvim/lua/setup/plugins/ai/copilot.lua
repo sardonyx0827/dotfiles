@@ -3,16 +3,7 @@ return {
   "zbirenbaum/copilot.lua",
   event = "InsertEnter",
   cmd = "Copilot",
-  dependencies = {
-    {
-      "zbirenbaum/copilot-cmp",
-      config = function()
-        require("copilot_cmp").setup({
-          fix_pairs = true,
-        })
-      end,
-    },
-  },
+  dependencies = {},
   config = function()
     require("copilot").setup({
       -- copilot_model = "gpt-5-mini",

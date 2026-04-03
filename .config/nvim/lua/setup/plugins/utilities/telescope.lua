@@ -1,7 +1,7 @@
 -- fuzzy search using ripgrep
 return {
   "nvim-telescope/telescope.nvim",
-  version = "0.1.8",
+  branch = "master",
   dependencies = { { "nvim-lua/plenary.nvim" } },
   config = function()
     require("telescope").setup({
