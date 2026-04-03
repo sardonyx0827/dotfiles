@@ -43,6 +43,35 @@ vim.keymap.set("n", "<leader>ct", ":lua require('nvim-tree.api').tree.open({ pat
 -- set termguicolors to enable highlight groups
 vim.opt.termguicolors = true
 
+local function diff_with_current_buffer()
+  local node = require("nvim-tree.api").tree.get_node_under_cursor()
+  if not node or node.type == "directory" then
+    vim.notify("Please select a file", vim.log.levels.WARN)
+    return
+  end
+  local tree_file = node.absolute_path
+
+  local current_buf_file = nil
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    local bufname = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w))
+    if bufname:match("NvimTree_") == nil and bufname ~= "" then
+      current_buf_file = bufname
+      break
+    end
+  end
+
+  if not current_buf_file then
+    vim.notify("No buffer to diff with", vim.log.levels.WARN)
+    return
+  end
+
+  require("nvim-tree.api").tree.close()
+  vim.cmd("tabnew " .. vim.fn.fnameescape(current_buf_file))
+  vim.cmd("diffthis")
+  vim.cmd("vsplit " .. vim.fn.fnameescape(tree_file))
+  vim.cmd("diffthis")
+end
+
 local function move_l()
   vim.cmd("wincmd l")
 end
@@ -63,6 +92,7 @@ local function tree_on_attach(bufnr)
   vim.keymap.set('n', '<C-s>', api.node.open.horizontal, opts('Open: horizontal Split'))
   --vim.keymap.set('n', '<leader>e', api.tree.close, opts('Close'))
   vim.keymap.set('n', '<leader>e', move_l, opts('Close'))
+  vim.keymap.set('n', '<leader>df', diff_with_current_buffer, opts('Diff with current buffer'))
 end
 
 --setup with some options
