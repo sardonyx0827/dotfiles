@@ -26,7 +26,7 @@ require("nvim-treesitter.configs").setup {
 
   highlight = {
     -- `false` will disable the whole extension
-    enable = false,
+    enable = true,
     -- setting this to true will run `:h syntax` and tree-sitter at the same time.
     -- set this to `true` if you depend on "syntax" being enabled (like for indentation).
     -- using this option may slow down your editor, and you may see some duplicate highlights.
