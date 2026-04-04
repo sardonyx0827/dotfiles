@@ -1,3 +1,18 @@
+--- @diagnostic disable: undefined-global
+-- Workaround: Neovim 0.12.0 treesitter nil node in _get_injections
+-- https://github.com/neovim/neovim/issues (treesitter.lua:196 get_range nil)
+local orig_get_node_text = vim.treesitter.get_node_text
+vim.treesitter.get_node_text = function(node, source, opts)
+  if node == nil then
+    return ""
+  end
+  local ok, result = pcall(orig_get_node_text, node, source, opts)
+  if ok then
+    return result
+  end
+  return ""
+end
+
 require("nvim-treesitter.configs").setup {
   -- a list of parser names, or "all"
   --ensure_installed = { "vimdoc", "javascript", "typescript", "c", "lua", "rust" },
