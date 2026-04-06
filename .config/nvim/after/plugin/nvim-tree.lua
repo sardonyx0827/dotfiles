@@ -93,6 +93,8 @@ local function tree_on_attach(bufnr)
   --vim.keymap.set('n', '<leader>e', api.tree.close, opts('Close'))
   vim.keymap.set('n', '<leader>e', move_l, opts('Close'))
   vim.keymap.set('n', '<leader>df', diff_with_current_buffer, opts('Diff with current buffer'))
+  vim.keymap.set('n', ']g', api.node.navigate.git.next, opts('Next Git'))
+  vim.keymap.set('n', '[g', api.node.navigate.git.prev, opts('Prev Git'))
 end
 
 --setup with some options
@@ -205,6 +207,8 @@ local command = {
   { "C",     tree.toggle_git_clean_filter,   "Toggle Git Clean" },
   { "[c",    node.navigate.git.prev,         "Prev Git" },
   { "]c",    node.navigate.git.next,         "Next Git" },
+  { "[g",    node.navigate.git.prev,         "Prev Git" },
+  { "]g",    node.navigate.git.next,         "Next Git" },
   { "d",     fs.remove,                      "Delete" },
   { "D",     fs.trash,                       "Trash" },
   { "E",     tree.expand_all,                "Expand All" },
