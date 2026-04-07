@@ -171,13 +171,21 @@
             ]
         },{
             "before": [
-                "<leader>",
-                "g",
-                "n"
+                "]",
+                "g"
             ],
             // git next change
             "commands": [
                 "workbench.action.editor.nextChange"
+            ]
+        },{
+            "before": [
+                "[",
+                "g"
+            ],
+            // git previous change
+            "commands": [
+                "workbench.action.editor.previousChange"
             ]
         },{
             "before": [
