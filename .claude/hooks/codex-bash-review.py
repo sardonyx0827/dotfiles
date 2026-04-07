@@ -1,4 +1,4 @@
-# ~/.claude/hooks/codex-review.py
+# ~/.claude/hooks/codex-bash-review.py
 import json
 import os
 import platform
