@@ -2,7 +2,7 @@
 --- @diagnostic disable: different-requires
 
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
-if not vim.loop.fs_stat(lazypath) then
+if not vim.uv.fs_stat(lazypath) then
   vim.fn.system({
     "git",
     "clone",
@@ -23,11 +23,11 @@ local function load_plugins()
 
   -- Helper function to scan directory recursively
   local function scan_dir(dir)
-    local handle = vim.loop.fs_scandir(dir)
+    local handle = vim.uv.fs_scandir(dir)
     if not handle then return end
 
     while true do
-      local name, type = vim.loop.fs_scandir_next(handle)
+      local name, type = vim.uv.fs_scandir_next(handle)
       if not name then break end
 
       local full_path = dir .. "/" .. name
