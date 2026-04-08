@@ -465,7 +465,7 @@ local function generate_commit_message_with_claude()
           end
           vim.api.nvim_win_close(win, true)
           vim.notify("Commit message copied to clipboard.")
-        end, { buffer = buf, desc = "Accept and copy commit message" })
+        end, { buf = buf, desc = "Accept and copy commit message" })
 
         -- Accept: copy to clipboard and close and paste
         vim.keymap.set("n", "p", function()
@@ -479,12 +479,12 @@ local function generate_commit_message_with_claude()
           vim.api.nvim_win_close(win, true)
           vim.notify("Commit message copied to clipboard.")
           vim.cmd("normal! p")
-        end, { buffer = buf, desc = "Accept and copy commit message" })
+        end, { buf = buf, desc = "Accept and copy commit message" })
 
         -- Close without action
         vim.keymap.set("n", "q", function()
           vim.api.nvim_win_close(win, true)
-        end, { buffer = buf, desc = "Close commit message window" })
+        end, { buf = buf, desc = "Close commit message window" })
 
       end)
     end,

@@ -175,8 +175,8 @@ function M.open_vimdiff()
     end
 
     -- Remove temporary keymaps from the target buffer
-    pcall(vim.keymap.del, "n", "<C-w>q", { buffer = target_buf })
-    pcall(vim.keymap.del, "n", "<C-w><C-q>", { buffer = target_buf })
+    pcall(vim.keymap.del, "n", "<C-w>q", { buf = target_buf })
+    pcall(vim.keymap.del, "n", "<C-w><C-q>", { buf = target_buf })
 
     -- Explicitly wipe the scratch buffer
     if vim.api.nvim_buf_is_valid(old_buf) then
@@ -192,11 +192,11 @@ function M.open_vimdiff()
 
   -- Left side (scratch buffer): simple mapping
   vim.keymap.set("n", "<C-w>q", close_diff_tab, {
-    buffer = old_buf, silent = true, noremap = true,
+    buf = old_buf, silent = true, noremap = true,
     desc = "undotree vimdiff: close diff tab",
   })
   vim.keymap.set("n", "<C-w><C-q>", close_diff_tab, {
-    buffer = old_buf, silent = true, noremap = true,
+    buf = old_buf, silent = true, noremap = true,
     desc = "undotree vimdiff: close diff tab",
   })
 
@@ -212,7 +212,7 @@ function M.open_vimdiff()
   end
 
   vim.keymap.set("n", "<C-w>q", close_if_in_diff_tab, {
-    buffer = target_buf, silent = true, noremap = true,
+    buf = target_buf, silent = true, noremap = true,
     desc = "undotree vimdiff: close diff tab",
   })
 
@@ -243,7 +243,7 @@ function M.setup()
     pattern = { "undotree", "Undotree" },
     callback = function(ev)
       vim.keymap.set("n", "<C-d>", M.open_vimdiff, {
-        buffer = ev.buf,
+        buf = ev.buf,
         silent = true,
         noremap = true,
         desc = "undotree: open vimdiff comparison",

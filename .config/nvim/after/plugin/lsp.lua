@@ -29,7 +29,7 @@ vim.api.nvim_create_autocmd('LspAttach', {
   callback = function(ev)
     local bufnr = ev.buf
     local client = vim.lsp.get_client_by_id(ev.data.client_id)
-    local opts = { buffer = bufnr, remap = false }
+    local opts = { buf = bufnr, remap = false }
 
     vim.keymap.set("n", "<C-t>", vim.lsp.buf.definition, vim.tbl_extend("force", opts, { desc = "jump to definition" }))
     vim.keymap.set("n", "gd", vim.lsp.buf.definition, vim.tbl_extend("force", opts, { desc = "jump to definition" }))
@@ -72,7 +72,7 @@ vim.diagnostic.config({
   float = {
     style = 'minimal',
     border = 'rounded',
-    source = 'always',
+    source = true,
     header = '',
     prefix = '',
   },

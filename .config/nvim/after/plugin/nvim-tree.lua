@@ -78,7 +78,7 @@ end
 local function tree_on_attach(bufnr)
   local api = require "nvim-tree.api"
   local function opts(desc)
-    return { desc = "nvim-tree: " .. desc, buffer = bufnr, noremap = true, silent = true, nowait = true }
+    return { desc = "nvim-tree: " .. desc, buf = bufnr, noremap = true, silent = true, nowait = true }
   end
   -- default mappings
   api.config.mappings.default_on_attach(bufnr)
@@ -253,7 +253,7 @@ local M = {}
 
 function M.on_attach(bufnr)
   local opts = function(desc)
-    return { desc = "nvim-tree: " .. desc, buffer = bufnr, nowait = true }
+    return { desc = "nvim-tree: " .. desc, buf = bufnr, nowait = true }
   end
   for _, cmd in pairs(command) do
     if (string.len(cmd[1]) > 0) then

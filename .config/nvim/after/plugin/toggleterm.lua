@@ -2,7 +2,7 @@
 --- @diagnostic disable: duplicate-set-field
 --- @diagnostic disable: lowercase-global
 function _G.set_terminal_keymaps()
-  local opts = { buffer = 0 }
+  local opts = { buf = 0 }
   vim.keymap.set("t", "<esc>", [[<C-\><C-n>]], opts)
 end
 
@@ -40,8 +40,8 @@ function _docker_toggle()
   toggle_docker:toggle()
 end
 
-vim.api.nvim_set_keymap("n", "<leader>td", "<cmd>lua _docker_toggle()<CR>",
-  { noremap = true, silent = true, desc = "docker - CUI tool" })
+vim.keymap.set("n", "<leader>td", "<cmd>lua _docker_toggle()<CR>",
+  { silent = true, desc = "docker - CUI tool" })
 
 -- claude code
 local toggle_claude = Terminal:new({
@@ -53,8 +53,8 @@ function _claude_toggle()
   toggle_claude:toggle()
 end
 
-vim.api.nvim_set_keymap("n", "<leader>cc", "<cmd>lua _claude_toggle()<CR>",
-  { noremap = true, silent = true, desc = "claude - CUI tool" })
+vim.keymap.set("n", "<leader>cc", "<cmd>lua _claude_toggle()<CR>",
+  { silent = true, desc = "claude - CUI tool" })
 
 -- gemini cli
 local toggle_gemini = Terminal:new({
@@ -67,8 +67,8 @@ function _gemini_toggle()
   toggle_gemini:toggle()
 end
 
-vim.api.nvim_set_keymap("n", "<leader>tg", "<cmd>lua _gemini_toggle()<CR>",
-  { noremap = true, silent = true, desc = "gemini cli - CUI tool" })
+vim.keymap.set("n", "<leader>tg", "<cmd>lua _gemini_toggle()<CR>",
+  { silent = true, desc = "gemini cli - CUI tool" })
 
 -- codex (OpenAI)
 local toggle_codex = Terminal:new({
@@ -81,5 +81,5 @@ function _codex_toggle()
   toggle_codex:toggle()
 end
 
-vim.api.nvim_set_keymap("n", "<leader>to", "<cmd>lua _codex_toggle()<CR>",
-  { noremap = true, silent = true, desc = "codex (OpenAI) - CUI tool" })
+vim.keymap.set("n", "<leader>to", "<cmd>lua _codex_toggle()<CR>",
+  { silent = true, desc = "codex (OpenAI) - CUI tool" })

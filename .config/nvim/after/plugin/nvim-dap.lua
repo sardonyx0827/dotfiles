@@ -78,12 +78,12 @@ else
   require('dap-python').setup()
 end
 
-vim.api.nvim_set_keymap('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true, desc = "Toggle Breakpoint." })
-vim.api.nvim_set_keymap('n', '<leader>be', ':lua require("dap").clear_breakpoints()<CR>',
+vim.keymap.set('n', '<leader>bp', ':DapToggleBreakpoint<CR>', { silent = true, desc = "Toggle Breakpoint." })
+vim.keymap.set('n', '<leader>be', ':lua require("dap").clear_breakpoints()<CR>',
   { silent = true, desc = "Clear All Breakpoint." })
-vim.api.nvim_set_keymap('n', '<F5>', ':DapContinue<CR>', { silent = true })
-vim.api.nvim_set_keymap('n', '<F9>', ':DapStepOver<CR>', { silent = true })
-vim.api.nvim_set_keymap('n', '<F10>', ':DapStepInto<CR>', { silent = true })
-vim.api.nvim_set_keymap('n', '<F12>', ':DapStepOut<CR>', { silent = true })
-vim.api.nvim_set_keymap('n', '<S-F5>', '<cmd>lua require("dap").disconnect({ terminateDebuggee = true })<CR>'
+vim.keymap.set('n', '<F5>', ':DapContinue<CR>', { silent = true })
+vim.keymap.set('n', '<F9>', ':DapStepOver<CR>', { silent = true })
+vim.keymap.set('n', '<F10>', ':DapStepInto<CR>', { silent = true })
+vim.keymap.set('n', '<F12>', ':DapStepOut<CR>', { silent = true })
+vim.keymap.set('n', '<S-F5>', '<cmd>lua require("dap").disconnect({ terminateDebuggee = true })<CR>'
   .. '<cmd>lua require("dap").close()<CR>', { silent = true })
