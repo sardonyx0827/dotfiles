@@ -7,6 +7,6 @@ personality = "pragmatic"
 web_search = "live"
 
 [features]
-streamable_shell = true          # enable the streamable exec tool
+streamable_shell = true
 multi_agent = true
 
