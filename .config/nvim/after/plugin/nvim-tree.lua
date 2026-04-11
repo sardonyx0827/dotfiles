@@ -87,6 +87,14 @@ local function tree_on_attach(bufnr)
   FloatPreview.attach_nvimtree(bufnr)
   -- custom mappings
   vim.keymap.set('n', 'l', api.node.open.edit, opts('Open'))
+  vim.keymap.set('n', 'h', function()
+    local node = api.tree.get_node_under_cursor()
+    if node and node.type == "directory" and node.open then
+      api.node.open.edit()
+    else
+      api.node.navigate.parent_close()
+    end
+  end, opts('Close Directory'))
   vim.keymap.set('n', '<C-l>', api.tree.change_root_to_node, opts('CD'))
   vim.keymap.set('n', '<C-h>', api.tree.change_root_to_parent, opts('Up'))
   vim.keymap.set('n', '<C-s>', api.node.open.horizontal, opts('Open: horizontal Split'))
