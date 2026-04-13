@@ -6,6 +6,10 @@ network_access = true
 personality = "pragmatic"
 web_search = "live"
 
+[agents]
+max_threads = 6
+max_depth = 1
+
 [features]
 streamable_shell = true
 multi_agent = true
