@@ -23,65 +23,65 @@
 <optional body>
 ```
 
-- Written in English, following Conventional Commits
-- Summary ~50 characters, add body if needed
-- Types: feat, fix, refactor, docs, test, chore, perf, ci
+- 英語で記述し、Conventional Commits に従うこと
+- 要約は約50文字、必要に応じて本文を追加する
+- 種別: feat, fix, refactor, docs, test, chore, perf, ci
 
-### Command Triggers
+### コマンドトリガー
 
 #### push を要求された場合（例: "push して", "プッシュして", "push this"）
 
-1. Review changes (`git status` / `git diff`)
-2. Stage files (`git add`) — skip if already staged
-3. Commit following the commit message format above
-4. Push to remote (propose PR creation if direct push to default branch is inappropriate)
+1. 変更内容を確認する（`git status` / `git diff`）
+2. ファイルをステージする（`git add`） — すでにステージ済みの場合はスキップ
+3. 上記のコミットメッセージ形式に従ってコミットする
+4. リモートへプッシュする（デフォルトブランチへの直接プッシュが不適切な場合は PR 作成を提案する）
 
 #### commit を要求された場合（例: "commit して", "コミットして", "commit this"）
 
-1. Review changes (`git status` / `git diff`)
-2. Stage files (`git add`) — skip if already staged
-3. Commit following the commit message format above
+1. 変更内容を確認する（`git status` / `git diff`）
+2. ファイルをステージする（`git add`） — すでにステージ済みの場合はスキップ
+3. 上記のコミットメッセージ形式に従ってコミットする
 
 #### PR 作成を要求された場合（例: "pr作成して", "PR作って", "create a PR"）
 
-1. Review current changes and branch structure
-2. Create a new branch from the current branch (naming: `fix/`, `feat/`, `style/` prefix)
-3. Commit following the commit message format above
-4. Push the new branch to remote
-5. Create a Pull Request against the original branch (follow PR quality standards below)
-6. Switch back to the original branch
-7. Suggest deleting the working branch after merge
+1. 現在の変更内容とブランチ構成を確認する
+2. 現在のブランチから新しいブランチを作成する（命名規則: `fix/`, `feat/`, `style/` のプレフィックス）
+3. 上記のコミットメッセージ形式に従ってコミットする
+4. 新しいブランチをリモートへプッシュする
+5. 元のブランチに対してプルリクエストを作成する（下記の PR 品質基準に従うこと）
+6. 元のブランチに戻る
+7. マージ後に作業ブランチの削除を提案する
 
-### Pull Request クオリティ基準
+### プルリクエスト品質基準
 
-1. Analyze full commit history (not just latest commit)
-2. Use `git diff [base-branch]...HEAD` to see all changes
-3. Draft comprehensive PR summary in Japanese
-4. Include test plan with TODOs
-5. Push with `-u` flag if new branch
-6. If direct push to default branch is inappropriate, propose PR creation
+1. 最新コミットだけでなく、全コミット履歴を分析する
+2. `git diff [base-branch]...HEAD` を使用してすべての変更を確認する
+3. 日本語で包括的な PR サマリーを作成する
+4. TODO を含むテスト計画を記載する
+5. 新規ブランチの場合は `-u` フラグ付きでプッシュする
+6. デフォルトブランチへの直接プッシュが不適切な場合は、PR 作成を提案する
 
 ### 機能実装ワークフロー
 
-1. **Plan First**
-   - Create implementation plan
-   - Identify dependencies and risks
-   - Break down into phases
+1. **まず計画する**
+   - 実装計画を作成する
+   - 依存関係とリスクを特定する
+   - フェーズに分割する
 
-2. **TDD Approach**
-   - Write tests first (RED)
-   - Implement to pass tests (GREEN)
-   - Refactor (IMPROVE)
-   - Verify 80%+ coverage
+2. **TDD アプローチ**
+   - 最初にテストを書く（RED）
+   - テストをパスする実装を行う（GREEN）
+   - リファクタリングする（IMPROVE）
+   - カバレッジ 80% 以上を確認する
 
-3. **Code Review**
-   - Review code after writing
-   - Address CRITICAL and HIGH issues
-   - Fix MEDIUM issues when possible
+3. **コードレビュー**
+   - 記述後にコードをレビューする
+   - CRITICAL および HIGH の問題に対処する
+   - 可能な場合は MEDIUM の問題も修正する
 
-4. **Commit & Push**
-   - Detailed commit messages
-   - Follow conventional commits format
+4. **コミットとプッシュ**
+   - 詳細なコミットメッセージを記述する
+   - Conventional Commits 形式に従う
 
 ## 4. セーフティガード
 
@@ -91,18 +91,18 @@
 
 ## 5. コーディングスタイル
 
-### Immutability (CRITICAL)
+### イミュータビリティ（重要）
 
-ALWAYS create new objects, NEVER mutate:
+常に新しいオブジェクトを作成し、決してミューテーションしないこと:
 
 ```javascript
-// WRONG: Mutation
+// 誤り: ミューテーション
 function updateUser(user, name) {
-  user.name = name; // MUTATION!
+  user.name = name; // ミューテーション!
   return user;
 }
 
-// CORRECT: Immutability
+// 正しい: イミュータブル
 function updateUser(user, name) {
   return {
     ...user,
@@ -111,18 +111,18 @@ function updateUser(user, name) {
 }
 ```
 
-### File Organization
+### ファイル構成
 
-MANY SMALL FILES > FEW LARGE FILES:
+多数の小さなファイル > 少数の大きなファイル:
 
-- High cohesion, low coupling
-- 200-400 lines typical, 800 max
-- Extract utilities from large components
-- Organize by feature/domain, not by type
+- 高凝集・低結合
+- 通常 200〜400 行、最大 800 行
+- 大きなコンポーネントからユーティリティを抽出する
+- 種類別ではなく、機能・ドメイン別に整理する
 
-### Error Handling
+### エラーハンドリング
 
-ALWAYS handle errors comprehensively:
+常にエラーを包括的に処理すること:
 
 ```typescript
 try {
@@ -130,13 +130,13 @@ try {
   return result;
 } catch (error) {
   console.error("Operation failed:", error);
-  throw new Error("Detailed user-friendly message");
+  throw new Error("詳細でユーザーにわかりやすいメッセージ");
 }
 ```
 
-### Input Validation
+### 入力バリデーション
 
-ALWAYS validate user input:
+常にユーザー入力を検証すること:
 
 ```typescript
 import { z } from "zod";
@@ -149,88 +149,88 @@ const schema = z.object({
 const validated = schema.parse(input);
 ```
 
-### Code Quality Checklist
+### コード品質チェックリスト
 
-Before marking work complete:
+作業完了とする前に:
 
-- [ ] Code is readable and well-named
-- [ ] Functions are small (<50 lines)
-- [ ] Files are focused (<800 lines)
-- [ ] No deep nesting (>4 levels)
-- [ ] Proper error handling
-- [ ] No console.log statements
-- [ ] No hardcoded values
-- [ ] No mutation (immutable patterns used)
+- [ ] コードが読みやすく、適切に命名されている
+- [ ] 関数が小さい（50 行未満）
+- [ ] ファイルが焦点を絞っている（800 行未満）
+- [ ] ネストが深くない（4 階層以下）
+- [ ] 適切なエラーハンドリングがある
+- [ ] console.log 文がない
+- [ ] ハードコードされた値がない
+- [ ] ミューテーションがない（イミュータブルなパターンを使用）
 
 ## 6. セキュリティ
 
-### Mandatory Security Checks
+### 必須セキュリティチェック
 
-Before ANY commit:
+いかなるコミットの前にも:
 
-- [ ] No hardcoded secrets (API keys, passwords, tokens)
-- [ ] All user inputs validated
-- [ ] SQL injection prevention (parameterized queries)
-- [ ] XSS prevention (sanitized HTML)
-- [ ] CSRF protection enabled
-- [ ] Authentication/authorization verified
-- [ ] Rate limiting on all endpoints
-- [ ] Error messages don't leak sensitive data
+- [ ] ハードコードされた秘密情報がない（API キー、パスワード、トークン）
+- [ ] すべてのユーザー入力が検証されている
+- [ ] SQL インジェクションの防止（パラメータ化クエリ）
+- [ ] XSS の防止（HTML のサニタイズ）
+- [ ] CSRF 保護が有効
+- [ ] 認証・認可が検証されている
+- [ ] すべてのエンドポイントにレート制限がある
+- [ ] エラーメッセージが機密情報を漏洩しない
 
-### Secret Management
+### シークレット管理
 
 ```typescript
-// NEVER: Hardcoded secrets
+// 禁止: ハードコードされた秘密情報
 const apiKey = "sk-proj-xxxxx";
 
-// ALWAYS: Environment variables
+// 必須: 環境変数
 const apiKey = process.env.OPENAI_API_KEY;
 
 if (!apiKey) {
-  throw new Error("OPENAI_API_KEY not configured");
+  throw new Error("OPENAI_API_KEY が設定されていません");
 }
 ```
 
-### Security Response Protocol
+### セキュリティ対応プロトコル
 
-If security issue found:
+セキュリティ問題を発見した場合:
 
-1. STOP immediately
+1. 直ちに停止する
 2. セキュリティの根本原因を分析する
-3. Fix CRITICAL issues before continuing
-4. Rotate any exposed secrets
-5. Review entire codebase for similar issues
+3. 続行する前に CRITICAL な問題を修正する
+4. 露出した秘密情報をローテーションする
+5. コードベース全体を類似の問題についてレビューする
 
 ## 7. テスト要件
 
-### Minimum Test Coverage: 80%
+### 最小テストカバレッジ: 80%
 
-Test Types (ALL required):
+テスト種別（すべて必須）:
 
-1. **Unit Tests** - Individual functions, utilities, components
-2. **Integration Tests** - API endpoints, database operations
-3. **E2E Tests** - Critical user flows (Playwright)
+1. **ユニットテスト** — 個々の関数、ユーティリティ、コンポーネント
+2. **統合テスト** — API エンドポイント、データベース操作
+3. **E2E テスト** — クリティカルなユーザーフロー（Playwright）
 
-### Test-Driven Development
+### テスト駆動開発
 
-MANDATORY workflow:
+必須ワークフロー:
 
-1. Write test first (RED)
-2. Run test - it should FAIL
-3. Write minimal implementation (GREEN)
-4. Run test - it should PASS
-5. Refactor (IMPROVE)
-6. Verify coverage (80%+)
+1. 最初にテストを書く（RED）
+2. テストを実行する — 失敗するはず
+3. 最小限の実装を書く（GREEN）
+4. テストを実行する — パスするはず
+5. リファクタリングする（IMPROVE）
+6. カバレッジを確認する（80% 以上）
 
-### Troubleshooting Test Failures
+### テスト失敗のトラブルシューティング
 
-1. Check test isolation
-2. Verify mocks are correct
-3. Fix implementation, not tests (unless tests are wrong)
+1. テストの独立性を確認する
+2. モックが正しいか検証する
+3. テストではなく実装を修正する（テストが間違っている場合を除く）
 
 ## 8. 共通パターン
 
-### API Response Format
+### API レスポンス形式
 
 ```typescript
 interface ApiResponse<T> {
@@ -245,7 +245,7 @@ interface ApiResponse<T> {
 }
 ```
 
-### Custom Hooks Pattern
+### カスタムフックのパターン
 
 ```typescript
 export function useDebounce<T>(value: T, delay: number): T {
@@ -260,7 +260,7 @@ export function useDebounce<T>(value: T, delay: number): T {
 }
 ```
 
-### Repository Pattern
+### リポジトリパターン
 
 ```typescript
 interface Repository<T> {
@@ -272,11 +272,11 @@ interface Repository<T> {
 }
 ```
 
-### Skeleton Projects
+### スケルトンプロジェクト
 
-When implementing new functionality:
+新機能を実装する際は:
 
-1. Search for battle-tested skeleton projects
-2. Evaluate options (security, extensibility, relevance)
-3. Clone best match as foundation
-4. Iterate within proven structure
+1. 実績のあるスケルトンプロジェクトを探す
+2. 選択肢を評価する（セキュリティ、拡張性、関連性）
+3. 最適なものをクローンして基盤とする
+4. 実績のある構造の中で反復開発する
