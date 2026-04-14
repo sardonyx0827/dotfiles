@@ -188,7 +188,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python ~/.claude/hooks/codex-bash-review.py"
+            "command": "python ~/.claude/hooks/bash-review.py"
           }
         ]
       }
