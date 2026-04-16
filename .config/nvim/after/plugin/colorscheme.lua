@@ -24,7 +24,7 @@ local function set_barbar_transparent()
   local hl = vim.api.nvim_set_hl
 
   -- Combination of buffer states and parts
-  local states = {'Current', 'Inactive', 'Visible', 'Alternate'}
+  local states = { 'Current', 'Inactive', 'Visible', 'Alternate' }
   local parts = {
     '', 'Btn', 'Icon', 'Index', 'Mod', 'ModBtn', 'Number',
     'Pin', 'PinBtn', 'Sign', 'SignRight', 'Target',
@@ -34,7 +34,7 @@ local function set_barbar_transparent()
   for _, state in ipairs(states) do
     for _, part in ipairs(parts) do
       local group = 'Buffer' .. state .. part
-      local ok, existing = pcall(vim.api.nvim_get_hl, 0, {name = group, link = false})
+      local ok, existing = pcall(vim.api.nvim_get_hl, 0, { name = group, link = false })
       if ok and existing then
         existing.bg = 'NONE'
         hl(0, group, existing)
@@ -44,15 +44,15 @@ local function set_barbar_transparent()
 
   -- Special highlight groups (e.g., tabbar empty areas)
   local special_groups = {
-    'BufferTabpageFill',   -- Space between buffer and tabpage
-    'BufferTabpages',      -- Tabpage indicator
-    'BufferTabpagesSep',   -- Tabpage separator
-    'BufferScrollArrow',   -- Scroll arrows
-    'BufferOffset',        -- Sidebar offset
+    'BufferTabpageFill', -- Space between buffer and tabpage
+    'BufferTabpages',    -- Tabpage indicator
+    'BufferTabpagesSep', -- Tabpage separator
+    'BufferScrollArrow', -- Scroll arrows
+    'BufferOffset',      -- Sidebar offset
   }
 
   for _, group in ipairs(special_groups) do
-    hl(0, group, {bg = 'NONE'})
+    hl(0, group, { bg = 'NONE' })
   end
 end
 

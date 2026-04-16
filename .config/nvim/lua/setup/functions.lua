@@ -195,7 +195,8 @@ local function copy_file_absolute_path()
   end
   print("Copied file absolute path to clipboard: " .. filepath)
 end
-vim.keymap.set("n", "<leader>cp", copy_file_absolute_path, { desc = "Copy file absolute path to clipboard", noremap = true })
+vim.keymap.set("n", "<leader>cp", copy_file_absolute_path,
+  { desc = "Copy file absolute path to clipboard", noremap = true })
 
 ---------------------------------------------------------
 -- [AI solution] copy lsp diagnostics to clipboard for ai assistance
@@ -239,7 +240,8 @@ local function copy_lsp_diagnostics()
     print("No LSP diagnostics found.")
   end
 end
-vim.keymap.set("n", "<leader><leader>d", copy_lsp_diagnostics, { desc = "Copy LSP diagnostics to clipboard", noremap = true })
+vim.keymap.set("n", "<leader><leader>d", copy_lsp_diagnostics,
+  { desc = "Copy LSP diagnostics to clipboard", noremap = true })
 
 
 ---------------------------------------------------------
@@ -295,7 +297,8 @@ local function copy_all_lsp_diagnostics()
     print("No LSP diagnostics found.")
   end
 end
-vim.keymap.set("n", "<leader><leader>a", copy_all_lsp_diagnostics, { desc = "Copy all LSP diagnostics to clipboard", noremap = true })
+vim.keymap.set("n", "<leader><leader>a", copy_all_lsp_diagnostics,
+  { desc = "Copy all LSP diagnostics to clipboard", noremap = true })
 
 ---------------------------------------------------------
 -- [AI solution] get file and line info visual selection
@@ -326,39 +329,9 @@ _G.get_file_line_info_visual = function(start_line, end_line)
   print("Copied file and line info to clipboard.")
 end
 
-vim.keymap.set("x", "<leader><leader>c", ":<C-u>lua get_file_line_info_visual(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"))<CR>",
+vim.keymap.set("x", "<leader><leader>c",
+  ":<C-u>lua get_file_line_info_visual(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"))<CR>",
   { desc = "Get file and line info from visual selection", noremap = true, silent = true })
-
----------------------------------------------------------
--- close other buffers except current one
----------------------------------------------------------
-local function close_other_buffers()
-  local current_buf = vim.api.nvim_get_current_buf()
-  local buffers = vim.api.nvim_list_bufs()
-  for _, buf in ipairs(buffers) do
-    if buf ~= current_buf and vim.api.nvim_buf_is_loaded(buf) then
-      vim.api.nvim_buf_delete(buf, { force = true })
-    end
-  end
-end
-vim.keymap.set("n", "<leader>bo", close_other_buffers, { noremap = true, silent = true, desc = "Close Other Buffers" })
-
----------------------------------------------------------
--- close buffers to the right of current buffer
----------------------------------------------------------
-local function close_buffers_to_right()
-  local current_buf = vim.api.nvim_get_current_buf()
-  local buffers = vim.api.nvim_list_bufs()
-  local found_current = false
-  for _, buf in ipairs(buffers) do
-    if buf == current_buf then
-      found_current = true
-    elseif found_current and vim.api.nvim_buf_is_loaded(buf) then
-      vim.api.nvim_buf_delete(buf, { force = true })
-    end
-  end
-end
-vim.keymap.set("n", "<leader>br", close_buffers_to_right, { noremap = true, silent = true, desc = "Close Buffers to Right" })
 
 ---------------------------------------------------------
 -- close current buffer
@@ -398,10 +371,10 @@ local function generate_commit_message_with_claude()
   vim.fn.writefile(vim.split(diff, "\n"), tmpfile)
 
   local prompt = "Generate a git commit message for the following diff. "
-    .. "Follow Conventional Commits format (e.g. feat:, fix:, refactor:, docs:, test:, chore:). "
-    .. "Reply ONLY with the commit message, no markdown formatting, no explanation, no surrounding quotes. "
-    .. "Keep the summary line under 50 characters. Add a body separated by a blank line if the change is complex. "
-    .. "Write in English."
+      .. "Follow Conventional Commits format (e.g. feat:, fix:, refactor:, docs:, test:, chore:). "
+      .. "Reply ONLY with the commit message, no markdown formatting, no explanation, no surrounding quotes. "
+      .. "Keep the summary line under 50 characters. Add a body separated by a blank line if the change is complex. "
+      .. "Write in English."
 
   local result_lines = {}
   local cmd = string.format("cat %s | claude --model haiku -p %s",
@@ -485,11 +458,10 @@ local function generate_commit_message_with_claude()
         vim.keymap.set("n", "q", function()
           vim.api.nvim_win_close(win, true)
         end, { buf = buf, desc = "Close commit message window" })
-
       end)
     end,
   })
 end
 
-vim.keymap.set("n", "<leader>cm", generate_commit_message_with_claude, { desc = "Generate commit message with Claude Code", noremap = true })
-
+vim.keymap.set("n", "<leader>cm", generate_commit_message_with_claude,
+  { desc = "Generate commit message with Claude Code", noremap = true })
