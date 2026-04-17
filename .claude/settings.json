@@ -8,7 +8,6 @@
     "pr": ""
   },
   "permissions": {
-    "defaultMode": "auto",
     "allow": [
       "Read",
       "Edit",
@@ -164,7 +163,8 @@
       "Read(./dist/**)",
       "Read(out/**)",
       "Read(./.next/**)"
-    ]
+    ],
+    "defaultMode": "auto"
   },
   "hooks": {
     "PostToolUse": [
@@ -220,7 +220,8 @@
     ]
   },
   "autoUpdatesChannel": "latest",
-  "voiceEnabled": false,
   "autoMemoryEnabled": false,
-  "teammateMode": "tmux"
+  "voiceEnabled": false,
+  "teammateMode": "tmux",
+  "skipAutoPermissionPrompt": true
 }
