@@ -612,6 +612,7 @@
     "telemetry.feedback.enabled": false,
     "workbench.enableExperiments": false,
     "npm.fetchOnlinePackageInfo": false,
+    "workbench.settings.enableNaturalLanguageSearch": false,
 
     // others
     "settingsSync.keybindingsPerPlatform": false,
