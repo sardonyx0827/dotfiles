@@ -147,13 +147,13 @@ install_wezterm() {
 install_fonts() {
   if [[ "$OS" == "macos" ]]; then
     print_info "Installing fonts..."
-    brew tap homebrew/cask-fonts
+    # homebrew/cask-fonts was deprecated in 2024 and folded into homebrew/cask.
     brew install --cask font-ubuntu-mono
     brew install --cask font-hack-nerd-font
     print_success "Fonts installed"
   elif [[ "$OS" == "ubuntu" ]]; then
     print_info "Installing fonts..."
-    sudo apt-get install -y fonts-ubuntu fonts-hack
+    sudo apt-get install -y fonts-ubuntu fonts-hack-ttf
     print_success "Fonts installed"
   fi
 }
@@ -176,6 +176,11 @@ install_nodejs() {
   # Setup npm global directory
   mkdir -p "$HOME/.npm-global"
   npm config set prefix "$HOME/.npm-global"
+  # Ensure the npm-global bin is visible to the rest of this script so subsequent
+  # `command_exists` checks and direct invocations of globally installed tools
+  # (prettier, eslint, claude, etc.) resolve correctly. .zshrc already exports
+  # this for interactive shells.
+  export PATH="$HOME/.npm-global/bin:$PATH"
   print_success "npm global directory configured"
 }
 
@@ -206,18 +211,13 @@ install_oh_my_zsh() {
 }
 
 # Install vim-plug
+# Neovim is managed by lazy.nvim (see .config/nvim/), so vim-plug is only
+# needed for classic Vim (.vimrc).
 install_vim_plug() {
   print_info "Installing vim-plug..."
 
-  # For Vim
   if [ ! -f "$HOME/.vim/autoload/plug.vim" ]; then
     curl -fLo "$HOME/.vim/autoload/plug.vim" --create-dirs \
-      https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-  fi
-
-  # For Neovim
-  if [ ! -f "$HOME/.config/nvim/autoload/plug.vim" ]; then
-    curl -fLo "$HOME/.config/nvim/autoload/plug.vim" --create-dirs \
       https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
   fi
 
@@ -232,7 +232,31 @@ create_symlinks() {
   backup_dir="$HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
   mkdir -p "$backup_dir"
 
-  # Files to symlink
+  # Helper: backup a path if it exists as a real file/dir (not a symlink)
+  backup_if_real() {
+    local target="$1"
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+      print_warning "Backing up existing $(basename "$target")"
+      mv "$target" "$backup_dir/"
+    elif [ -L "$target" ]; then
+      rm -f "$target"
+    fi
+  }
+
+  # Helper: symlink a repo entry into a destination directory, backing up reals
+  link_entry() {
+    local src="$1"
+    local dest="$2"
+    if [ ! -e "$src" ]; then
+      print_warning "Skipping missing source: $src"
+      return
+    fi
+    backup_if_real "$dest"
+    ln -sf "$src" "$dest"
+    print_success "Linked $(basename "$dest")"
+  }
+
+  # Top-level dotfiles
   files=(
     ".zshrc"
     ".vimrc"
@@ -243,54 +267,68 @@ create_symlinks() {
   )
 
   for file in "${files[@]}"; do
-    if [ -f "$HOME/$file" ] && [ ! -L "$HOME/$file" ]; then
-      print_warning "Backing up existing $file"
-      mv "$HOME/$file" "$backup_dir/"
-    fi
-    ln -sf "$DOTFILES_DIR/$file" "$HOME/$file"
-    print_success "Linked $file"
+    link_entry "$DOTFILES_DIR/$file" "$HOME/$file"
   done
 
   # Directories to symlink
   mkdir -p "$HOME/.config"
 
-  # Neovim config
-  if [ -d "$HOME/.config/nvim" ] && [ ! -L "$HOME/.config/nvim" ]; then
-    print_warning "Backing up existing nvim config"
-    mv "$HOME/.config/nvim" "$backup_dir/"
-  fi
-  ln -sf "$DOTFILES_DIR/.config/nvim_lazy" "$HOME/.config/nvim"
-  print_success "Linked Neovim config"
+  # Neovim config (repo stores it at .config/nvim)
+  link_entry "$DOTFILES_DIR/.config/nvim" "$HOME/.config/nvim"
 
-  # Claude Code config
-  if [ -d "$HOME/.claude" ] && [ ! -L "$HOME/.claude" ]; then
-    print_warning "Backing up existing Claude config"
-    mv "$HOME/.claude" "$backup_dir/"
-  fi
-  ln -sf "$DOTFILES_DIR/.claude" "$HOME/.claude"
-  print_success "Linked Claude config"
+  # Claude Code config: symlink individual entries so CLI runtime data
+  # (projects/, sessions/, history.jsonl, backups/, etc.) stays out of the repo.
+  mkdir -p "$HOME/.claude"
+  local claude_entries=(
+    "CLAUDE.md"
+    "settings.json"
+    "statusline-command.sh"
+    "agents"
+    "archive"
+    "commands"
+    "hooks"
+    "mcp-servers"
+    "rules"
+    "skills"
+  )
+  for entry in "${claude_entries[@]}"; do
+    [ -e "$DOTFILES_DIR/.claude/$entry" ] &&
+      link_entry "$DOTFILES_DIR/.claude/$entry" "$HOME/.claude/$entry"
+  done
 
-  # Codex config
-  if [ -d "$HOME/.codex" ] && [ ! -L "$HOME/.codex" ]; then
-    print_warning "Backing up existing Codex config"
-    mv "$HOME/.codex" "$backup_dir/"
-  fi
-  ln -sf "$DOTFILES_DIR/.codex" "$HOME/.codex"
-  print_success "Linked Codex config"
+  # Codex config: symlink individual entries
+  mkdir -p "$HOME/.codex"
+  local codex_entries=(
+    "AGENTS.md"
+    "config.json"
+    "config.toml"
+    "agents"
+  )
+  for entry in "${codex_entries[@]}"; do
+    [ -e "$DOTFILES_DIR/.codex/$entry" ] &&
+      link_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
+  done
 
-  # Gemini config
-  if [ -d "$HOME/.gemini" ] && [ ! -L "$HOME/.gemini" ]; then
-    print_warning "Backing up existing Gemini config"
-    mv "$HOME/.gemini" "$backup_dir/"
-  fi
-  ln -sf "$DOTFILES_DIR/.gemini" "$HOME/.gemini"
-  print_success "Linked Gemini config"
+  # Gemini config: symlink individual entries
+  mkdir -p "$HOME/.gemini"
+  local gemini_entries=(
+    "GEMINI.md"
+    "settings.json"
+  )
+  for entry in "${gemini_entries[@]}"; do
+    [ -e "$DOTFILES_DIR/.gemini/$entry" ] &&
+      link_entry "$DOTFILES_DIR/.gemini/$entry" "$HOME/.gemini/$entry"
+  done
 
-  # Oh My Zsh custom theme
+  # Oh My Zsh custom: remove existing (real dir or stale symlink) before linking
+  # to prevent `ln -sf` from creating a symlink *inside* the existing directory.
+  if [ -e "$HOME/.oh-my-zsh/custom" ] || [ -L "$HOME/.oh-my-zsh/custom" ]; then
+    backup_if_real "$HOME/.oh-my-zsh/custom"
+  fi
   ln -sf "$DOTFILES_DIR/.oh-my-zsh/custom" "$HOME/.oh-my-zsh/custom"
-  print_success "Linked Oh My Zsh custom theme"
+  print_success "Linked Oh My Zsh custom"
 
-  if [ "$(ls -A "$backup_dir" 2>/dev/null)" ]; then
+  if [ -n "$(ls -A "$backup_dir" 2>/dev/null)" ]; then
     print_info "Backup created at: $backup_dir"
   else
     rmdir "$backup_dir"
@@ -318,16 +356,25 @@ install_ai_tools() {
   if [[ $REPLY =~ ^[Yy]$ ]]; then
     print_info "Installing AI development tools..."
 
-    # Claude Code
+    # Claude Code (official npm distribution)
     if ! command_exists claude; then
-      print_warning "Claude Code installation requires manual setup"
-      print_info "Visit: https://docs.anthropic.com/claude-code"
+      npm install -g @anthropic-ai/claude-code 2>/dev/null ||
+        print_warning "Failed to install Claude Code"
+    else
+      print_info "Claude Code already installed"
     fi
 
     # Install npm-based tools
     npm install -g @openai/codex 2>/dev/null || print_warning "Failed to install Codex"
     npm install -g @google/gemini-cli 2>/dev/null || print_warning "Failed to install Gemini CLI"
-    npm install -g @github/copilot 2>/dev/null || print_warning "Failed to install GitHub Copilot CLI"
+
+    # GitHub Copilot CLI is distributed as a `gh` extension, not an npm package.
+    if command_exists gh; then
+      gh extension install github/gh-copilot 2>/dev/null ||
+        print_info "gh-copilot already installed or install skipped"
+    else
+      print_warning "gh CLI not found; install it to use GitHub Copilot CLI (gh extension install github/gh-copilot)"
+    fi
 
     print_success "AI tools installation attempted (check warnings above)"
   fi
@@ -383,13 +430,15 @@ install_linters_formatters() {
   # --- Platform-specific tools ---
   case "$OS" in
   macos)
+    # Note: clang-format ships with llvm (brew has no standalone formula).
+    # checkstyle has no brew formula; install manually from
+    # https://checkstyle.sourceforge.io/ if needed.
     local brew_tools=(
       shellcheck   # Shell script linter
       shfmt        # Shell script formatter
       cppcheck     # C/C++ linter
-      clang-format # C/C++ formatter (part of llvm)
+      llvm         # Provides clang-format for C/C++
       staticcheck  # Go advanced linter
-      checkstyle   # Java linter
       php-cs-fixer # PHP formatter
     )
     for tool in "${brew_tools[@]}"; do
