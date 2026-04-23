@@ -224,6 +224,11 @@ autoload -Uz compinit
 compinit
 # End of Docker CLI completions
 
+# When Neovim is closed
+function precmd() {
+  printf '\e[1 q'
+}
+
 # ai tools
 ## update
 function update_ai_tools() {

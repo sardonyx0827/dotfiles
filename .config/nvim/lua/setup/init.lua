@@ -46,3 +46,22 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
     end
   end,
 })
+
+vim.opt.guicursor = table.concat({
+  "n-v-c:block-blinkon500-blinkoff500",
+  "i-ci-ve:ver25-blinkon500-blinkoff500",
+  "r-cr:hor20-blinkon500-blinkoff500",
+  "o:hor50-blinkon500-blinkoff500",
+  "a:blinkwait700",
+}, ",")
+
+local function set_cursor_blinking_block()
+  -- DECSCUSR Ps=1: blinking block
+  vim.api.nvim_chan_send(vim.v.stderr, "\x1b[1 q")
+end
+
+vim.api.nvim_create_autocmd({ "VimLeave", "VimSuspend" }, {
+  callback = function()
+    set_cursor_blinking_block()
+  end,
+})
