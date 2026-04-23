@@ -22,10 +22,12 @@ config.warn_about_missing_glyphs = false
 -- remove tab bar
 config.hide_tab_bar_if_only_one_tab = true
 -- background_opacity (no bg image)
-config.window_background_opacity = 0.8
+config.window_background_opacity = 0.9
 -- input backslash (macos: option + ¥ -> \)
 config.keys = {
-  { key = "¥", mods = "", action = wezterm.action.SendString("\\") },
+  { key = "¥", mods = "",    action = wezterm.action.SendString("\\") },
   { key = "¥", mods = "OPT", action = wezterm.action.SendString("¥") },
+  { key = 'F10', mods = 'OPT', action = wezterm.action.ToggleFullScreen,
+  },
 }
 return config
