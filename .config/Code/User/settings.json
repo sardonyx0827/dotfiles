@@ -1,622 +1,531 @@
 {
-    // vim settings
-    "vim.useSystemClipboard": true,
-    "vim.hlsearch": true,
-    "vim.incsearch": true,
-    "vim.leader": ",",
-    "vim.useCtrlKeys": true,
-    "vim.easymotion": true,
-    "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
-    "vim.showMarksInGutter": true,
+  // vim settings
+  "vim.useSystemClipboard": true,
+  "vim.hlsearch": true,
+  "vim.incsearch": true,
+  "vim.leader": ",",
+  "vim.useCtrlKeys": true,
+  "vim.easymotion": true,
+  "vim.easymotionKeys": "hklyuiopnmqwertzxcvbasdgjf",
+  "vim.showMarksInGutter": true,
 
-    "vim.normalModeKeyBindingsNonRecursive": [
+  "vim.normalModeKeyBindingsNonRecursive": [
+    {
+      "before": ["<leader>", "c", "c"],
+      "commands": [
+        "workbench.action.createTerminalEditorSide",
         {
-            "before": [
-                "<leader>",
-                "c",
-                "c"
-            ],
-            "commands": [
-                "workbench.action.createTerminalEditorSide",
-                {
-                    "command": "workbench.action.terminal.sendSequence",
-                    "args": { "text": "claude\n" }
-                }
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "c",
-                "o"
-            ],
-            "commands": [
-                "workbench.action.chat.open"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "a",
-                "a"
-            ],
-            "commands": [
-                "claude-vscode.editor.open"
-            ]
-        }, {
-            "before": [
-                "<leader>",
-                "d",
-                "a"
-            ],
-            "commands": [
-                "claude-vscode.acceptProposedDiff"
-            ]
-        }, {
-            "before": [
-                "<leader>",
-                "d",
-                "d"
-            ],
-            "commands": [
-                "claude-vscode.rejectProposedDiff"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "e"
-            ],
-            // open explorer
-            "commands": [
-                "workbench.view.explorer"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "u"
-            ],
-            // timeline
-            "commands": [
-                "timeline.focus"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "s",
-                "f"
-            ],
-            // find in files
-            "commands": [
-                "workbench.action.quickOpen"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "s",
-                "o"
-            ],
-            "commands": [
-                "workbench.action.gotoSymbol"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "g",
-                "r"
-            ],
-            // find in files
-            "commands": [
-                "workbench.action.findInFiles"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "g",
-                "c"
-            ],
-            // open source control
-            "commands": [
-                "workbench.view.scm"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "g",
-                "d"
-            ],
-            // open git diff
-            "commands": [
-                "workbench.view.scm.diff"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                " "
-            ],
-            // disable search highlight
-            "commands": [
-                ":noh"
-            ]
-        },{
-            "before": [
-                "u"
-            ],
-            "commands": [
-                "undo"
-            ]
-        },{
-            "before": [
-                "<C-r>"
-            ],
-            "commands": [
-                "redo"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "r",
-                "n"
-            ],
-            // search and replace
-            "commands": [
-                "editor.action.startFindReplaceAction"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "g",
-                "d"
-            ],
-            // git diff on current file
-            "commands": [
-                "git.openChange"
-            ]
-        },{
-            "before": [
-                "]",
-                "g"
-            ],
-            // git next change
-            "commands": [
-                "workbench.action.editor.nextChange"
-            ]
-        },{
-            "before": [
-                "[",
-                "g"
-            ],
-            // git previous change
-            "commands": [
-                "workbench.action.editor.previousChange"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "f",
-                "f"
-            ],
-            // format document
-            "commands": [
-                "editor.action.formatDocument"
-            ]
-        },{
-            "before": [
-                "K"
-            ],
-            // definition preview
-            "commands": [
-                "editor.action.showDefinitionPreviewHover"
-            ]
-        },{
-            "before": [
-                "<C-t>"
-            ],
-            // jump to definition
-            "commands": [
-                "editor.action.revealDefinition"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "b",
-                "f"
-            ],
-            // instead of Buffers
-            "commands": [
-                "workbench.files.action.focusOpenEditorsView"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "l",
-                "s"
-            ],
-            // instead of Buffers
-            "commands": [
-                "workbench.action.showAllEditors"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "s",
-                "l"
-            ],
-            // instead of Buffers
-            "commands": [
-                "workbench.action.showAllEditors"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "l",
-                "l"
-            ],
-            // instead of Buffers
-            "commands": [
-                "workbench.action.showAllEditors"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "x",
-                "p"
-            ],
-            // instead of Buffers
-            "commands": [
-                "workbench.action.files.openFolderInNewWindow"
-            ]
-        },{
-            "before": [
-                "g",
-                "c",
-                "c"
-            ],
-            // toggle comment
-            "commands": [
-                "editor.action.commentLine"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "x",
-                "w"
-            ],
-            // display all problems
-            "commands": [
-                "workbench.actions.view.problems"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "x",
-                "x"
-            ],
-            // display all problems
-            "commands": [
-                "workbench.actions.view.problems"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "x",
-                "n"
-            ],
-            // jump to next problem
-            "commands": [
-                "editor.action.marker.nextInFiles"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "w",
-                "w"
-            ],
-            "commands": [
-                "workbench.action.compareEditor.focusOtherSide"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "j",
-                "j"
-            ],
-            // vim easy motion
-            "after": [
-                "leader",
-                "leader",
-                "leader",
-                "b",
-                "d",
-                "w"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "j",
-                "s"
-            ],
-            // vim easy motion
-            "after": [
-                "leader",
-                "leader",
-                "/"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "j",
-                "c"
-            ],
-            // vim easy motion
-            "after": [
-                "leader",
-                "leader",
-                "s"
-            ]
-        },{
-            "before": [
-                "<C-l>"
-            ],
-            "after": [
-                "g",
-                "t"
-            ]
-        },{
-            "before": [
-                "<C-h>"
-            ],
-            "after": [
-                "g",
-                "T"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "b",
-                "c"
-            ],
-            "commands": [
-                // close current tab
-                "workbench.action.closeActiveEditor"
-            ]
-        },{
-            "before": [
-                "<C-q>"
-            ],
-            "commands": [
-                // close current tab
-                "workbench.action.closeActiveEditor"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "b",
-                "r"
-            ],
-            "commands": [
-                // close tabs to the right of current buffer
-                "workbench.action.closeEditorsToTheRight"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "b",
-                "o"
-            ],
-            "commands": [
-                // close tabs without current buffer
-                "workbench.action.closeOtherEditors"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "s",
-                "h"
-            ],
-            "commands": [
-                "workbench.action.createTerminalEditorSide"
-            ]
+          "command": "workbench.action.terminal.sendSequence",
+          "args": { "text": "claude\n" }
         }
-    ],
-
-    "vim.visualModeKeyBindingsNonRecursive": [
+      ]
+    },
+    {
+      "before": ["<leader>", "c", "o"],
+      "commands": ["workbench.action.chat.open"]
+    },
+    {
+      "before": ["<leader>", "a", "a"],
+      "commands": ["claude-vscode.editor.open"]
+    },
+    {
+      "before": ["<leader>", "d", "a"],
+      "commands": ["claude-vscode.acceptProposedDiff"]
+    },
+    {
+      "before": ["<leader>", "d", "d"],
+      "commands": ["claude-vscode.rejectProposedDiff"]
+    },
+    {
+      "before": ["<leader>", "e"],
+      // open explorer
+      "commands": ["workbench.view.explorer"]
+    },
+    {
+      "before": ["<leader>", "u"],
+      // timeline
+      "commands": ["timeline.focus"]
+    },
+    {
+      "before": ["<leader>", "s", "f"],
+      // find in files
+      "commands": ["workbench.action.quickOpen"]
+    },
+    {
+      "before": ["<leader>", "s", "o"],
+      "commands": ["workbench.action.gotoSymbol"]
+    },
+    {
+      "before": ["<leader>", "g", "r"],
+      // find in files
+      "commands": ["workbench.action.findInFiles"]
+    },
+    {
+      "before": ["<leader>", "g", "c"],
+      // open source control
+      "commands": ["workbench.view.scm"]
+    },
+    {
+      "before": ["<leader>", "g", "d"],
+      // open git diff
+      "commands": ["workbench.view.scm.diff"]
+    },
+    {
+      "before": ["<leader>", " "],
+      // disable search highlight
+      "commands": [":noh"]
+    },
+    {
+      "before": ["u"],
+      "commands": ["undo"]
+    },
+    {
+      "before": ["<C-r>"],
+      "commands": ["redo"]
+    },
+    {
+      "before": ["<leader>", "r", "n"],
+      // search and replace
+      "commands": ["editor.action.startFindReplaceAction"]
+    },
+    {
+      "before": ["<leader>", "g", "d"],
+      // git diff on current file
+      "commands": ["git.openChange"]
+    },
+    {
+      "before": ["]", "g"],
+      // git next change
+      "commands": ["workbench.action.editor.nextChange"]
+    },
+    {
+      "before": ["[", "g"],
+      // git previous change
+      "commands": ["workbench.action.editor.previousChange"]
+    },
+    {
+      "before": ["<leader>", "f", "f"],
+      // format document
+      "commands": ["editor.action.formatDocument"]
+    },
+    {
+      "before": ["K"],
+      // definition preview
+      "commands": ["editor.action.showDefinitionPreviewHover"]
+    },
+    {
+      "before": ["<C-t>"],
+      // jump to definition
+      "commands": ["editor.action.revealDefinition"]
+    },
+    {
+      "before": ["<leader>", "b", "f"],
+      // instead of Buffers
+      "commands": ["workbench.files.action.focusOpenEditorsView"]
+    },
+    {
+      "before": ["<leader>", "l", "s"],
+      // instead of Buffers
+      "commands": ["workbench.action.showAllEditors"]
+    },
+    {
+      "before": ["<leader>", "s", "l"],
+      // instead of Buffers
+      "commands": ["workbench.action.showAllEditors"]
+    },
+    {
+      "before": ["<leader>", "l", "l"],
+      // instead of Buffers
+      "commands": ["workbench.action.showAllEditors"]
+    },
+    {
+      "before": ["<leader>", "x", "p"],
+      // instead of Buffers
+      "commands": ["workbench.action.files.openFolderInNewWindow"]
+    },
+    {
+      "before": ["g", "c", "c"],
+      // toggle comment
+      "commands": ["editor.action.commentLine"]
+    },
+    {
+      "before": ["<leader>", "x", "w"],
+      // display all problems
+      "commands": ["workbench.actions.view.problems"]
+    },
+    {
+      "before": ["<leader>", "x", "x"],
+      // display all problems
+      "commands": ["workbench.actions.view.problems"]
+    },
+    {
+      "before": ["<leader>", "x", "n"],
+      // jump to next problem
+      "commands": ["editor.action.marker.nextInFiles"]
+    },
+    {
+      "before": ["<leader>", "w", "w"],
+      "commands": ["workbench.action.compareEditor.focusOtherSide"]
+    },
+    {
+      "before": ["<leader>", "j", "j"],
+      // vim easy motion
+      "after": ["leader", "leader", "leader", "b", "d", "w"]
+    },
+    {
+      "before": ["<leader>", "j", "s"],
+      // vim easy motion
+      "after": ["leader", "leader", "/"]
+    },
+    {
+      "before": ["<leader>", "j", "c"],
+      // vim easy motion
+      "after": ["leader", "leader", "s"]
+    },
+    {
+      "before": ["<C-l>"],
+      "after": ["g", "t"]
+    },
+    {
+      "before": ["<C-h>"],
+      "after": ["g", "T"]
+    },
+    {
+      "before": ["<leader>", "b", "c"],
+      "commands": [
+        // close current tab
+        "workbench.action.closeActiveEditor"
+      ]
+    },
+    {
+      "before": ["<C-q>"],
+      "commands": [
+        // close current tab
+        "workbench.action.closeActiveEditor"
+      ]
+    },
+    {
+      "before": ["<leader>", "b", "r"],
+      "commands": [
+        // close tabs to the right of current buffer
+        "workbench.action.closeEditorsToTheRight"
+      ]
+    },
+    {
+      "before": ["<leader>", "b", "o"],
+      "commands": [
+        // close tabs without current buffer
+        "workbench.action.closeOtherEditors"
+      ]
+    },
+    {
+      "before": ["<leader>", "s", "h"],
+      "commands": ["workbench.action.createTerminalEditorSide"]
+    },
+    {
+      // === Item 3: AI helpers ===
+      // copy absolute file path (mirrors nvim <leader>cp)
+      "before": ["<leader>", "c", "p"],
+      "commands": ["copyFilePath"]
+    },
+    {
+      // copy relative file path
+      "before": ["<leader>", "c", "P"],
+      "commands": ["copyRelativeFilePath"]
+    },
+    {
+      // copy file reference for AI prompt (best-effort: relative path; line# requires extension)
+      "before": ["<leader>", "<leader>", "c"],
+      "commands": ["copyRelativeFilePath"]
+    },
+    {
+      // generate commit message via Copilot (mirrors nvim <leader>cm Claude version)
+      "before": ["<leader>", "c", "m"],
+      "commands": ["github.copilot.git.generateCommitMessage"]
+    },
+    {
+      // open chat for AI diagnostics assist (use #problems / #file in prompt)
+      "before": ["<leader>", "<leader>", "d"],
+      "commands": ["workbench.action.chat.open"]
+    },
+    {
+      // focus Problems panel (then Cmd+A / Cmd+C to copy all diagnostics)
+      "before": ["<leader>", "<leader>", "a"],
+      "commands": ["workbench.actions.view.problems"]
+    },
+    {
+      // === Item 4: Telescope-style pickers ===
+      // recent files (oldfiles)
+      "before": ["<leader>", "o", "f"],
+      "commands": ["workbench.action.openRecent"]
+    },
+    {
+      // git files (Cmd+P respects .gitignore in VSCode)
+      "before": ["<leader>", "s", "g"],
+      "commands": ["workbench.action.quickOpen"]
+    },
+    {
+      "before": ["<leader>", "g", "f"],
+      "commands": ["workbench.action.quickOpen"]
+    },
+    {
+      // git status (alias of ,gc)
+      "before": ["<leader>", "g", "s"],
+      "commands": ["workbench.view.scm"]
+    },
+    {
+      // git commit history
+      "before": ["<leader>", "g", "l"],
+      "commands": ["git.viewHistory"]
+    },
+    {
+      // grep cursor word (expand to word, then open find-in-files prefilled)
+      "before": ["<leader>", "g", "w"],
+      "commands": [
+        "editor.action.smartSelect.expand",
+        "workbench.action.findInFiles"
+      ]
+    },
+    {
+      // workspace symbols (vs ,so which is file-only goto symbol)
+      "before": ["<leader>", "s", "O"],
+      "commands": ["workbench.action.showAllSymbols"]
+    },
+    {
+      // === Item 5: Terminal sessions ===
+      // focus terminal at index 1-9
+      "before": ["<leader>", "s", "h", "1"],
+      "commands": ["workbench.action.terminal.focusAtIndex1"]
+    },
+    {
+      "before": ["<leader>", "s", "h", "2"],
+      "commands": ["workbench.action.terminal.focusAtIndex2"]
+    },
+    {
+      "before": ["<leader>", "s", "h", "3"],
+      "commands": ["workbench.action.terminal.focusAtIndex3"]
+    },
+    {
+      "before": ["<leader>", "s", "h", "4"],
+      "commands": ["workbench.action.terminal.focusAtIndex4"]
+    },
+    {
+      "before": ["<leader>", "s", "h", "5"],
+      "commands": ["workbench.action.terminal.focusAtIndex5"]
+    },
+    {
+      "before": ["<leader>", "s", "h", "6"],
+      "commands": ["workbench.action.terminal.focusAtIndex6"]
+    },
+    {
+      "before": ["<leader>", "s", "h", "7"],
+      "commands": ["workbench.action.terminal.focusAtIndex7"]
+    },
+    {
+      "before": ["<leader>", "s", "h", "8"],
+      "commands": ["workbench.action.terminal.focusAtIndex8"]
+    },
+    {
+      "before": ["<leader>", "s", "h", "9"],
+      "commands": ["workbench.action.terminal.focusAtIndex9"]
+    },
+    {
+      // float-like terminal (in editor area)
+      "before": ["<leader>", "s", "h", "f"],
+      "commands": ["workbench.action.createTerminalEditor"]
+    },
+    {
+      // bottom panel terminal toggle
+      "before": ["<leader>", "s", "h", "b"],
+      "commands": ["workbench.action.terminal.toggleTerminal"]
+    },
+    {
+      // lazydocker in side terminal editor
+      "before": ["<leader>", "t", "d"],
+      "commands": [
+        "workbench.action.createTerminalEditorSide",
         {
-            "before": [
-                "<leader>",
-                "c",
-                "o"
-            ],
-            "commands": [
-                "workbench.panel.chat"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "e"
-            ],
-            // open explorer
-            "commands": [
-                "workbench.view.explorer"
-            ]
-        },{
-            "before": [
-                "<leader>",
-                "u"
-            ],
-            // timeline
-            "commands": [
-                "timeline.focus"
-            ]
-        },{
-            "before": [
-                ">"
-            ],
-            "commands": [
-                "editor.action.indentLines"
-            ]
-        },{
-            "before": [
-                "<"
-            ],
-            "commands": [
-                "editor.action.outdentLines"
-            ]
-        },{
-            "before": [
-                "g",
-                "c"
-            ],
-            // toggle comment
-            "commands": [
-                "editor.action.commentLine"
-            ]
-        },{
-            "before": [
-                "<C-w>",
-                "q"
-            ],
-            "commands": [
-                // close editor
-                "workbench.action.closeActiveEditor"
-            ]
+          "command": "workbench.action.terminal.sendSequence",
+          "args": { "text": "lazydocker\n" }
         }
-    ],
-
-    "vim.insertModeKeyBindingsNonRecursive": [ ],
-
-    // vim status bar colors
-    "vim.statusBarColorControl": true,
-    "vim.statusBarColors.normal": [
-        "#181818",
-        "#7aa2f7"
-    ],
-    "vim.statusBarColors.insert": [
-        "#181818",
-        "#9ece6a"
-    ],
-    "vim.statusBarColors.visual": [
-        "#181818",
-        "#ff9e64"
-    ],
-    "vim.statusBarColors.visualblock": [
-        "#181818",
-        "#ff9e64"
-    ],
-    "vim.statusBarColors.visualline": [
-        "#181818",
-        "#ff9e64"
-    ],
-    "vim.statusBarColors.commandlineinprogress": [
-        "#181818",
-        "#e0af68"
-    ],
-    "vim.statusBarColors.searchinprogressmode": [
-        "#181818",
-        "#007acc"
-    ],
-    "vim.statusBarColors.easymotioninputmode": [
-        "#181818",
-        "#907acc"
-    ],
-    "vim.statusBarColors.easymotionmode": [
-        "#181818",
-        "#907acc"
-    ],
-    "workbench.colorCustomizations": {
-        "statusBar.background": "#181818",
-        "statusBar.noFolderBackground": "#181818",
-        "statusBar.debuggingBackground": "#181818",
-        "statusBar.foreground": "#7aa2f7",
-        "statusBar.debuggingBorder": "#191724",
-        "statusBar.debuggingForeground": "#7aa2f7"
+      ]
     },
-
-    // Github Copilot settings
-    "github.copilot.chat.localeOverride": "ja",
-    "github.copilot.advanced": {},
-    "github.copilot.enable": {
-        "*": true,
-        "plaintext": true,
-        "markdown": true,
-        "scminput": true
+    {
+      // gemini cli in side terminal editor
+      "before": ["<leader>", "t", "g"],
+      "commands": [
+        "workbench.action.createTerminalEditorSide",
+        {
+          "command": "workbench.action.terminal.sendSequence",
+          "args": { "text": "gemini\n" }
+        }
+      ]
     },
-    "remote.defaultExtensionsIfInstalledLocally": [
-        "GitHub.copilot",
-        "GitHub.copilot-chat",
-        "GitHub.vscode-pull-request-github"
-    ],
-    "github.copilot.nextEditSuggestions.enabled": true,
-    "chat.mcp.discovery.enabled": {
-        "claude-desktop": true,
-        "windsurf": true,
-        "cursor-global": true,
-        "cursor-workspace": true
+    {
+      // codex (OpenAI) cli in side terminal editor
+      "before": ["<leader>", "t", "o"],
+      "commands": [
+        "workbench.action.createTerminalEditorSide",
+        {
+          "command": "workbench.action.terminal.sendSequence",
+          "args": { "text": "codex\n" }
+        }
+      ]
+    }
+  ],
+
+  "vim.visualModeKeyBindingsNonRecursive": [
+    {
+      "before": ["<leader>", "c", "o"],
+      "commands": ["workbench.panel.chat"]
     },
-    "chat.agent.enabled": true,
-    "chat.extensionUnification.enabled": false,
-    "inlineChat.enableV2": true,
-    "mermaid-chat.enabled": true,
-
-    // editor settings
-    "workbench.startupEditor": "none",
-    "workbench.activityBar.location": "top",
-    "workbench.secondarySideBar.defaultVisibility": "hidden",
-    "files.trimTrailingWhitespace": true,
-    "indentRainbow.indicatorStyle": "light",
-    "vscode_vibrancy.opacity": 1.7,
-    "vscode_vibrancy.refreshInterval": 10000,
-    "editor.lineNumbers": "relative",
-    "editor.tabSize": 2,
-    "editor.minimap.enabled": false,
-    "window.customMenuBarAltFocus": false,
-    "window.titleBarStyle": "custom",
-    "explorer.confirmDragAndDrop": false,
-    "window.enableMenuBarMnemonics": false,
-    "window.density.editorTabHeight": "compact",
-    // "workbench.editor.showTabs": "none",
-    "window.restoreWindows": "none",
-    "window.customTitleBarVisibility": "auto",
-    "editor.smoothScrolling": true,
-    "security.promptForRemoteFileProtocolHandling": false,
-
-    // git
-    "git.autofetch": true,
-    "git.openRepositoryInParentFolders": "never",
-    "git.confirmSync": false,
-
-    // formatting
-    "[typescriptreact]": {
-        "editor.defaultFormatter": "vscode.typescript-language-features"
+    {
+      "before": ["<leader>", "e"],
+      // open explorer
+      "commands": ["workbench.view.explorer"]
     },
-    "[javascript]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    {
+      "before": ["<leader>", "u"],
+      // timeline
+      "commands": ["timeline.focus"]
     },
-    "[json]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    {
+      "before": [">"],
+      "commands": ["editor.action.indentLines"]
     },
-    "[jsonc]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    {
+      "before": ["<"],
+      "commands": ["editor.action.outdentLines"]
     },
-    "[python]": {
-        "editor.defaultFormatter": "charliermarsh.ruff"
+    {
+      "before": ["g", "c"],
+      // toggle comment
+      "commands": ["editor.action.commentLine"]
     },
+    {
+      "before": ["<C-w>", "q"],
+      "commands": [
+        // close editor
+        "workbench.action.closeActiveEditor"
+      ]
+    },
+    {
+      // copy file reference for AI prompt from selection (best-effort: relative path; line# requires extension)
+      "before": ["<leader>", "<leader>", "c"],
+      "commands": ["copyRelativeFilePath"]
+    }
+  ],
 
-    // terminal
-    "terminal.integrated.defaultProfile.linux": "zsh",
-    "terminal.integrated.defaultProfile.osx": "zsh",
+  "vim.insertModeKeyBindingsNonRecursive": [],
 
-    // themes
-    "workbench.iconTheme": "material-icon-theme",
+  // vim status bar colors
+  "vim.statusBarColorControl": true,
+  "vim.statusBarColors.normal": ["#181818", "#7aa2f7"],
+  "vim.statusBarColors.insert": ["#181818", "#9ece6a"],
+  "vim.statusBarColors.visual": ["#181818", "#ff9e64"],
+  "vim.statusBarColors.visualblock": ["#181818", "#ff9e64"],
+  "vim.statusBarColors.visualline": ["#181818", "#ff9e64"],
+  "vim.statusBarColors.commandlineinprogress": ["#181818", "#e0af68"],
+  "vim.statusBarColors.searchinprogressmode": ["#181818", "#007acc"],
+  "vim.statusBarColors.easymotioninputmode": ["#181818", "#907acc"],
+  "vim.statusBarColors.easymotionmode": ["#181818", "#907acc"],
+  "workbench.colorCustomizations": {
+    "statusBar.background": "#181818",
+    "statusBar.noFolderBackground": "#181818",
+    "statusBar.debuggingBackground": "#181818",
+    "statusBar.foreground": "#7aa2f7",
+    "statusBar.debuggingBorder": "#191724",
+    "statusBar.debuggingForeground": "#7aa2f7"
+  },
 
-    // security
-    "telemetry.telemetryLevel": "off",
-    "telemetry.editStats.enabled": false,
-    "telemetry.feedback.enabled": false,
-    "workbench.enableExperiments": false,
-    "npm.fetchOnlinePackageInfo": false,
-    "workbench.settings.enableNaturalLanguageSearch": false,
+  // Github Copilot settings
+  "github.copilot.chat.localeOverride": "ja",
+  "github.copilot.advanced": {},
+  "github.copilot.enable": {
+    "*": true,
+    "plaintext": true,
+    "markdown": true,
+    "scminput": true
+  },
+  "remote.defaultExtensionsIfInstalledLocally": [
+    "GitHub.copilot",
+    "GitHub.copilot-chat",
+    "GitHub.vscode-pull-request-github"
+  ],
+  "github.copilot.nextEditSuggestions.enabled": true,
+  "chat.mcp.discovery.enabled": {
+    "claude-desktop": true,
+    "windsurf": true,
+    "cursor-global": true,
+    "cursor-workspace": true
+  },
+  "chat.agent.enabled": true,
+  "chat.extensionUnification.enabled": false,
+  "inlineChat.enableV2": true,
+  "mermaid-chat.enabled": true,
 
-    // others
-    "settingsSync.keybindingsPerPlatform": false,
-    "claudeCode.preferredLocation": "sidebar",
-    "workbench.colorTheme": "Rosé Pine",
-    "claudeCode.selectedModel": "default"
+  // editor settings
+  "workbench.startupEditor": "none",
+  "workbench.activityBar.location": "top",
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "files.trimTrailingWhitespace": true,
+  "indentRainbow.indicatorStyle": "light",
+  "vscode_vibrancy.opacity": 1.7,
+  "vscode_vibrancy.refreshInterval": 10000,
+  "editor.lineNumbers": "relative",
+  "editor.tabSize": 2,
+  "editor.minimap.enabled": false,
+  "window.customMenuBarAltFocus": false,
+  "window.titleBarStyle": "custom",
+  "explorer.confirmDragAndDrop": false,
+  "window.enableMenuBarMnemonics": false,
+  "window.density.editorTabHeight": "compact",
+  // "workbench.editor.showTabs": "none",
+  "window.restoreWindows": "none",
+  "window.customTitleBarVisibility": "auto",
+  "editor.smoothScrolling": true,
+  "security.promptForRemoteFileProtocolHandling": false,
+
+  // git
+  "git.autofetch": true,
+  "git.openRepositoryInParentFolders": "never",
+  "git.confirmSync": false,
+
+  // formatting
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff"
+  },
+
+  // terminal
+  "terminal.integrated.defaultProfile.linux": "zsh",
+  "terminal.integrated.defaultProfile.osx": "zsh",
+
+  // themes
+  "workbench.iconTheme": "material-icon-theme",
+
+  // security
+  "telemetry.telemetryLevel": "off",
+  "telemetry.editStats.enabled": false,
+  "telemetry.feedback.enabled": false,
+  "workbench.enableExperiments": false,
+  "npm.fetchOnlinePackageInfo": false,
+  "workbench.settings.enableNaturalLanguageSearch": false,
+
+  // others
+  "settingsSync.keybindingsPerPlatform": false,
+  "claudeCode.preferredLocation": "sidebar",
+  "workbench.colorTheme": "Rosé Pine",
+  "claudeCode.selectedModel": "default"
 }
