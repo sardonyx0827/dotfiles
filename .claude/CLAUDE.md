@@ -21,7 +21,7 @@ push / commit / PR作成 の指示を受けた場合は `@~/.claude/rules/git-wo
 - 状態遷移が逐次的で、途中結果のレビュー・ユーザー確認を挟みたい
 - 1〜2ファイル程度の小規模変更、対話的なデバッグ、軽微な修正
 
-### 2. SubAgents (Task ツールで並列起動)
+### 2. SubAgents (Agent ツールで並列起動)
 以下のいずれかに該当する場合は SubAgents を積極的に並列起動する(目安は同時 2〜4)。
 - コンテキストを汚染したくない大量探索(Glob/Grep、ログ走査、コード全体把握)
 - 互いに独立して走れる並列タスク(複数案生成、複数観点レビュー、テスト生成)
@@ -32,7 +32,7 @@ push / commit / PR作成 の指示を受けた場合は `@~/.claude/rules/git-wo
 - 返却は要約(差分・結論)のみ。生ログをメインに戻させない
 - 同じファイルを書き込む SubAgents を同時起動しない(競合上書きを避ける)
 
-### 3. AgentTeams (tmux、experimental)
+### 3. AgentTeams (tmux)
 並列処理可能かつ、SubAgents ではコンテキスト維持が困難なSingleとSubAgentsの中間ケースに限定して使う。
 起動条件(いずれかを満たすとき):
 - ユーザーから明示的に AgentTeam / team / tmux 起動の指示があった
