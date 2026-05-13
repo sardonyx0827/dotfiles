@@ -12,6 +12,8 @@ return {
     },   -- optional but recommended
   },
   config = function()
-    require("neogit").setup()
+    require("neogit").setup({
+      disable_insert_on_commit = true,
+    })
   end,
 }
