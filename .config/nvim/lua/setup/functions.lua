@@ -513,6 +513,30 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
     end
   end
 
+  -- Trap focus inside the prompt window: snap back if the user moves away
+  local prompt_group = vim.api.nvim_create_augroup(
+    "AskClaudePrompt_" .. prompt_win, { clear = true })
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = prompt_group,
+    pattern = tostring(prompt_win),
+    callback = function()
+      pcall(vim.api.nvim_del_augroup_by_id, prompt_group)
+    end,
+  })
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = prompt_group,
+    callback = function()
+      if vim.api.nvim_get_current_win() ~= prompt_win
+        and vim.api.nvim_win_is_valid(prompt_win) then
+        vim.schedule(function()
+          if vim.api.nvim_win_is_valid(prompt_win) then
+            vim.api.nvim_set_current_win(prompt_win)
+          end
+        end)
+      end
+    end,
+  })
+
   vim.keymap.set("n", "q", function() close_window(prompt_win) end,
     { buffer = prompt_buf, desc = "Cancel prompt" })
 
@@ -563,23 +587,38 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
             return
           end
 
+          -- Prepare two scratch buffers: left = original selection, right = response
+          local original_buf = vim.api.nvim_create_buf(false, true)
           local preview_buf = vim.api.nvim_create_buf(false, true)
+          vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
           vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, result_lines)
 
-          local max_line_width = 0
-          for _, l in ipairs(result_lines) do
-            max_line_width = math.max(max_line_width, #l)
-          end
-          local width = math.min(math.max(60, max_line_width + 4), vim.o.columns - 4)
-          local height = math.min(#result_lines + 2, vim.o.lines - 4)
+          -- Layout: side-by-side floating windows occupying most of the editor
+          local total_width = math.min(vim.o.columns - 4, 200)
+          local pane_width = math.floor((total_width - 2) / 2)
+          local max_lines = math.max(#selected_lines, #result_lines)
+          local height = math.min(max_lines + 2, vim.o.lines - 4)
+          local row = math.floor((vim.o.lines - height) / 2)
+          local left_col = math.floor((vim.o.columns - total_width) / 2)
+          local right_col = left_col + pane_width + 2
 
-          local win = vim.api.nvim_open_win(preview_buf, true, {
+          local original_win = vim.api.nvim_open_win(original_buf, false, {
             relative = "editor",
-            width = width,
+            width = pane_width,
             height = height,
-            row = math.floor((vim.o.lines - height) / 2),
-            col = math.floor((vim.o.columns - width) / 2),
-            style = "minimal",
+            row = row,
+            col = left_col,
+            border = "rounded",
+            title = " Original ",
+            title_pos = "center",
+          })
+
+          local preview_win = vim.api.nvim_open_win(preview_buf, true, {
+            relative = "editor",
+            width = pane_width,
+            height = height,
+            row = row,
+            col = right_col,
             border = "rounded",
             title = " Claude's Response ",
             title_pos = "center",
@@ -587,27 +626,93 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
             footer_pos = "center",
           })
 
-          vim.bo[preview_buf].modifiable = true
+          vim.bo[original_buf].filetype = filetype
           vim.bo[preview_buf].filetype = filetype
+          vim.bo[original_buf].modifiable = false
+          vim.bo[preview_buf].modifiable = true
+
+          -- Enable diff mode on both windows for inline change highlighting
+          vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
+          vim.api.nvim_win_call(preview_win, function() vim.cmd("diffthis") end)
 
           -- Ensure normal mode in case the prompt window was submitted from insert mode
           vim.cmd("stopinsert")
 
-          -- Accept: replace the original selected range with the response
-          vim.keymap.set("n", "y", function()
+          local function close_diff()
+            close_window(original_win)
+            close_window(preview_win)
+          end
+
+          -- If either window is closed externally, tear down the other too
+          local group = vim.api.nvim_create_augroup(
+            "AskClaudeDiff_" .. preview_win, { clear = true })
+          vim.api.nvim_create_autocmd("WinClosed", {
+            group = group,
+            pattern = { tostring(original_win), tostring(preview_win) },
+            callback = function()
+              close_diff()
+              pcall(vim.api.nvim_del_augroup_by_id, group)
+            end,
+          })
+
+          -- Trap focus inside the diff pair: if the user moves out (e.g. <C-w>h to
+          -- a background window), snap back to the last visited diff pane.
+          local last_diff_win = preview_win
+          vim.api.nvim_create_autocmd("WinEnter", {
+            group = group,
+            callback = function()
+              local cur = vim.api.nvim_get_current_win()
+              if cur == original_win or cur == preview_win then
+                last_diff_win = cur
+              elseif vim.api.nvim_win_is_valid(last_diff_win) then
+                vim.schedule(function()
+                  if vim.api.nvim_win_is_valid(last_diff_win) then
+                    vim.api.nvim_set_current_win(last_diff_win)
+                  end
+                end)
+              end
+            end,
+          })
+
+          -- Accept: replace the original selected range with the (possibly edited) response
+          local accept = function()
             local lines = vim.api.nvim_buf_get_lines(preview_buf, 0, -1, false)
-            close_window(win)
+            close_diff()
             if vim.api.nvim_buf_is_valid(target_buf) then
               vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
               vim.notify("Selection replaced with Claude's response.")
             else
               vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
             end
-          end, { buffer = preview_buf, desc = "Replace selection with response" })
+          end
+          local cancel = function() close_diff() end
 
-          -- Cancel without replacing
-          vim.keymap.set("n", "q", function() close_window(win) end,
-            { buffer = preview_buf, desc = "Cancel replacement" })
+          local focus_left = function()
+            if vim.api.nvim_win_is_valid(original_win) then
+              vim.api.nvim_set_current_win(original_win)
+            end
+          end
+          local focus_right = function()
+            if vim.api.nvim_win_is_valid(preview_win) then
+              vim.api.nvim_set_current_win(preview_win)
+            end
+          end
+
+          for _, buf in ipairs({ original_buf, preview_buf }) do
+            vim.keymap.set("n", "y", accept,
+              { buffer = buf, desc = "Replace selection with response" })
+            vim.keymap.set("n", "q", cancel,
+              { buffer = buf, desc = "Cancel replacement" })
+            -- Constrain window movement to only the two diff panes
+            vim.keymap.set("n", "<C-w>h", focus_left,
+              { buffer = buf, desc = "Focus original pane" })
+            vim.keymap.set("n", "<C-w><C-h>", focus_left,
+              { buffer = buf, desc = "Focus original pane" })
+            vim.keymap.set("n", "<C-w>l", focus_right,
+              { buffer = buf, desc = "Focus response pane" })
+            vim.keymap.set("n", "<C-w><C-l>", focus_right,
+              { buffer = buf, desc = "Focus response pane" })
+          end
         end)
       end,
     })
