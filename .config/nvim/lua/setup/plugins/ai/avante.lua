@@ -28,7 +28,7 @@ return {
     },
     mappings = {
       ask = "<leader>co",
-      edit = "<c-c>",
+      edit = "<leader>ac",
       refresh = "<leader>ar",
     },
   },

@@ -465,3 +465,158 @@ end
 
 vim.keymap.set("n", "<leader>cm", generate_commit_message_with_claude,
   { desc = "Generate commit message with Claude Code", noremap = true })
+
+
+---------------------------------------------------------
+-- [AI solution] Select a range, open a prompt window to ask the AI(Claude code), and replace the selected range with the AI's response
+---------------------------------------------------------
+_G.ask_claude_and_replace_selection = function(start_line, end_line)
+  if not start_line or not end_line or start_line == 0 or end_line == 0 then
+    vim.notify("No visual selection found.", vim.log.levels.ERROR)
+    return
+  end
+  if start_line > end_line then
+    start_line, end_line = end_line, start_line
+  end
+
+  -- Capture target window/buffer so we can replace the range later
+  local target_buf = vim.api.nvim_get_current_buf()
+  local selected_lines = vim.api.nvim_buf_get_lines(target_buf, start_line - 1, end_line, false)
+  local filetype = vim.bo[target_buf].filetype
+  local lang = filetype ~= "" and filetype or "plain text"
+
+  -- Open prompt window for user instruction
+  local prompt_buf = vim.api.nvim_create_buf(false, true)
+  local prompt_width = math.min(80, vim.o.columns - 4)
+  local prompt_height = math.min(10, vim.o.lines - 4)
+  local prompt_win = vim.api.nvim_open_win(prompt_buf, true, {
+    relative = "editor",
+    width = prompt_width,
+    height = prompt_height,
+    row = math.floor((vim.o.lines - prompt_height) / 2),
+    col = math.floor((vim.o.columns - prompt_width) / 2),
+    style = "minimal",
+    border = "rounded",
+    title = string.format(" Ask Claude (lines %d-%d, %s) ", start_line, end_line, lang),
+    title_pos = "center",
+    footer = " <C-s>:submit  q:cancel(normal) ",
+    footer_pos = "center",
+  })
+
+  vim.bo[prompt_buf].modifiable = true
+  vim.bo[prompt_buf].filetype = "markdown"
+  vim.cmd("startinsert")
+
+  local function close_window(win)
+    if win and vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
+  vim.keymap.set("n", "q", function() close_window(prompt_win) end,
+    { buffer = prompt_buf, desc = "Cancel prompt" })
+
+  local submit = function()
+    local prompt_lines = vim.api.nvim_buf_get_lines(prompt_buf, 0, -1, false)
+    local user_prompt = vim.trim(table.concat(prompt_lines, "\n"))
+    if user_prompt == "" then
+      vim.notify("Prompt is empty.", vim.log.levels.WARN)
+      return
+    end
+    close_window(prompt_win)
+    vim.notify("Asking Claude Code...", vim.log.levels.INFO)
+
+    local system_prompt = string.format(
+      "You are an AI assistant integrated into a Neovim editor. "
+        .. "The selected %s code/text is provided via stdin. "
+        .. "Apply the user's request and reply ONLY with the resulting text that should replace the selection. "
+        .. "Do NOT wrap the output in markdown code fences. "
+        .. "Do NOT include explanations, preambles, or trailing commentary. "
+        .. "Preserve the original indentation style of the input.\n\n"
+        .. "## User Request\n%s",
+      lang,
+      user_prompt
+    )
+
+    local tmpfile = vim.fn.tempname()
+    vim.fn.writefile(selected_lines, tmpfile)
+    local cmd = string.format("cat %s | claude --model sonnet -p %s",
+      vim.fn.shellescape(tmpfile),
+      vim.fn.shellescape(system_prompt))
+
+    local result_lines = {}
+    vim.fn.jobstart({ "sh", "-c", cmd }, {
+      stdout_buffered = true,
+      on_stdout = function(_, data)
+        if data then
+          if #data > 0 and data[#data] == "" then
+            table.remove(data)
+          end
+          result_lines = data
+        end
+      end,
+      on_exit = function(_, exit_code)
+        vim.fn.delete(tmpfile)
+        vim.schedule(function()
+          if exit_code ~= 0 or #result_lines == 0 then
+            vim.notify("Failed to get response from Claude.", vim.log.levels.ERROR)
+            return
+          end
+
+          local preview_buf = vim.api.nvim_create_buf(false, true)
+          vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, result_lines)
+
+          local max_line_width = 0
+          for _, l in ipairs(result_lines) do
+            max_line_width = math.max(max_line_width, #l)
+          end
+          local width = math.min(math.max(60, max_line_width + 4), vim.o.columns - 4)
+          local height = math.min(#result_lines + 2, vim.o.lines - 4)
+
+          local win = vim.api.nvim_open_win(preview_buf, true, {
+            relative = "editor",
+            width = width,
+            height = height,
+            row = math.floor((vim.o.lines - height) / 2),
+            col = math.floor((vim.o.columns - width) / 2),
+            style = "minimal",
+            border = "rounded",
+            title = " Claude's Response ",
+            title_pos = "center",
+            footer = " y:replace  q:cancel ",
+            footer_pos = "center",
+          })
+
+          vim.bo[preview_buf].modifiable = true
+          vim.bo[preview_buf].filetype = filetype
+
+          -- Ensure normal mode in case the prompt window was submitted from insert mode
+          vim.cmd("stopinsert")
+
+          -- Accept: replace the original selected range with the response
+          vim.keymap.set("n", "y", function()
+            local lines = vim.api.nvim_buf_get_lines(preview_buf, 0, -1, false)
+            close_window(win)
+            if vim.api.nvim_buf_is_valid(target_buf) then
+              vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+              vim.notify("Selection replaced with Claude's response.")
+            else
+              vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+            end
+          end, { buffer = preview_buf, desc = "Replace selection with response" })
+
+          -- Cancel without replacing
+          vim.keymap.set("n", "q", function() close_window(win) end,
+            { buffer = preview_buf, desc = "Cancel replacement" })
+        end)
+      end,
+    })
+  end
+
+  vim.keymap.set({ "n", "i" }, "<C-s>", submit,
+    { buffer = prompt_buf, desc = "Submit prompt to Claude" })
+end
+
+vim.keymap.set("x", "<C-c>",
+  ":<C-u>lua _G.ask_claude_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"))<CR>",
+  { desc = "Ask Claude and replace selection", noremap = true, silent = true })
