@@ -21,6 +21,16 @@
       ]
     },
     {
+      "before": ["<leader>", "c", "x"],
+      "commands": [
+        "workbench.action.createTerminalEditorSide",
+        {
+          "command": "workbench.action.terminal.sendSequence",
+          "args": { "text": "codex\n" }
+        }
+      ]
+    },
+    {
       "before": ["<leader>", "c", "o"],
       "commands": ["workbench.action.chat.open"]
     },
