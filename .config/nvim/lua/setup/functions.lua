@@ -346,9 +346,13 @@ vim.keymap.set("n", "<C-q>", close_current_buffer, { noremap = true, silent = tr
 vim.keymap.set("n", "<leader>bc", close_current_buffer, { noremap = true, silent = true, desc = "Close Current Buffer" })
 
 ---------------------------------------------------------
--- [AI solution] generate commit message with Claude Code
+-- [AI solution] generate commit message with Claude Code / Codex
 ---------------------------------------------------------
-local function generate_commit_message_with_claude()
+local function generate_commit_message(tool)
+  if tool ~= "claude" and tool ~= "codex" then
+    tool = "claude"
+  end
+
   local diff = vim.fn.system("git diff --cached")
   if vim.v.shell_error ~= 0 then
     vim.notify("Not a git repository.", vim.log.levels.ERROR)
@@ -365,7 +369,7 @@ local function generate_commit_message_with_claude()
     return
   end
 
-  vim.notify("Generating commit message with Claude Code...", vim.log.levels.INFO)
+  vim.notify("Generating commit message with " .. tool .. "...", vim.log.levels.INFO)
 
   local tmpfile = vim.fn.tempname()
   vim.fn.writefile(vim.split(diff, "\n"), tmpfile)
@@ -380,6 +384,12 @@ local function generate_commit_message_with_claude()
   local cmd = string.format("cat %s | claude --model haiku -p %s",
     vim.fn.shellescape(tmpfile),
     vim.fn.shellescape(prompt))
+
+  if tool ~= "claude" then
+    cmd = string.format("cat %s | codex exec %s",
+      vim.fn.shellescape(tmpfile),
+      vim.fn.shellescape(prompt))
+  end
 
   vim.fn.jobstart({ "sh", "-c", cmd }, {
     stdout_buffered = true,
@@ -418,7 +428,7 @@ local function generate_commit_message_with_claude()
           col = math.floor((vim.o.columns - width) / 2),
           style = "minimal",
           border = "rounded",
-          title = string.format(" Commit Message (%s) ", diff_type),
+          title = string.format(" Commit Message (%s, %s) ", tool, diff_type),
           title_pos = "center",
           footer = " y:yank  p:paste  q:close ",
           footer_pos = "center",
@@ -463,20 +473,25 @@ local function generate_commit_message_with_claude()
   })
 end
 
-vim.keymap.set("n", "<leader>cm", generate_commit_message_with_claude,
+vim.keymap.set("n", "<leader>cm", function() generate_commit_message("claude") end,
+  { desc = "Generate commit message with Claude Code", noremap = true })
+vim.keymap.set("n", "<leader>cx", function() generate_commit_message("codex") end,
   { desc = "Generate commit message with Claude Code", noremap = true })
 
 
 ---------------------------------------------------------
 -- [AI solution] Select a range, open a prompt window to ask the AI(Claude code), and replace the selected range with the AI's response
 ---------------------------------------------------------
-_G.ask_claude_and_replace_selection = function(start_line, end_line)
+_G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then
     vim.notify("No visual selection found.", vim.log.levels.ERROR)
     return
   end
   if start_line > end_line then
     start_line, end_line = end_line, start_line
+  end
+  if tool ~= "claude" and tool ~= "codex" then
+    tool = "claude"
   end
 
   -- Capture target window/buffer so we can replace the range later
@@ -497,7 +512,7 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
     col = math.floor((vim.o.columns - prompt_width) / 2),
     style = "minimal",
     border = "rounded",
-    title = string.format(" Ask Claude (lines %d-%d, %s) ", start_line, end_line, lang),
+    title = string.format(" Ask %s (lines %d-%d, %s) ", tool, start_line, end_line, lang),
     title_pos = "center",
     footer = " <C-s>:submit  q:cancel(normal) ",
     footer_pos = "center",
@@ -515,7 +530,7 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
 
   -- Trap focus inside the prompt window: snap back if the user moves away
   local prompt_group = vim.api.nvim_create_augroup(
-    "AskClaudePrompt_" .. prompt_win, { clear = true })
+    "AskAiPrompt_" .. prompt_win, { clear = true })
   vim.api.nvim_create_autocmd("WinClosed", {
     group = prompt_group,
     pattern = tostring(prompt_win),
@@ -548,7 +563,7 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
       return
     end
     close_window(prompt_win)
-    vim.notify("Asking Claude Code...", vim.log.levels.INFO)
+    vim.notify("Asking " .. tool .. "...", vim.log.levels.INFO)
 
     local system_prompt = string.format(
       "You are an AI assistant integrated into a Neovim editor. "
@@ -568,6 +583,12 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
       vim.fn.shellescape(tmpfile),
       vim.fn.shellescape(system_prompt))
 
+    if tool ~= "claude" then
+      cmd = string.format("cat %s | codex exec %s",
+        vim.fn.shellescape(tmpfile),
+        vim.fn.shellescape(system_prompt))
+    end
+
     local result_lines = {}
     vim.fn.jobstart({ "sh", "-c", cmd }, {
       stdout_buffered = true,
@@ -583,7 +604,7 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
         vim.fn.delete(tmpfile)
         vim.schedule(function()
           if exit_code ~= 0 or #result_lines == 0 then
-            vim.notify("Failed to get response from Claude.", vim.log.levels.ERROR)
+            vim.notify("Failed to get response from " .. tool, vim.log.levels.ERROR)
             return
           end
 
@@ -620,7 +641,7 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
             row = row,
             col = right_col,
             border = "rounded",
-            title = " Claude's Response ",
+            title = tool .. "'s Response ",
             title_pos = "center",
             footer = " y:replace  q:cancel ",
             footer_pos = "center",
@@ -645,7 +666,7 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
 
           -- If either window is closed externally, tear down the other too
           local group = vim.api.nvim_create_augroup(
-            "AskClaudeDiff_" .. preview_win, { clear = true })
+            "AskAiDiff_" .. preview_win, { clear = true })
           vim.api.nvim_create_autocmd("WinClosed", {
             group = group,
             pattern = { tostring(original_win), tostring(preview_win) },
@@ -680,7 +701,7 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
             close_diff()
             if vim.api.nvim_buf_is_valid(target_buf) then
               vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
-              vim.notify("Selection replaced with Claude's response.")
+              vim.notify("Selection replaced with %s's response.", tool)
             else
               vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
             end
@@ -719,9 +740,12 @@ _G.ask_claude_and_replace_selection = function(start_line, end_line)
   end
 
   vim.keymap.set({ "n", "i" }, "<C-s>", submit,
-    { buffer = prompt_buf, desc = "Submit prompt to Claude" })
+    { buffer = prompt_buf, desc = "Submit prompt to " .. tool })
 end
 
 vim.keymap.set("x", "<C-c>",
-  ":<C-u>lua _G.ask_claude_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"))<CR>",
-  { desc = "Ask Claude and replace selection", noremap = true, silent = true })
+  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'claude')<CR>",
+  { desc = "Ask AI and replace selection", noremap = true, silent = true })
+vim.keymap.set("x", "<C-x>",
+  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'codex')<CR>",
+  { desc = "Ask AI and replace selection", noremap = true, silent = true })
