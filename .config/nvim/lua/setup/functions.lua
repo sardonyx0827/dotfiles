@@ -480,7 +480,7 @@ vim.keymap.set("n", "<leader>cx", function() generate_commit_message("codex") en
 
 
 ---------------------------------------------------------
--- [AI solution] Select a range, open a prompt window to ask the AI(Claude code), and replace the selected range with the AI's response
+-- [AI solution] Select a range, open a prompt window to ask the AI(Claude Code / Codex), and replace the selected range with the AI's response
 ---------------------------------------------------------
 _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then
