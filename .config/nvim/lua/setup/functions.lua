@@ -597,7 +597,7 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
     end
 
     if tool == "all" then
-      local tools_order = { "claude", "codex", "gemini" }
+      local tools_order = { "claude", "codex" }
       local results = {}
       local pending = #tools_order
 
