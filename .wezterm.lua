@@ -11,6 +11,10 @@ config.use_ime = true
 config.default_cursor_style = 'BlinkingBlock'
 -- font (macos: brew install --cask font-ubuntu-mono)
 config.font = wezterm.font("Ubuntu Mono", { weight = "Medium", stretch = "Normal", style = "Normal" })
+config.font = wezterm.font_with_fallback {
+  'Ubuntu Mono',
+  'Hiragino Sans'
+}
 -- font-size (default: 12)
 config.font_size = 14
 -- color scheme
