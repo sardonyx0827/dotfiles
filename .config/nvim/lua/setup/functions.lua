@@ -476,11 +476,11 @@ end
 vim.keymap.set("n", "<leader>cm", function() generate_commit_message("claude") end,
   { desc = "Generate commit message with Claude Code", noremap = true })
 vim.keymap.set("n", "<leader>cx", function() generate_commit_message("codex") end,
-  { desc = "Generate commit message with Claude Code", noremap = true })
+  { desc = "Generate commit message with Codex", noremap = true })
 
 
 ---------------------------------------------------------
--- [AI solution] Select a range, open a prompt window to ask the AI(Claude Code / Codex), and replace the selected range with the AI's response
+-- [AI solution] Select a range, open a prompt window to ask the AI(Claude Code / Codex / Gemini), and replace the selected range with the AI's response
 ---------------------------------------------------------
 _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then
@@ -749,10 +749,10 @@ end
 
 vim.keymap.set("x", "<C-c>",
   ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'claude')<CR>",
-  { desc = "Ask AI and replace selection", noremap = true, silent = true })
+  { desc = "Ask AI(Claude) and replace selection", noremap = true, silent = true })
 vim.keymap.set("x", "<C-x>",
   ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'codex')<CR>",
-  { desc = "Ask AI and replace selection", noremap = true, silent = true })
+  { desc = "Ask AI(Codex) and replace selection", noremap = true, silent = true })
 vim.keymap.set("x", "<C-g>",
   ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'gemini')<CR>",
-  { desc = "Ask AI and replace selection", noremap = true, silent = true })
+  { desc = "Ask AI(Gemini) and replace selection", noremap = true, silent = true })
