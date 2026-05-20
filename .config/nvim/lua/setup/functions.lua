@@ -490,7 +490,7 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
   if start_line > end_line then
     start_line, end_line = end_line, start_line
   end
-  if tool ~= "claude" and tool ~= "codex" and tool ~= "gemini" then
+  if tool ~= "claude" and tool ~= "codex" and tool ~= "gemini" and tool ~= "all" then
     tool = "claude"
   end
 
@@ -579,20 +579,252 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
 
     local tmpfile = vim.fn.tempname()
     vim.fn.writefile(selected_lines, tmpfile)
-    local cmd = string.format("cat %s | claude --model sonnet -p %s",
-      vim.fn.shellescape(tmpfile),
-      vim.fn.shellescape(system_prompt))
 
-    if tool == "codex" then
-      cmd = string.format("cat %s | codex exec %s",
-        vim.fn.shellescape(tmpfile),
-        vim.fn.shellescape(system_prompt))
-    elseif tool == "gemini" then
-      cmd = string.format("cat %s | gemini -m gemini-3.1-flash-lite-preview -p %s",
-        vim.fn.shellescape(tmpfile),
-        vim.fn.shellescape(system_prompt))
+    local function build_cmd(t)
+      if t == "codex" then
+        return string.format("cat %s | codex exec %s",
+          vim.fn.shellescape(tmpfile),
+          vim.fn.shellescape(system_prompt))
+      elseif t == "gemini" then
+        return string.format("cat %s | gemini -m gemini-3.1-flash-lite-preview -p %s",
+          vim.fn.shellescape(tmpfile),
+          vim.fn.shellescape(system_prompt))
+      else
+        return string.format("cat %s | claude --model sonnet -p %s",
+          vim.fn.shellescape(tmpfile),
+          vim.fn.shellescape(system_prompt))
+      end
     end
 
+    if tool == "all" then
+      local tools_order = { "claude", "codex", "gemini" }
+      local results = {}
+      local pending = #tools_order
+
+      local function open_multi_panel()
+        -- Substitute a placeholder for any tool that failed so the UI still renders
+        for _, t in ipairs(tools_order) do
+          local r = results[t]
+          if r.exit_code ~= 0 or #r.lines == 0 then
+            r.lines = { string.format("[%s failed (exit code %d)]", t, r.exit_code) }
+          end
+        end
+
+        local total_width = math.min(vim.o.columns - 4, 200)
+        local pane_width = math.floor((total_width - 2) / 2)
+        local max_lines = #selected_lines
+        for _, t in ipairs(tools_order) do
+          max_lines = math.max(max_lines, #results[t].lines)
+        end
+        -- Ensure each stacked right panel has at least ~6 inner rows
+        local height = math.min(math.max(max_lines + 2, 22), vim.o.lines - 4)
+        local row = math.floor((vim.o.lines - height) / 2)
+        local left_col = math.floor((vim.o.columns - total_width) / 2)
+        local right_col = left_col + pane_width + 2
+
+        local original_buf = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
+        local original_win = vim.api.nvim_open_win(original_buf, false, {
+          relative = "editor",
+          width = pane_width,
+          height = height,
+          row = row,
+          col = left_col,
+          border = "rounded",
+          title = " Original ",
+          title_pos = "center",
+        })
+        vim.bo[original_buf].filetype = filetype
+        vim.bo[original_buf].modifiable = false
+
+        -- Stack the response panels on the right. Match the left pane's outer span.
+        local right_total_outer = height + 2
+        local panel_outer = math.floor(right_total_outer / #tools_order)
+        local panels = {}
+        for i, t in ipairs(tools_order) do
+          local outer = panel_outer
+          if i == #tools_order then
+            outer = right_total_outer - panel_outer * (i - 1)
+          end
+          local inner = math.max(outer - 2, 1)
+          local panel_row = row + panel_outer * (i - 1)
+
+          local buf = vim.api.nvim_create_buf(false, true)
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, results[t].lines)
+
+          local win = vim.api.nvim_open_win(buf, i == 1, {
+            relative = "editor",
+            width = pane_width,
+            height = inner,
+            row = panel_row,
+            col = right_col,
+            border = "rounded",
+            title = string.format(" %s's Response ", t),
+            title_pos = "center",
+            footer = " y:replace  q:cancel  <C-w>j/k:next/prev ",
+            footer_pos = "center",
+          })
+
+          vim.bo[buf].filetype = filetype
+          vim.bo[buf].modifiable = true
+          panels[i] = { buf = buf, win = win, tool = t }
+        end
+
+        vim.cmd("stopinsert")
+
+        local function close_all()
+          close_window(original_win)
+          for _, p in ipairs(panels) do
+            close_window(p.win)
+          end
+        end
+
+        local close_patterns = { tostring(original_win) }
+        for _, p in ipairs(panels) do
+          table.insert(close_patterns, tostring(p.win))
+        end
+        local group = vim.api.nvim_create_augroup(
+          "AskAiMultiDiff_" .. panels[1].win, { clear = true })
+        vim.api.nvim_create_autocmd("WinClosed", {
+          group = group,
+          pattern = close_patterns,
+          callback = function()
+            close_all()
+            pcall(vim.api.nvim_del_augroup_by_id, group)
+          end,
+        })
+
+        -- Enable diff between Original and the initially focused response pane
+        vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
+        vim.api.nvim_win_call(panels[1].win, function() vim.cmd("diffthis") end)
+
+        -- Trap focus inside the cluster; remember the last visited response pane.
+        -- Swap diff to whichever response pane currently has focus.
+        local cluster = { [original_win] = true }
+        for _, p in ipairs(panels) do
+          cluster[p.win] = true
+        end
+        local last_panel_idx = 1
+        local current_diff_idx = 1
+        vim.api.nvim_create_autocmd("WinEnter", {
+          group = group,
+          callback = function()
+            local cur = vim.api.nvim_get_current_win()
+            if cluster[cur] then
+              for i, p in ipairs(panels) do
+                if p.win == cur then
+                  if i ~= current_diff_idx then
+                    local prev = panels[current_diff_idx]
+                    if vim.api.nvim_win_is_valid(prev.win) then
+                      vim.api.nvim_win_call(prev.win, function() vim.cmd("diffoff") end)
+                    end
+                    vim.api.nvim_win_call(p.win, function() vim.cmd("diffthis") end)
+                    if vim.api.nvim_win_is_valid(original_win) then
+                      vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
+                    end
+                    current_diff_idx = i
+                  end
+                  last_panel_idx = i
+                  break
+                end
+              end
+            else
+              vim.schedule(function()
+                if vim.api.nvim_win_is_valid(panels[last_panel_idx].win) then
+                  vim.api.nvim_set_current_win(panels[last_panel_idx].win)
+                end
+              end)
+            end
+          end,
+        })
+
+        local function focus_original()
+          if vim.api.nvim_win_is_valid(original_win) then
+            vim.api.nvim_set_current_win(original_win)
+          end
+        end
+        local function focus_panel(idx)
+          if panels[idx] and vim.api.nvim_win_is_valid(panels[idx].win) then
+            vim.api.nvim_set_current_win(panels[idx].win)
+          end
+        end
+        local function focus_panel_offset(offset)
+          local cur = vim.api.nvim_get_current_win()
+          for i, p in ipairs(panels) do
+            if p.win == cur then
+              local n = #panels
+              local new_i = ((i - 1 + offset) % n) + 1
+              focus_panel(new_i)
+              return
+            end
+          end
+        end
+
+        for _, p in ipairs(panels) do
+          local panel = p
+          vim.keymap.set("n", "y", function()
+            local lines = vim.api.nvim_buf_get_lines(panel.buf, 0, -1, false)
+            close_all()
+            if vim.api.nvim_buf_is_valid(target_buf) then
+              vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+              vim.notify(string.format("Selection replaced with %s's response.", panel.tool))
+            else
+              vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+            end
+          end, { buffer = panel.buf, desc = "Replace selection with " .. panel.tool .. "'s response" })
+
+          vim.keymap.set("n", "q", close_all,
+            { buffer = panel.buf, desc = "Cancel replacement" })
+
+          vim.keymap.set("n", "<C-w>h", focus_original,
+            { buffer = panel.buf, desc = "Focus original pane" })
+          vim.keymap.set("n", "<C-w><C-h>", focus_original,
+            { buffer = panel.buf, desc = "Focus original pane" })
+          vim.keymap.set("n", "<C-w>j", function() focus_panel_offset(1) end,
+            { buffer = panel.buf, desc = "Focus next response pane" })
+          vim.keymap.set("n", "<C-w><C-j>", function() focus_panel_offset(1) end,
+            { buffer = panel.buf, desc = "Focus next response pane" })
+          vim.keymap.set("n", "<C-w>k", function() focus_panel_offset(-1) end,
+            { buffer = panel.buf, desc = "Focus prev response pane" })
+          vim.keymap.set("n", "<C-w><C-k>", function() focus_panel_offset(-1) end,
+            { buffer = panel.buf, desc = "Focus prev response pane" })
+        end
+
+        vim.keymap.set("n", "q", close_all,
+          { buffer = original_buf, desc = "Cancel replacement" })
+        vim.keymap.set("n", "<C-w>l", function() focus_panel(last_panel_idx) end,
+          { buffer = original_buf, desc = "Focus response pane" })
+        vim.keymap.set("n", "<C-w><C-l>", function() focus_panel(last_panel_idx) end,
+          { buffer = original_buf, desc = "Focus response pane" })
+      end
+
+      for _, t in ipairs(tools_order) do
+        local current_t = t
+        local result_lines = {}
+        vim.fn.jobstart({ "sh", "-c", build_cmd(current_t) }, {
+          stdout_buffered = true,
+          on_stdout = function(_, data)
+            if data then
+              if #data > 0 and data[#data] == "" then
+                table.remove(data)
+              end
+              result_lines = data
+            end
+          end,
+          on_exit = function(_, exit_code)
+            results[current_t] = { exit_code = exit_code, lines = result_lines }
+            pending = pending - 1
+            if pending == 0 then
+              vim.fn.delete(tmpfile)
+              vim.schedule(open_multi_panel)
+            end
+          end,
+        })
+      end
+      return
+    end
+
+    local cmd = build_cmd(tool)
     local result_lines = {}
     vim.fn.jobstart({ "sh", "-c", cmd }, {
       stdout_buffered = true,
@@ -756,3 +988,6 @@ vim.keymap.set("x", "<C-x>",
 vim.keymap.set("x", "<C-g>",
   ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'gemini')<CR>",
   { desc = "Ask AI(Gemini) and replace selection", noremap = true, silent = true })
+vim.keymap.set("x", "<C-l>",
+  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'all')<CR>",
+  { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
