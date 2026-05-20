@@ -403,7 +403,7 @@
     // close explorer
     "key": "q",
     "command": "workbench.action.toggleSidebarVisibility",
-    "when": "filesExplorerFocus"
+    "when": "filesExplorerFocus && !inputFocus"
   },
   {
     // close terminal
