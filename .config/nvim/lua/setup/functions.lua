@@ -490,7 +490,7 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
   if start_line > end_line then
     start_line, end_line = end_line, start_line
   end
-  if tool ~= "claude" and tool ~= "codex" then
+  if tool ~= "claude" and tool ~= "codex" and tool ~= "gemini" then
     tool = "claude"
   end
 
@@ -583,8 +583,12 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
       vim.fn.shellescape(tmpfile),
       vim.fn.shellescape(system_prompt))
 
-    if tool ~= "claude" then
+    if tool == "codex" then
       cmd = string.format("cat %s | codex exec %s",
+        vim.fn.shellescape(tmpfile),
+        vim.fn.shellescape(system_prompt))
+    elseif tool == "gemini" then
+      cmd = string.format("cat %s | gemini -m gemini-3.1-flash-lite-preview -p %s",
         vim.fn.shellescape(tmpfile),
         vim.fn.shellescape(system_prompt))
     end
@@ -748,4 +752,7 @@ vim.keymap.set("x", "<C-c>",
   { desc = "Ask AI and replace selection", noremap = true, silent = true })
 vim.keymap.set("x", "<C-x>",
   ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'codex')<CR>",
+  { desc = "Ask AI and replace selection", noremap = true, silent = true })
+vim.keymap.set("x", "<C-g>",
+  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'gemini')<CR>",
   { desc = "Ask AI and replace selection", noremap = true, silent = true })
