@@ -386,7 +386,7 @@ local function generate_commit_message(tool)
     vim.fn.shellescape(prompt))
 
   if tool ~= "claude" then
-    cmd = string.format("cat %s | codex exec %s",
+    cmd = string.format("cat %s | codex exec --skip-git-repo-check %s",
       vim.fn.shellescape(tmpfile),
       vim.fn.shellescape(prompt))
   end
@@ -582,7 +582,7 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
 
     local function build_cmd(t)
       if t == "codex" then
-        return string.format("cat %s | codex exec %s",
+        return string.format("cat %s | codex exec --skip-git-repo-check %s",
           vim.fn.shellescape(tmpfile),
           vim.fn.shellescape(system_prompt))
       elseif t == "gemini" then
