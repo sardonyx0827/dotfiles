@@ -386,7 +386,7 @@ local function generate_commit_message(tool)
     vim.fn.shellescape(prompt))
 
   if tool ~= "claude" then
-    cmd = string.format("cat %s | codex exec --skip-git-repo-check %s",
+    cmd = string.format("cat %s | codex exec %s",
       vim.fn.shellescape(tmpfile),
       vim.fn.shellescape(prompt))
   end
