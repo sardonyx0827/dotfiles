@@ -20,14 +20,6 @@
       },
       "timeout": 5000
     },
-    "sequential-thinking": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-sequential-thinking"
-      ],
-      "env": {}
-    },
     "context7": {
       "command": "npx",
       "args": [
