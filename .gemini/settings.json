@@ -13,20 +13,6 @@
         "@executeautomation/playwright-mcp-server"
       ]
     },
-    "serena": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/oraios/serena",
-        "serena-mcp-server",
-        "--context",
-        "ide-assistant",
-        "--enable-web-dashboard",
-        "false",
-        "--project",
-        "~/work/sandbox"
-      ]
-    },
     "github": {
       "httpUrl": "https://api.githubcopilot.com/mcp/",
       "headers": {
@@ -52,7 +38,7 @@
     }
   },
   "model": {
-    "name": "gemini-2.5-flash"
+    "name": "gemini-3.1-flash-lite-preview"
   },
   "general": {
     "preferredEditor": "vim",
@@ -60,7 +46,7 @@
   },
   "security": {
     "auth": {
-      "selectedType": "oauth-personal"
+      "selectedType": "gemini-api-key"
     }
   },
   "ui": {
