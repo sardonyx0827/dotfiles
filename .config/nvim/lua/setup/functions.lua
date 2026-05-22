@@ -608,211 +608,268 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
     end
 
     if tool == "all" then
-      local tools_order = { "claude", "codex", "gemini" }
-      local results = {}
-      local pending = #tools_order
+      local tools_order = { "claude", "codex", "gemini", "copilot" }
+      local state = {
+        buffers = {},
+        jobs = {},
+        status = {},
+        active_idx = 1,
+        closed = false,
+      }
+      local pending_jobs = #tools_order
 
-      local function open_multi_panel()
-        -- Substitute a placeholder for any tool that failed so the UI still renders
-        for _, t in ipairs(tools_order) do
-          local r = results[t]
-          if r.exit_code ~= 0 or #r.lines == 0 then
-            r.lines = { string.format("[%s failed (exit code %d)]", t, r.exit_code) }
-          end
-        end
-
-        local total_width = math.min(vim.o.columns - 4, 200)
-        local pane_width = math.floor((total_width - 2) / 2)
-        local max_lines = #selected_lines
-        for _, t in ipairs(tools_order) do
-          max_lines = math.max(max_lines, #results[t].lines)
-        end
-        -- Ensure each stacked right panel has at least ~6 inner rows
-        local height = math.min(math.max(max_lines + 2, 22), vim.o.lines - 4)
-        local row = math.floor((vim.o.lines - height) / 2)
-        local left_col = math.floor((vim.o.columns - total_width) / 2)
-        local right_col = left_col + pane_width + 2
-
-        local original_buf = vim.api.nvim_create_buf(false, true)
-        vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
-        local original_win = vim.api.nvim_open_win(original_buf, false, {
-          relative = "editor",
-          width = pane_width,
-          height = height,
-          row = row,
-          col = left_col,
-          border = "rounded",
-          title = " Original ",
-          title_pos = "center",
-        })
-        vim.bo[original_buf].filetype = filetype
-        vim.bo[original_buf].modifiable = false
-
-        -- Stack the response panels on the right. Match the left pane's outer span.
-        local right_total_outer = height + 2
-        local panel_outer = math.floor(right_total_outer / #tools_order)
-        local panels = {}
+      local function build_title()
+        local parts = {}
         for i, t in ipairs(tools_order) do
-          local outer = panel_outer
-          if i == #tools_order then
-            outer = right_total_outer - panel_outer * (i - 1)
+          local marker = ""
+          if state.status[t] == "pending" then
+            marker = " (loading)"
+          elseif state.status[t] == "failed" then
+            marker = " (failed)"
+          elseif state.status[t] == "cancelled" then
+            marker = " (cancelled)"
           end
-          local inner = math.max(outer - 2, 1)
-          local panel_row = row + panel_outer * (i - 1)
-
-          local buf = vim.api.nvim_create_buf(false, true)
-          vim.api.nvim_buf_set_lines(buf, 0, -1, false, results[t].lines)
-
-          local win = vim.api.nvim_open_win(buf, i == 1, {
-            relative = "editor",
-            width = pane_width,
-            height = inner,
-            row = panel_row,
-            col = right_col,
-            border = "rounded",
-            title = string.format(" %s's Response ", t),
-            title_pos = "center",
-            footer = " y:replace  q:cancel  <C-w>j/k:next/prev ",
-            footer_pos = "center",
-          })
-
-          vim.bo[buf].filetype = filetype
-          vim.bo[buf].modifiable = true
-          panels[i] = { buf = buf, win = win, tool = t }
-        end
-
-        vim.cmd("stopinsert")
-
-        local function close_all()
-          close_window(original_win)
-          for _, p in ipairs(panels) do
-            close_window(p.win)
+          local label = t .. marker
+          if i == state.active_idx then
+            table.insert(parts, "[" .. label .. "]")
+          else
+            table.insert(parts, label)
           end
         end
-
-        local close_patterns = { tostring(original_win) }
-        for _, p in ipairs(panels) do
-          table.insert(close_patterns, tostring(p.win))
-        end
-        local group = vim.api.nvim_create_augroup(
-          "AskAiMultiDiff_" .. panels[1].win, { clear = true })
-        vim.api.nvim_create_autocmd("WinClosed", {
-          group = group,
-          pattern = close_patterns,
-          callback = function()
-            close_all()
-            pcall(vim.api.nvim_del_augroup_by_id, group)
-          end,
-        })
-
-        -- Enable diff between Original and the initially focused response pane
-        vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
-        vim.api.nvim_win_call(panels[1].win, function() vim.cmd("diffthis") end)
-
-        -- Trap focus inside the cluster; remember the last visited response pane.
-        -- Swap diff to whichever response pane currently has focus.
-        local cluster = { [original_win] = true }
-        for _, p in ipairs(panels) do
-          cluster[p.win] = true
-        end
-        local last_panel_idx = 1
-        local current_diff_idx = 1
-        vim.api.nvim_create_autocmd("WinEnter", {
-          group = group,
-          callback = function()
-            local cur = vim.api.nvim_get_current_win()
-            if cluster[cur] then
-              for i, p in ipairs(panels) do
-                if p.win == cur then
-                  if i ~= current_diff_idx then
-                    local prev = panels[current_diff_idx]
-                    if vim.api.nvim_win_is_valid(prev.win) then
-                      vim.api.nvim_win_call(prev.win, function() vim.cmd("diffoff") end)
-                    end
-                    vim.api.nvim_win_call(p.win, function() vim.cmd("diffthis") end)
-                    if vim.api.nvim_win_is_valid(original_win) then
-                      vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
-                    end
-                    current_diff_idx = i
-                  end
-                  last_panel_idx = i
-                  break
-                end
-              end
-            else
-              vim.schedule(function()
-                if vim.api.nvim_win_is_valid(panels[last_panel_idx].win) then
-                  vim.api.nvim_set_current_win(panels[last_panel_idx].win)
-                end
-              end)
-            end
-          end,
-        })
-
-        local function focus_original()
-          if vim.api.nvim_win_is_valid(original_win) then
-            vim.api.nvim_set_current_win(original_win)
-          end
-        end
-        local function focus_panel(idx)
-          if panels[idx] and vim.api.nvim_win_is_valid(panels[idx].win) then
-            vim.api.nvim_set_current_win(panels[idx].win)
-          end
-        end
-        local function focus_panel_offset(offset)
-          local cur = vim.api.nvim_get_current_win()
-          for i, p in ipairs(panels) do
-            if p.win == cur then
-              local n = #panels
-              local new_i = ((i - 1 + offset) % n) + 1
-              focus_panel(new_i)
-              return
-            end
-          end
-        end
-
-        for _, p in ipairs(panels) do
-          local panel = p
-          vim.keymap.set("n", "y", function()
-            local lines = vim.api.nvim_buf_get_lines(panel.buf, 0, -1, false)
-            close_all()
-            if vim.api.nvim_buf_is_valid(target_buf) then
-              vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
-              vim.notify(string.format("Selection replaced with %s's response.", panel.tool))
-            else
-              vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
-            end
-          end, { buffer = panel.buf, desc = "Replace selection with " .. panel.tool .. "'s response" })
-
-          vim.keymap.set("n", "q", close_all,
-            { buffer = panel.buf, desc = "Cancel replacement" })
-
-          vim.keymap.set("n", "<C-w>h", focus_original,
-            { buffer = panel.buf, desc = "Focus original pane" })
-          vim.keymap.set("n", "<C-w><C-h>", focus_original,
-            { buffer = panel.buf, desc = "Focus original pane" })
-          vim.keymap.set("n", "<C-w>j", function() focus_panel_offset(1) end,
-            { buffer = panel.buf, desc = "Focus next response pane" })
-          vim.keymap.set("n", "<C-w><C-j>", function() focus_panel_offset(1) end,
-            { buffer = panel.buf, desc = "Focus next response pane" })
-          vim.keymap.set("n", "<C-w>k", function() focus_panel_offset(-1) end,
-            { buffer = panel.buf, desc = "Focus prev response pane" })
-          vim.keymap.set("n", "<C-w><C-k>", function() focus_panel_offset(-1) end,
-            { buffer = panel.buf, desc = "Focus prev response pane" })
-        end
-
-        vim.keymap.set("n", "q", close_all,
-          { buffer = original_buf, desc = "Cancel replacement" })
-        vim.keymap.set("n", "<C-w>l", function() focus_panel(last_panel_idx) end,
-          { buffer = original_buf, desc = "Focus response pane" })
-        vim.keymap.set("n", "<C-w><C-l>", function() focus_panel(last_panel_idx) end,
-          { buffer = original_buf, desc = "Focus response pane" })
+        return " " .. table.concat(parts, " | ") .. " "
       end
 
+      -- Pre-create per-tool buffers so the UI can render before any job completes.
+      for _, t in ipairs(tools_order) do
+        local buf = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+          string.format("[%s: waiting for response...]", t),
+        })
+        vim.bo[buf].filetype = filetype
+        vim.bo[buf].modifiable = false
+        state.buffers[t] = buf
+        state.status[t] = "pending"
+      end
+
+      -- Fixed-size side-by-side panes for consistent comparison
+      local total_width = math.min(vim.o.columns - 4, 200)
+      local pane_width = math.floor((total_width - 2) / 2)
+      local height = math.min(math.max(#selected_lines + 2, 24), vim.o.lines - 4)
+      local row = math.floor((vim.o.lines - height) / 2)
+      local left_col = math.floor((vim.o.columns - total_width) / 2)
+      local right_col = left_col + pane_width + 2
+
+      local original_buf = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
+      vim.bo[original_buf].filetype = filetype
+      vim.bo[original_buf].modifiable = false
+
+      local original_win = vim.api.nvim_open_win(original_buf, false, {
+        relative = "editor",
+        width = pane_width,
+        height = height,
+        row = row,
+        col = left_col,
+        border = "rounded",
+        title = " Original ",
+        title_pos = "center",
+      })
+
+      local response_win = vim.api.nvim_open_win(state.buffers[tools_order[1]], true, {
+        relative = "editor",
+        width = pane_width,
+        height = height,
+        row = row,
+        col = right_col,
+        border = "rounded",
+        title = build_title(),
+        title_pos = "center",
+        footer = " y:replace  q:cancel  <Tab>/<S-Tab>:switch  1/2/3:jump ",
+        footer_pos = "center",
+      })
+
+      vim.cmd("stopinsert")
+
+      local function update_title()
+        if not vim.api.nvim_win_is_valid(response_win) then return end
+        local cfg = vim.api.nvim_win_get_config(response_win)
+        cfg.title = build_title()
+        pcall(vim.api.nvim_win_set_config, response_win, cfg)
+      end
+
+      -- Diff only when the active response is real content; loading/failed
+      -- placeholders would otherwise mark every line as changed.
+      local function update_diff()
+        local active_t = tools_order[state.active_idx]
+        if state.status[active_t] == "done" then
+          if vim.api.nvim_win_is_valid(original_win) then
+            vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
+          end
+          if vim.api.nvim_win_is_valid(response_win) then
+            vim.api.nvim_win_call(response_win, function() vim.cmd("diffthis") end)
+          end
+        else
+          if vim.api.nvim_win_is_valid(original_win) then
+            vim.api.nvim_win_call(original_win, function() vim.cmd("diffoff") end)
+          end
+          if vim.api.nvim_win_is_valid(response_win) then
+            vim.api.nvim_win_call(response_win, function() vim.cmd("diffoff") end)
+          end
+        end
+      end
+
+      local function switch_to(idx)
+        if idx < 1 or idx > #tools_order then return end
+        -- Tear down diff before the buffer swap; otherwise the Original pane
+        -- keeps highlights derived from the previous comparison.
+        if vim.api.nvim_win_is_valid(original_win) then
+          vim.api.nvim_win_call(original_win, function() vim.cmd("diffoff") end)
+        end
+        if vim.api.nvim_win_is_valid(response_win) then
+          vim.api.nvim_win_call(response_win, function() vim.cmd("diffoff") end)
+        end
+        state.active_idx = idx
+        local buf = state.buffers[tools_order[idx]]
+        if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_win_is_valid(response_win) then
+          vim.api.nvim_win_set_buf(response_win, buf)
+        end
+        update_title()
+        update_diff()
+      end
+
+      local function switch_offset(offset)
+        local n = #tools_order
+        local new_idx = ((state.active_idx - 1 + offset) % n) + 1
+        switch_to(new_idx)
+      end
+
+      local function cancel_pending_jobs()
+        for t, job_id in pairs(state.jobs) do
+          if state.status[t] == "pending" and job_id and job_id > 0 then
+            pcall(vim.fn.jobstop, job_id)
+            state.status[t] = "cancelled"
+          end
+        end
+      end
+
+      local group = vim.api.nvim_create_augroup(
+        "AskAiAllTabs_" .. response_win, { clear = true })
+
+      local function close_all()
+        if state.closed then return end
+        state.closed = true
+        pcall(vim.api.nvim_del_augroup_by_id, group)
+        cancel_pending_jobs()
+        close_window(original_win)
+        close_window(response_win)
+        for _, buf in pairs(state.buffers) do
+          if vim.api.nvim_buf_is_valid(buf) then
+            pcall(vim.api.nvim_buf_delete, buf, { force = true })
+          end
+        end
+        if vim.api.nvim_buf_is_valid(original_buf) then
+          pcall(vim.api.nvim_buf_delete, original_buf, { force = true })
+        end
+      end
+
+      vim.api.nvim_create_autocmd("WinClosed", {
+        group = group,
+        pattern = { tostring(original_win), tostring(response_win) },
+        callback = close_all,
+      })
+
+      -- Trap focus inside the cluster
+      local cluster = { [original_win] = true, [response_win] = true }
+      local last_focused = response_win
+      vim.api.nvim_create_autocmd("WinEnter", {
+        group = group,
+        callback = function()
+          local cur = vim.api.nvim_get_current_win()
+          if cluster[cur] then
+            last_focused = cur
+          elseif vim.api.nvim_win_is_valid(last_focused) then
+            vim.schedule(function()
+              if vim.api.nvim_win_is_valid(last_focused) then
+                vim.api.nvim_set_current_win(last_focused)
+              end
+            end)
+          end
+        end,
+      })
+
+      local function focus_original()
+        if vim.api.nvim_win_is_valid(original_win) then
+          vim.api.nvim_set_current_win(original_win)
+        end
+      end
+      local function focus_response()
+        if vim.api.nvim_win_is_valid(response_win) then
+          vim.api.nvim_set_current_win(response_win)
+        end
+      end
+
+      local function accept()
+        local active_t = tools_order[state.active_idx]
+        if state.status[active_t] == "pending" then
+          vim.notify(active_t .. " response is still loading.", vim.log.levels.WARN)
+          return
+        end
+        if state.status[active_t] ~= "done" then
+          vim.notify(active_t .. " response is not available.", vim.log.levels.WARN)
+          return
+        end
+        local active_buf = state.buffers[active_t]
+        local lines = vim.api.nvim_buf_get_lines(active_buf, 0, -1, false)
+        close_all()
+        if vim.api.nvim_buf_is_valid(target_buf) then
+          vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+          vim.notify(string.format("Selection replaced with %s's response.", active_t))
+        else
+          vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+        end
+      end
+
+      local function setup_keymaps(buf)
+        vim.keymap.set("n", "y", accept,
+          { buffer = buf, desc = "Replace selection with active response" })
+        vim.keymap.set("n", "q", close_all,
+          { buffer = buf, desc = "Cancel and close" })
+        vim.keymap.set("n", "<Tab>", function() switch_offset(1) end,
+          { buffer = buf, desc = "Next AI response" })
+        vim.keymap.set("n", "<S-Tab>", function() switch_offset(-1) end,
+          { buffer = buf, desc = "Prev AI response" })
+        vim.keymap.set("n", "<C-w>j", function() switch_offset(1) end,
+          { buffer = buf, desc = "Next AI response" })
+        vim.keymap.set("n", "<C-w><C-j>", function() switch_offset(1) end,
+          { buffer = buf, desc = "Next AI response" })
+        vim.keymap.set("n", "<C-w>k", function() switch_offset(-1) end,
+          { buffer = buf, desc = "Prev AI response" })
+        vim.keymap.set("n", "<C-w><C-k>", function() switch_offset(-1) end,
+          { buffer = buf, desc = "Prev AI response" })
+        vim.keymap.set("n", "<C-w>h", focus_original,
+          { buffer = buf, desc = "Focus original pane" })
+        vim.keymap.set("n", "<C-w><C-h>", focus_original,
+          { buffer = buf, desc = "Focus original pane" })
+        vim.keymap.set("n", "<C-w>l", focus_response,
+          { buffer = buf, desc = "Focus response pane" })
+        vim.keymap.set("n", "<C-w><C-l>", focus_response,
+          { buffer = buf, desc = "Focus response pane" })
+        for i = 1, #tools_order do
+          vim.keymap.set("n", tostring(i), function() switch_to(i) end,
+            { buffer = buf, desc = "Switch to response " .. i })
+        end
+      end
+
+      setup_keymaps(original_buf)
+      for _, t in ipairs(tools_order) do
+        setup_keymaps(state.buffers[t])
+      end
+
+      -- Launch all jobs in parallel; each completion fills its own buffer in place.
       for _, t in ipairs(tools_order) do
         local current_t = t
         local result_lines = {}
-        vim.fn.jobstart({ "sh", "-c", build_cmd(current_t) }, {
+        local job_id = vim.fn.jobstart({ "sh", "-c", build_cmd(current_t) }, {
           stdout_buffered = true,
           on_stdout = function(_, data)
             if data then
@@ -823,15 +880,37 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
             end
           end,
           on_exit = function(_, exit_code)
-            results[current_t] = { exit_code = exit_code, lines = result_lines }
-            pending = pending - 1
-            if pending == 0 then
+            pending_jobs = pending_jobs - 1
+            if pending_jobs == 0 then
               vim.fn.delete(tmpfile)
-              vim.schedule(open_multi_panel)
             end
+            vim.schedule(function()
+              if state.closed then return end
+              local buf = state.buffers[current_t]
+              if not vim.api.nvim_buf_is_valid(buf) then return end
+
+              vim.bo[buf].modifiable = true
+              if exit_code == 0 and #result_lines > 0 then
+                state.status[current_t] = "done"
+                vim.api.nvim_buf_set_lines(buf, 0, -1, false, result_lines)
+              else
+                state.status[current_t] = "failed"
+                vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+                  string.format("[%s failed (exit code %d)]", current_t, exit_code),
+                })
+                vim.bo[buf].modifiable = false
+              end
+
+              update_title()
+              if tools_order[state.active_idx] == current_t then
+                update_diff()
+              end
+            end)
           end,
         })
+        state.jobs[current_t] = job_id
       end
+
       return
     end
 
