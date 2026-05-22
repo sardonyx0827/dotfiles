@@ -248,7 +248,7 @@ function translate() {
 alias c='claude'
 alias cl='claude'
 ## Codex CLI
-alias co='codex'
+alias cx='codex'
 ## GitHub Copilot CLI
 alias cop='copilot'
 ## Gemini CLI
