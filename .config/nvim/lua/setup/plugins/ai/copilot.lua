@@ -3,11 +3,14 @@ return {
   "zbirenbaum/copilot.lua",
   event = "InsertEnter",
   cmd = "Copilot",
-  dependencies = {},
+  dependencies = {
+    "copilotlsp-nvim/copilot-lsp", -- (optional) for NES functionality
+    init = function()
+      vim.g.copilot_nes_debounce = 500
+    end,
+  },
   config = function()
     require("copilot").setup({
-      -- copilot_model = "gpt-5-mini",
-
       suggestion = {
         enabled = false,
         auto_trigger = false,
@@ -37,6 +40,7 @@ return {
           ratio = 0.5
         },
       },
+
       filetypes = {
         yaml = true,
         markdown = true,
@@ -44,6 +48,15 @@ return {
         gitcommit = true,
         gitrebase = true,
         hgcommit = true,
+      },
+
+      nes = {
+        enabled = true,
+        keymap = {
+          accept_and_goto = "<leader>p",
+          accept = false,
+          dismiss = "<Esc>",
+        },
       },
     })
   end
