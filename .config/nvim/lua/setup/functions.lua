@@ -608,7 +608,7 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
     end
 
     if tool == "all" then
-      local tools_order = { "claude", "codex", "gemini", "copilot" }
+      local tools_order = { "claude", "codex", "copilot" }
       local state = {
         buffers = {},
         jobs = {},
