@@ -2,7 +2,8 @@
 require("setup.lazy")
 require("setup.set")
 require("setup.remap")
-require("setup.functions")
+require("setup.functions.file")
+require("setup.functions.ai")
 
 local augroup = vim.api.nvim_create_augroup
 local setupGroup = augroup("setup", {})
