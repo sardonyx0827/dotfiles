@@ -939,8 +939,206 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
     end
 
     local cmd = build_cmd(tool)
+
+    -- Highlight groups for status indicator. `default = true` avoids
+    -- overriding user customisations and is safe to set repeatedly.
+    vim.api.nvim_set_hl(0, "AskAiTabDone",
+      { fg = "#a6e3a1", bold = true, default = true })
+    vim.api.nvim_set_hl(0, "AskAiTabFailed",
+      { fg = "#f38ba8", bold = true, default = true })
+    vim.api.nvim_set_hl(0, "AskAiTabPending",
+      { link = "FloatTitle", default = true })
+
+    local state = {
+      status = "pending",
+      closed = false,
+      job_id = nil,
+    }
+
+    local function build_title()
+      local hl, marker
+      if state.status == "done" then
+        hl = "AskAiTabDone"
+        marker = ""
+      elseif state.status == "failed" then
+        hl = "AskAiTabFailed"
+        marker = " (failed)"
+      elseif state.status == "cancelled" then
+        hl = "AskAiTabFailed"
+        marker = " (cancelled)"
+      else
+        hl = "AskAiTabPending"
+        marker = " (loading)"
+      end
+      return {
+        { " ", "AskAiTabPending" },
+        { tool .. "'s Response" .. marker, hl },
+        { " ", "AskAiTabPending" },
+      }
+    end
+
+    -- Pre-create scratch buffers so the UI renders before the job completes.
+    local original_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
+    vim.bo[original_buf].filetype = filetype
+    vim.bo[original_buf].modifiable = false
+
+    local preview_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, {
+      string.format("[%s: waiting for response...]", tool),
+    })
+    vim.bo[preview_buf].filetype = filetype
+    vim.bo[preview_buf].modifiable = false
+
+    -- Fixed-size side-by-side panes for consistent comparison
+    local total_width = math.min(vim.o.columns - 4, 200)
+    local pane_width = math.floor((total_width - 2) / 2)
+    local height = math.min(math.max(#selected_lines + 2, 24), vim.o.lines - 4)
+    local row = math.floor((vim.o.lines - height) / 2)
+    local left_col = math.floor((vim.o.columns - total_width) / 2)
+    local right_col = left_col + pane_width + 2
+
+    local original_win = vim.api.nvim_open_win(original_buf, false, {
+      relative = "editor",
+      width = pane_width,
+      height = height,
+      row = row,
+      col = left_col,
+      border = "rounded",
+      title = " Original ",
+      title_pos = "center",
+    })
+
+    local preview_win = vim.api.nvim_open_win(preview_buf, true, {
+      relative = "editor",
+      width = pane_width,
+      height = height,
+      row = row,
+      col = right_col,
+      border = "rounded",
+      title = build_title(),
+      title_pos = "center",
+      footer = " y:replace  q:cancel ",
+      footer_pos = "center",
+    })
+
+    -- Ensure normal mode in case the prompt window was submitted from insert mode
+    vim.cmd("stopinsert")
+
+    local function update_title()
+      if not vim.api.nvim_win_is_valid(preview_win) then return end
+      local cfg = vim.api.nvim_win_get_config(preview_win)
+      cfg.title = build_title()
+      pcall(vim.api.nvim_win_set_config, preview_win, cfg)
+    end
+
+    -- Diff only after content arrives; the loading placeholder would otherwise
+    -- mark every line as changed.
+    local function update_diff()
+      if state.status == "done" then
+        if vim.api.nvim_win_is_valid(original_win) then
+          vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
+        end
+        if vim.api.nvim_win_is_valid(preview_win) then
+          vim.api.nvim_win_call(preview_win, function() vim.cmd("diffthis") end)
+        end
+      end
+    end
+
+    local group = vim.api.nvim_create_augroup(
+      "AskAiSingle_" .. preview_win, { clear = true })
+
+    local function close_all()
+      if state.closed then return end
+      state.closed = true
+      pcall(vim.api.nvim_del_augroup_by_id, group)
+      if state.status == "pending" and state.job_id and state.job_id > 0 then
+        pcall(vim.fn.jobstop, state.job_id)
+        state.status = "cancelled"
+      end
+      close_window(original_win)
+      close_window(preview_win)
+      if vim.api.nvim_buf_is_valid(preview_buf) then
+        pcall(vim.api.nvim_buf_delete, preview_buf, { force = true })
+      end
+      if vim.api.nvim_buf_is_valid(original_buf) then
+        pcall(vim.api.nvim_buf_delete, original_buf, { force = true })
+      end
+    end
+
+    vim.api.nvim_create_autocmd("WinClosed", {
+      group = group,
+      pattern = { tostring(original_win), tostring(preview_win) },
+      callback = close_all,
+    })
+
+    -- Trap focus inside the diff pair: if the user moves out, snap back.
+    local cluster = { [original_win] = true, [preview_win] = true }
+    local last_focused = preview_win
+    vim.api.nvim_create_autocmd("WinEnter", {
+      group = group,
+      callback = function()
+        local cur = vim.api.nvim_get_current_win()
+        if cluster[cur] then
+          last_focused = cur
+        elseif vim.api.nvim_win_is_valid(last_focused) then
+          vim.schedule(function()
+            if vim.api.nvim_win_is_valid(last_focused) then
+              vim.api.nvim_set_current_win(last_focused)
+            end
+          end)
+        end
+      end,
+    })
+
+    local function focus_left()
+      if vim.api.nvim_win_is_valid(original_win) then
+        vim.api.nvim_set_current_win(original_win)
+      end
+    end
+    local function focus_right()
+      if vim.api.nvim_win_is_valid(preview_win) then
+        vim.api.nvim_set_current_win(preview_win)
+      end
+    end
+
+    local function accept()
+      if state.status == "pending" then
+        vim.notify(tool .. " response is still loading.", vim.log.levels.WARN)
+        return
+      end
+      if state.status ~= "done" then
+        vim.notify(tool .. " response is not available.", vim.log.levels.WARN)
+        return
+      end
+      local lines = vim.api.nvim_buf_get_lines(preview_buf, 0, -1, false)
+      close_all()
+      if vim.api.nvim_buf_is_valid(target_buf) then
+        vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+        vim.notify(string.format("Selection replaced with %s's response.", tool))
+      else
+        vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+      end
+    end
+
+    for _, buf in ipairs({ original_buf, preview_buf }) do
+      vim.keymap.set("n", "y", accept,
+        { buffer = buf, desc = "Replace selection with response" })
+      vim.keymap.set("n", "q", close_all,
+        { buffer = buf, desc = "Cancel replacement" })
+      -- Constrain window movement to only the two diff panes
+      vim.keymap.set("n", "<C-w>h", focus_left,
+        { buffer = buf, desc = "Focus original pane" })
+      vim.keymap.set("n", "<C-w><C-h>", focus_left,
+        { buffer = buf, desc = "Focus original pane" })
+      vim.keymap.set("n", "<C-w>l", focus_right,
+        { buffer = buf, desc = "Focus response pane" })
+      vim.keymap.set("n", "<C-w><C-l>", focus_right,
+        { buffer = buf, desc = "Focus response pane" })
+    end
+
     local result_lines = {}
-    vim.fn.jobstart({ "sh", "-c", cmd }, {
+    state.job_id = vim.fn.jobstart({ "sh", "-c", cmd }, {
       stdout_buffered = true,
       on_stdout = function(_, data)
         if data then
@@ -953,137 +1151,23 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
       on_exit = function(_, exit_code)
         vim.fn.delete(tmpfile)
         vim.schedule(function()
-          if exit_code ~= 0 or #result_lines == 0 then
-            vim.notify("Failed to get response from " .. tool, vim.log.levels.ERROR)
-            return
-          end
+          if state.closed then return end
+          if not vim.api.nvim_buf_is_valid(preview_buf) then return end
 
-          -- Prepare two scratch buffers: left = original selection, right = response
-          local original_buf = vim.api.nvim_create_buf(false, true)
-          local preview_buf = vim.api.nvim_create_buf(false, true)
-          vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
-          vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, result_lines)
-
-          -- Layout: side-by-side floating windows occupying most of the editor
-          local total_width = math.min(vim.o.columns - 4, 200)
-          local pane_width = math.floor((total_width - 2) / 2)
-          local max_lines = math.max(#selected_lines, #result_lines)
-          local height = math.min(max_lines + 2, vim.o.lines - 4)
-          local row = math.floor((vim.o.lines - height) / 2)
-          local left_col = math.floor((vim.o.columns - total_width) / 2)
-          local right_col = left_col + pane_width + 2
-
-          local original_win = vim.api.nvim_open_win(original_buf, false, {
-            relative = "editor",
-            width = pane_width,
-            height = height,
-            row = row,
-            col = left_col,
-            border = "rounded",
-            title = " Original ",
-            title_pos = "center",
-          })
-
-          local preview_win = vim.api.nvim_open_win(preview_buf, true, {
-            relative = "editor",
-            width = pane_width,
-            height = height,
-            row = row,
-            col = right_col,
-            border = "rounded",
-            title = tool .. "'s Response ",
-            title_pos = "center",
-            footer = " y:replace  q:cancel ",
-            footer_pos = "center",
-          })
-
-          vim.bo[original_buf].filetype = filetype
-          vim.bo[preview_buf].filetype = filetype
-          vim.bo[original_buf].modifiable = false
           vim.bo[preview_buf].modifiable = true
-
-          -- Enable diff mode on both windows for inline change highlighting
-          vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
-          vim.api.nvim_win_call(preview_win, function() vim.cmd("diffthis") end)
-
-          -- Ensure normal mode in case the prompt window was submitted from insert mode
-          vim.cmd("stopinsert")
-
-          local function close_diff()
-            close_window(original_win)
-            close_window(preview_win)
+          if exit_code == 0 and #result_lines > 0 then
+            state.status = "done"
+            vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, result_lines)
+          else
+            state.status = "failed"
+            vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, {
+              string.format("[%s failed (exit code %d)]", tool, exit_code),
+            })
+            vim.bo[preview_buf].modifiable = false
           end
 
-          -- If either window is closed externally, tear down the other too
-          local group = vim.api.nvim_create_augroup(
-            "AskAiDiff_" .. preview_win, { clear = true })
-          vim.api.nvim_create_autocmd("WinClosed", {
-            group = group,
-            pattern = { tostring(original_win), tostring(preview_win) },
-            callback = function()
-              close_diff()
-              pcall(vim.api.nvim_del_augroup_by_id, group)
-            end,
-          })
-
-          -- Trap focus inside the diff pair: if the user moves out (e.g. <C-w>h to
-          -- a background window), snap back to the last visited diff pane.
-          local last_diff_win = preview_win
-          vim.api.nvim_create_autocmd("WinEnter", {
-            group = group,
-            callback = function()
-              local cur = vim.api.nvim_get_current_win()
-              if cur == original_win or cur == preview_win then
-                last_diff_win = cur
-              elseif vim.api.nvim_win_is_valid(last_diff_win) then
-                vim.schedule(function()
-                  if vim.api.nvim_win_is_valid(last_diff_win) then
-                    vim.api.nvim_set_current_win(last_diff_win)
-                  end
-                end)
-              end
-            end,
-          })
-
-          -- Accept: replace the original selected range with the (possibly edited) response
-          local accept = function()
-            local lines = vim.api.nvim_buf_get_lines(preview_buf, 0, -1, false)
-            close_diff()
-            if vim.api.nvim_buf_is_valid(target_buf) then
-              vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
-              vim.notify("Selection replaced with %s's response.", tool)
-            else
-              vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
-            end
-          end
-          local cancel = function() close_diff() end
-
-          local focus_left = function()
-            if vim.api.nvim_win_is_valid(original_win) then
-              vim.api.nvim_set_current_win(original_win)
-            end
-          end
-          local focus_right = function()
-            if vim.api.nvim_win_is_valid(preview_win) then
-              vim.api.nvim_set_current_win(preview_win)
-            end
-          end
-
-          for _, buf in ipairs({ original_buf, preview_buf }) do
-            vim.keymap.set("n", "y", accept,
-              { buffer = buf, desc = "Replace selection with response" })
-            vim.keymap.set("n", "q", cancel,
-              { buffer = buf, desc = "Cancel replacement" })
-            -- Constrain window movement to only the two diff panes
-            vim.keymap.set("n", "<C-w>h", focus_left,
-              { buffer = buf, desc = "Focus original pane" })
-            vim.keymap.set("n", "<C-w><C-h>", focus_left,
-              { buffer = buf, desc = "Focus original pane" })
-            vim.keymap.set("n", "<C-w>l", focus_right,
-              { buffer = buf, desc = "Focus response pane" })
-            vim.keymap.set("n", "<C-w><C-l>", focus_right,
-              { buffer = buf, desc = "Focus response pane" })
-          end
+          update_title()
+          update_diff()
         end)
       end,
     })
