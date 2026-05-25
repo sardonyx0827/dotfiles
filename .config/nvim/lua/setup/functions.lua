@@ -618,25 +618,49 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
       }
       local pending_jobs = #tools_order
 
+      -- Highlight groups for tab status indicators.
+      -- `default = true` avoids overriding user customisations.
+      vim.api.nvim_set_hl(0, "AskAiTabDone",
+        { fg = "#a6e3a1", bold = true, default = true })
+      vim.api.nvim_set_hl(0, "AskAiTabFailed",
+        { fg = "#f38ba8", bold = true, default = true })
+      vim.api.nvim_set_hl(0, "AskAiTabPending",
+        { link = "FloatTitle", default = true })
+
       local function build_title()
-        local parts = {}
+        local parts = { { " ", "AskAiTabPending" } }
         for i, t in ipairs(tools_order) do
+          if i > 1 then
+            table.insert(parts, { " | ", "AskAiTabPending" })
+          end
+          local status = state.status[t]
+          local hl
+          if status == "done" then
+            hl = "AskAiTabDone"
+          elseif status == "failed" or status == "cancelled" then
+            hl = "AskAiTabFailed"
+          else
+            hl = "AskAiTabPending"
+          end
+
           local marker = ""
-          if state.status[t] == "pending" then
+          if status == "pending" then
             marker = " (loading)"
-          elseif state.status[t] == "failed" then
+          elseif status == "failed" then
             marker = " (failed)"
-          elseif state.status[t] == "cancelled" then
+          elseif status == "cancelled" then
             marker = " (cancelled)"
           end
+
           local label = t .. marker
           if i == state.active_idx then
-            table.insert(parts, "[" .. label .. "]")
+            table.insert(parts, { "[" .. label .. "]", hl })
           else
-            table.insert(parts, label)
+            table.insert(parts, { label, hl })
           end
         end
-        return " " .. table.concat(parts, " | ") .. " "
+        table.insert(parts, { " ", "AskAiTabPending" })
+        return parts
       end
 
       -- Pre-create per-tool buffers so the UI can render before any job completes.
