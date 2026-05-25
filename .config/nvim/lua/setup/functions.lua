@@ -607,6 +607,15 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
       end
     end
 
+    -- Highlight groups for tab status indicators.
+    -- `default = true` avoids overriding user customisations.
+    vim.api.nvim_set_hl(0, "AskAiTabDone",
+      { fg = "#a6e3a1", bold = true, default = true })
+    vim.api.nvim_set_hl(0, "AskAiTabFailed",
+      { fg = "#f38ba8", bold = true, default = true })
+    vim.api.nvim_set_hl(0, "AskAiTabPending",
+      { link = "FloatTitle", default = true })
+
     if tool == "all" then
       local tools_order = { "claude", "codex", "copilot" }
       local state = {
@@ -617,15 +626,6 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
         closed = false,
       }
       local pending_jobs = #tools_order
-
-      -- Highlight groups for tab status indicators.
-      -- `default = true` avoids overriding user customisations.
-      vim.api.nvim_set_hl(0, "AskAiTabDone",
-        { fg = "#a6e3a1", bold = true, default = true })
-      vim.api.nvim_set_hl(0, "AskAiTabFailed",
-        { fg = "#f38ba8", bold = true, default = true })
-      vim.api.nvim_set_hl(0, "AskAiTabPending",
-        { link = "FloatTitle", default = true })
 
       local function build_title()
         local parts = { { " ", "AskAiTabPending" } }
@@ -939,15 +939,6 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
     end
 
     local cmd = build_cmd(tool)
-
-    -- Highlight groups for status indicator. `default = true` avoids
-    -- overriding user customisations and is safe to set repeatedly.
-    vim.api.nvim_set_hl(0, "AskAiTabDone",
-      { fg = "#a6e3a1", bold = true, default = true })
-    vim.api.nvim_set_hl(0, "AskAiTabFailed",
-      { fg = "#f38ba8", bold = true, default = true })
-    vim.api.nvim_set_hl(0, "AskAiTabPending",
-      { link = "FloatTitle", default = true })
 
     local state = {
       status = "pending",
