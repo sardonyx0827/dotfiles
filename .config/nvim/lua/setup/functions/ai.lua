@@ -486,7 +486,6 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
       local original_buf = vim.api.nvim_create_buf(false, true)
       vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
       vim.bo[original_buf].filetype = filetype
-      vim.bo[original_buf].modifiable = false
 
       local original_win = vim.api.nvim_open_win(original_buf, false, {
         relative = "editor",
@@ -508,7 +507,7 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
         border = "rounded",
         title = build_title(),
         title_pos = "center",
-        footer = " y:replace  q:cancel  <Tab>/<S-Tab>:switch  1/2/3:jump ",
+        footer = " y:AI  Y:merged  q:cancel  <Tab>/<S-Tab>:switch  1/2/3:jump ",
         footer_pos = "center",
       })
 
@@ -621,6 +620,36 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
         end,
       })
 
+      -- Pin each pane to its expected buffer so :bnext / :bprev / <C-^>
+      -- can't replace the diff contents.
+      vim.api.nvim_create_autocmd("BufWinEnter", {
+        group = group,
+        callback = function()
+          if vim.api.nvim_win_is_valid(original_win)
+            and vim.api.nvim_buf_is_valid(original_buf)
+            and vim.api.nvim_win_get_buf(original_win) ~= original_buf then
+            vim.schedule(function()
+              if vim.api.nvim_win_is_valid(original_win)
+                and vim.api.nvim_buf_is_valid(original_buf) then
+                vim.api.nvim_win_set_buf(original_win, original_buf)
+              end
+            end)
+          end
+          if vim.api.nvim_win_is_valid(response_win) then
+            local exp = state.buffers[tools_order[state.active_idx]]
+            if exp and vim.api.nvim_buf_is_valid(exp)
+              and vim.api.nvim_win_get_buf(response_win) ~= exp then
+              vim.schedule(function()
+                if vim.api.nvim_win_is_valid(response_win)
+                  and vim.api.nvim_buf_is_valid(exp) then
+                  vim.api.nvim_win_set_buf(response_win, exp)
+                end
+              end)
+            end
+          end
+        end,
+      })
+
       local function focus_original()
         if vim.api.nvim_win_is_valid(original_win) then
           vim.api.nvim_set_current_win(original_win)
@@ -653,9 +682,24 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
         end
       end
 
+      -- Accept the (possibly merged) original_buf so that selective dp/do
+      -- merges can be applied back to the target buffer.
+      local function accept_merged()
+        local lines = vim.api.nvim_buf_get_lines(original_buf, 0, -1, false)
+        close_all()
+        if vim.api.nvim_buf_is_valid(target_buf) then
+          vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+          vim.notify("Selection replaced with merged result.")
+        else
+          vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+        end
+      end
+
       local function setup_keymaps(buf)
         vim.keymap.set("n", "y", accept,
           { buffer = buf, desc = "Replace selection with active response" })
+        vim.keymap.set("n", "Y", accept_merged,
+          { buffer = buf, desc = "Replace selection with merged original buffer" })
         vim.keymap.set("n", "q", close_all,
           { buffer = buf, desc = "Cancel and close" })
         vim.keymap.set("n", "<Tab>", function() switch_offset(1) end,
@@ -772,7 +816,6 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
     local original_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
     vim.bo[original_buf].filetype = filetype
-    vim.bo[original_buf].modifiable = false
 
     local preview_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, {
@@ -809,7 +852,7 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
       border = "rounded",
       title = build_title(),
       title_pos = "center",
-      footer = " y:replace  q:cancel ",
+      footer = " y:AI  Y:merged  q:cancel ",
       footer_pos = "center",
     })
 
@@ -882,6 +925,30 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
       end,
     })
 
+    -- Pin each pane to its expected buffer so :bnext / :bprev / <C-^>
+    -- can't replace the diff contents.
+    local expected_buf = {
+      [original_win] = original_buf,
+      [preview_win] = preview_buf,
+    }
+    vim.api.nvim_create_autocmd("BufWinEnter", {
+      group = group,
+      callback = function()
+        for win, exp in pairs(expected_buf) do
+          if vim.api.nvim_win_is_valid(win)
+            and vim.api.nvim_buf_is_valid(exp)
+            and vim.api.nvim_win_get_buf(win) ~= exp then
+            vim.schedule(function()
+              if vim.api.nvim_win_is_valid(win)
+                and vim.api.nvim_buf_is_valid(exp) then
+                vim.api.nvim_win_set_buf(win, exp)
+              end
+            end)
+          end
+        end
+      end,
+    })
+
     local function focus_left()
       if vim.api.nvim_win_is_valid(original_win) then
         vim.api.nvim_set_current_win(original_win)
@@ -912,9 +979,24 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
       end
     end
 
+    -- Accept the (possibly merged) original_buf so that selective dp/do
+    -- merges can be applied back to the target buffer.
+    local function accept_merged()
+      local lines = vim.api.nvim_buf_get_lines(original_buf, 0, -1, false)
+      close_all()
+      if vim.api.nvim_buf_is_valid(target_buf) then
+        vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+        vim.notify("Selection replaced with merged result.")
+      else
+        vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+      end
+    end
+
     for _, buf in ipairs({ original_buf, preview_buf }) do
       vim.keymap.set("n", "y", accept,
         { buffer = buf, desc = "Replace selection with response" })
+      vim.keymap.set("n", "Y", accept_merged,
+        { buffer = buf, desc = "Replace selection with merged original buffer" })
       vim.keymap.set("n", "q", close_all,
         { buffer = buf, desc = "Cancel replacement" })
       -- Constrain window movement to only the two diff panes
