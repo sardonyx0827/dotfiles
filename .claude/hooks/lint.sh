@@ -74,18 +74,25 @@ js | jsx | ts | tsx)
     done
   fi
 
-  if $HAS_ESLINT_CONFIG && command -v eslint >/dev/null 2>&1; then
-    echo "  → Running ESLint..."
-    if ! OUTPUT=$(eslint "$FILE_PATH" 2>&1); then
-      LINT_ERRORS="${LINT_ERRORS}[ESLint]\n${OUTPUT}\n"
-    else
-      echo "  ✅ ESLint passed"
+    ESLINT_BIN=""
+    if [ -n "$PROJECT_ROOT" ] && [ -x "$PROJECT_ROOT/node_modules/.bin/eslint" ]; then
+      ESLINT_BIN="$PROJECT_ROOT/node_modules/.bin/eslint"
+    elif command -v eslint >/dev/null 2>&1; then
+      ESLINT_BIN="eslint"
     fi
-  elif ! $HAS_ESLINT_CONFIG; then
-    echo "  ⚠️  ESLint config not found, skipping"
-  else
-    echo "  ⚠️  ESLint not found"
-  fi
+
+    if $HAS_ESLINT_CONFIG && [ -n "$ESLINT_BIN" ]; then
+      echo "  → Running ESLint ($ESLINT_BIN)..."
+      if ! OUTPUT=$("$ESLINT_BIN" "$FILE_PATH" 2>&1); then
+        LINT_ERRORS="${LINT_ERRORS}[ESLint]\n${OUTPUT}\n"
+      else
+        echo "  ✅ ESLint passed"
+      fi
+    elif ! $HAS_ESLINT_CONFIG; then
+      echo "  ⚠️  ESLint config not found, skipping"
+    else
+      echo "  ⚠️  ESLint not found"
+    fi
 
   # TypeScriptの型チェック（tsconfig.jsonが存在する場合のみ）
   if [[ "$EXTENSION" == "ts" || "$EXTENSION" == "tsx" ]]; then
