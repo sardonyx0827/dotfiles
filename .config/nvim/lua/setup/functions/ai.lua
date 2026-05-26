@@ -103,7 +103,7 @@ vim.keymap.set("n", "<leader><leader>a", copy_all_lsp_diagnostics,
 ---------------------------------------------------------
 -- [AI solution] get file and line info visual selection
 ---------------------------------------------------------
-_G.get_file_line_info_visual = function(start_line, end_line)
+local function get_file_line_info_visual(start_line, end_line)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then
     print("No visual selection found.")
     return
@@ -129,9 +129,11 @@ _G.get_file_line_info_visual = function(start_line, end_line)
   print("Copied file and line info to clipboard.")
 end
 
-vim.keymap.set("x", "<leader><leader>c",
-  ":<C-u>lua get_file_line_info_visual(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"))<CR>",
-  { desc = "Get file and line info from visual selection", noremap = true, silent = true })
+vim.keymap.set("x", "<leader><leader>c", function()
+  -- Exit visual mode so '< and '> marks reflect the just-completed selection
+  vim.cmd("normal! \27")
+  get_file_line_info_visual(vim.fn.line("'<"), vim.fn.line("'>"))
+end, { desc = "Get file and line info from visual selection", noremap = true, silent = true })
 
 ---------------------------------------------------------
 -- close current buffer
@@ -282,7 +284,7 @@ vim.keymap.set("n", "<leader>cx", function() generate_commit_message("codex") en
 ---------------------------------------------------------
 -- [AI solution] Select a range, open a prompt window to ask the AI(Claude Code / Codex / Gemini), and replace the selected range with the AI's response
 ---------------------------------------------------------
-_G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
+local function ask_ai_and_replace_selection(start_line, end_line, tool)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then
     vim.notify("No visual selection found.", vim.log.levels.ERROR)
     return
@@ -1050,18 +1052,21 @@ _G.ask_ai_and_replace_selection = function(start_line, end_line, tool)
     { buffer = prompt_buf, desc = "Submit prompt to " .. tool })
 end
 
-vim.keymap.set("x", "<C-c>",
-  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'claude')<CR>",
+local function ask_ai_keymap(tool)
+  return function()
+    -- Exit visual mode so '< and '> marks reflect the just-completed selection
+    vim.cmd("normal! \27")
+    ask_ai_and_replace_selection(vim.fn.line("'<"), vim.fn.line("'>"), tool)
+  end
+end
+
+vim.keymap.set("x", "<C-c>", ask_ai_keymap("claude"),
   { desc = "Ask AI(Claude) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-x>",
-  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'codex')<CR>",
+vim.keymap.set("x", "<C-x>", ask_ai_keymap("codex"),
   { desc = "Ask AI(Codex) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-g>",
-  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'gemini')<CR>",
+vim.keymap.set("x", "<C-g>", ask_ai_keymap("gemini"),
   { desc = "Ask AI(Gemini) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-o>",
-  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'copilot')<CR>",
+vim.keymap.set("x", "<C-o>", ask_ai_keymap("copilot"),
   { desc = "Ask AI(Copilot) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-l>",
-  ":<C-u>lua _G.ask_ai_and_replace_selection(vim.fn.line(\"'<\"), vim.fn.line(\"'>\"), 'all')<CR>",
+vim.keymap.set("x", "<C-l>", ask_ai_keymap("all"),
   { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
