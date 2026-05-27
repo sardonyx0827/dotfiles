@@ -174,6 +174,10 @@ SAFE_COMMANDS = [
 
 DENY_COMMANDS = ["curl", "wget", "nc", "ssh", "shred", "dd", "rm -rf /", "rm -rf ~", "rm -rf ."]
 
+# Safe-skip is intentionally conservative: these tokens can hide execution
+# or writes inside an otherwise harmless-looking command prefix.
+COMPLEX_SHELL_SYNTAX = re.compile(r"[\r\n`<>]|\$\(|(?<!&)&(?!&)")
+
 
 def _split_commands(cmd: str) -> list[str]:
     return [p.strip() for p in re.split(r"\s*(?:&&|\|\||[|;])\s*", cmd) if p.strip()]
@@ -181,6 +185,10 @@ def _split_commands(cmd: str) -> list[str]:
 
 def _is_safe_command(cmd: str) -> bool:
     return any(cmd == safe or cmd.startswith(safe + " ") for safe in SAFE_COMMANDS)
+
+
+def _can_skip_review(cmd: str) -> bool:
+    return not COMPLEX_SHELL_SYNTAX.search(cmd) and _is_safe_command(cmd)
 
 
 def _is_deny_command(cmd: str) -> tuple[bool, str]:
@@ -204,7 +212,7 @@ for sub_cmd in sub_commands:
         sys.exit(0)
 
 # --- 安全コマンドのスキップ ---
-if sub_commands and all(_is_safe_command(c) for c in sub_commands):
+if sub_commands and all(_can_skip_review(c) for c in sub_commands):
     write_detail_log({"Result": "SKIP (safe command)"})
     log_summary("ALLOW", "pre", "safe command")
     sys.exit(0)
