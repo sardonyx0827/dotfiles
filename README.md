@@ -96,7 +96,6 @@
 ├── .codex/                         # Codex設定
 ├── .config/                        # アプリケーション設定
 │   ├── Code/                       # VS Code設定
-│   ├── mcphub/                     # MCP Hub設定
 │   └── nvim_lazy/                  # Neovim (lazy.nvim) 設定
 ├── .gemini/                        # Gemini CLI設定
 ├── .oh-my-zsh/                     # Oh My Zsh設定
