@@ -284,7 +284,7 @@ vim.keymap.set("n", "<leader>cx", function() generate_commit_message("codex") en
 ---------------------------------------------------------
 -- [AI solution] Select a range, open a prompt window to ask the AI(Claude Code / Codex / Gemini), and replace the selected range with the AI's response
 ---------------------------------------------------------
-local function ask_ai_and_replace_selection(start_line, end_line, tool)
+local function _ask_ai_and_replace_selection(start_line, end_line, tool)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then
     vim.notify("No visual selection found.", vim.log.levels.ERROR)
     return
@@ -1052,21 +1052,21 @@ local function ask_ai_and_replace_selection(start_line, end_line, tool)
     { buffer = prompt_buf, desc = "Submit prompt to " .. tool })
 end
 
-local function ask_ai_keymap(tool)
+local function ask_ai_and_replace_selection(tool)
   return function()
     -- Exit visual mode so '< and '> marks reflect the just-completed selection
     vim.cmd("normal! \27")
-    ask_ai_and_replace_selection(vim.fn.line("'<"), vim.fn.line("'>"), tool)
+    _ask_ai_and_replace_selection(vim.fn.line("'<"), vim.fn.line("'>"), tool)
   end
 end
 
-vim.keymap.set("x", "<C-c>", ask_ai_keymap("claude"),
+vim.keymap.set("x", "<C-c>", ask_ai_and_replace_selection("claude"),
   { desc = "Ask AI(Claude) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-x>", ask_ai_keymap("codex"),
+vim.keymap.set("x", "<C-x>", ask_ai_and_replace_selection("codex"),
   { desc = "Ask AI(Codex) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-g>", ask_ai_keymap("gemini"),
+vim.keymap.set("x", "<C-g>", ask_ai_and_replace_selection("gemini"),
   { desc = "Ask AI(Gemini) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-o>", ask_ai_keymap("copilot"),
+vim.keymap.set("x", "<C-o>", ask_ai_and_replace_selection("copilot"),
   { desc = "Ask AI(Copilot) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-l>", ask_ai_keymap("all"),
+vim.keymap.set("x", "<C-l>", ask_ai_and_replace_selection("all"),
   { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
