@@ -13,4 +13,5 @@ max_depth = 1
 [features]
 streamable_shell = true
 multi_agent = true
-
+js_repl = false
+multi_agent = true
