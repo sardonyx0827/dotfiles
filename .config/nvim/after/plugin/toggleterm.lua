@@ -55,6 +55,8 @@ end
 
 vim.keymap.set("n", "<leader>cc", "<cmd>lua _claude_toggle()<CR>",
   { silent = true, desc = "claude - CUI tool" })
+vim.keymap.set("n", "<leader>tc", "<cmd>lua _claude_toggle()<CR>",
+  { silent = true, desc = "claude - CUI tool" })
 
 -- gemini cli
 local toggle_gemini = Terminal:new({
@@ -81,5 +83,19 @@ function _codex_toggle()
   toggle_codex:toggle()
 end
 
-vim.keymap.set("n", "<leader>to", "<cmd>lua _codex_toggle()<CR>",
+vim.keymap.set("n", "<leader>tx", "<cmd>lua _codex_toggle()<CR>",
   { silent = true, desc = "codex (OpenAI) - CUI tool" })
+
+-- copilot
+local toggle_copilot = Terminal:new({
+  cmd = "copilot",
+  direction = "float",
+  hidden = true
+})
+
+function _copilot_toggle()
+  toggle_copilot:toggle()
+end
+
+vim.keymap.set("n", "<leader>to", "<cmd>lua _copilot_toggle()<CR>",
+  { silent = true, desc = "copilot (Github) - CUI tool" })
