@@ -149,7 +149,6 @@ SAFE_COMMANDS = [
     "git branch",
     "grep",
     "rg",
-    "find",
     "head",
     "tail",
     "wc",
@@ -159,8 +158,6 @@ SAFE_COMMANDS = [
     "date",
     "tree",
     "jq",
-    "sed",
-    "awk",
     "npm run",
     "pnpm run",
     "yarn run",
@@ -172,7 +169,17 @@ SAFE_COMMANDS = [
     "jest",
 ]
 
-DENY_COMMANDS = ["curl", "wget", "nc", "ssh", "shred", "dd", "rm -rf /", "rm -rf ~", "rm -rf ."]
+DENY_COMMANDS = [
+    "curl",
+    "wget",
+    "nc",
+    "ssh",
+    "shred",
+    "dd",
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf .",
+]
 
 # Safe-skip is intentionally conservative: these tokens can hide execution
 # or writes inside an otherwise harmless-looking command prefix.

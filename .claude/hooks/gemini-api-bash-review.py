@@ -130,7 +130,6 @@ SAFE_COMMANDS = [
     "git branch",
     "grep",
     "rg",
-    "find",
     "head",
     "tail",
     "wc",
@@ -140,8 +139,6 @@ SAFE_COMMANDS = [
     "date",
     "tree",
     "jq",
-    "sed",
-    "awk",
     "npm run",
     "pnpm run",
     "yarn run",
@@ -156,7 +153,17 @@ SAFE_COMMANDS = [
 # -------------------------------------------------------------------
 # 危険なコマンドの拒否判定
 # -------------------------------------------------------------------
-DENY_COMMANDS = ["curl", "wget", "nc", "ssh", "shred", "dd", "rm -rf /", "rm -rf ~", "rm -rf ."]
+DENY_COMMANDS = [
+    "curl",
+    "wget",
+    "nc",
+    "ssh",
+    "shred",
+    "dd",
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf .",
+]
 
 
 def _split_commands(cmd: str) -> list[str]:
