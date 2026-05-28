@@ -292,7 +292,7 @@ local function _ask_ai_and_replace_selection(start_line, end_line, tool)
   if start_line > end_line then
     start_line, end_line = end_line, start_line
   end
-  if tool ~= "claude" and tool ~= "codex" and tool ~= "gemini" and tool ~= "copilot" and tool ~= "all" then
+  if tool ~= "claude" and tool ~= "codex" and tool ~= "gemini"  and tool ~= "all" then
     tool = "claude"
   end
 
@@ -391,17 +391,6 @@ local function _ask_ai_and_replace_selection(start_line, end_line, tool)
         return string.format("cat %s | gemini -m gemini-3.1-flash-lite-preview -p %s",
           vim.fn.shellescape(tmpfile),
           vim.fn.shellescape(system_prompt))
-      elseif t == "copilot" then
-        -- copilot CLI does not read stdin as context, so inline the selection into the prompt.
-        local copilot_prompt = string.format(
-          "%s\n\n## Selected %s code\n```%s\n%s\n```",
-          system_prompt,
-          lang,
-          lang,
-          table.concat(selected_lines, "\n")
-        )
-        return string.format("copilot --model gpt-5-mini -s -p %s",
-          vim.fn.shellescape(copilot_prompt))
       else
         return string.format("cat %s | claude --model sonnet -p %s",
           vim.fn.shellescape(tmpfile),
@@ -419,7 +408,7 @@ local function _ask_ai_and_replace_selection(start_line, end_line, tool)
       { link = "FloatTitle", default = true })
 
     if tool == "all" then
-      local tools_order = { "claude", "codex", "copilot" }
+      local tools_order = { "claude", "codex" }
       local state = {
         buffers = {},
         jobs = {},
@@ -1066,7 +1055,5 @@ vim.keymap.set("x", "<C-x>", ask_ai_and_replace_selection("codex"),
   { desc = "Ask AI(Codex) and replace selection", noremap = true, silent = true })
 vim.keymap.set("x", "<C-g>", ask_ai_and_replace_selection("gemini"),
   { desc = "Ask AI(Gemini) and replace selection", noremap = true, silent = true })
-vim.keymap.set("x", "<C-o>", ask_ai_and_replace_selection("copilot"),
-  { desc = "Ask AI(Copilot) and replace selection", noremap = true, silent = true })
 vim.keymap.set("x", "<C-l>", ask_ai_and_replace_selection("all"),
   { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
