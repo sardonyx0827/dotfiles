@@ -202,7 +202,16 @@
   },
   "enabledPlugins": {
     "document-skills@anthropic-agent-skills": true,
-    "code-review@claude-plugins-official": true
+    "code-review@claude-plugins-official": true,
+    "codex@openai-codex": true
+  },
+  "extraKnownMarketplaces": {
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
   },
   "sandbox": {
     "enabled": false,
@@ -223,8 +232,8 @@
   },
   "autoUpdatesChannel": "latest",
   "autoMemoryEnabled": false,
+  "editorMode": "vim",
   "teammateMode": "tmux",
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false,
-  "editorMode": "vim"
+  "voiceEnabled": false
 }
