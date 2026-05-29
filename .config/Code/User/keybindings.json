@@ -512,5 +512,29 @@
       "commands": ["list.focusUp", "filesExplorer.openFilePreserveFocus"]
     },
     "when": "filesExplorerFocus && foldersViewVisible && !inputFocus"
+  },
+  {
+    // ask-ai extension settings
+    "key": "ctrl+c",
+    "command": "askAi.replaceWithClaude",
+    "when": "editorTextFocus && vim.mode =~ /^Visual/"
+  },
+  {
+    // ask-ai extension settings
+    "key": "ctrl+x",
+    "command": "askAi.replaceWithCodex",
+    "when": "editorTextFocus && vim.mode =~ /^Visual/"
+  },
+  {
+    // ask-ai extension settings
+    "key": "ctrl+g",
+    "command": "askAi.replaceWithGemini",
+    "when": "editorTextFocus && vim.mode =~ /^Visual/"
+  },
+  {
+    // ask-ai extension settings
+    "key": "ctrl+l",
+    "command": "askAi.replaceWithAll",
+    "when": "editorTextFocus && vim.mode =~ /^Visual/"
   }
 ]
