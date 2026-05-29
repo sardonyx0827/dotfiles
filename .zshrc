@@ -249,8 +249,6 @@ alias c='claude'
 alias cl='claude'
 ## Codex CLI
 alias cx='codex'
-## GitHub Copilot CLI
-alias cop='copilot'
 ## Gemini CLI
 alias ge='gemini'
 
