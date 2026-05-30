@@ -12,6 +12,10 @@
   "vim.normalModeKeyBindingsNonRecursive": [
     {
       "before": ["<leader>", "c", "c"],
+      "commands": ["workbench.action.toggleAuxiliaryBar"]
+    },
+    {
+      "before": ["<leader>", "t", "c"],
       "commands": [
         "workbench.action.createTerminalEditorSide",
         {
