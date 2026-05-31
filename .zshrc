@@ -186,13 +186,15 @@ alias gimp="/Applications/GIMP.app/Contents/MacOS/gimp"
 # python environment
 export PYENV_ROOT="$HOME/.pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init --path)"
-eval "$(pyenv init -)"
+if command -v pyenv >/dev/null 2>&1; then
+  eval "$(pyenv init --path)"
+  eval "$(pyenv init -)"
+fi
 
 # rust environment
 export PATH="$HOME/.cargo/bin:$PATH"
 
-eval "$(fzf --zsh)"
+command -v fzf >/dev/null 2>&1 && eval "$(fzf --zsh)"
 
 # history
 HISTFILE=~/.zsh_history

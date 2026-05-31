@@ -89,7 +89,32 @@ install_apt_packages() {
     curl \
     wget \
     build-essential \
-    xsel
+    xsel \
+    fzf \
+    jq \
+    ripgrep \
+    bat \
+    fd-find \
+    universal-ctags \
+    libnotify-bin \
+    golang-go \
+    python3 \
+    python3-pip \
+    python3-venv \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libffi-dev \
+    liblzma-dev
+
+  # On Debian/Ubuntu the binaries are named `batcat` and `fdfind`, but the
+  # configs (.zshrc vf(), nvim telescope) invoke `bat` and `fd`. Provide
+  # PATH-visible aliases so those code paths resolve.
+  mkdir -p "$HOME/.local/bin"
+  command_exists batcat && ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
+  command_exists fdfind && ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
 
   print_success "APT packages installed"
 }
@@ -106,6 +131,15 @@ install_brew_packages() {
     tmux
     curl
     wget
+    fzf             # fuzzy finder (.zshrc `eval "$(fzf --zsh)"`, sshs/cf/vf)
+    jq              # JSON processor (.claude/statusline-command.sh)
+    ripgrep         # rg: vim :Find / nvim telescope live_grep
+    bat             # vf() fzf preview
+    fd              # nvim telescope find_files
+    universal-ctags # vim tagbar (F4)
+    make            # gmake for vimproc / treesitter compilation
+    python          # python3 for pip-based linters and MCP server
+    go              # ~/go/bin tools (goimports, staticcheck), .zshrc PATH
   )
 
   for package in "${packages[@]}"; do
@@ -155,6 +189,158 @@ install_fonts() {
     print_info "Installing fonts..."
     sudo apt-get install -y fonts-ubuntu fonts-hack-ttf
     print_success "Fonts installed"
+  fi
+}
+
+# Install GitHub CLI (gh)
+# .gitconfig uses `gh auth git-credential` as the HTTPS credential helper.
+install_gh() {
+  if command_exists gh; then
+    print_success "gh already installed"
+    return
+  fi
+  print_info "Installing GitHub CLI (gh)..."
+  if [[ "$OS" == "macos" ]]; then
+    brew install gh || print_warning "Failed to install gh"
+  elif [[ "$OS" == "ubuntu" ]]; then
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg |
+      sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+    sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" |
+      sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+    sudo apt-get update
+    sudo apt-get install -y gh || print_warning "Failed to install gh"
+  fi
+  command_exists gh && print_success "gh installed"
+}
+
+# Install uv / uvx (Astral) — required to launch the serena MCP server.
+install_uv() {
+  if command_exists uv; then
+    print_success "uv already installed"
+    return
+  fi
+  print_info "Installing uv (Astral)..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null ||
+    print_warning "Failed to install uv"
+  # uv installs to ~/.local/bin; make it visible for the rest of this script.
+  export PATH="$HOME/.local/bin:$PATH"
+  command_exists uv && print_success "uv installed"
+}
+
+# Install pyenv (macOS handled by brew packages; this covers Ubuntu).
+install_pyenv() {
+  if command_exists pyenv || [ -d "$HOME/.pyenv" ]; then
+    print_success "pyenv already installed"
+    return
+  fi
+  if [[ "$OS" == "ubuntu" ]]; then
+    print_info "Installing pyenv..."
+    curl -fsSL https://pyenv.run | bash 2>/dev/null ||
+      print_warning "Failed to install pyenv"
+    command_exists pyenv || [ -d "$HOME/.pyenv" ] && print_success "pyenv installed"
+  fi
+}
+
+# Install glow — vim :PreviewMarkdown renderer.
+install_glow() {
+  if command_exists glow; then
+    print_success "glow already installed"
+    return
+  fi
+  print_info "Installing glow..."
+  if [[ "$OS" == "macos" ]]; then
+    brew install glow || print_warning "Failed to install glow"
+  elif [[ "$OS" == "ubuntu" ]]; then
+    # Prefer go install (go is installed via apt) to avoid another apt repo.
+    if command_exists go; then
+      go install github.com/charmbracelet/glow@latest 2>/dev/null ||
+        print_warning "Failed to install glow via go"
+    else
+      print_warning "go not found; skipping glow"
+    fi
+  fi
+  command_exists glow && print_success "glow installed"
+}
+
+# Install lazydocker — referenced by nvim toggleterm and editor keybindings.
+install_lazydocker() {
+  if command_exists lazydocker; then
+    print_success "lazydocker already installed"
+    return
+  fi
+  print_info "Installing lazydocker..."
+  if [[ "$OS" == "macos" ]]; then
+    brew install lazydocker || print_warning "Failed to install lazydocker"
+  elif [[ "$OS" == "ubuntu" ]]; then
+    curl -fsSL https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh |
+      bash 2>/dev/null || print_warning "Failed to install lazydocker"
+  fi
+  command_exists lazydocker && print_success "lazydocker installed"
+}
+
+# Install Docker — MCP_DOCKER gateway and the dsollama/deollama aliases.
+install_docker() {
+  if command_exists docker; then
+    print_success "Docker already installed"
+    return
+  fi
+  print_info "Installing Docker..."
+  if [[ "$OS" == "macos" ]]; then
+    brew install --cask docker || print_warning "Failed to install Docker Desktop"
+    print_info "Launch Docker Desktop once and enable the MCP Toolkit for the MCP_DOCKER gateway."
+  elif [[ "$OS" == "ubuntu" ]]; then
+    curl -fsSL https://get.docker.com | sudo sh 2>/dev/null ||
+      print_warning "Failed to install Docker engine"
+    sudo usermod -aG docker "$USER" 2>/dev/null || true
+    print_info "Log out/in (or 'newgrp docker') for group membership to take effect."
+  fi
+  command_exists docker && print_success "Docker installed"
+}
+
+# Install the tree-sitter CLI — nvim treesitter `auto_install` needs it to
+# build grammars that ship only a grammar.js.
+install_tree_sitter_cli() {
+  if command_exists tree-sitter; then
+    print_success "tree-sitter CLI already installed"
+    return
+  fi
+  if command_exists npm; then
+    print_info "Installing tree-sitter CLI via npm..."
+    npm install -g tree-sitter-cli 2>/dev/null ||
+      print_warning "Failed to install tree-sitter CLI"
+  else
+    print_warning "npm not found; skipping tree-sitter CLI"
+  fi
+}
+
+# Install tpm (Tmux Plugin Manager) — .tmux.conf declares plugins via @plugin
+# and runs ~/.tmux/plugins/tpm/tpm, but tpm does not bootstrap itself.
+install_tmux_plugins() {
+  if [ -d "$HOME/.tmux/plugins/tpm" ]; then
+    print_success "tpm already installed"
+    return
+  fi
+  print_info "Installing tpm..."
+  git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" 2>/dev/null ||
+    print_warning "Failed to install tpm"
+  print_info "Launch tmux and press prefix + I to install the declared plugins."
+}
+
+# Install Python deps for the bundled MCP server (.claude/mcp-servers/gemini-consultant).
+# server.py imports `mcp.server.fastmcp`, so the `mcp` package must be present.
+install_mcp_server_deps() {
+  if command_exists pip3 || command_exists pip; then
+    local pip_cmd="pip3"
+    command_exists pip3 || pip_cmd="pip"
+    if ! $pip_cmd show mcp &>/dev/null; then
+      print_info "Installing Python 'mcp' package for the gemini-consultant MCP server..."
+      $pip_cmd install --user mcp 2>/dev/null || print_warning "Failed to install mcp"
+    else
+      print_info "Python 'mcp' package already installed"
+    fi
+  else
+    print_warning "pip not found; skipping MCP server deps"
   fi
 }
 
@@ -327,6 +513,11 @@ create_symlinks() {
   fi
   ln -sf "$DOTFILES_DIR/.oh-my-zsh/custom" "$HOME/.oh-my-zsh/custom"
   print_success "Linked Oh My Zsh custom"
+
+  # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
+  mkdir -p "$HOME/.tmux"
+  link_entry "$DOTFILES_DIR/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
+  chmod +x "$DOTFILES_DIR/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
 
   if [ -n "$(ls -A "$backup_dir" 2>/dev/null)" ]; then
     print_info "Backup created at: $backup_dir"
@@ -612,9 +803,18 @@ main() {
   install_wezterm
   install_fonts
   install_nodejs
+  install_gh
+  install_pyenv
+  install_uv
+  install_glow
+  install_docker
+  install_lazydocker
+  install_tree_sitter_cli
+  install_mcp_server_deps
   install_linters_formatters
   install_oh_my_zsh
   install_vim_plug
+  install_tmux_plugins
 
   # Create symlinks
   create_symlinks
@@ -637,8 +837,15 @@ main() {
   print_info "Next steps:"
   echo "  1. Restart your terminal"
   echo "  2. Open Neovim to complete lazy.nvim setup: nvim"
-  echo "  3. Install AI tools if needed (see README.md)"
-  echo "  4. Customize configurations as needed"
+  echo "  3. In tmux, press prefix + I to install plugins (tpm)"
+  echo "  4. Install AI tools if needed (see README.md)"
+  echo "  5. Customize configurations as needed"
+  echo
+  print_info "Secrets / credentials still required (cannot be installed):"
+  echo "  - GEMINI_API_KEY : export in your shell for the gemini-api bash-review hook"
+  echo "                     and the gemini-consultant MCP server"
+  echo "  - GitHub MCP token: replace the <placeholder> token in .gemini/.claude MCP config"
+  echo "  - gh auth login   : authenticate GitHub CLI (used by .gitconfig credential helper)"
   echo
   print_info "Utility scripts:"
   echo "  - ./update_ai_tools.sh : Update all AI tools"
