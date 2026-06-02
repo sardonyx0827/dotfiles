@@ -72,6 +72,8 @@ Plug 'joshdick/onedark.vim'
 Plug 'rose-pine/vim'
 " preview markdown
 Plug 'skanehira/preview-markdown.vim'
+"" GitHub Copilot
+Plug 'github/copilot.vim'
 
 if isdirectory('/usr/local/opt/fzf')
   Plug '/usr/local/opt/fzf' | Plug 'junegunn/fzf.vim'
