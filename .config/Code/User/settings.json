@@ -430,7 +430,17 @@
     }
   ],
 
-  "vim.insertModeKeyBindingsNonRecursive": [],
+  "vim.insertModeKeyBindingsNonRecursive": [
+    // move cursor in insert mode
+    {
+      "before": ["<C-b>"],
+      "after": ["<Left>"]
+    },
+    {
+      "before": ["<C-f>"],
+      "after": ["<Right>"]
+    }
+  ],
 
   // vim status bar colors
   "vim.statusBarColorControl": true,
