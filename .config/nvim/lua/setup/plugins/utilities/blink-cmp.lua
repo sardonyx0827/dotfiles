@@ -4,6 +4,13 @@ return {
   version = '1.*',
   dependencies = {
     { 'rafamadriz/friendly-snippets' },
+    {
+      'fang2hou/blink-copilot',
+      opts = {
+        max_completions = 3,
+        max_attempts = 4,
+      },
+    },
   },
 
   ---@module 'blink.cmp'
@@ -31,6 +38,7 @@ return {
     appearance = {
       nerd_font_variant = 'mono',
       kind_icons = {
+        Copilot = "",
         Text = "󰉿",
         Method = "󰆧",
         Function = "󰊕",
@@ -74,7 +82,15 @@ return {
     },
 
     sources = {
-      default = { 'lsp', 'snippets', 'buffer' },
+      default = { 'copilot', 'lsp', 'snippets', 'buffer' },
+      providers = {
+        copilot = {
+          name = 'copilot',
+          module = 'blink-copilot',
+          score_offset = 100,
+          async = true,
+        },
+      },
     },
 
     cmdline = {

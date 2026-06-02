@@ -551,6 +551,5 @@
   "settingsSync.keybindingsPerPlatform": false,
   "claudeCode.preferredLocation": "sidebar",
   "workbench.colorTheme": "Rosé Pine",
-  "claudeCode.selectedModel": "default",
-  "chat.disableAIFeatures": true
+  "claudeCode.selectedModel": "default"
 }
