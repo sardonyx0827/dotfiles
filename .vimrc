@@ -674,11 +674,9 @@ nnoremap <silent> <C-Left> 1<C-w><
 "" close all buffers
 nnoremap <silent> <leader>cb :%bdelete<CR>
 
-"" move cursor in insert mode (match nvim_lazy remap.lua)
-inoremap <C-j> <C-o>gj
-inoremap <C-k> <C-o>gk
-inoremap <C-h> <C-o>h
-inoremap <C-l> <C-o>l
+"" move cursor in insert mode
+inoremap <C-b> <Left>
+inoremap <C-f> <Right>
 
 "" move cursor in command mode
 cnoremap <C-b> <Left>
