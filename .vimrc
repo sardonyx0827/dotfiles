@@ -72,6 +72,8 @@ Plug 'joshdick/onedark.vim'
 Plug 'rose-pine/vim'
 " preview markdown
 Plug 'skanehira/preview-markdown.vim'
+" jump anywhere on screen with a few keystrokes
+Plug 'easymotion/vim-easymotion'
 "" GitHub Copilot
 Plug 'github/copilot.vim'
 
@@ -559,6 +561,22 @@ nnoremap <silent> <leader>ll <cmd>Buffers<CR>
 " jump to next buffer
 nnoremap <silent> <C-l> :bnext<CR>
 nnoremap <silent> <C-h> :bprevious<CR>
+
+
+"*****************************************************************************
+"" EasyMotion
+"*****************************************************************************
+" Use a single <leader> prefix instead of the default <leader><leader>.
+let g:EasyMotion_do_mapping = 0
+" Match upper & lower case so you can type the label without worrying about case.
+let g:EasyMotion_smartcase = 1
+" Keep the cursor on the matched line for n/N style repeats.
+let g:EasyMotion_use_smartsign_us = 1
+
+" 1-char search across all visible windows.
+nmap <leader>jc <Plug>(easymotion-overwin-f)
+" line-wise motions
+map <leader>jj <Plug>(easymotion-bd-w)
 
 
 "*****************************************************************************
