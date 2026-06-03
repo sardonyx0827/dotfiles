@@ -425,6 +425,132 @@ endfunction
 " show nerdtree default
 let g:nerdtree_tabs_open_on_console_startup=0
 
+"*****************************************************************************
+"" NERDTree floating file preview
+"*****************************************************************************
+" While the cursor sits on a file node in NERDTree, show the first lines of
+" that file in a floating window (Neovim: nvim_open_win / Vim: popup_create).
+" Auto-updates on cursor move, closes when leaving the tree. Toggle with P.
+let g:nerdtree_preview_enabled = 1
+let s:nt_preview_win = 0
+
+" extension -> filetype, used to syntax-highlight the preview buffer
+let s:nt_preview_ft = {
+      \ 'js': 'javascript', 'jsx': 'javascriptreact',
+      \ 'ts': 'typescript', 'tsx': 'typescriptreact',
+      \ 'py': 'python', 'go': 'go', 'rb': 'ruby', 'rs': 'rust',
+      \ 'c': 'c', 'h': 'c', 'cpp': 'cpp', 'cc': 'cpp', 'hpp': 'cpp',
+      \ 'java': 'java', 'php': 'php', 'vim': 'vim', 'lua': 'lua',
+      \ 'sh': 'sh', 'bash': 'sh', 'zsh': 'sh', 'fish': 'fish',
+      \ 'html': 'html', 'css': 'css', 'scss': 'scss', 'sass': 'sass',
+      \ 'json': 'json', 'yaml': 'yaml', 'yml': 'yaml', 'toml': 'toml',
+      \ 'md': 'markdown', 'sql': 'sql', 'xml': 'xml', 'vue': 'vue',
+      \ }
+
+" extensions we never want to dump into a text preview
+let s:nt_preview_skip = {
+      \ 'png': 1, 'jpg': 1, 'jpeg': 1, 'gif': 1, 'bmp': 1, 'ico': 1,
+      \ 'webp': 1, 'svg': 1, 'pdf': 1, 'zip': 1, 'gz': 1, 'tar': 1,
+      \ 'o': 1, 'so': 1, 'a': 1, 'dylib': 1, 'exe': 1, 'bin': 1,
+      \ 'class': 1, 'pyc': 1, 'woff': 1, 'woff2': 1, 'ttf': 1, 'otf': 1,
+      \ 'mp3': 1, 'mp4': 1, 'mov': 1, 'avi': 1, 'wav': 1, 'db': 1, 'sqlite': 1,
+      \ }
+
+function! s:NTPreviewClose() abort
+  if s:nt_preview_win <= 0
+    return
+  endif
+  if has('nvim')
+    if nvim_win_is_valid(s:nt_preview_win)
+      call nvim_win_close(s:nt_preview_win, v:true)
+    endif
+  else
+    call popup_close(s:nt_preview_win)
+  endif
+  let s:nt_preview_win = 0
+endfunction
+
+function! s:NTPreviewShow() abort
+  if !g:nerdtree_preview_enabled || &filetype !=# 'nerdtree'
+        \ || !exists('g:NERDTreeFileNode')
+    call s:NTPreviewClose()
+    return
+  endif
+  let l:node = g:NERDTreeFileNode.GetSelected()
+  if empty(l:node) || l:node.path.isDirectory
+    call s:NTPreviewClose()
+    return
+  endif
+  let l:path = l:node.path.str()
+  let l:ext = tolower(fnamemodify(l:path, ':e'))
+  if !filereadable(l:path) || get(s:nt_preview_skip, l:ext, 0)
+        \ || getfsize(l:path) > 1024 * 1024
+    call s:NTPreviewClose()
+    return
+  endif
+
+  let l:lines = readfile(l:path, '', 300)
+  if empty(l:lines)
+    let l:lines = ['[empty file]']
+  endif
+  let l:ft = get(s:nt_preview_ft, l:ext, '')
+  let l:name = fnamemodify(l:path, ':t')
+  let l:width = max([40, float2nr(&columns * 0.5)])
+  let l:height = max([10, float2nr(&lines * 0.6)])
+  let l:col = g:NERDTreeWinSize + 4
+
+  call s:NTPreviewClose()
+  if has('nvim')
+    let l:buf = nvim_create_buf(v:false, v:true)
+    call nvim_buf_set_lines(l:buf, 0, -1, v:false, l:lines)
+    if l:ft !=# ''
+      call setbufvar(l:buf, '&filetype', l:ft)
+    endif
+    let l:opts = {
+          \ 'relative': 'editor', 'anchor': 'NW',
+          \ 'width': l:width, 'height': l:height,
+          \ 'row': 2, 'col': l:col,
+          \ 'style': 'minimal', 'border': 'rounded',
+          \ 'focusable': v:false, 'noautocmd': v:true,
+          \ }
+    if has('nvim-0.9')
+      let l:opts.title = ' ' . l:name . ' '
+      let l:opts.title_pos = 'center'
+    endif
+    let s:nt_preview_win = nvim_open_win(l:buf, v:false, l:opts)
+  else
+    let s:nt_preview_win = popup_create(l:lines, {
+          \ 'line': 3, 'col': l:col + 1,
+          \ 'minwidth': l:width, 'maxwidth': l:width,
+          \ 'minheight': l:height, 'maxheight': l:height,
+          \ 'border': [], 'padding': [0, 1, 0, 1],
+          \ 'title': ' ' . l:name . ' ',
+          \ 'scrollbar': 0, 'zindex': 200,
+          \ })
+    if l:ft !=# ''
+      call setbufvar(winbufnr(s:nt_preview_win), '&filetype', l:ft)
+    endif
+  endif
+endfunction
+
+function! s:NTPreviewToggle() abort
+  let g:nerdtree_preview_enabled = !g:nerdtree_preview_enabled
+  if g:nerdtree_preview_enabled
+    echo 'NERDTree preview: ON'
+    call s:NTPreviewShow()
+  else
+    echo 'NERDTree preview: OFF'
+    call s:NTPreviewClose()
+  endif
+endfunction
+
+augroup NERDTreePreview
+  autocmd!
+  autocmd FileType nerdtree nnoremap <buffer><silent> P :call <SID>NTPreviewToggle()<CR>
+  autocmd FileType nerdtree autocmd CursorMoved <buffer> call s:NTPreviewShow()
+  autocmd FileType nerdtree autocmd BufLeave,BufWinLeave,WinLeave <buffer> call s:NTPreviewClose()
+augroup END
+
 " set cursor position in new tab(or file) when launch Vim
 autocmd VimEnter * wincmd p
 
@@ -593,7 +719,10 @@ function! s:fzf_without_dots(cmd)
   execute a:cmd
 endfunction
 " nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
-nmap <leader>sf :FZF<CR>
+" Use :Files (defined above with fzf#vim#with_preview()) so the picker shows a
+" floating preview pane. Neovim renders fzf itself in a floating window; install
+" `bat` for syntax-highlighted previews (falls back to plain text without it).
+nmap <leader>sf :Files<CR>
 
 " vimgrep search and copen(use vimgrep instead of grep)
 function! s:vimgrep_search(pattern)
