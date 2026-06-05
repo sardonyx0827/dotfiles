@@ -549,8 +549,13 @@ endfunction
 augroup NERDTreePreview
   autocmd!
   autocmd FileType nerdtree nnoremap <buffer><silent> P :call <SID>NTPreviewToggle()<CR>
-  autocmd FileType nerdtree autocmd CursorMoved <buffer> call s:NTPreviewShow()
-  autocmd FileType nerdtree autocmd BufLeave,BufWinLeave,WinLeave <buffer> call s:NTPreviewClose()
+  " Refresh the preview as the cursor moves over nodes in the tree.
+  autocmd CursorMoved * if &filetype ==# 'nerdtree' | call s:NTPreviewShow() | endif
+  " Close the preview the moment focus lands on anything that is not the tree.
+  " NERDTree opens files with `noautocmd`, so the tree's own WinLeave/BufLeave
+  " never fire on <CR>/o; keying off *entering* the new window is what makes the
+  " float disappear when a file is opened (not just when the tree is closed).
+  autocmd WinEnter,BufEnter * if &filetype !=# 'nerdtree' | call s:NTPreviewClose() | endif
 augroup END
 
 " set cursor position in new tab(or file) when launch Vim
