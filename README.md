@@ -405,6 +405,20 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
   - vim-fugitive: Git統合
   - vim-airline: ステータスライン
   - fzf: ファジーファインダー
+  - tagbar: タグ一覧表示（`F4`）
+  - vim-gutentags: 保存時に `tags` を自動生成・更新（`universal-ctags` が必要）
+
+#### タグジャンプ（定義ジャンプ）
+
+`universal-ctags` と vim-gutentags により、ファイルをまたいだ定義ジャンプが可能です。
+
+| キー                | 動作                                   |
+| ------------------- | -------------------------------------- |
+| `Ctrl-t` / `Ctrl-]` | カーソル下の定義へジャンプ             |
+| `Ctrl-o`            | ジャンプ前の位置へ戻る                 |
+| `g Ctrl-]`          | 候補が複数あるとき一覧表示してジャンプ |
+
+> `tags` は vim-gutentags が保存時に自動更新します。手動生成する場合は対象ディレクトリで `ctags -R .` を実行してください。
 
 ### Neovim (.config/nvim_lazy/)
 

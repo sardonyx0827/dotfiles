@@ -59,6 +59,8 @@ Plug 'vim-scripts/CSApprox'
 Plug 'Raimondi/delimitMate'
 " displays tags in a window, ordered by scope.
 Plug 'majutsushi/tagbar'
+" ctags
+Plug 'ludovicchabant/vim-gutentags'
 " Asynchronous Lint Engine
 Plug 'dense-analysis/ale'
 " display the indention levels with thin vertical lines.
@@ -818,6 +820,9 @@ vnoremap <leader>eb :s/\(\w.*\)/\1<Left><Left>
 
 "" insert tab character in insert mode
 inoremap <C-t> <C-v><Tab>
+
+"" tag jump with Ctrl-t (same as Ctrl-]). use Ctrl-o to go back
+nnoremap <C-t> <C-]>
 
 "" window resize with arrow keys (match nvim_lazy remap.lua)
 nnoremap <silent> <C-Up> 1<C-w>+

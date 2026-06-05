@@ -136,7 +136,7 @@ install_brew_packages() {
     ripgrep         # rg: vim :Find / nvim telescope live_grep
     bat             # vf() fzf preview
     fd              # nvim telescope find_files
-    universal-ctags # vim tagbar (F4)
+    universal-ctags # vim tagbar (F4) / tag jump (Ctrl-t) via vim-gutentags
     make            # gmake for vimproc / treesitter compilation
     python          # python3 for pip-based linters and MCP server
     go              # ~/go/bin tools (goimports, staticcheck), .zshrc PATH
