@@ -59,5 +59,10 @@ return {
         },
       },
     })
+
+    vim.keymap.set("n", "<leader>ce", function()
+      require("copilot.command").toggle()
+    end, { desc = "Copilot: toggle enable/disable" })
+
   end
 }
