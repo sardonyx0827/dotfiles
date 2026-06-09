@@ -232,9 +232,9 @@
   },
   "autoUpdatesChannel": "latest",
   "autoMemoryEnabled": false,
-  "editorMode": "vim",
+  "skipWorkflowUsageWarning": true,
+  "editorMode": "normal",
   "teammateMode": "tmux",
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false,
-  "skipWorkflowUsageWarning": true
+  "voiceEnabled": false
 }
