@@ -151,7 +151,7 @@ vim.keymap.set("n", "<leader>bc", close_current_buffer, { noremap = true, silent
 -- [AI solution] generate commit message with Claude Code / Codex
 ---------------------------------------------------------
 local function generate_commit_message(tool)
-  if tool ~= "claude" and tool ~= "codex" then
+  if tool ~= "claude" and tool ~= "codex" and tool ~= "gemini" then
     tool = "claude"
   end
 
@@ -183,12 +183,17 @@ local function generate_commit_message(tool)
       .. "Write in English."
 
   local result_lines = {}
-  local cmd = string.format("cat %s | claude --model haiku -p %s",
-    vim.fn.shellescape(tmpfile),
-    vim.fn.shellescape(prompt))
-
-  if tool ~= "claude" then
+  local cmd
+  if tool == "codex" then
     cmd = string.format("cat %s | codex exec %s",
+      vim.fn.shellescape(tmpfile),
+      vim.fn.shellescape(prompt))
+  elseif tool == "gemini" then
+    cmd = string.format("cat %s | gemini -m gemini-flash-lite-latest -p %s",
+      vim.fn.shellescape(tmpfile),
+      vim.fn.shellescape(prompt))
+  else
+    cmd = string.format("cat %s | claude --model haiku -p %s",
       vim.fn.shellescape(tmpfile),
       vim.fn.shellescape(prompt))
   end
@@ -279,6 +284,8 @@ vim.keymap.set("n", "<leader>cm", function() generate_commit_message("claude") e
   { desc = "Generate commit message with Claude Code", noremap = true })
 vim.keymap.set("n", "<leader>cx", function() generate_commit_message("codex") end,
   { desc = "Generate commit message with Codex", noremap = true })
+vim.keymap.set("n", "<leader>cg", function() generate_commit_message("gemini") end,
+  { desc = "Generate commit message with Gemini", noremap = true })
 
 
 ---------------------------------------------------------
@@ -388,7 +395,7 @@ local function _ask_ai_and_replace_selection(start_line, end_line, tool)
           vim.fn.shellescape(tmpfile),
           vim.fn.shellescape(system_prompt))
       elseif t == "gemini" then
-        return string.format("cat %s | gemini -m gemini-3.1-flash-lite-preview -p %s",
+        return string.format("cat %s | gemini -m gemini-flash-lite-latest -p %s",
           vim.fn.shellescape(tmpfile),
           vim.fn.shellescape(system_prompt))
       else
