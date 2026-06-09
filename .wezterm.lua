@@ -27,12 +27,13 @@ config.warn_about_missing_glyphs = false
 config.hide_tab_bar_if_only_one_tab = true
 -- background_opacity (no bg image)
 config.window_background_opacity = 0.9
+config.native_macos_fullscreen_mode = false
 -- key bindings
 config.keys = {
   -- input backslash (macos: option + ¥ -> \)
   { key = "¥", mods = "",    action = wezterm.action.SendString("\\") },
   { key = "¥", mods = "OPT", action = wezterm.action.SendString("¥") },
-  { key = 'F10', mods = 'OPT', action = wezterm.action.ToggleFullScreen,
+  { key = 'Enter', mods = 'OPT', action = wezterm.action.ToggleFullScreen,
   },
 }
 return config
