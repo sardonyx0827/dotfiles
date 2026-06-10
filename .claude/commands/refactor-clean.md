@@ -1,3 +1,7 @@
+---
+description: Find and safely remove dead code using knip, depcheck, and ts-prune with test verification at each step. Invokes the refactor-cleaner agent.
+---
+
 # Refactor Clean
 
 Safely identify and remove dead code with test verification:

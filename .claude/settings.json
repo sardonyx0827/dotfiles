@@ -165,6 +165,21 @@
           {
             "type": "command",
             "command": "python ~/.claude/hooks/bash-review.py"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/git-push-review.sh",
+            "if": "Bash(git push*)"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/stop-audit.sh"
           }
         ]
       }
@@ -189,11 +204,7 @@
   },
   "sandbox": {
     "enabled": false,
-    "excludedCommands": [
-      "docker",
-      "docker-compose",
-      "git"
-    ],
+    "excludedCommands": ["docker", "docker-compose", "git"],
     "allowedNetworkHosts": [
       "github.com",
       "api.github.com",

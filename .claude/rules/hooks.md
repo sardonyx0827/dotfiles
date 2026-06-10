@@ -17,6 +17,12 @@
   `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
   Helper modules: `claude-bash-review.py`, `codex-bash-review.py`,
   `gemini-api-bash-review.py`.
+- **git-push-review** (`hooks/git-push-review.sh`, matcher: `Bash`,
+  if: `Bash(git push*)`):
+  Detects `git push` commands and forces a confirmation prompt
+  (permissionDecision: ask) with a summary of the branch, commits,
+  and diffstat about to be pushed. Enforces the pre-push review step
+  of `rules/git-workflow.md`.
 
 ### PostToolUse
 
@@ -32,7 +38,12 @@ Matcher: `Write|Edit|MultiEdit` (runs in order):
 
 ### Stop
 
-None configured.
+- **stop-audit** (`hooks/stop-audit.sh`):
+  Final verification gate when Claude finishes a turn. Scans modified
+  and untracked files for leftover debug statements (`console.log` /
+  `debugger` in JS/TS, `breakpoint()` / `pdb.set_trace()` in Python)
+  and blocks once with the findings so Claude removes them.
+  `stop_hook_active` guards against infinite loops.
 
 ## Auto-Accept Permissions
 

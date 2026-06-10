@@ -1,3 +1,7 @@
+---
+description: Sync documentation from source of truth - scripts reference, environment variables, and API docs. Invokes the doc-updater agent.
+---
+
 # Update Documentation
 
 Sync documentation from source-of-truth:

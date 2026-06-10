@@ -1,3 +1,7 @@
+---
+description: Analyze the current session, extract reusable problem-solving patterns, and save them as skills for future sessions.
+---
+
 # /learn - Extract Reusable Patterns
 
 Analyze the current session and extract any patterns worth saving as skills.
@@ -42,15 +46,19 @@ Create a skill file at `~/.claude/skills/learned/[pattern-name].md`:
 **Context:** [Brief description of when this applies]
 
 ## Problem
+
 [What problem this solves - be specific]
 
 ## Solution
+
 [The pattern/technique/workaround]
 
 ## Example
+
 [Code example if applicable]
 
 ## When to Use
+
 [Trigger conditions - what should activate this skill]
 ```
 

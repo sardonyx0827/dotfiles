@@ -1,3 +1,7 @@
+---
+description: Run a sequential multi-agent workflow (plan, implement, review, test) for complex tasks. Usage: /orchestrate [workflow-type] [task-description]
+---
+
 # Orchestrate Command
 
 Sequential agent workflow for complex tasks.
@@ -9,25 +13,33 @@ Sequential agent workflow for complex tasks.
 ## Workflow Types
 
 ### feature
+
 Full feature implementation workflow:
+
 ```
 planner -> tdd-guide -> code-reviewer -> security-reviewer
 ```
 
 ### bugfix
+
 Bug investigation and fix workflow:
+
 ```
 explorer -> tdd-guide -> code-reviewer
 ```
 
 ### refactor
+
 Safe refactoring workflow:
+
 ```
 architect -> code-reviewer -> tdd-guide
 ```
 
 ### security
+
 Security-focused review:
+
 ```
 security-reviewer -> code-reviewer -> architect
 ```
@@ -49,18 +61,23 @@ Between agents, create handoff document:
 ## HANDOFF: [previous-agent] -> [next-agent]
 
 ### Context
+
 [Summary of what was done]
 
 ### Findings
+
 [Key discoveries or decisions]
 
 ### Files Modified
+
 [List of files touched]
 
 ### Open Questions
+
 [Unresolved items for next agent]
 
 ### Recommendations
+
 [Suggested next steps]
 ```
 
@@ -139,18 +156,22 @@ For independent checks, run agents in parallel:
 
 ```markdown
 ### Parallel Phase
+
 Run simultaneously:
+
 - code-reviewer (quality)
 - security-reviewer (security)
 - architect (design)
 
 ### Merge Results
+
 Combine outputs into single report
 ```
 
 ## Arguments
 
 $ARGUMENTS:
+
 - `feature <description>` - Full feature workflow
 - `bugfix <description>` - Bug fix workflow
 - `refactor <description>` - Refactoring workflow
