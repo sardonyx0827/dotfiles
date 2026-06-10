@@ -22,23 +22,26 @@ This skill ensures all code follows security best practices and identifies poten
 ### 1. Secrets Management
 
 #### ❌ NEVER Do This
+
 ```typescript
-const apiKey = "sk-proj-xxxxx"  // Hardcoded secret
-const dbPassword = "password123" // In source code
+const apiKey = "sk-proj-xxxxx"; // Hardcoded secret
+const dbPassword = "password123"; // In source code
 ```
 
 #### ✅ ALWAYS Do This
+
 ```typescript
-const apiKey = process.env.OPENAI_API_KEY
-const dbUrl = process.env.DATABASE_URL
+const apiKey = process.env.OPENAI_API_KEY;
+const dbUrl = process.env.DATABASE_URL;
 
 // Verify secrets exist
 if (!apiKey) {
-  throw new Error('OPENAI_API_KEY not configured')
+  throw new Error("OPENAI_API_KEY not configured");
 }
 ```
 
 #### Verification Steps
+
 - [ ] No hardcoded API keys, tokens, or passwords
 - [ ] All secrets in environment variables
 - [ ] `.env.local` in .gitignore
@@ -48,57 +51,60 @@ if (!apiKey) {
 ### 2. Input Validation
 
 #### Always Validate User Input
+
 ```typescript
-import { z } from 'zod'
+import { z } from "zod";
 
 // Define validation schema
 const CreateUserSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(100),
-  age: z.number().int().min(0).max(150)
-})
+  age: z.number().int().min(0).max(150),
+});
 
 // Validate before processing
 export async function createUser(input: unknown) {
   try {
-    const validated = CreateUserSchema.parse(input)
-    return await db.users.create(validated)
+    const validated = CreateUserSchema.parse(input);
+    return await db.users.create(validated);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return { success: false, errors: error.errors }
+      return { success: false, errors: error.errors };
     }
-    throw error
+    throw error;
   }
 }
 ```
 
 #### File Upload Validation
+
 ```typescript
 function validateFileUpload(file: File) {
   // Size check (5MB max)
-  const maxSize = 5 * 1024 * 1024
+  const maxSize = 5 * 1024 * 1024;
   if (file.size > maxSize) {
-    throw new Error('File too large (max 5MB)')
+    throw new Error("File too large (max 5MB)");
   }
 
   // Type check
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif']
+  const allowedTypes = ["image/jpeg", "image/png", "image/gif"];
   if (!allowedTypes.includes(file.type)) {
-    throw new Error('Invalid file type')
+    throw new Error("Invalid file type");
   }
 
   // Extension check
-  const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif']
-  const extension = file.name.toLowerCase().match(/\.[^.]+$/)?.[0]
+  const allowedExtensions = [".jpg", ".jpeg", ".png", ".gif"];
+  const extension = file.name.toLowerCase().match(/\.[^.]+$/)?.[0];
   if (!extension || !allowedExtensions.includes(extension)) {
-    throw new Error('Invalid file extension')
+    throw new Error("Invalid file extension");
   }
 
-  return true
+  return true;
 }
 ```
 
 #### Verification Steps
+
 - [ ] All user inputs validated with schemas
 - [ ] File uploads restricted (size, type, extension)
 - [ ] No direct use of user input in queries
@@ -108,28 +114,28 @@ function validateFileUpload(file: File) {
 ### 3. SQL Injection Prevention
 
 #### ❌ NEVER Concatenate SQL
+
 ```typescript
 // DANGEROUS - SQL Injection vulnerability
-const query = `SELECT * FROM users WHERE email = '${userEmail}'`
-await db.query(query)
+const query = `SELECT * FROM users WHERE email = '${userEmail}'`;
+await db.query(query);
 ```
 
 #### ✅ ALWAYS Use Parameterized Queries
+
 ```typescript
 // Safe - parameterized query
 const { data } = await supabase
-  .from('users')
-  .select('*')
-  .eq('email', userEmail)
+  .from("users")
+  .select("*")
+  .eq("email", userEmail);
 
 // Or with raw SQL
-await db.query(
-  'SELECT * FROM users WHERE email = $1',
-  [userEmail]
-)
+await db.query("SELECT * FROM users WHERE email = $1", [userEmail]);
 ```
 
 #### Verification Steps
+
 - [ ] All database queries use parameterized queries
 - [ ] No string concatenation in SQL
 - [ ] ORM/query builder used correctly
@@ -138,36 +144,38 @@ await db.query(
 ### 4. Authentication & Authorization
 
 #### JWT Token Handling
+
 ```typescript
 // ❌ WRONG: localStorage (vulnerable to XSS)
-localStorage.setItem('token', token)
+localStorage.setItem("token", token);
 
 // ✅ CORRECT: httpOnly cookies
-res.setHeader('Set-Cookie',
-  `token=${token}; HttpOnly; Secure; SameSite=Strict; Max-Age=3600`)
+res.setHeader(
+  "Set-Cookie",
+  `token=${token}; HttpOnly; Secure; SameSite=Strict; Max-Age=3600`,
+);
 ```
 
 #### Authorization Checks
+
 ```typescript
 export async function deleteUser(userId: string, requesterId: string) {
   // ALWAYS verify authorization first
   const requester = await db.users.findUnique({
-    where: { id: requesterId }
-  })
+    where: { id: requesterId },
+  });
 
-  if (requester.role !== 'admin') {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 403 }
-    )
+  if (requester.role !== "admin") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
   // Proceed with deletion
-  await db.users.delete({ where: { id: userId } })
+  await db.users.delete({ where: { id: userId } });
 }
 ```
 
 #### Row Level Security (Supabase)
+
 ```sql
 -- Enable RLS on all tables
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -184,6 +192,7 @@ CREATE POLICY "Users update own data"
 ```
 
 #### Verification Steps
+
 - [ ] Tokens stored in httpOnly cookies (not localStorage)
 - [ ] Authorization checks before sensitive operations
 - [ ] Row Level Security enabled in Supabase
@@ -193,6 +202,7 @@ CREATE POLICY "Users update own data"
 ### 5. XSS Prevention
 
 #### Sanitize HTML
+
 ```typescript
 import DOMPurify from 'isomorphic-dompurify'
 
@@ -207,11 +217,12 @@ function renderUserContent(html: string) {
 ```
 
 #### Content Security Policy
+
 ```typescript
 // next.config.js
 const securityHeaders = [
   {
-    key: 'Content-Security-Policy',
+    key: "Content-Security-Policy",
     value: `
       default-src 'self';
       script-src 'self' 'unsafe-eval' 'unsafe-inline';
@@ -219,12 +230,15 @@ const securityHeaders = [
       img-src 'self' data: https:;
       font-src 'self';
       connect-src 'self' https://api.example.com;
-    `.replace(/\s{2,}/g, ' ').trim()
-  }
-]
+    `
+      .replace(/\s{2,}/g, " ")
+      .trim(),
+  },
+];
 ```
 
 #### Verification Steps
+
 - [ ] User-provided HTML sanitized
 - [ ] CSP headers configured
 - [ ] No unvalidated dynamic content rendering
@@ -233,17 +247,15 @@ const securityHeaders = [
 ### 6. CSRF Protection
 
 #### CSRF Tokens
+
 ```typescript
-import { csrf } from '@/lib/csrf'
+import { csrf } from "@/lib/csrf";
 
 export async function POST(request: Request) {
-  const token = request.headers.get('X-CSRF-Token')
+  const token = request.headers.get("X-CSRF-Token");
 
   if (!csrf.verify(token)) {
-    return NextResponse.json(
-      { error: 'Invalid CSRF token' },
-      { status: 403 }
-    )
+    return NextResponse.json({ error: "Invalid CSRF token" }, { status: 403 });
   }
 
   // Process request
@@ -251,12 +263,16 @@ export async function POST(request: Request) {
 ```
 
 #### SameSite Cookies
+
 ```typescript
-res.setHeader('Set-Cookie',
-  `session=${sessionId}; HttpOnly; Secure; SameSite=Strict`)
+res.setHeader(
+  "Set-Cookie",
+  `session=${sessionId}; HttpOnly; Secure; SameSite=Strict`,
+);
 ```
 
 #### Verification Steps
+
 - [ ] CSRF tokens on state-changing operations
 - [ ] SameSite=Strict on all cookies
 - [ ] Double-submit cookie pattern implemented
@@ -264,32 +280,35 @@ res.setHeader('Set-Cookie',
 ### 7. Rate Limiting
 
 #### API Rate Limiting
+
 ```typescript
-import rateLimit from 'express-rate-limit'
+import rateLimit from "express-rate-limit";
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // 100 requests per window
-  message: 'Too many requests'
-})
+  message: "Too many requests",
+});
 
 // Apply to routes
-app.use('/api/', limiter)
+app.use("/api/", limiter);
 ```
 
 #### Expensive Operations
+
 ```typescript
 // Aggressive rate limiting for searches
 const searchLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 10, // 10 requests per minute
-  message: 'Too many search requests'
-})
+  message: "Too many search requests",
+});
 
-app.use('/api/search', searchLimiter)
+app.use("/api/search", searchLimiter);
 ```
 
 #### Verification Steps
+
 - [ ] Rate limiting on all API endpoints
 - [ ] Stricter limits on expensive operations
 - [ ] IP-based rate limiting
@@ -298,17 +317,19 @@ app.use('/api/search', searchLimiter)
 ### 8. Sensitive Data Exposure
 
 #### Logging
+
 ```typescript
 // ❌ WRONG: Logging sensitive data
-console.log('User login:', { email, password })
-console.log('Payment:', { cardNumber, cvv })
+console.log("User login:", { email, password });
+console.log("Payment:", { cardNumber, cvv });
 
 // ✅ CORRECT: Redact sensitive data
-console.log('User login:', { email, userId })
-console.log('Payment:', { last4: card.last4, userId })
+console.log("User login:", { email, userId });
+console.log("Payment:", { last4: card.last4, userId });
 ```
 
 #### Error Messages
+
 ```typescript
 // ❌ WRONG: Exposing internal details
 catch (error) {
@@ -329,6 +350,7 @@ catch (error) {
 ```
 
 #### Verification Steps
+
 - [ ] No passwords, tokens, or secrets in logs
 - [ ] Error messages generic for users
 - [ ] Detailed errors only in server logs
@@ -337,51 +359,54 @@ catch (error) {
 ### 9. Blockchain Security (Solana)
 
 #### Wallet Verification
+
 ```typescript
-import { verify } from '@solana/web3.js'
+import { verify } from "@solana/web3.js";
 
 async function verifyWalletOwnership(
   publicKey: string,
   signature: string,
-  message: string
+  message: string,
 ) {
   try {
     const isValid = verify(
       Buffer.from(message),
-      Buffer.from(signature, 'base64'),
-      Buffer.from(publicKey, 'base64')
-    )
-    return isValid
+      Buffer.from(signature, "base64"),
+      Buffer.from(publicKey, "base64"),
+    );
+    return isValid;
   } catch (error) {
-    return false
+    return false;
   }
 }
 ```
 
 #### Transaction Verification
+
 ```typescript
 async function verifyTransaction(transaction: Transaction) {
   // Verify recipient
   if (transaction.to !== expectedRecipient) {
-    throw new Error('Invalid recipient')
+    throw new Error("Invalid recipient");
   }
 
   // Verify amount
   if (transaction.amount > maxAmount) {
-    throw new Error('Amount exceeds limit')
+    throw new Error("Amount exceeds limit");
   }
 
   // Verify user has sufficient balance
-  const balance = await getBalance(transaction.from)
+  const balance = await getBalance(transaction.from);
   if (balance < transaction.amount) {
-    throw new Error('Insufficient balance')
+    throw new Error("Insufficient balance");
   }
 
-  return true
+  return true;
 }
 ```
 
 #### Verification Steps
+
 - [ ] Wallet signatures verified
 - [ ] Transaction details validated
 - [ ] Balance checks before transactions
@@ -390,6 +415,7 @@ async function verifyTransaction(transaction: Transaction) {
 ### 10. Dependency Security
 
 #### Regular Updates
+
 ```bash
 # Check for vulnerabilities
 npm audit
@@ -405,6 +431,7 @@ npm outdated
 ```
 
 #### Lock Files
+
 ```bash
 # ALWAYS commit lock files
 git add package-lock.json
@@ -414,50 +441,175 @@ npm ci  # Instead of npm install
 ```
 
 #### Verification Steps
+
 - [ ] Dependencies up to date
 - [ ] No known vulnerabilities (npm audit clean)
 - [ ] Lock files committed
 - [ ] Dependabot enabled on GitHub
 - [ ] Regular security updates
 
+### 11. Command Injection Prevention
+
+#### ❌ NEVER Pass User Input to Shell
+
+```typescript
+import { exec } from "child_process";
+
+// DANGEROUS - command injection vulnerability
+exec(`ping ${userInput}`, callback);
+```
+
+#### ✅ ALWAYS Use Libraries or Argument Arrays
+
+```typescript
+// Use a library instead of shelling out
+import dns from "dns";
+dns.lookup(userInput, callback);
+
+// If a subprocess is unavoidable, pass args as an array (no shell)
+import { execFile } from "child_process";
+execFile("ping", ["-c", "1", validatedHost], callback);
+```
+
+#### Verification Steps
+
+- [ ] No user input concatenated into shell commands
+- [ ] `execFile`/spawn with argument arrays instead of `exec`
+- [ ] Input validated against a whitelist before subprocess use
+
+### 12. SSRF Prevention
+
+#### ❌ NEVER Fetch User-Provided URLs Directly
+
+```typescript
+// DANGEROUS - SSRF vulnerability (can reach internal services)
+const response = await fetch(userProvidedUrl);
+```
+
+#### ✅ ALWAYS Validate and Whitelist URLs
+
+```typescript
+const allowedDomains = ["api.example.com", "cdn.example.com"];
+const url = new URL(userProvidedUrl);
+
+if (!allowedDomains.includes(url.hostname)) {
+  throw new Error("Invalid URL");
+}
+
+const response = await fetch(url.toString());
+```
+
+#### Verification Steps
+
+- [ ] User-provided URLs validated against a domain whitelist
+- [ ] Internal/private IP ranges blocked (169.254.x.x, 10.x.x.x, etc.)
+- [ ] Redirects not followed blindly
+
+### 13. Race Conditions in Critical Operations
+
+#### ❌ NEVER Check-Then-Act Without Locking
+
+```typescript
+// DANGEROUS - parallel requests can both pass the check
+const balance = await getBalance(userId);
+if (balance >= amount) {
+  await withdraw(userId, amount);
+}
+```
+
+#### ✅ ALWAYS Use Atomic Transactions with Locks
+
+```typescript
+await db.transaction(async (trx) => {
+  const balance = await trx("balances")
+    .where({ user_id: userId })
+    .forUpdate() // Lock row
+    .first();
+
+  if (balance.amount < amount) {
+    throw new Error("Insufficient balance");
+  }
+
+  await trx("balances").where({ user_id: userId }).decrement("amount", amount);
+});
+```
+
+#### Verification Steps
+
+- [ ] Balance/quota checks and updates are atomic (single transaction)
+- [ ] Row locks (`FOR UPDATE`) on read-modify-write paths
+- [ ] No floating-point arithmetic for money
+- [ ] Idempotency keys on state-changing endpoints
+
+## Security Scanning Commands
+
+```bash
+# Check for vulnerable dependencies
+npm audit
+npm audit --audit-level=high
+
+# Static analysis for security issues
+npx eslint . --plugin security
+
+# Scan for hardcoded secrets
+grep -rE "api[_-]?key|password|secret|token" --include="*.ts" --include="*.js" --include="*.json" .
+npx trufflehog filesystem . --json
+
+# Check git history for secrets
+git log -p | grep -iE "password|api_key|secret"
+
+# Pattern-based scanning
+semgrep --config auto .
+```
+
+## Common False Positives
+
+Not every finding is a vulnerability — always verify context before flagging:
+
+- Environment variables in `.env.example` (placeholders, not actual secrets)
+- Test credentials in test files (if clearly marked as fake)
+- Public API keys (if actually meant to be public, e.g. Stripe publishable keys)
+- SHA256/MD5 used for checksums (not password hashing)
+
 ## Security Testing
 
 ### Automated Security Tests
+
 ```typescript
 // Test authentication
-test('requires authentication', async () => {
-  const response = await fetch('/api/protected')
-  expect(response.status).toBe(401)
-})
+test("requires authentication", async () => {
+  const response = await fetch("/api/protected");
+  expect(response.status).toBe(401);
+});
 
 // Test authorization
-test('requires admin role', async () => {
-  const response = await fetch('/api/admin', {
-    headers: { Authorization: `Bearer ${userToken}` }
-  })
-  expect(response.status).toBe(403)
-})
+test("requires admin role", async () => {
+  const response = await fetch("/api/admin", {
+    headers: { Authorization: `Bearer ${userToken}` },
+  });
+  expect(response.status).toBe(403);
+});
 
 // Test input validation
-test('rejects invalid input', async () => {
-  const response = await fetch('/api/users', {
-    method: 'POST',
-    body: JSON.stringify({ email: 'not-an-email' })
-  })
-  expect(response.status).toBe(400)
-})
+test("rejects invalid input", async () => {
+  const response = await fetch("/api/users", {
+    method: "POST",
+    body: JSON.stringify({ email: "not-an-email" }),
+  });
+  expect(response.status).toBe(400);
+});
 
 // Test rate limiting
-test('enforces rate limits', async () => {
-  const requests = Array(101).fill(null).map(() =>
-    fetch('/api/endpoint')
-  )
+test("enforces rate limits", async () => {
+  const requests = Array(101)
+    .fill(null)
+    .map(() => fetch("/api/endpoint"));
 
-  const responses = await Promise.all(requests)
-  const tooManyRequests = responses.filter(r => r.status === 429)
+  const responses = await Promise.all(requests);
+  const tooManyRequests = responses.filter((r) => r.status === 429);
 
-  expect(tooManyRequests.length).toBeGreaterThan(0)
-})
+  expect(tooManyRequests.length).toBeGreaterThan(0);
+});
 ```
 
 ## Pre-Deployment Security Checklist

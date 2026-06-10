@@ -1,34 +1,34 @@
 # Security Guidelines
 
-## Mandatory Security Checks
+Role separation (single source of truth):
 
-Before ANY commit:
+- **This rule**: triggers and response protocol only
+- **`security-review` skill**: full checklist, vulnerability patterns, scan commands
+- **security-reviewer agent**: review workflow and report format
+
+## Triggers
+
+| Situation                                                                                 | Action                                      |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Implementing auth, user input handling, secrets, API endpoints, payments, or file uploads | Follow the **security-review** skill        |
+| Code written/modified in the above areas, or before commit                                | Run the **security-reviewer** agent         |
+| Security issue discovered                                                                 | Follow the Security Response Protocol below |
+
+## Pre-Commit Gate
+
+Before ANY commit, verify at minimum:
+
 - [ ] No hardcoded secrets (API keys, passwords, tokens)
 - [ ] All user inputs validated
-- [ ] SQL injection prevention (parameterized queries)
-- [ ] XSS prevention (sanitized HTML)
-- [ ] CSRF protection enabled
-- [ ] Authentication/authorization verified
-- [ ] Rate limiting on all endpoints
-- [ ] Error messages don't leak sensitive data
+- [ ] Parameterized queries only (SQL injection prevention)
+- [ ] Error messages and logs don't leak sensitive data
 
-## Secret Management
-
-```typescript
-// NEVER: Hardcoded secrets
-const apiKey = "sk-proj-xxxxx"
-
-// ALWAYS: Environment variables
-const apiKey = process.env.OPENAI_API_KEY
-
-if (!apiKey) {
-  throw new Error('OPENAI_API_KEY not configured')
-}
-```
+Full checklist and code patterns live in the `security-review` skill — do not duplicate them here.
 
 ## Security Response Protocol
 
-If security issue found:
+If a security issue is found:
+
 1. STOP immediately
 2. Use **security-reviewer** agent
 3. Fix CRITICAL issues before continuing
