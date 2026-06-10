@@ -211,7 +211,7 @@ Ask: "Is this a design decision or coordination role?" → Opus.
 
 If a Haiku SubAgent returns incorrect or incomplete results, re-run at Sonnet.
 If a Sonnet SubAgent fails twice, escalate to Opus or consult Codex MCP per
-`rules/MCP_Codex.md`.
+the `codex-consultation` skill.
 
 ---
 

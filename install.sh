@@ -347,7 +347,7 @@ install_mcp_server_deps() {
 # Register MCP servers with Claude Code (user scope, idempotent).
 # Server connections live in ~/.claude.json, which is NOT under dotfiles
 # management, so re-register them here so a fresh machine matches the
-# servers assumed by .claude/rules/MCP_*.md.
+# servers assumed by .claude/skills/codex-consultation and CLAUDE.md.
 register_claude_mcp_servers() {
   if ! command_exists claude; then
     print_warning "claude CLI not found; skipping MCP server registration"

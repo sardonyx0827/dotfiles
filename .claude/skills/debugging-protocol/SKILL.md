@@ -83,7 +83,7 @@ Why: it prevents retrying refuted ideas, and it is exactly the "Attempts so far"
 
 ## Escalation to Codex MCP
 
-Per `~/.claude/rules/MCP_Codex.md`: after **2 consecutive failed fix attempts on the same issue**, stop iterating and escalate for root-cause analysis. Continuing to guess past this point burns context and compounds confusion.
+Per the `codex-consultation` skill: after **2 consecutive failed fix attempts on the same issue**, stop iterating and escalate for root-cause analysis. Continuing to guess past this point burns context and compounds confusion.
 
 Use the `codex-delegator` agent (or `mcp__codex__codex` directly with `sandbox: read-only`, model `gpt-5.3-codex` for code-reading tasks). Build the prompt from the attempt log:
 

@@ -59,6 +59,12 @@ push / commit / PR作成 の指示を受けた場合は `@~/.claude/rules/git-wo
 - Opus 4.8: 設計 / 大規模リファクタ / 全体分析 / team lead
 - 失敗時は一段上のモデルで再試行
 
+## 開発ワークフロー
+
+- 新機能・バグ修正・リファクタは **tdd-workflow** スキルに従うこと(テストファースト、カバレッジ 80%+)
+- コード作成・変更後は **code-reviewer** エージェント(Go は **go-reviewer**)でレビューすること
+- コードパターン/スタイルの詳細は常時ロードせず、該当スキル(coding-standards / backend-patterns / frontend-patterns 等)に従うこと
+
 ## セーフティガード
 
 - 破壊的操作(rm -rf / force push / 本番DB操作等)は実行前に必ず確認
@@ -66,4 +72,4 @@ push / commit / PR作成 の指示を受けた場合は `@~/.claude/rules/git-wo
 
 ## 外部エージェント連携
 
-仕様検討や設計、バグ修正、テストコード作成を行う場合は `@~/.claude/rules/MCP_Codex.md` に従うこと。
+仕様検討や設計、バグ修正、テストコード作成を行う場合は **codex-consultation** スキルに従うこと。
