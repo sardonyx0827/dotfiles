@@ -344,6 +344,37 @@ install_mcp_server_deps() {
   fi
 }
 
+# Register MCP servers with Claude Code (user scope, idempotent).
+# Server connections live in ~/.claude.json, which is NOT under dotfiles
+# management, so re-register them here so a fresh machine matches the
+# servers assumed by .claude/rules/MCP_*.md.
+register_claude_mcp_servers() {
+  if ! command_exists claude; then
+    print_warning "claude CLI not found; skipping MCP server registration"
+    return
+  fi
+
+  add_mcp() {
+    local name="$1"
+    shift
+    if claude mcp get "$name" &>/dev/null; then
+      print_info "MCP server '$name' already registered"
+    else
+      print_info "Registering MCP server '$name'..."
+      claude mcp add --scope user "$name" "$@" ||
+        print_warning "Failed to register MCP server '$name'"
+    fi
+  }
+
+  add_mcp github --transport http https://api.githubcopilot.com/mcp/
+  add_mcp context7 -- npx -y @upstash/context7-mcp
+  add_mcp codex -- codex mcp-server
+  add_mcp serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
+  add_mcp MCP_DOCKER -- docker mcp gateway run
+  add_mcp drawio -- npx -y @drawio/mcp
+  add_mcp gemini-consultant -- python "$HOME/.claude/mcp-servers/gemini-consultant/server.py"
+}
+
 # Install Node.js and npm
 install_nodejs() {
   if ! command_exists node; then
@@ -825,6 +856,9 @@ main() {
 
   # Optional AI tools
   install_ai_tools
+
+  # Register MCP servers with Claude Code (after symlinks + AI tools)
+  register_claude_mcp_servers
 
   # Change shell
   change_shell

@@ -9,36 +9,51 @@
 ## Current Hooks (in ~/.claude/settings.json)
 
 ### PreToolUse
-- **tmux reminder**: Suggests tmux for long-running commands (npm, pnpm, yarn, cargo, etc.)
-- **git push review**: Opens Zed for review before push
-- **doc blocker**: Blocks creation of unnecessary .md/.txt files
+
+- **bash-review** (`hooks/bash-review.py`, matcher: `Bash`):
+  Reviews every Bash command before execution.
+  Primary pass uses the Gemini API (high throughput); if Gemini returns
+  ASK/DENY, a secondary pass re-checks with Codex. Logs to
+  `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
+  Helper modules: `claude-bash-review.py`, `codex-bash-review.py`,
+  `gemini-api-bash-review.py`.
 
 ### PostToolUse
-- **PR creation**: Logs PR URL and GitHub Actions status
-- **Prettier**: Auto-formats JS/TS files after edit
-- **TypeScript check**: Runs tsc after editing .ts/.tsx files
-- **console.log warning**: Warns about console.log in edited files
+
+Matcher: `Write|Edit|MultiEdit` (runs in order):
+
+1. **auto-format** (`hooks/auto-format.sh`):
+   Extracts the edited file path from hook JSON and runs the matching
+   formatter (prettier, etc.). Logs to `~/.claude/logs/format.log`.
+2. **lint** (`hooks/lint.sh`):
+   Static analysis after formatting. Exits with code 2 to feed errors
+   back to Claude and trigger self-correction. Logs to
+   `~/.claude/logs/lint.log`.
 
 ### Stop
-- **console.log audit**: Checks all modified files for console.log before session ends
+
+None configured.
 
 ## Auto-Accept Permissions
 
 Use with caution:
+
 - Enable for trusted, well-defined plans
 - Disable for exploratory work
 - Never use dangerously-skip-permissions flag
-- Configure `allowedTools` in `~/.claude.json` instead
+- Configure permissions in `~/.claude/settings.json` instead
 
 ## TodoWrite Best Practices
 
 Use TodoWrite tool to:
+
 - Track progress on multi-step tasks
 - Verify understanding of instructions
 - Enable real-time steering
 - Show granular implementation steps
 
 Todo list reveals:
+
 - Out of order steps
 - Missing items
 - Extra unnecessary items
