@@ -552,5 +552,6 @@
   "claudeCode.preferredLocation": "sidebar",
   "workbench.colorTheme": "Rosé Pine",
   "claudeCode.selectedModel": "default",
-  "update.mode": "manual"
+  "update.mode": "manual",
+  "extensions.autoUpdate": false
 }

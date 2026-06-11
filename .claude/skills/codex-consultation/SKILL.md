@@ -5,68 +5,69 @@ description: Consult OpenAI Codex MCP for second opinions on specs, architecture
 
 # Codex MCP Server
 
-**Purpose**: OpenAI Codex による高度な問題解決・コード生成エンジンを、
-アーキテクチャ設計、戦略的分析、バグ修正などの意見収集に使用する。
-コードの生成も可能だが**指示がない限り絶対に実装はさせず**、設計や戦略などの議論のみに利用すること。
-Codex MCPから回答を得た後は、Claudeで意見の妥当性を検証すること。
+**Purpose**: Use OpenAI Codex's advanced problem-solving and code-generation engine
+to gather opinions on architecture design, strategic analysis, bug fixes, and similar topics.
+Although it can generate code, **never let it implement anything unless explicitly instructed** —
+use it solely for discussions about design, strategy, and the like.
+After receiving an answer from Codex MCP, validate its soundness with Claude.
 
 ## Tools
 
-| ツール                    | 用途                                               |
-| ------------------------- | -------------------------------------------------- |
-| `mcp__codex__codex`       | 新規セッション開始（`prompt` 必須）                |
-| `mcp__codex__codex-reply` | 既存セッションの継続（`threadId` + `prompt` 必須） |
+| Tool                      | Purpose                                                       |
+| ------------------------- | ------------------------------------------------------------- |
+| `mcp__codex__codex`       | Start a new session (`prompt` required)                       |
+| `mcp__codex__codex-reply` | Continue an existing session (`threadId` + `prompt` required) |
 
-### `mcp__codex__codex` パラメータ
+### `mcp__codex__codex` parameters
 
-| パラメータ        | 説明                   | 値の例                                                             |
-| ----------------- | ---------------------- | ------------------------------------------------------------------ |
-| `prompt`          | 初期プロンプト（必須） | 問題の詳細な記述                                                   |
-| `sandbox`         | サンドボックスモード   | `read-only`                                                        |
-| `approval-policy` | シェルコマンド承認     | `untrusted`, `on-failure`, `on-request`, `never`                   |
-| `model`           | モデル指定             | 推論タスク `gpt-5.4`, コードの読み取りを含むタスク `gpt-5.3-codex` |
-| `cwd`             | 作業ディレクトリ       | プロジェクトルートパス                                             |
+| Parameter         | Description               | Example values                                                            |
+| ----------------- | ------------------------- | ------------------------------------------------------------------------- |
+| `prompt`          | Initial prompt (required) | Detailed description of the problem                                       |
+| `sandbox`         | Sandbox mode              | `read-only`                                                               |
+| `approval-policy` | Shell command approval    | `untrusted`, `on-failure`, `on-request`, `never`                          |
+| `model`           | Model selection           | Reasoning tasks: `gpt-5.4`; tasks involving code reading: `gpt-5.3-codex` |
+| `cwd`             | Working directory         | Project root path                                                         |
 
-### `mcp__codex__codex-reply` パラメータ
+### `mcp__codex__codex-reply` parameters
 
-| パラメータ | 説明                                                  |
-| ---------- | ----------------------------------------------------- |
-| `threadId` | 前回レスポンスの `structuredContent.threadId`（必須） |
-| `prompt`   | 追加の指示・質問（必須）                              |
+| Parameter  | Description                                                        |
+| ---------- | ------------------------------------------------------------------ |
+| `threadId` | `structuredContent.threadId` from the previous response (required) |
+| `prompt`   | Follow-up instructions / questions (required)                      |
 
-## いつ使うか
+## When to Use
 
-- 仕様を提案、設計、大規模修正を行う場合のダブルチェックおよび意見収集
-- 同じトピックに関するエラーの修正に2回連続で失敗し、根本原因分析や修正戦略の立案が必要な場合の意見収集
+- Double-checking and gathering opinions when proposing a specification, designing, or making large-scale modifications
+- Gathering opinions when two consecutive attempts to fix an error on the same topic have failed and root-cause analysis or a fix strategy is needed
 
-## エスカレーションフロー
+## Escalation Flow
 
 ```
-Claude で実装 → テスト/検証で失敗
-  → 失敗の詳細 + 試行内容を prompt にまとめる
-  → Codex に委譲（根本原因分析 + 修正戦略）
-  → Codex の回答を Claude で実装・検証
+Implement with Claude → tests/verification fail
+  → Summarize failure details + attempts so far into a prompt
+  → Delegate to Codex (root-cause analysis + fix strategy)
+  → Implement and verify Codex's answer with Claude
 ```
 
-## 会話継続パターン
+## Conversation Continuation Pattern
 
-1. `mcp__codex__codex` で初回セッションを開始
-2. レスポンスの `structuredContent.threadId` を取得
-3. `mcp__codex__codex-reply` に `threadId` と `prompt` を渡して継続
-4. 必要に応じて手順3を繰り返す
+1. Start the initial session with `mcp__codex__codex`
+2. Capture `structuredContent.threadId` from the response
+3. Continue by passing `threadId` and `prompt` to `mcp__codex__codex-reply`
+4. Repeat step 3 as needed
 
-**注意**: MCP サーバー再起動後は threadId が無効になるため、セッションをまたいだ継続は不可。
+**Note**: threadIds become invalid after the MCP server restarts, so continuation across sessions is not possible.
 
-## Codex MCPに渡すPromptに含めるべき内容
+## What to Include in the Prompt Passed to Codex MCP
 
-- **Goal**: 何を変えたい、または構築したいのか
-- **Context**: このタスクに関連するファイル、フォルダ、ドキュメント、例、エラーは何か
-- **Constraints**: Codexが従うべき標準、アーキテクチャ、安全要件、または規約は何か
-- **Done when**: タスク完了前に満たすべき条件
-- **Attempts so far**: これまでに試したこととその結果
-- **Important**: **「コード生成は不要で、設計や戦略の提案のみが必要」** と明示すること
+- **Goal**: What do you want to change or build?
+- **Context**: Which files, folders, documents, examples, or errors are relevant to this task?
+- **Constraints**: What standards, architecture, safety requirements, or conventions must Codex follow?
+- **Done when**: Conditions that must be met before the task is complete
+- **Attempts so far**: What has been tried so far and the results
+- **Important**: Explicitly state **"No code generation is needed — only design and strategy proposals."**
 
-## codex-delegator エージェントとの使い分け
+## Choosing Between This and the codex-delegator Agent
 
-- **`codex-delegator` エージェント（Task tool 経由）**: 仕様検討、バグ修正方針の相談、複雑な技術判断の委譲。Claude が複数回失敗した場合の自動エスカレーション
-- **直接 MCP ツール呼び出し**: `sandbox` や `model` を細かく制御したい場合、または `codex-reply` で既存会話を継続する場合
+- **`codex-delegator` agent (via the Task tool)**: Delegate spec discussions, bug-fix strategy consultations, and complex technical decisions. Automatic escalation when Claude has failed multiple times
+- **Direct MCP tool calls**: When you need fine-grained control over `sandbox` or `model`, or when continuing an existing conversation with `codex-reply`
