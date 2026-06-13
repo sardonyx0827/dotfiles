@@ -551,7 +551,5 @@
   "settingsSync.keybindingsPerPlatform": false,
   "claudeCode.preferredLocation": "sidebar",
   "workbench.colorTheme": "Rosé Pine",
-  "claudeCode.selectedModel": "default",
-  "update.mode": "manual",
-  "extensions.autoUpdate": false
+  "claudeCode.selectedModel": "default"
 }
