@@ -1064,3 +1064,419 @@ vim.keymap.set("x", "<C-g>", ask_ai_and_replace_selection("gemini"),
   { desc = "Ask AI(Gemini) and replace selection", noremap = true, silent = true })
 vim.keymap.set("x", "<C-l>", ask_ai_and_replace_selection("all"),
   { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
+
+
+-- Map a short tool alias to the actual Ollama model tag.
+local OLLAMA_MODELS = {
+  gemma = "gemma4:e4b",
+}
+
+local function _ask_ai_and_replace_selection_ollama(start_line, end_line, tool)
+  if not start_line or not end_line or start_line == 0 or end_line == 0 then
+    vim.notify("No visual selection found.", vim.log.levels.ERROR)
+    return
+  end
+  if start_line > end_line then
+    start_line, end_line = end_line, start_line
+  end
+
+  local model = OLLAMA_MODELS[tool]
+  if not model then
+    tool = "gemma"
+    model = OLLAMA_MODELS[tool]
+  end
+
+  -- Capture target window/buffer so we can replace the range later
+  local target_buf = vim.api.nvim_get_current_buf()
+  local selected_lines = vim.api.nvim_buf_get_lines(target_buf, start_line - 1, end_line, false)
+  local filetype = vim.bo[target_buf].filetype
+  local lang = filetype ~= "" and filetype or "plain text"
+
+  -- Open prompt window for user instruction
+  local prompt_buf = vim.api.nvim_create_buf(false, true)
+  local prompt_width = math.min(80, vim.o.columns - 4)
+  local prompt_height = math.min(10, vim.o.lines - 4)
+  local prompt_win = vim.api.nvim_open_win(prompt_buf, true, {
+    relative = "editor",
+    width = prompt_width,
+    height = prompt_height,
+    row = math.floor((vim.o.lines - prompt_height) / 2),
+    col = math.floor((vim.o.columns - prompt_width) / 2),
+    style = "minimal",
+    border = "rounded",
+    title = string.format(" Ask %s (lines %d-%d, %s) ", tool, start_line, end_line, lang),
+    title_pos = "center",
+    footer = " <C-s>:submit  q:cancel(normal) ",
+    footer_pos = "center",
+  })
+
+  vim.bo[prompt_buf].modifiable = true
+  vim.bo[prompt_buf].filetype = "markdown"
+  vim.cmd("startinsert")
+
+  local function close_window(win)
+    if win and vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
+  -- Trap focus inside the prompt window: snap back if the user moves away
+  local prompt_group = vim.api.nvim_create_augroup(
+    "AskAiOllamaPrompt_" .. prompt_win, { clear = true })
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = prompt_group,
+    pattern = tostring(prompt_win),
+    callback = function()
+      pcall(vim.api.nvim_del_augroup_by_id, prompt_group)
+    end,
+  })
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = prompt_group,
+    callback = function()
+      if vim.api.nvim_get_current_win() ~= prompt_win
+        and vim.api.nvim_win_is_valid(prompt_win) then
+        vim.schedule(function()
+          if vim.api.nvim_win_is_valid(prompt_win) then
+            vim.api.nvim_set_current_win(prompt_win)
+          end
+        end)
+      end
+    end,
+  })
+
+  vim.keymap.set("n", "q", function() close_window(prompt_win) end,
+    { buffer = prompt_buf, desc = "Cancel prompt" })
+
+  local submit = function()
+    local prompt_lines = vim.api.nvim_buf_get_lines(prompt_buf, 0, -1, false)
+    local user_prompt = vim.trim(table.concat(prompt_lines, "\n"))
+    if user_prompt == "" then
+      vim.notify("Prompt is empty.", vim.log.levels.WARN)
+      return
+    end
+    close_window(prompt_win)
+    vim.notify("Asking " .. tool .. " (ollama)...", vim.log.levels.INFO)
+
+    local system_prompt = string.format(
+      "You are an AI assistant integrated into a Neovim editor. "
+        .. "The selected %s code/text is provided via stdin. "
+        .. "Apply the user's request and reply ONLY with the resulting text that should replace the selection. "
+        .. "Do NOT wrap the output in markdown code fences. "
+        .. "Do NOT include explanations, preambles, or trailing commentary. "
+        .. "Preserve the original indentation style of the input.\n\n"
+        .. "## User Request\n%s",
+      lang,
+      user_prompt
+    )
+
+    -- `ollama run` writes ANSI cursor/word-wrap control codes onto STDOUT (not
+    -- just the stderr spinner), which corrupts the captured text. Instead POST
+    -- to the local Ollama HTTP API with stream=false and parse the JSON, which
+    -- yields clean output. think=true keeps reasoning on; the API returns the
+    -- reasoning in a separate field, so only the final answer lands in
+    -- `.response`.
+    local body = vim.json.encode({
+      model = model,
+      system = system_prompt,
+      prompt = table.concat(selected_lines, "\n"),
+      stream = false,
+      think = true,
+    })
+    local tmpfile = vim.fn.tempname()
+    vim.fn.writefile({ body }, tmpfile)
+
+    local cmd = string.format(
+      "curl -s http://localhost:11434/api/generate --data-binary @%s",
+      vim.fn.shellescape(tmpfile))
+
+    -- Highlight groups for the status indicator in the response title.
+    vim.api.nvim_set_hl(0, "AskAiTabDone",
+      { fg = "#a6e3a1", bold = true, default = true })
+    vim.api.nvim_set_hl(0, "AskAiTabFailed",
+      { fg = "#f38ba8", bold = true, default = true })
+    vim.api.nvim_set_hl(0, "AskAiTabPending",
+      { link = "FloatTitle", default = true })
+
+    local state = {
+      status = "pending",
+      closed = false,
+      job_id = nil,
+    }
+
+    local function build_title()
+      local hl, marker
+      if state.status == "done" then
+        hl = "AskAiTabDone"
+        marker = ""
+      elseif state.status == "failed" then
+        hl = "AskAiTabFailed"
+        marker = " (failed)"
+      elseif state.status == "cancelled" then
+        hl = "AskAiTabFailed"
+        marker = " (cancelled)"
+      else
+        hl = "AskAiTabPending"
+        marker = " (loading)"
+      end
+      return {
+        { " ", "AskAiTabPending" },
+        { tool .. "'s Response" .. marker, hl },
+        { " ", "AskAiTabPending" },
+      }
+    end
+
+    -- Pre-create scratch buffers so the UI renders before the job completes.
+    local original_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(original_buf, 0, -1, false, selected_lines)
+    vim.bo[original_buf].filetype = filetype
+
+    local preview_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, {
+      string.format("[%s: waiting for response...]", tool),
+    })
+    vim.bo[preview_buf].filetype = filetype
+    vim.bo[preview_buf].modifiable = false
+
+    -- Fixed-size side-by-side panes for consistent comparison
+    local total_width = math.min(vim.o.columns - 4, 200)
+    local pane_width = math.floor((total_width - 2) / 2)
+    local height = math.min(math.max(#selected_lines + 2, 24), vim.o.lines - 4)
+    local row = math.floor((vim.o.lines - height) / 2)
+    local left_col = math.floor((vim.o.columns - total_width) / 2)
+    local right_col = left_col + pane_width + 2
+
+    local original_win = vim.api.nvim_open_win(original_buf, false, {
+      relative = "editor",
+      width = pane_width,
+      height = height,
+      row = row,
+      col = left_col,
+      border = "rounded",
+      title = " Original ",
+      title_pos = "center",
+    })
+
+    local preview_win = vim.api.nvim_open_win(preview_buf, true, {
+      relative = "editor",
+      width = pane_width,
+      height = height,
+      row = row,
+      col = right_col,
+      border = "rounded",
+      title = build_title(),
+      title_pos = "center",
+      footer = " y:AI  Y:merged  q:cancel ",
+      footer_pos = "center",
+    })
+
+    -- Ensure normal mode in case the prompt window was submitted from insert mode
+    vim.cmd("stopinsert")
+
+    local function update_title()
+      if not vim.api.nvim_win_is_valid(preview_win) then return end
+      local cfg = vim.api.nvim_win_get_config(preview_win)
+      cfg.title = build_title()
+      pcall(vim.api.nvim_win_set_config, preview_win, cfg)
+    end
+
+    -- Diff only after content arrives; the loading placeholder would otherwise
+    -- mark every line as changed.
+    local function update_diff()
+      if state.status == "done" then
+        if vim.api.nvim_win_is_valid(original_win) then
+          vim.api.nvim_win_call(original_win, function() vim.cmd("diffthis") end)
+        end
+        if vim.api.nvim_win_is_valid(preview_win) then
+          vim.api.nvim_win_call(preview_win, function() vim.cmd("diffthis") end)
+        end
+      end
+    end
+
+    local group = vim.api.nvim_create_augroup(
+      "AskAiOllamaSingle_" .. preview_win, { clear = true })
+
+    local function close_all()
+      if state.closed then return end
+      state.closed = true
+      pcall(vim.api.nvim_del_augroup_by_id, group)
+      if state.status == "pending" and state.job_id and state.job_id > 0 then
+        pcall(vim.fn.jobstop, state.job_id)
+        state.status = "cancelled"
+      end
+      close_window(original_win)
+      close_window(preview_win)
+      if vim.api.nvim_buf_is_valid(preview_buf) then
+        pcall(vim.api.nvim_buf_delete, preview_buf, { force = true })
+      end
+      if vim.api.nvim_buf_is_valid(original_buf) then
+        pcall(vim.api.nvim_buf_delete, original_buf, { force = true })
+      end
+    end
+
+    vim.api.nvim_create_autocmd("WinClosed", {
+      group = group,
+      pattern = { tostring(original_win), tostring(preview_win) },
+      callback = close_all,
+    })
+
+    -- Trap focus inside the diff pair: if the user moves out, snap back.
+    local cluster = { [original_win] = true, [preview_win] = true }
+    local last_focused = preview_win
+    vim.api.nvim_create_autocmd("WinEnter", {
+      group = group,
+      callback = function()
+        local cur = vim.api.nvim_get_current_win()
+        if cluster[cur] then
+          last_focused = cur
+        elseif vim.api.nvim_win_is_valid(last_focused) then
+          vim.schedule(function()
+            if vim.api.nvim_win_is_valid(last_focused) then
+              vim.api.nvim_set_current_win(last_focused)
+            end
+          end)
+        end
+      end,
+    })
+
+    -- Pin each pane to its expected buffer so :bnext / :bprev / <C-^>
+    -- can't replace the diff contents.
+    local expected_buf = {
+      [original_win] = original_buf,
+      [preview_win] = preview_buf,
+    }
+    vim.api.nvim_create_autocmd("BufWinEnter", {
+      group = group,
+      callback = function()
+        for win, exp in pairs(expected_buf) do
+          if vim.api.nvim_win_is_valid(win)
+            and vim.api.nvim_buf_is_valid(exp)
+            and vim.api.nvim_win_get_buf(win) ~= exp then
+            vim.schedule(function()
+              if vim.api.nvim_win_is_valid(win)
+                and vim.api.nvim_buf_is_valid(exp) then
+                vim.api.nvim_win_set_buf(win, exp)
+              end
+            end)
+          end
+        end
+      end,
+    })
+
+    local function focus_left()
+      if vim.api.nvim_win_is_valid(original_win) then
+        vim.api.nvim_set_current_win(original_win)
+      end
+    end
+    local function focus_right()
+      if vim.api.nvim_win_is_valid(preview_win) then
+        vim.api.nvim_set_current_win(preview_win)
+      end
+    end
+
+    local function accept()
+      if state.status == "pending" then
+        vim.notify(tool .. " response is still loading.", vim.log.levels.WARN)
+        return
+      end
+      if state.status ~= "done" then
+        vim.notify(tool .. " response is not available.", vim.log.levels.WARN)
+        return
+      end
+      local lines = vim.api.nvim_buf_get_lines(preview_buf, 0, -1, false)
+      close_all()
+      if vim.api.nvim_buf_is_valid(target_buf) then
+        vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+        vim.notify(string.format("Selection replaced with %s's response.", tool))
+      else
+        vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+      end
+    end
+
+    -- Accept the (possibly merged) original_buf so that selective dp/do
+    -- merges can be applied back to the target buffer.
+    local function accept_merged()
+      local lines = vim.api.nvim_buf_get_lines(original_buf, 0, -1, false)
+      close_all()
+      if vim.api.nvim_buf_is_valid(target_buf) then
+        vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+        vim.notify("Selection replaced with merged result.")
+      else
+        vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+      end
+    end
+
+    for _, buf in ipairs({ original_buf, preview_buf }) do
+      vim.keymap.set("n", "y", accept,
+        { buffer = buf, desc = "Replace selection with response" })
+      vim.keymap.set("n", "Y", accept_merged,
+        { buffer = buf, desc = "Replace selection with merged original buffer" })
+      vim.keymap.set("n", "q", close_all,
+        { buffer = buf, desc = "Cancel replacement" })
+      -- Constrain window movement to only the two diff panes
+      vim.keymap.set("n", "<C-w>h", focus_left,
+        { buffer = buf, desc = "Focus original pane" })
+      vim.keymap.set("n", "<C-w><C-h>", focus_left,
+        { buffer = buf, desc = "Focus original pane" })
+      vim.keymap.set("n", "<C-w>l", focus_right,
+        { buffer = buf, desc = "Focus response pane" })
+      vim.keymap.set("n", "<C-w><C-l>", focus_right,
+        { buffer = buf, desc = "Focus response pane" })
+    end
+
+    local stdout_data = {}
+    state.job_id = vim.fn.jobstart({ "sh", "-c", cmd }, {
+      stdout_buffered = true,
+      on_stdout = function(_, data)
+        if data then
+          stdout_data = data
+        end
+      end,
+      on_exit = function(_, exit_code)
+        vim.fn.delete(tmpfile)
+        vim.schedule(function()
+          if state.closed then return end
+          if not vim.api.nvim_buf_is_valid(preview_buf) then return end
+
+          -- The API returns a single JSON object: { "response": "...", ... }.
+          local raw = table.concat(stdout_data, "\n")
+          local ok, decoded = pcall(vim.json.decode, raw)
+          local result_lines
+          if ok and type(decoded) == "table" and type(decoded.response) == "string" then
+            result_lines = vim.split(vim.trim(decoded.response), "\n", { plain = true })
+          end
+
+          vim.bo[preview_buf].modifiable = true
+          if exit_code == 0 and result_lines and #result_lines > 0
+            and not (#result_lines == 1 and result_lines[1] == "") then
+            state.status = "done"
+            vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, result_lines)
+          else
+            state.status = "failed"
+            local errmsg = string.format("[%s failed (exit code %d)]", tool, exit_code)
+            if ok and type(decoded) == "table" and decoded.error then
+              errmsg = string.format("[%s error: %s]", tool, tostring(decoded.error))
+            end
+            vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { errmsg })
+            vim.bo[preview_buf].modifiable = false
+          end
+
+          update_title()
+          update_diff()
+        end)
+      end,
+    })
+  end
+
+  vim.keymap.set({ "n", "i" }, "<C-s>", submit,
+    { buffer = prompt_buf, desc = "Submit prompt to " .. tool })
+end
+
+local function ask_ai_and_replace_selection_ollama(tool)
+  return function()
+    -- Exit visual mode so '< and '> marks reflect the just-completed selection
+    vim.cmd("normal! \27")
+    _ask_ai_and_replace_selection_ollama(vim.fn.line("'<"), vim.fn.line("'>"), tool)
+  end
+end
+vim.keymap.set("x", "<C-o>", ask_ai_and_replace_selection_ollama("gemma"),
+  { desc = "Ask AI(Gemma) and replace selection", noremap = true, silent = true })
