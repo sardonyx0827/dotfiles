@@ -533,6 +533,12 @@
   },
   {
     // ask-ai extension settings
+    "key": "ctrl+o",
+    "command": "askAi.replaceWithOllama",
+    "when": "editorTextFocus && vim.mode =~ /^Visual/"
+  },
+  {
+    // ask-ai extension settings
     "key": "ctrl+l",
     "command": "askAi.replaceWithAll",
     "when": "editorTextFocus && vim.mode =~ /^Visual/"
