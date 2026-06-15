@@ -865,11 +865,16 @@ noremap <silent> <C-s> :w<CR>
 "*****************************************************************************
 " Select a range, type an instruction in a prompt split, send the selection to
 " an AI CLI (claude / codex / gemini) over stdin, preview the result in a diff
-" tab, then replace the original selection.
+" tab, then replace the original selection. <C-o> instead hits a local Ollama
+" model via its HTTP API.
 "   <C-c> claude   <C-x> codex   <C-g> gemini   <C-l> all (claude|codex)
+"   <C-o> gemma (ollama)
 " Diff tab keys: y=accept AI  Y=accept merged  q=cancel  <Tab>/<S-Tab>/1/2=switch
 " Neovim is handled by lua/setup/functions/ai.lua, so this is Vim-only.
 if !has('nvim') && has('job') && has('channel') && has('timers')
+
+  " Map a short tool alias to the actual Ollama model tag (mirrors ai.lua).
+  let s:ai_ollama_models = { 'gemma': 'gemma4:e4b' }
 
   function! s:AI_TrimOutput(list) abort
     let l:out = copy(a:list)
@@ -1226,6 +1231,104 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     endfor
   endfunction
 
+  " ---- ollama mode (local HTTP API, single tool) --------------------------
+  " `ollama run` writes ANSI control codes onto STDOUT, corrupting the captured
+  " text. Instead POST to the local Ollama HTTP API with stream=false and parse
+  " the JSON, which yields clean output. think=true keeps reasoning on; the API
+  " returns reasoning in a separate field, so only the final answer lands in
+  " `.response`. Reuses the single-mode UI/accept/close machinery; only the
+  " command and the JSON output parsing differ.
+  function! s:AI_BuildOllamaCmd(tmpfile) abort
+    return 'curl -s http://localhost:11434/api/generate --data-binary @'
+          \ . shellescape(a:tmpfile)
+  endfunction
+
+  function! s:AI_OllamaFinish(state, status, timer) abort
+    let l:s = a:state
+    if l:s.closed
+      return
+    endif
+    call delete(l:s.tmpfile)
+    if l:s.status !=# 'cancelled'
+      " The API returns a single JSON object: { "response": "...", ... }.
+      let l:raw = join(l:s.output, "\n")
+      let l:result = []
+      let l:err = ''
+      try
+        let l:decoded = json_decode(l:raw)
+        if type(l:decoded) == v:t_dict
+          if has_key(l:decoded, 'response') && type(l:decoded.response) == v:t_string
+            let l:result = split(trim(l:decoded.response), "\n", 1)
+          endif
+          if has_key(l:decoded, 'error')
+            let l:err = string(l:decoded.error)
+          endif
+        endif
+      catch
+      endtry
+      call setbufvar(l:s.resp_buf, '&modifiable', 1)
+      if a:status == 0 && len(l:result) > 0
+            \ && !(len(l:result) == 1 && l:result[0] ==# '')
+        let l:s.status = 'done'
+        call s:AI_SetBufAll(l:s.resp_buf, l:result)
+      else
+        let l:s.status = 'failed'
+        let l:msg = printf('[%s failed (exit code %d)]', l:s.tool, a:status)
+        if l:err !=# ''
+          let l:msg = printf('[%s error: %s]', l:s.tool, l:err)
+        endif
+        call s:AI_SetBufAll(l:s.resp_buf, [l:msg])
+        call setbufvar(l:s.resp_buf, '&modifiable', 0)
+      endif
+    endif
+    call s:AI_SingleStatus(l:s)
+    if l:s.status ==# 'done'
+      call win_execute(l:s.orig_win, 'diffthis')
+      call win_execute(l:s.resp_win, 'diffthis')
+    endif
+  endfunction
+
+  function! s:AI_OllamaExit(state, job, status) abort
+    call timer_start(0, function('s:AI_OllamaFinish', [a:state, a:status]))
+  endfunction
+
+  function! s:AI_RunOllama(ctx, tmpfile) abort
+    tabnew
+    setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted
+    call setline(1, a:ctx.selected)
+    let &l:filetype = a:ctx.ft
+    let l:orig_buf = bufnr('%')
+    let l:orig_win = win_getid()
+    call s:AI_SetMaps('single')
+
+    rightbelow vnew
+    setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted
+    call setline(1, printf('[%s: waiting for response...]', a:ctx.tool))
+    let &l:filetype = a:ctx.ft
+    setlocal nomodifiable
+    let l:resp_buf = bufnr('%')
+    let l:resp_win = win_getid()
+    call s:AI_SetMaps('single')
+
+    let l:state = {
+          \ 'mode': 'single', 'tool': a:ctx.tool,
+          \ 'target_buf': a:ctx.target_buf, 'start': a:ctx.start, 'end': a:ctx.end,
+          \ 'orig_buf': l:orig_buf, 'orig_win': l:orig_win,
+          \ 'resp_buf': l:resp_buf, 'resp_win': l:resp_win,
+          \ 'status': 'pending', 'output': [], 'closed': 0, 'tmpfile': a:tmpfile,
+          \ }
+    call setbufvar(l:orig_buf, 'ai_state', l:state)
+    call setbufvar(l:resp_buf, 'ai_state', l:state)
+    call s:AI_SingleStatus(l:state)
+
+    let l:cmd = s:AI_BuildOllamaCmd(a:tmpfile)
+    let l:state.job = job_start(['sh', '-c', l:cmd], {
+          \ 'out_cb': function('s:AI_JobOut', [l:state.output]),
+          \ 'out_mode': 'nl',
+          \ 'exit_cb': function('s:AI_OllamaExit', [l:state]),
+          \ })
+  endfunction
+
   " ---- buffer-local keymaps for the diff tab ------------------------------
   function! s:AI_SetMaps(mode) abort
     nnoremap <buffer><silent> q :call <SID>AI_Close()<CR>
@@ -1268,6 +1371,21 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ . "Do NOT include explanations, preambles, or trailing commentary. "
           \ . "Preserve the original indentation style of the input.\n\n"
           \ . "## User Request\n%s", l:ctx.lang, l:prompt)
+    " Ollama tools hit the local HTTP API; the body is JSON, not the raw text.
+    if has_key(s:ai_ollama_models, l:ctx.tool)
+      let l:body = json_encode({
+            \ 'model': s:ai_ollama_models[l:ctx.tool],
+            \ 'system': l:sys,
+            \ 'prompt': join(l:ctx.selected, "\n"),
+            \ 'stream': v:false,
+            \ 'think': v:true,
+            \ })
+      let l:tmpfile = tempname()
+      call writefile([l:body], l:tmpfile)
+      echo 'Asking ' . l:ctx.tool . ' (ollama)...'
+      call s:AI_RunOllama(l:ctx, l:tmpfile)
+      return
+    endif
     let l:tmpfile = tempname()
     call writefile(l:ctx.selected, l:tmpfile)
     echo 'Asking ' . l:ctx.tool . '...'
@@ -1290,6 +1408,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     endif
     let l:tool = a:tool
     if index(['claude', 'codex', 'gemini', 'all'], l:tool) < 0
+          \ && !has_key(s:ai_ollama_models, l:tool)
       let l:tool = 'claude'
     endif
     let l:ft = &filetype
@@ -1316,6 +1435,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   xnoremap <silent> <C-x> :<C-u>call <SID>AI_Start('codex')<CR>
   xnoremap <silent> <C-g> :<C-u>call <SID>AI_Start('gemini')<CR>
   xnoremap <silent> <C-l> :<C-u>call <SID>AI_Start('all')<CR>
+  xnoremap <silent> <C-o> :<C-u>call <SID>AI_Start('gemma')<CR>
 endif
 
 
