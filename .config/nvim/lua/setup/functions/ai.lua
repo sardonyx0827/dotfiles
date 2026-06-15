@@ -151,7 +151,7 @@ vim.keymap.set("n", "<leader>bc", close_current_buffer, { noremap = true, silent
 -- [AI solution] generate commit message with Claude Code / Codex
 ---------------------------------------------------------
 local function generate_commit_message(tool)
-  if tool ~= "claude" and tool ~= "codex" and tool ~= "gemini" then
+  if tool ~= "claude" and tool ~= "codex" and tool ~= "gemini" and tool ~= "all" then
     tool = "claude"
   end
 
@@ -182,23 +182,423 @@ local function generate_commit_message(tool)
       .. "Keep the summary line under 50 characters. Add a body separated by a blank line if the change is complex. "
       .. "Write in English."
 
-  local result_lines = {}
-  local cmd
-  if tool == "codex" then
-    cmd = string.format("cat %s | codex exec %s",
-      vim.fn.shellescape(tmpfile),
-      vim.fn.shellescape(prompt))
-  elseif tool == "gemini" then
-    cmd = string.format("cat %s | gemini -m gemini-flash-lite-latest -p %s",
-      vim.fn.shellescape(tmpfile),
-      vim.fn.shellescape(prompt))
-  else
-    cmd = string.format("cat %s | claude --model haiku -p %s",
-      vim.fn.shellescape(tmpfile),
-      vim.fn.shellescape(prompt))
+  local function build_cmd(t)
+    if t == "codex" then
+      return string.format("cat %s | codex exec %s",
+        vim.fn.shellescape(tmpfile),
+        vim.fn.shellescape(prompt))
+    elseif t == "gemini" then
+      return string.format("cat %s | gemini -m gemini-flash-lite-latest -p %s",
+        vim.fn.shellescape(tmpfile),
+        vim.fn.shellescape(prompt))
+    else
+      return string.format("cat %s | claude --model haiku -p %s",
+        vim.fn.shellescape(tmpfile),
+        vim.fn.shellescape(prompt))
+    end
   end
 
-  vim.fn.jobstart({ "sh", "-c", cmd }, {
+  -- Highlight groups for the status indicators in the popup title.
+  -- `default = true` avoids overriding user customisations.
+  vim.api.nvim_set_hl(0, "AskAiTabDone",
+    { fg = "#a6e3a1", bold = true, default = true })
+  vim.api.nvim_set_hl(0, "AskAiTabFailed",
+    { fg = "#f38ba8", bold = true, default = true })
+  vim.api.nvim_set_hl(0, "AskAiTabPending",
+    { link = "FloatTitle", default = true })
+
+  local function close_window(win)
+    if win and vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
+  -- Copy text to clipboard (and tmux buffer when available).
+  local function copy_to_clipboard(msg)
+    vim.fn.setreg("+", msg)
+    vim.fn.setreg('"', msg)
+    if vim.env.TMUX then
+      vim.fn.system("tmux load-buffer -", msg)
+    end
+  end
+
+  if tool == "all" then
+    local tools_order = { "claude", "codex" }
+    local state = {
+      buffers = {},
+      jobs = {},
+      status = {},
+      active_idx = 1,
+      closed = false,
+    }
+    local pending_jobs = #tools_order
+
+    local function build_title()
+      local parts = { { " ", "AskAiTabPending" } }
+      for i, t in ipairs(tools_order) do
+        if i > 1 then
+          table.insert(parts, { " | ", "AskAiTabPending" })
+        end
+        local status = state.status[t]
+        local hl
+        if status == "done" then
+          hl = "AskAiTabDone"
+        elseif status == "failed" or status == "cancelled" then
+          hl = "AskAiTabFailed"
+        else
+          hl = "AskAiTabPending"
+        end
+
+        local marker = ""
+        if status == "pending" then
+          marker = " (loading)"
+        elseif status == "failed" then
+          marker = " (failed)"
+        elseif status == "cancelled" then
+          marker = " (cancelled)"
+        end
+
+        local label = t .. marker
+        if i == state.active_idx then
+          table.insert(parts, { "[" .. label .. "]", hl })
+        else
+          table.insert(parts, { label, hl })
+        end
+      end
+      table.insert(parts, { " ", "AskAiTabPending" })
+      return parts
+    end
+
+    -- Pre-create per-tool buffers so the UI can render before any job completes.
+    for _, t in ipairs(tools_order) do
+      local buf = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+        string.format("[%s: waiting for response...]", t),
+      })
+      vim.bo[buf].filetype = "gitcommit"
+      vim.bo[buf].modifiable = false
+      state.buffers[t] = buf
+      state.status[t] = "pending"
+    end
+
+    local width = math.min(80, vim.o.columns - 4)
+    local height = math.min(20, vim.o.lines - 4)
+    local win = vim.api.nvim_open_win(state.buffers[tools_order[1]], true, {
+      relative = "editor",
+      width = width,
+      height = height,
+      row = math.floor((vim.o.lines - height) / 2),
+      col = math.floor((vim.o.columns - width) / 2),
+      style = "minimal",
+      border = "rounded",
+      title = build_title(),
+      title_pos = "center",
+      footer = string.format(
+        " Commit Message (%s) | y:yank  p:paste  q:close  <Tab>/<S-Tab>:switch  1/2:jump ",
+        diff_type),
+      footer_pos = "center",
+    })
+
+    local function update_title()
+      if not vim.api.nvim_win_is_valid(win) then return end
+      local cfg = vim.api.nvim_win_get_config(win)
+      cfg.title = build_title()
+      pcall(vim.api.nvim_win_set_config, win, cfg)
+    end
+
+    local group = vim.api.nvim_create_augroup(
+      "GenCommitAllTabs_" .. win, { clear = true })
+
+    local function close_all()
+      if state.closed then return end
+      state.closed = true
+      pcall(vim.api.nvim_del_augroup_by_id, group)
+      for t, job_id in pairs(state.jobs) do
+        if state.status[t] == "pending" and job_id and job_id > 0 then
+          pcall(vim.fn.jobstop, job_id)
+          state.status[t] = "cancelled"
+        end
+      end
+      close_window(win)
+      for _, buf in pairs(state.buffers) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          pcall(vim.api.nvim_buf_delete, buf, { force = true })
+        end
+      end
+    end
+
+    local function switch_to(idx)
+      if idx < 1 or idx > #tools_order then return end
+      state.active_idx = idx
+      local buf = state.buffers[tools_order[idx]]
+      if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_set_buf(win, buf)
+      end
+      update_title()
+    end
+
+    local function switch_offset(offset)
+      local n = #tools_order
+      local new_idx = ((state.active_idx - 1 + offset) % n) + 1
+      switch_to(new_idx)
+    end
+
+    vim.api.nvim_create_autocmd("WinClosed", {
+      group = group,
+      pattern = tostring(win),
+      callback = close_all,
+    })
+
+    -- Trap focus inside the popup: snap back if the user moves away.
+    vim.api.nvim_create_autocmd("WinEnter", {
+      group = group,
+      callback = function()
+        if vim.api.nvim_get_current_win() ~= win
+          and vim.api.nvim_win_is_valid(win) then
+          vim.schedule(function()
+            if vim.api.nvim_win_is_valid(win) then
+              vim.api.nvim_set_current_win(win)
+            end
+          end)
+        end
+      end,
+    })
+
+    -- Pin the window to the active tool's buffer so :bnext / :bprev / <C-^>
+    -- can't replace the contents.
+    vim.api.nvim_create_autocmd("BufWinEnter", {
+      group = group,
+      callback = function()
+        if vim.api.nvim_win_is_valid(win) then
+          local exp = state.buffers[tools_order[state.active_idx]]
+          if exp and vim.api.nvim_buf_is_valid(exp)
+            and vim.api.nvim_win_get_buf(win) ~= exp then
+            vim.schedule(function()
+              if vim.api.nvim_win_is_valid(win)
+                and vim.api.nvim_buf_is_valid(exp) then
+                vim.api.nvim_win_set_buf(win, exp)
+              end
+            end)
+          end
+        end
+      end,
+    })
+
+    local function active_message()
+      local active_t = tools_order[state.active_idx]
+      if state.status[active_t] == "pending" then
+        vim.notify(active_t .. " response is still loading.", vim.log.levels.WARN)
+        return nil
+      end
+      if state.status[active_t] ~= "done" then
+        vim.notify(active_t .. " response is not available.", vim.log.levels.WARN)
+        return nil
+      end
+      local lines = vim.api.nvim_buf_get_lines(state.buffers[active_t], 0, -1, false)
+      return table.concat(lines, "\n")
+    end
+
+    local function on_yank()
+      local msg = active_message()
+      if not msg then return end
+      copy_to_clipboard(msg)
+      close_all()
+      vim.notify("Commit message copied to clipboard.")
+    end
+
+    local function on_paste()
+      local msg = active_message()
+      if not msg then return end
+      copy_to_clipboard(msg)
+      close_all()
+      vim.notify("Commit message copied to clipboard.")
+      vim.cmd("normal! p")
+    end
+
+    local function setup_keymaps(buf)
+      vim.keymap.set("n", "y", on_yank,
+        { buffer = buf, desc = "Yank active commit message" })
+      vim.keymap.set("n", "p", on_paste,
+        { buffer = buf, desc = "Yank and paste active commit message" })
+      vim.keymap.set("n", "q", close_all,
+        { buffer = buf, desc = "Close commit message window" })
+      vim.keymap.set("n", "<Tab>", function() switch_offset(1) end,
+        { buffer = buf, desc = "Next AI commit message" })
+      vim.keymap.set("n", "<S-Tab>", function() switch_offset(-1) end,
+        { buffer = buf, desc = "Prev AI commit message" })
+      for i = 1, #tools_order do
+        vim.keymap.set("n", tostring(i), function() switch_to(i) end,
+          { buffer = buf, desc = "Switch to commit message " .. i })
+      end
+    end
+
+    for _, t in ipairs(tools_order) do
+      setup_keymaps(state.buffers[t])
+    end
+
+    -- Launch all jobs in parallel; each completion fills its own buffer in place.
+    for _, t in ipairs(tools_order) do
+      local current_t = t
+      local result_lines = {}
+      local job_id = vim.fn.jobstart({ "sh", "-c", build_cmd(current_t) }, {
+        stdout_buffered = true,
+        on_stdout = function(_, data)
+          if data then
+            if #data > 0 and data[#data] == "" then
+              table.remove(data)
+            end
+            result_lines = data
+          end
+        end,
+        on_exit = function(_, exit_code)
+          pending_jobs = pending_jobs - 1
+          if pending_jobs == 0 then
+            vim.fn.delete(tmpfile)
+          end
+          vim.schedule(function()
+            if state.closed then return end
+            local buf = state.buffers[current_t]
+            if not vim.api.nvim_buf_is_valid(buf) then return end
+
+            vim.bo[buf].modifiable = true
+            if exit_code == 0 and #result_lines > 0 then
+              state.status[current_t] = "done"
+              vim.api.nvim_buf_set_lines(buf, 0, -1, false, result_lines)
+            else
+              state.status[current_t] = "failed"
+              vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+                string.format("[%s failed (exit code %d)]", current_t, exit_code),
+              })
+              vim.bo[buf].modifiable = false
+            end
+
+            update_title()
+          end)
+        end,
+      })
+      state.jobs[current_t] = job_id
+    end
+
+    return
+  end
+
+  -- Single-tool mode
+  local cmd = build_cmd(tool)
+  local state = { status = "pending", closed = false, job_id = nil }
+
+  local function build_title()
+    local hl, marker
+    if state.status == "done" then
+      hl = "AskAiTabDone"
+      marker = ""
+    elseif state.status == "failed" then
+      hl = "AskAiTabFailed"
+      marker = " (failed)"
+    elseif state.status == "cancelled" then
+      hl = "AskAiTabFailed"
+      marker = " (cancelled)"
+    else
+      hl = "AskAiTabPending"
+      marker = " (loading)"
+    end
+    return {
+      { " Commit Message (", "AskAiTabPending" },
+      { tool .. ", " .. diff_type .. marker, hl },
+      { ") ", "AskAiTabPending" },
+    }
+  end
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    string.format("[%s: waiting for response...]", tool),
+  })
+  vim.bo[buf].filetype = "gitcommit"
+  vim.bo[buf].modifiable = false
+
+  local width = math.min(80, vim.o.columns - 4)
+  local height = math.min(20, vim.o.lines - 4)
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.floor((vim.o.lines - height) / 2),
+    col = math.floor((vim.o.columns - width) / 2),
+    style = "minimal",
+    border = "rounded",
+    title = build_title(),
+    title_pos = "center",
+    footer = " y:yank  p:paste  q:close ",
+    footer_pos = "center",
+  })
+
+  local function update_title()
+    if not vim.api.nvim_win_is_valid(win) then return end
+    local cfg = vim.api.nvim_win_get_config(win)
+    cfg.title = build_title()
+    pcall(vim.api.nvim_win_set_config, win, cfg)
+  end
+
+  local group = vim.api.nvim_create_augroup(
+    "GenCommitSingle_" .. win, { clear = true })
+
+  local function close_all()
+    if state.closed then return end
+    state.closed = true
+    pcall(vim.api.nvim_del_augroup_by_id, group)
+    if state.status == "pending" and state.job_id and state.job_id > 0 then
+      pcall(vim.fn.jobstop, state.job_id)
+      state.status = "cancelled"
+    end
+    close_window(win)
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = group,
+    pattern = tostring(win),
+    callback = close_all,
+  })
+
+  local function message_text()
+    if state.status == "pending" then
+      vim.notify(tool .. " response is still loading.", vim.log.levels.WARN)
+      return nil
+    end
+    if state.status ~= "done" then
+      vim.notify(tool .. " response is not available.", vim.log.levels.WARN)
+      return nil
+    end
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    return table.concat(lines, "\n")
+  end
+
+  -- Accept: copy to clipboard and close
+  vim.keymap.set("n", "y", function()
+    local msg = message_text()
+    if not msg then return end
+    copy_to_clipboard(msg)
+    close_all()
+    vim.notify("Commit message copied to clipboard.")
+  end, { buffer = buf, desc = "Yank commit message" })
+
+  -- Accept: copy to clipboard, close, and paste
+  vim.keymap.set("n", "p", function()
+    local msg = message_text()
+    if not msg then return end
+    copy_to_clipboard(msg)
+    close_all()
+    vim.notify("Commit message copied to clipboard.")
+    vim.cmd("normal! p")
+  end, { buffer = buf, desc = "Yank and paste commit message" })
+
+  -- Close without action
+  vim.keymap.set("n", "q", close_all,
+    { buffer = buf, desc = "Close commit message window" })
+
+  local result_lines = {}
+  state.job_id = vim.fn.jobstart({ "sh", "-c", cmd }, {
     stdout_buffered = true,
     on_stdout = function(_, data)
       if data then
@@ -212,69 +612,22 @@ local function generate_commit_message(tool)
     on_exit = function(_, exit_code)
       vim.fn.delete(tmpfile)
       vim.schedule(function()
-        if exit_code ~= 0 or #result_lines == 0 then
-          vim.notify("Failed to generate commit message.", vim.log.levels.ERROR)
-          return
-        end
-
-        local buf = vim.api.nvim_create_buf(false, true)
-        vim.api.nvim_buf_set_lines(buf, 0, -1, false, result_lines)
-
-        local max_line_width = 0
-        for _, l in ipairs(result_lines) do
-          max_line_width = math.max(max_line_width, #l)
-        end
-        local width = math.min(math.max(60, max_line_width + 4), vim.o.columns - 4)
-        local height = math.min(#result_lines + 2, vim.o.lines - 4)
-
-        local win = vim.api.nvim_open_win(buf, true, {
-          relative = "editor",
-          width = width,
-          height = height,
-          row = math.floor((vim.o.lines - height) / 2),
-          col = math.floor((vim.o.columns - width) / 2),
-          style = "minimal",
-          border = "rounded",
-          title = string.format(" Commit Message (%s, %s) ", tool, diff_type),
-          title_pos = "center",
-          footer = " y:yank  p:paste  q:close ",
-          footer_pos = "center",
-        })
+        if state.closed then return end
+        if not vim.api.nvim_buf_is_valid(buf) then return end
 
         vim.bo[buf].modifiable = true
-        vim.bo[buf].filetype = "gitcommit"
+        if exit_code == 0 and #result_lines > 0 then
+          state.status = "done"
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, result_lines)
+        else
+          state.status = "failed"
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+            string.format("[%s failed (exit code %d)]", tool, exit_code),
+          })
+          vim.bo[buf].modifiable = false
+        end
 
-        -- Accept: copy to clipboard and close
-        vim.keymap.set("n", "y", function()
-          local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-          local msg = table.concat(lines, "\n")
-          vim.fn.setreg("+", msg)
-          vim.fn.setreg('"', msg)
-          if vim.env.TMUX then
-            vim.fn.system("tmux load-buffer -", msg)
-          end
-          vim.api.nvim_win_close(win, true)
-          vim.notify("Commit message copied to clipboard.")
-        end, { buf = buf, desc = "Accept and copy commit message" })
-
-        -- Accept: copy to clipboard and close and paste
-        vim.keymap.set("n", "p", function()
-          local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-          local msg = table.concat(lines, "\n")
-          vim.fn.setreg("+", msg)
-          vim.fn.setreg('"', msg)
-          if vim.env.TMUX then
-            vim.fn.system("tmux load-buffer -", msg)
-          end
-          vim.api.nvim_win_close(win, true)
-          vim.notify("Commit message copied to clipboard.")
-          vim.cmd("normal! p")
-        end, { buf = buf, desc = "Accept and copy commit message" })
-
-        -- Close without action
-        vim.keymap.set("n", "q", function()
-          vim.api.nvim_win_close(win, true)
-        end, { buf = buf, desc = "Close commit message window" })
+        update_title()
       end)
     end,
   })
@@ -286,6 +639,8 @@ vim.keymap.set("n", "<leader>cx", function() generate_commit_message("codex") en
   { desc = "Generate commit message with Codex", noremap = true })
 vim.keymap.set("n", "<leader>cg", function() generate_commit_message("gemini") end,
   { desc = "Generate commit message with Gemini", noremap = true })
+vim.keymap.set("n", "<leader>cl", function() generate_commit_message("all") end,
+  { desc = "Generate commit message with All (Claude/Codex)", noremap = true })
 
 
 ---------------------------------------------------------
