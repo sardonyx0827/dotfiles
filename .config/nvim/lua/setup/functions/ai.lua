@@ -643,6 +643,243 @@ vim.keymap.set("n", "<leader>cl", function() generate_commit_message("all") end,
   { desc = "Generate commit message with All (Claude/Codex)", noremap = true })
 
 
+-- Map a short tool alias to the actual Ollama model tag.
+local OLLAMA_MODELS = {
+  gemma = "gemma4:e4b",
+}
+
+local function generate_commit_message_ollama(tool)
+  local model = OLLAMA_MODELS[tool]
+  if not model then
+    tool = "gemma"
+    model = OLLAMA_MODELS[tool]
+  end
+
+  local diff = vim.fn.system("git diff --cached")
+  if vim.v.shell_error ~= 0 then
+    vim.notify("Not a git repository.", vim.log.levels.ERROR)
+    return
+  end
+
+  local diff_type = "staged"
+  if diff == "" then
+    diff = vim.fn.system("git diff")
+    diff_type = "unstaged"
+  end
+  if diff == "" then
+    vim.notify("No changes detected.", vim.log.levels.WARN)
+    return
+  end
+
+  vim.notify("Generating commit message with " .. tool .. " (ollama)...", vim.log.levels.INFO)
+
+  local system_prompt = "Generate a git commit message for the following diff. "
+      .. "Follow Conventional Commits format (e.g. feat:, fix:, refactor:, docs:, test:, chore:). "
+      .. "Reply ONLY with the commit message, no markdown formatting, no explanation, no surrounding quotes. "
+      .. "Keep the summary line under 50 characters. Add a body separated by a blank line if the change is complex. "
+      .. "Write in English."
+
+  -- `ollama run` writes ANSI cursor/word-wrap control codes onto STDOUT (not
+  -- just the stderr spinner), which corrupts the captured text. Instead POST
+  -- to the local Ollama HTTP API with stream=false and parse the JSON, which
+  -- yields clean output. think=false keeps reasoning off, so only the final
+  -- answer lands in `.response`.
+  local body = vim.json.encode({
+    model = model,
+    system = system_prompt,
+    prompt = diff,
+    stream = false,
+    think = false,
+  })
+  local tmpfile = vim.fn.tempname()
+  vim.fn.writefile({ body }, tmpfile)
+
+  local cmd = string.format(
+    "curl -s http://localhost:11434/api/generate --data-binary @%s",
+    vim.fn.shellescape(tmpfile))
+
+  -- Highlight groups for the status indicators in the popup title.
+  -- `default = true` avoids overriding user customisations.
+  vim.api.nvim_set_hl(0, "AskAiTabDone",
+    { fg = "#a6e3a1", bold = true, default = true })
+  vim.api.nvim_set_hl(0, "AskAiTabFailed",
+    { fg = "#f38ba8", bold = true, default = true })
+  vim.api.nvim_set_hl(0, "AskAiTabPending",
+    { link = "FloatTitle", default = true })
+
+  local function close_window(win)
+    if win and vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
+  -- Copy text to clipboard (and tmux buffer when available).
+  local function copy_to_clipboard(msg)
+    vim.fn.setreg("+", msg)
+    vim.fn.setreg('"', msg)
+    if vim.env.TMUX then
+      vim.fn.system("tmux load-buffer -", msg)
+    end
+  end
+
+  local state = { status = "pending", closed = false, job_id = nil }
+
+  local function build_title()
+    local hl, marker
+    if state.status == "done" then
+      hl = "AskAiTabDone"
+      marker = ""
+    elseif state.status == "failed" then
+      hl = "AskAiTabFailed"
+      marker = " (failed)"
+    elseif state.status == "cancelled" then
+      hl = "AskAiTabFailed"
+      marker = " (cancelled)"
+    else
+      hl = "AskAiTabPending"
+      marker = " (loading)"
+    end
+    return {
+      { " Commit Message (", "AskAiTabPending" },
+      { tool .. ", " .. diff_type .. marker, hl },
+      { ") ", "AskAiTabPending" },
+    }
+  end
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    string.format("[%s: waiting for response...]", tool),
+  })
+  vim.bo[buf].filetype = "gitcommit"
+  vim.bo[buf].modifiable = false
+
+  local width = math.min(80, vim.o.columns - 4)
+  local height = math.min(20, vim.o.lines - 4)
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.floor((vim.o.lines - height) / 2),
+    col = math.floor((vim.o.columns - width) / 2),
+    style = "minimal",
+    border = "rounded",
+    title = build_title(),
+    title_pos = "center",
+    footer = " y:yank  p:paste  q:close ",
+    footer_pos = "center",
+  })
+
+  local function update_title()
+    if not vim.api.nvim_win_is_valid(win) then return end
+    local cfg = vim.api.nvim_win_get_config(win)
+    cfg.title = build_title()
+    pcall(vim.api.nvim_win_set_config, win, cfg)
+  end
+
+  local group = vim.api.nvim_create_augroup(
+    "GenCommitOllama_" .. win, { clear = true })
+
+  local function close_all()
+    if state.closed then return end
+    state.closed = true
+    pcall(vim.api.nvim_del_augroup_by_id, group)
+    if state.status == "pending" and state.job_id and state.job_id > 0 then
+      pcall(vim.fn.jobstop, state.job_id)
+      state.status = "cancelled"
+    end
+    close_window(win)
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = group,
+    pattern = tostring(win),
+    callback = close_all,
+  })
+
+  local function message_text()
+    if state.status == "pending" then
+      vim.notify(tool .. " response is still loading.", vim.log.levels.WARN)
+      return nil
+    end
+    if state.status ~= "done" then
+      vim.notify(tool .. " response is not available.", vim.log.levels.WARN)
+      return nil
+    end
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    return table.concat(lines, "\n")
+  end
+
+  -- Accept: copy to clipboard and close
+  vim.keymap.set("n", "y", function()
+    local msg = message_text()
+    if not msg then return end
+    copy_to_clipboard(msg)
+    close_all()
+    vim.notify("Commit message copied to clipboard.")
+  end, { buffer = buf, desc = "Yank commit message" })
+
+  -- Accept: copy to clipboard, close, and paste
+  vim.keymap.set("n", "p", function()
+    local msg = message_text()
+    if not msg then return end
+    copy_to_clipboard(msg)
+    close_all()
+    vim.notify("Commit message copied to clipboard.")
+    vim.cmd("normal! p")
+  end, { buffer = buf, desc = "Yank and paste commit message" })
+
+  -- Close without action
+  vim.keymap.set("n", "q", close_all,
+    { buffer = buf, desc = "Close commit message window" })
+
+  local stdout_data = {}
+  state.job_id = vim.fn.jobstart({ "sh", "-c", cmd }, {
+    stdout_buffered = true,
+    on_stdout = function(_, data)
+      if data then
+        stdout_data = data
+      end
+    end,
+    on_exit = function(_, exit_code)
+      vim.fn.delete(tmpfile)
+      vim.schedule(function()
+        if state.closed then return end
+        if not vim.api.nvim_buf_is_valid(buf) then return end
+
+        -- The API returns a single JSON object: { "response": "...", ... }.
+        local raw = table.concat(stdout_data, "\n")
+        local ok, decoded = pcall(vim.json.decode, raw)
+        local result_lines
+        if ok and type(decoded) == "table" and type(decoded.response) == "string" then
+          result_lines = vim.split(vim.trim(decoded.response), "\n", { plain = true })
+        end
+
+        vim.bo[buf].modifiable = true
+        if exit_code == 0 and result_lines and #result_lines > 0
+          and not (#result_lines == 1 and result_lines[1] == "") then
+          state.status = "done"
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, result_lines)
+        else
+          state.status = "failed"
+          local errmsg = string.format("[%s failed (exit code %d)]", tool, exit_code)
+          if ok and type(decoded) == "table" and decoded.error then
+            errmsg = string.format("[%s error: %s]", tool, tostring(decoded.error))
+          end
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, { errmsg })
+          vim.bo[buf].modifiable = false
+        end
+
+        update_title()
+      end)
+    end,
+  })
+end
+vim.keymap.set("n", "<leader>co", function() generate_commit_message_ollama("gemma") end,
+  { desc = "Generate commit message with Ollama (Gemma)", noremap = true })
+
 ---------------------------------------------------------
 -- [AI solution] Select a range, open a prompt window to ask the AI(Claude Code / Codex / Gemini), and replace the selected range with the AI's response
 ---------------------------------------------------------
@@ -1421,11 +1658,6 @@ vim.keymap.set("x", "<C-l>", ask_ai_and_replace_selection("all"),
   { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
 
 
--- Map a short tool alias to the actual Ollama model tag.
-local OLLAMA_MODELS = {
-  gemma = "gemma4:e4b",
-}
-
 local function _ask_ai_and_replace_selection_ollama(start_line, end_line, tool)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then
     vim.notify("No visual selection found.", vim.log.levels.ERROR)
@@ -1535,7 +1767,7 @@ local function _ask_ai_and_replace_selection_ollama(start_line, end_line, tool)
       system = system_prompt,
       prompt = table.concat(selected_lines, "\n"),
       stream = false,
-      think = true,
+      think = false,
     })
     local tmpfile = vim.fn.tempname()
     vim.fn.writefile({ body }, tmpfile)
