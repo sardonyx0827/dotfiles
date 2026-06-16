@@ -770,7 +770,7 @@ local function _ask_ai_and_replace_selection(start_line, end_line, tool)
       { link = "FloatTitle", default = true })
 
     if tool == "all" then
-      local tools_order = { "claude", "codex" }
+      local tools_order = { "claude", "codex", "gemini" }
       local state = {
         buffers = {},
         jobs = {},
