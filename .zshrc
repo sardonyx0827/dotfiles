@@ -232,6 +232,9 @@ function precmd() {
 }
 
 # ai tools
+# ollama
+export OLLAMA_KEEP_ALIVE="-1"
+
 ## update
 function update_ai_tools() {
   ~/work/github/dotfiles/update_ai_tools.sh
