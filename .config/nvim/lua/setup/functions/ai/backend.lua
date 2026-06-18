@@ -13,18 +13,20 @@ local M = {}
 -- Tool registry. `kind` selects the transport; `default_model` is used when the
 -- caller does not pass an explicit model in the spec.
 local TOOLS = {
-  claude = { kind = "cli", default_model = "sonnet" },
-  codex  = { kind = "cli", default_model = nil },
-  gemini = { kind = "cli", default_model = "gemini-flash-lite-latest" },
-  gemma  = { kind = "ollama", default_model = "gemma4:e4b" },
+  claude  = { kind = "cli", default_model = "sonnet" },
+  codex   = { kind = "cli", default_model = nil },
+  gemini  = { kind = "cli", default_model = "gemini-flash-lite-latest" },
+  copilot = { kind = "cli", default_model = "gpt-5-mini" },
+  gemma   = { kind = "ollama", default_model = "gemma4:e4b" },
 }
 
 M.TOOLS = TOOLS
 
---- Build the shell command for a CLI tool reading the payload from `tmpfile`.
+--- Build the shell command for a CLI tool. Most tools read the payload from
+--- `tmpfile` over stdin; copilot inlines `input` into the prompt instead.
 --- `skip_git_check` adds codex's --skip-git-repo-check (used by the replace
 --- feature so codex works outside a repo; commit generation leaves it off).
-local function build_cli_cmd(tool, model, instruction, tmpfile, skip_git_check)
+local function build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_check)
   local esc_file = vim.fn.shellescape(tmpfile)
   local esc_prompt = vim.fn.shellescape(instruction)
   if tool == "codex" then
@@ -34,6 +36,14 @@ local function build_cli_cmd(tool, model, instruction, tmpfile, skip_git_check)
   elseif tool == "gemini" then
     return string.format("cat %s | gemini -m %s -p %s",
       esc_file, vim.fn.shellescape(model), esc_prompt)
+  elseif tool == "copilot" then
+    -- copilot CLI does not read stdin as context, so inline the payload into the
+    -- prompt. `instruction` already carries the task/language context; `-s` keeps
+    -- stdout to the agent response only so clean_cli_lines gets usable text.
+    local copilot_prompt = string.format("%s\n\n## Input\n```\n%s\n```",
+      instruction, input)
+    return string.format("copilot --model %s -s -p %s",
+      vim.fn.shellescape(model), vim.fn.shellescape(copilot_prompt))
   else -- claude
     return string.format("cat %s | claude --model %s -p %s",
       esc_file, vim.fn.shellescape(model), esc_prompt)
@@ -45,7 +55,7 @@ end
 local function run_cli(tool, model, instruction, input, skip_git_check, done)
   local tmpfile = vim.fn.tempname()
   vim.fn.writefile(vim.split(input, "\n", { plain = true }), tmpfile)
-  local cmd = build_cli_cmd(tool, model, instruction, tmpfile, skip_git_check)
+  local cmd = build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_check)
 
   local result = {}
   local job_id = vim.fn.jobstart({ "sh", "-c", cmd }, {

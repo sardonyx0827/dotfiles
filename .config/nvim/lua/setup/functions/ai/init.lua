@@ -133,7 +133,7 @@ local function generate_commit_message(tool)
     return
   end
 
-  local tools = tool == "all" and { "claude", "codex" } or { tool }
+  local tools = tool == "all" and { "claude", "codex", "copilot" } or { tool }
   vim.notify("Generating commit message with " .. tool .. "...", vim.log.levels.INFO)
 
   local instruction = prompt.commit_instruction()
@@ -181,7 +181,7 @@ local function ask_ai_and_replace(start_line, end_line, tool)
     start_line, end_line = end_line, start_line
   end
 
-  local tools = tool == "all" and { "claude", "codex", "gemini" } or { tool }
+  local tools = tool == "all" and { "claude", "codex", "gemini", "copilot" } or { tool }
   local target_buf = vim.api.nvim_get_current_buf()
   local selected_lines = vim.api.nvim_buf_get_lines(target_buf, start_line - 1, end_line, false)
   local filetype = vim.bo[target_buf].filetype
@@ -300,6 +300,8 @@ map("x", "<C-x>", replace_mapping("codex"),
   { desc = "Ask AI(Codex) and replace selection", noremap = true, silent = true })
 map("x", "<C-g>", replace_mapping("gemini"),
   { desc = "Ask AI(Gemini) and replace selection", noremap = true, silent = true })
+map("x", "<C-p>", replace_mapping("copilot"),
+  { desc = "Ask AI(Copilot) and replace selection", noremap = true, silent = true })
 map("x", "<C-l>", replace_mapping("all"),
   { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
 map("x", "<C-o>", replace_mapping("gemma"),
