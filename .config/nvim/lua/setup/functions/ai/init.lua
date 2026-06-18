@@ -1,0 +1,306 @@
+--- @diagnostic disable: undefined-global
+---------------------------------------------------------
+-- ai (entry point)
+-- Wires the AI features to keymaps. The heavy lifting lives in the sibling
+-- modules:
+--   ai.prompt   - prompt builders & diagnostic formatting (pure helpers)
+--   ai.backend  - tool invocation (CLI / Ollama), job & temp-file management
+--   ai.ui       - the shared floating-window driver (popup / diff)
+-- A feature here is just "build a prompt + pick the input + choose the UI".
+---------------------------------------------------------
+local backend = require("setup.functions.ai.backend")
+local prompt = require("setup.functions.ai.prompt")
+local ui = require("setup.functions.ai.ui")
+
+local map = vim.keymap.set
+
+-- Commit messages favour cheap/fast models; everything else uses backend
+-- defaults (claude=sonnet, gemini=flash-lite, codex=default, gemma=ollama).
+local COMMIT_MODELS = { claude = "haiku" }
+
+-- Copy to the system clipboard, the unnamed register, and the tmux buffer.
+local function copy_to_clipboard(content)
+  vim.fn.setreg("+", content)
+  vim.fn.setreg('"', content)
+  if vim.env.TMUX then
+    vim.fn.system("tmux load-buffer -", content)
+  end
+end
+
+---------------------------------------------------------
+-- Copy LSP diagnostics to clipboard for AI assistance
+---------------------------------------------------------
+local function copy_lsp_diagnostics()
+  local diagnostics = vim.diagnostic.get(0)
+  if #diagnostics == 0 then
+    print("No LSP diagnostics found.")
+    return
+  end
+  local filepath = vim.fn.expand("%:.")
+  local lines = { "Can you help me fix the diagnostics in @" .. filepath .. "?" }
+  vim.list_extend(lines, prompt.format_diagnostics(diagnostics, filepath))
+  copy_to_clipboard(table.concat(lines, "\n"))
+  print("Copied LSP diagnostics to clipboard.")
+end
+map("n", "<leader><leader>d", copy_lsp_diagnostics,
+  { desc = "Copy LSP diagnostics to clipboard", noremap = true })
+
+---------------------------------------------------------
+-- Copy all LSP diagnostics (every loaded buffer) to clipboard
+---------------------------------------------------------
+local function copy_all_lsp_diagnostics()
+  local lines = { "Can you help me fix the following diagnostics in my project?" }
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
+      local filepath = vim.api.nvim_buf_get_name(bufnr)
+      if filepath ~= "" then
+        local diagnostics = vim.diagnostic.get(bufnr)
+        if #diagnostics > 0 then
+          local relative_path = vim.fn.fnamemodify(filepath, ":.")
+          vim.list_extend(lines, prompt.format_diagnostics(diagnostics, relative_path))
+        end
+      end
+    end
+  end
+  if #lines > 1 then
+    copy_to_clipboard(table.concat(lines, "\n"))
+    print("Copied all LSP diagnostics to clipboard.")
+  else
+    print("No LSP diagnostics found.")
+  end
+end
+map("n", "<leader><leader>a", copy_all_lsp_diagnostics,
+  { desc = "Copy all LSP diagnostics to clipboard", noremap = true })
+
+---------------------------------------------------------
+-- Copy file + line reference from a visual selection
+---------------------------------------------------------
+local function get_file_line_info_visual(start_line, end_line)
+  if not start_line or not end_line or start_line == 0 or end_line == 0 then
+    print("No visual selection found.")
+    return
+  end
+  if start_line > end_line then
+    start_line, end_line = end_line, start_line
+  end
+  local filepath = vim.fn.expand("%:.")
+  local content
+  if start_line == end_line then
+    content = string.format("@%s#L%d", filepath, start_line)
+  else
+    content = string.format("@%s#L%d-%d", filepath, start_line, end_line)
+  end
+  copy_to_clipboard(content)
+  print("Copied file and line info to clipboard.")
+end
+map("x", "<leader><leader>c", function()
+  -- Exit visual mode so '< and '> reflect the just-completed selection
+  vim.cmd("normal! \27")
+  get_file_line_info_visual(vim.fn.line("'<"), vim.fn.line("'>"))
+end, { desc = "Get file and line info from visual selection", noremap = true, silent = true })
+
+---------------------------------------------------------
+-- Close current buffer
+---------------------------------------------------------
+local function close_current_buffer()
+  local current_buf = vim.api.nvim_get_current_buf()
+  if vim.api.nvim_buf_is_loaded(current_buf) then
+    vim.api.nvim_buf_delete(current_buf, { force = true })
+  end
+end
+map("n", "<C-q>", close_current_buffer,
+  { noremap = true, silent = true, desc = "Close Current Buffer" })
+map("n", "<leader>bc", close_current_buffer,
+  { noremap = true, silent = true, desc = "Close Current Buffer" })
+
+---------------------------------------------------------
+-- Generate a commit message (claude / codex / gemini / all / gemma)
+---------------------------------------------------------
+local function generate_commit_message(tool)
+  local diff = vim.fn.system("git diff --cached")
+  if vim.v.shell_error ~= 0 then
+    vim.notify("Not a git repository.", vim.log.levels.ERROR)
+    return
+  end
+
+  local diff_type = "staged"
+  if diff == "" then
+    diff = vim.fn.system("git diff")
+    diff_type = "unstaged"
+  end
+  if diff == "" then
+    vim.notify("No changes detected.", vim.log.levels.WARN)
+    return
+  end
+
+  local tools = tool == "all" and { "claude", "codex" } or { tool }
+  vim.notify("Generating commit message with " .. tool .. "...", vim.log.levels.INFO)
+
+  local instruction = prompt.commit_instruction()
+  local footer = string.format(
+    " Commit Message (%s) | y:yank  p:paste  q:close%s ",
+    diff_type,
+    #tools > 1 and "  <Tab>/<S-Tab>:switch  1/2:jump" or "")
+
+  ui.run_multi({
+    mode = "popup",
+    tools = tools,
+    filetype = "gitcommit",
+    footer = footer,
+    copy_notify = "Commit message copied to clipboard.",
+    start = function(t, done)
+      return backend.run({
+        tool = t,
+        prompt = instruction,
+        input = diff,
+        model = COMMIT_MODELS[t],
+      }, done)
+    end,
+  })
+end
+map("n", "<leader>cm", function() generate_commit_message("claude") end,
+  { desc = "Generate commit message with Claude Code", noremap = true })
+map("n", "<leader>cx", function() generate_commit_message("codex") end,
+  { desc = "Generate commit message with Codex", noremap = true })
+map("n", "<leader>cg", function() generate_commit_message("gemini") end,
+  { desc = "Generate commit message with Gemini", noremap = true })
+map("n", "<leader>cl", function() generate_commit_message("all") end,
+  { desc = "Generate commit message with All (Claude/Codex)", noremap = true })
+map("n", "<leader>co", function() generate_commit_message("gemma") end,
+  { desc = "Generate commit message with Ollama (Gemma)", noremap = true })
+
+---------------------------------------------------------
+-- Ask the AI about a selection and replace it (claude / codex / gemini / all / gemma)
+---------------------------------------------------------
+local function ask_ai_and_replace(start_line, end_line, tool)
+  if not start_line or not end_line or start_line == 0 or end_line == 0 then
+    vim.notify("No visual selection found.", vim.log.levels.ERROR)
+    return
+  end
+  if start_line > end_line then
+    start_line, end_line = end_line, start_line
+  end
+
+  local tools = tool == "all" and { "claude", "codex", "gemini" } or { tool }
+  local target_buf = vim.api.nvim_get_current_buf()
+  local selected_lines = vim.api.nvim_buf_get_lines(target_buf, start_line - 1, end_line, false)
+  local filetype = vim.bo[target_buf].filetype
+  local lang = filetype ~= "" and filetype or "plain text"
+
+  -- Prompt window for the user's instruction.
+  local prompt_buf = vim.api.nvim_create_buf(false, true)
+  local prompt_width = math.min(80, vim.o.columns - 4)
+  local prompt_height = math.min(10, vim.o.lines - 4)
+  local prompt_win = vim.api.nvim_open_win(prompt_buf, true, {
+    relative = "editor",
+    width = prompt_width,
+    height = prompt_height,
+    row = math.floor((vim.o.lines - prompt_height) / 2),
+    col = math.floor((vim.o.columns - prompt_width) / 2),
+    style = "minimal",
+    border = "rounded",
+    title = string.format(" Ask %s (lines %d-%d, %s) ", tool, start_line, end_line, lang),
+    title_pos = "center",
+    footer = " <C-s>:submit  q:cancel(normal) ",
+    footer_pos = "center",
+  })
+  vim.bo[prompt_buf].modifiable = true
+  vim.bo[prompt_buf].filetype = "markdown"
+  vim.cmd("startinsert")
+
+  -- Trap focus inside the prompt window: snap back if the user moves away.
+  local pgroup = vim.api.nvim_create_augroup("AskAiPrompt_" .. prompt_win, { clear = true })
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = pgroup,
+    pattern = tostring(prompt_win),
+    callback = function() pcall(vim.api.nvim_del_augroup_by_id, pgroup) end,
+  })
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = pgroup,
+    callback = function()
+      if vim.api.nvim_get_current_win() ~= prompt_win
+        and vim.api.nvim_win_is_valid(prompt_win) then
+        vim.schedule(function()
+          if vim.api.nvim_win_is_valid(prompt_win) then
+            vim.api.nvim_set_current_win(prompt_win)
+          end
+        end)
+      end
+    end,
+  })
+
+  local function close_prompt()
+    if vim.api.nvim_win_is_valid(prompt_win) then
+      vim.api.nvim_win_close(prompt_win, true)
+    end
+  end
+  map("n", "q", close_prompt, { buffer = prompt_buf, desc = "Cancel prompt" })
+
+  local function replace_range(lines)
+    if vim.api.nvim_buf_is_valid(target_buf) then
+      vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+      return true
+    end
+    vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+    return false
+  end
+
+  local function submit()
+    local user_prompt = vim.trim(table.concat(
+      vim.api.nvim_buf_get_lines(prompt_buf, 0, -1, false), "\n"))
+    if user_prompt == "" then
+      vim.notify("Prompt is empty.", vim.log.levels.WARN)
+      return
+    end
+    close_prompt()
+    vim.notify("Asking " .. tool .. "...", vim.log.levels.INFO)
+
+    local system = prompt.replace_system(lang, user_prompt)
+    local input = table.concat(selected_lines, "\n")
+    local footer = string.format(
+      " y:AI  Y:merged  q:cancel%s ",
+      #tools > 1 and "  <Tab>/<S-Tab>:switch  1/2/3:jump" or "")
+
+    ui.run_multi({
+      mode = "diff",
+      tools = tools,
+      filetype = filetype,
+      original = selected_lines,
+      footer = footer,
+      start = function(t, done)
+        return backend.run({ tool = t, prompt = system, input = input, skip_git_check = true }, done)
+      end,
+      on_accept = function(t, lines)
+        if replace_range(lines) then
+          vim.notify(string.format("Selection replaced with %s's response.", t))
+        end
+      end,
+      on_accept_merged = function(lines)
+        if replace_range(lines) then
+          vim.notify("Selection replaced with merged result.")
+        end
+      end,
+    })
+  end
+
+  map({ "n", "i" }, "<C-s>", submit,
+    { buffer = prompt_buf, desc = "Submit prompt to " .. tool })
+end
+
+local function replace_mapping(tool)
+  return function()
+    -- Exit visual mode so '< and '> reflect the just-completed selection
+    vim.cmd("normal! \27")
+    ask_ai_and_replace(vim.fn.line("'<"), vim.fn.line("'>"), tool)
+  end
+end
+map("x", "<C-c>", replace_mapping("claude"),
+  { desc = "Ask AI(Claude) and replace selection", noremap = true, silent = true })
+map("x", "<C-x>", replace_mapping("codex"),
+  { desc = "Ask AI(Codex) and replace selection", noremap = true, silent = true })
+map("x", "<C-g>", replace_mapping("gemini"),
+  { desc = "Ask AI(Gemini) and replace selection", noremap = true, silent = true })
+map("x", "<C-l>", replace_mapping("all"),
+  { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
+map("x", "<C-o>", replace_mapping("gemma"),
+  { desc = "Ask AI(Gemma) and replace selection", noremap = true, silent = true })
