@@ -219,6 +219,7 @@
       "static.crates.io"
     ]
   },
+  "effortLevel": "xhigh",
   "autoUpdatesChannel": "latest",
   "autoMemoryEnabled": false,
   "skipWorkflowUsageWarning": true,
