@@ -20,6 +20,7 @@ export LESS="-i -M -R -x4"
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
+# ~/.oh-my-zsh/custom/themes/px-rose-pine.zsh-theme
 ZSH_THEME="px-rose-pine"
 # ZSH_THEME="kennethreitz" # 1
 #ZSH_THEME="gallois" # 2
@@ -240,6 +241,7 @@ function update_ai_tools() {
   ~/work/github/dotfiles/update_ai_tools.sh
 }
 ## gemini cli
+alias g='gemini'
 alias push='gemini -y -p "pushして"'
 alias commit_message='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
 alias commit='gemini -y -p "commitして"'
@@ -254,6 +256,8 @@ alias c='claude'
 alias cl='claude'
 ## Codex CLI
 alias cx='codex'
+## GitHub Copilot CLI
+alias cop='copilot'
 ## Gemini CLI
 alias ge='gemini'
 
