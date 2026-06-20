@@ -99,6 +99,15 @@ let s:nt_preview_skip = {
       \ 'mp3': 1, 'mp4': 1, 'mov': 1, 'avi': 1, 'wav': 1, 'db': 1, 'sqlite': 1,
       \ }
 
+" Keep the floating preview's background transparent (guibg/ctermbg = NONE) so
+" it inherits the editor/terminal background instead of NERDTree's own bg.
+" Re-applied on ColorScheme since custom groups are cleared when it changes.
+function! s:NTPreviewHighlight() abort
+  highlight NTPreviewNormal guibg=NONE ctermbg=NONE
+  highlight NTPreviewBorder guibg=NONE ctermbg=NONE
+endfunction
+call s:NTPreviewHighlight()
+
 function! s:NTPreviewClose() abort
   if s:nt_preview_win <= 0
     return
@@ -161,12 +170,17 @@ function! s:NTPreviewShow() abort
       let l:opts.title_pos = 'center'
     endif
     let s:nt_preview_win = nvim_open_win(l:buf, v:false, l:opts)
+    " Make the float (body + border) background transparent.
+    call setwinvar(s:nt_preview_win, '&winhighlight',
+          \ 'NormalFloat:NTPreviewNormal,FloatBorder:NTPreviewBorder')
   else
     let s:nt_preview_win = popup_create(l:lines, {
           \ 'line': 3, 'col': l:col + 1,
           \ 'minwidth': l:width, 'maxwidth': l:width,
           \ 'minheight': l:height, 'maxheight': l:height,
           \ 'border': [], 'padding': [0, 1, 0, 1],
+          \ 'highlight': 'NTPreviewNormal',
+          \ 'borderhighlight': ['NTPreviewBorder'],
           \ 'title': ' ' . l:name . ' ',
           \ 'scrollbar': 0, 'zindex': 200,
           \ })
@@ -189,6 +203,8 @@ endfunction
 
 augroup NERDTreePreview
   autocmd!
+  " Re-assert the transparent preview highlights after a colorscheme switch.
+  autocmd ColorScheme * call s:NTPreviewHighlight()
   autocmd FileType nerdtree nnoremap <buffer><silent> P :call <SID>NTPreviewToggle()<CR>
   " Refresh the preview as the cursor moves over nodes in the tree.
   autocmd CursorMoved * if &filetype ==# 'nerdtree' | call s:NTPreviewShow() | endif
