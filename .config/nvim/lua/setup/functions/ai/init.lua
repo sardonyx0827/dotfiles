@@ -18,6 +18,12 @@ local map = vim.keymap.set
 -- defaults (claude=sonnet, gemini=flash-lite, codex=default, gemma=ollama).
 local COMMIT_MODELS = { claude = "haiku" }
 
+-- Upper bound on the diff sent for commit generation. Past this we fall back to
+-- `git diff --stat` plus a truncated patch (see commit_diff), which keeps the
+-- payload under the model's context window and under ARG_MAX for tools that
+-- inline the diff into argv (copilot). Without this, staging many files errors.
+local MAX_DIFF_BYTES = 50 * 1024
+
 -- Copy to the system clipboard, the unnamed register, and the tmux buffer.
 local function copy_to_clipboard(content)
   vim.fn.setreg("+", content)
@@ -116,8 +122,20 @@ map("n", "<leader>bc", close_current_buffer,
 ---------------------------------------------------------
 -- Generate a commit message (claude / codex / gemini / all / gemma)
 ---------------------------------------------------------
+-- Fetch the diff for commit generation, bounded to MAX_DIFF_BYTES. `cached` is
+-- the extra `git diff` flag ("--cached " for staged, "" for unstaged). Only when
+-- the full diff is large do we make the extra `--stat` call.
+local function commit_diff(cached)
+  local full = vim.fn.system("git diff " .. cached)
+  if vim.v.shell_error ~= 0 or #full <= MAX_DIFF_BYTES then
+    return full
+  end
+  local stat = vim.fn.system("git diff --stat " .. cached)
+  return prompt.bound_commit_diff(full, stat, MAX_DIFF_BYTES)
+end
+
 local function generate_commit_message(tool)
-  local diff = vim.fn.system("git diff --cached")
+  local diff = commit_diff("--cached ")
   if vim.v.shell_error ~= 0 then
     vim.notify("Not a git repository.", vim.log.levels.ERROR)
     return
@@ -125,7 +143,7 @@ local function generate_commit_message(tool)
 
   local diff_type = "staged"
   if diff == "" then
-    diff = vim.fn.system("git diff")
+    diff = commit_diff("")
     diff_type = "unstaged"
   end
   if diff == "" then

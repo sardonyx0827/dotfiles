@@ -50,6 +50,31 @@ function M.commit_instruction()
       .. "Write in English."
 end
 
+--- Bound a diff to a safe size for commit-message generation. When `full`
+--- exceeds `max_bytes`, return the `stat` summary (file list + churn) followed
+--- by the leading slice of the patch, clearly marked as truncated; otherwise
+--- return `full` unchanged. This keeps the payload under the model's context
+--- window and under ARG_MAX for tools that inline the diff into argv (copilot).
+--- @param full string output of `git diff [--cached]`
+--- @param stat string output of `git diff [--cached] --stat`
+--- @param max_bytes integer size threshold in bytes
+--- @return string
+function M.bound_commit_diff(full, stat, max_bytes)
+  if #full <= max_bytes then
+    return full
+  end
+  local patch = string.sub(full, 1, max_bytes)
+  return string.format(
+    "[Diff truncated because it is large (full patch is %d KB). Base the commit "
+    .. "message on the file summary plus the partial patch below.]\n\n"
+    .. "## Changed files (git diff --stat)\n%s\n"
+    .. "## Partial diff (first %d KB)\n%s\n... (patch truncated) ...\n",
+    math.floor(#full / 1024),
+    stat,
+    math.floor(max_bytes / 1024),
+    patch)
+end
+
 --- System prompt for "ask AI and replace the selection".
 --- @param lang string filetype (or "plain text")
 --- @param user_request string the user's instruction
