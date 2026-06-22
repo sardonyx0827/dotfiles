@@ -1,26 +1,26 @@
 #!/bin/bash
 
-# 送信したいコマンド
+# Command to send
 COMMAND="$*"
 
-# synchronize-panes の現在の状態を取得
+# Get the current state of synchronize-panes
 SYNC_STATE=$(tmux show-window-option -v synchronize-panes 2>/dev/null)
 
-# sync がオンなら一時的にオフにする
+# Temporarily turn off sync if it's on
 if [[ "$SYNC_STATE" == "on" ]]; then
 	tmux set-window-option synchronize-panes off
 fi
 
-# 現在のウィンドウのすべてのペインをリスト
+# List all panes in the current window
 tmux list-panes -F '#{pane_id} #{pane_current_command}' | while read -r PANE_ID COMMAND_NAME; do
-	# 実行中のコマンドが 'nvim' でない場合
+	# If the running command is not 'nvim'
 	if [[ "$COMMAND_NAME" != "nvim" ]]; then
-		# send-keys でコマンドを送信
+		# Send the command using send-keys
 		tmux send-keys -t "$PANE_ID" "$COMMAND"
 	fi
 done
 
-# sync がオンだった場合は元に戻す
+# Restore sync if it was on initially
 if [[ "$SYNC_STATE" == "on" ]]; then
 	tmux set-window-option synchronize-panes on
 fi
