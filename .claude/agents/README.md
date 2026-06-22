@@ -13,10 +13,10 @@ Located in `~/.claude/agents/`:
 
 ### Implementation & TDD
 
-| Agent      | Model | Purpose                                  | When to Use             |
-| ---------- | ----- | ---------------------------------------- | ----------------------- |
-| tdd-guide  | opus  | Test-driven development (80%+ coverage)  | New features, bug fixes |
-| e2e-runner | opus  | E2E testing (Agent Browser / Playwright) | Critical user flows     |
+| Agent      | Model  | Purpose                                  | When to Use             |
+| ---------- | ------ | ---------------------------------------- | ----------------------- |
+| tdd-guide  | opus   | Test-driven development (80%+ coverage)  | New features, bug fixes |
+| e2e-runner | sonnet | E2E testing (Agent Browser / Playwright) | Critical user flows     |
 
 ### Review & Quality
 
@@ -29,12 +29,12 @@ Located in `~/.claude/agents/`:
 
 ### Build & Maintenance
 
-| Agent                | Model | Purpose                                          | When to Use         |
-| -------------------- | ----- | ------------------------------------------------ | ------------------- |
-| build-error-resolver | opus  | Fix TS/build errors (minimal diffs)              | When build fails    |
-| go-build-resolver    | opus  | Fix Go build/vet/lint errors                     | When Go builds fail |
-| refactor-cleaner     | opus  | Dead code cleanup (knip, depcheck, ts-prune)     | Code maintenance    |
-| doc-updater          | opus  | Docs & codemaps (/update-docs, /update-codemaps) | Updating docs       |
+| Agent                | Model  | Purpose                                          | When to Use         |
+| -------------------- | ------ | ------------------------------------------------ | ------------------- |
+| build-error-resolver | sonnet | Fix TS/build errors (minimal diffs)              | When build fails    |
+| go-build-resolver    | sonnet | Fix Go build/vet/lint errors                     | When Go builds fail |
+| refactor-cleaner     | opus   | Dead code cleanup (knip, depcheck, ts-prune)     | Code maintenance    |
+| doc-updater          | sonnet | Docs & codemaps (/update-docs, /update-codemaps) | Updating docs       |
 
 ### Delegation
 
