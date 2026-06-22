@@ -1,6 +1,6 @@
 # Dotfiles
 
-個人用の開発環境設定ファイル（dotfiles）のリポジトリです。Vim、Zsh、Tmux、Neovim、WezTermなどの設定と、AI開発ツールのセットアップスクリプトを含んでいます。
+個人用の開発環境設定ファイル（dotfiles）のリポジトリです。Zsh、Vim、Neovim、tmux、WezTerm などの設定に加え、Claude Code・Codex・Gemini CLI・GitHub Copilot CLI といった AI 開発ツールのエージェント／スキル／フック設定とセットアップスクリプトを一括管理しています。全体を [Rosé Pine](https://rosepinetheme.com/) カラースキームで統一し、macOS / Ubuntu / WSL に対応した `install.sh` でシンボリックリンクを自動生成します。
 
 ## 🛠️ 技術スタック
 
@@ -43,6 +43,8 @@
 [codex-url]: https://openai.com/
 [gemini-shield]: https://img.shields.io/badge/Gemini-8E75B2?style=for-the-badge&logo=google&logoColor=white
 [gemini-url]: https://ai.google.dev/
+[copilot-shield]: https://img.shields.io/badge/GitHub_Copilot-000000?style=for-the-badge&logo=githubcopilot&logoColor=white
+[copilot-url]: https://github.com/features/copilot
 
 <!-- Languages -->
 
@@ -78,6 +80,7 @@
 [![Claude Code][claude-shield]][claude-url]
 [![Codex][codex-shield]][codex-url]
 [![Gemini][gemini-shield]][gemini-url]
+[![GitHub Copilot][copilot-shield]][copilot-url]
 
 ### プログラミング言語
 
@@ -90,22 +93,37 @@
 ```
 .
 ├── .claude/                        # Claude Code設定
-│   ├── agents/                     # カスタムエージェント
-│   ├── commands/                   # カスタムコマンド
-│   └── hooks/                      # フック設定
+│   ├── agents/                     # カスタムサブエージェント (architect, code-reviewer 等)
+│   ├── archive/                    # 旧エージェント / コマンド / ルールのアーカイブ
+│   ├── commands/                   # カスタムスラッシュコマンド (tdd, verify 等)
+│   ├── hooks/                      # フック (auto-format, lint, bash-review 等)
+│   ├── mcp-servers/                # 自作MCPサーバー (gemini-consultant)
+│   ├── rules/                      # ワークフロー / セキュリティルール
+│   ├── skills/                     # スキル定義 (coding-standards 等)
+│   ├── CLAUDE.md                   # グローバル指示
+│   ├── settings.json               # Claude Code設定
+│   └── statusline-command.sh       # ステータスライン
 ├── .codex/                         # Codex設定
+│   ├── agents/                     # Codexエージェント定義 (.toml)
+│   ├── hooks/                      # Codexフック
+│   ├── AGENTS.md                   # Codex向け指示
+│   └── config.toml / config.json   # Codex設定
 ├── .config/                        # アプリケーション設定
-│   ├── Code/                       # VS Code設定
-│   └── nvim_lazy/                  # Neovim (lazy.nvim) 設定
-├── .gemini/                        # Gemini CLI設定
+│   ├── Antigravity/                # Antigravity (settings / keybindings)
+│   ├── Code/                       # VS Code (settings / keybindings)
+│   └── nvim/                       # Neovim (lazy.nvim) 設定
+├── .gemini/                        # Gemini CLI設定 (GEMINI.md, settings.json)
 ├── .oh-my-zsh/                     # Oh My Zsh設定
-│   └── custom/                     # カスタムテーマとプラグイン
+│   └── custom/themes/              # カスタムテーマ (px-rose-pine)
+├── .vim/rc/                        # Vim設定本体 (分割ロード: 00-plugins, 10-basic ...)
+├── .vscode/                        # VS Code (ワークスペース) 設定
 ├── .gitconfig                      # Git設定
 ├── .gitignore_global               # グローバルgitignore
 ├── .tmux.conf                      # tmux設定
-├── .vimrc                          # Vim設定
+├── .vimrc                          # 薄いローダー (.vim/rc/*.vim を順次source)
 ├── .wezterm.lua                    # WezTerm設定
 ├── .zshrc                          # Zsh設定
+├── INSTALL_PLATFORM.md             # プラットフォーム別インストール / トラブルシューティング
 ├── install.sh                      # クロスプラットフォーム対応インストールスクリプト
 ├── tmux_send_to_all_except_nvim.sh # tmuxユーティリティ
 └── update_ai_tools.sh              # AIツール更新スクリプト
@@ -120,7 +138,7 @@
 1. **リポジトリのクローン**
 
 ```bash
-git clone https://github.com/yourusername/dotfiles.git ~/dotfiles
+git clone https://github.com/sardonyx0827/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 ```
 
@@ -136,16 +154,19 @@ cd ~/dotfiles
 - 必要なパッケージのインストール
   - macOS: Homebrew経由でVim、Neovim、tmux、WezTermなど
   - Ubuntu: APT経由でVim、Neovim、tmux、WezTermなど
+- CLI ツール（ripgrep、fd、bat、universal-ctags、tree-sitter、lazydocker など）のインストール
 - Oh My Zshとプラグインのインストール
 - vim-plugのインストール
 - Node.jsとnpmのセットアップ
+- Linter / Formatter（prettier、eslint など。フックが利用）のインストール
 - フォントのインストール
 - 設定ファイルのシンボリックリンク作成（既存ファイルは自動バックアップ）
+- Claude Code への MCP サーバー登録
 - デフォルトシェルをZshに変更
 
 3. **AIツールのインストール（オプション）**
 
-スクリプト実行中にAIツールのインストールを選択できます。
+スクリプト実行中に AI 開発ツール（Claude Code / Codex / Gemini CLI / GitHub Copilot CLI）のインストールを選択できます。
 
 4. **ターミナルの再起動**
 
@@ -177,7 +198,7 @@ nvim
 <summary>1. リポジトリのクローン</summary>
 
 ```bash
-git clone https://github.com/yourusername/dotfiles.git ~/dotfiles
+git clone https://github.com/sardonyx0827/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 ```
 
@@ -306,21 +327,34 @@ ln -sf ~/dotfiles/.gitignore_global ~/.gitignore_global
 # WezTerm設定
 ln -sf ~/dotfiles/.wezterm.lua ~/.wezterm.lua
 
-# Neovim設定
+# Neovim設定 (リポジトリ上は .config/nvim に格納)
 mkdir -p ~/.config
-ln -sf ~/dotfiles/.config/nvim_lazy ~/.config/nvim
+ln -sf ~/dotfiles/.config/nvim ~/.config/nvim
 
-# Claude Code設定
-ln -sf ~/dotfiles/.claude ~/.claude
+# Claude Code設定 (CLIの実行時データを巻き込まないよう個別にリンク)
+mkdir -p ~/.claude
+for e in CLAUDE.md settings.json statusline-command.sh agents archive commands hooks mcp-servers rules skills; do
+  ln -sf ~/dotfiles/.claude/$e ~/.claude/$e
+done
 
 # Codex設定
-ln -sf ~/dotfiles/.codex ~/.codex
+mkdir -p ~/.codex
+for e in AGENTS.md config.json config.toml agents; do
+  ln -sf ~/dotfiles/.codex/$e ~/.codex/$e
+done
 
 # Gemini設定
-ln -sf ~/dotfiles/.gemini ~/.gemini
+mkdir -p ~/.gemini
+for e in GEMINI.md settings.json; do
+  ln -sf ~/dotfiles/.gemini/$e ~/.gemini/$e
+done
 
 # Oh My Zsh カスタムテーマ
 ln -sf ~/dotfiles/.oh-my-zsh/custom ~/.oh-my-zsh/custom
+
+# tmuxヘルパースクリプト (.tmux.conf の `bind S` が参照)
+mkdir -p ~/.tmux
+ln -sf ~/dotfiles/tmux_send_to_all_except_nvim.sh ~/.tmux/tmux_send_to_all_except_nvim.sh
 ```
 
 </details>
@@ -375,10 +409,32 @@ npm install -g @openai/codex
 npm install -g @google/gemini-cli
 ```
 
+### GitHub Copilot CLI
+
+`gh` の拡張機能として配布されています（npm パッケージではありません）。
+
+```bash
+gh extension install github/gh-copilot
+```
+
+### MCP サーバーの登録
+
+`install.sh` は Claude Code に以下の MCP サーバーをユーザースコープで登録します（冪等）。手動で行う場合は `claude mcp add` を使用します。
+
+| サーバー            | 用途                            |
+| ------------------- | ------------------------------- |
+| `github`            | GitHub Copilot MCP (HTTP)       |
+| `context7`          | 最新ライブラリドキュメント取得  |
+| `codex`             | Codex 連携                      |
+| `serena`            | コードベース解析 (LSP)          |
+| `MCP_DOCKER`        | Docker MCP ゲートウェイ         |
+| `drawio`            | 図の生成                        |
+| `gemini-consultant` | 自作 Gemini 相談用 MCP サーバー |
+
 ### 一括更新
 
 ```bash
-# すべてのAIツールを更新
+# すべてのAIツールを更新 (Claude Code / Codex / Gemini CLI / Copilot CLI)
 ./update_ai_tools.sh
 ```
 
@@ -386,27 +442,41 @@ npm install -g @google/gemini-cli
 
 ### Zsh (.zshrc)
 
-- **プラグイン**: Oh My Zsh プラグインシステム
-- **PATH設定**: Go、PHP、Node.js グローバルパッケージ
-- **エイリアス**: 便利なコマンドショートカット
+- **テーマ**: `px-rose-pine`（`.oh-my-zsh/custom/themes/` のカスタムテーマ）
+- **プラグイン**: `git` / `zsh-autosuggestions` / `zsh-syntax-highlighting` / `z`
+- **PATH設定**: Go、npm global、PHP 8.4、pyenv、Rust (cargo)
+- **言語環境**: `pyenv`（インストール時のみ初期化）、Rust の cargo bin
+- **履歴**: 10万件・`share_history` / 重複除去などの最適化
+- **fzf 連携関数**: `cf`（ディレクトリ移動）/ `vf`（プレビュー付きで開く）/ `sshs`（SSH ホスト選択）
+- **AI ツールのエイリアス / 関数**:
+  - `c` / `cl`: Claude Code、`cx`: Codex、`ge` / `g`: Gemini CLI、`cop`: GitHub Copilot CLI
+  - `mc`（補完付き）: `mc explain` / `mc translate` / `mc commit` / `mc push` など Claude を用途別モデルで起動
+  - `commit` / `push` / `pull_request` / `translate`: Gemini CLI ベースの Git・翻訳ショートカット
+  - `update_ai_tools`: `update_ai_tools.sh` を実行
 
 ```bash
 # 主要なPATH設定
-export PATH=~/go/bin:$PATH                      # Go
-export PATH=~/.npm-global/bin:$PATH             # npm global
-export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
+export PATH=~/go/bin:$PATH                          # Go
+export PATH=~/.npm-global/bin:$PATH                 # npm global
+export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"   # PHP 8.4
+export PATH="$PYENV_ROOT/bin:$PATH"                 # pyenv
+export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 ```
 
-### Vim (.vimrc)
+### Vim (.vimrc → .vim/rc/)
 
+- **構成**: `.vimrc` は薄いローダーで、実体は `.vim/rc/*.vim` を番号順（`00-plugins` → `10-basic` → … → `80-custom`）に読み込み。`resolve()` でシンボリックリンクを辿るため `.vim/rc` の追加リンクは不要
 - **プラグインマネージャー**: vim-plug
+- **カラースキーム**: Rosé Pine（`rose-pine/vim`）
 - **主要プラグイン**:
   - NERDTree: ファイルエクスプローラー
-  - vim-fugitive: Git統合
+  - vim-fugitive / vim-rhubarb / vim-gitgutter: Git 統合
   - vim-airline: ステータスライン
   - fzf: ファジーファインダー
   - tagbar: タグ一覧表示（`F4`）
   - vim-gutentags: 保存時に `tags` を自動生成・更新（`universal-ctags` が必要）
+  - ALE: 非同期 Lint、asyncomplete 系: 補完
+  - vim-easymotion: 高速カーソル移動、copilot.vim: GitHub Copilot 補完
 
 #### タグジャンプ（定義ジャンプ）
 
@@ -420,20 +490,25 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
 
 > `tags` は vim-gutentags が保存時に自動更新します。手動生成する場合は対象ディレクトリで `ctags -R .` を実行してください。
 
-### Neovim (.config/nvim_lazy/)
+### Neovim (.config/nvim/)
 
-- **プラグインマネージャー**: lazy.nvim
-- **モダンなNeovim設定**: Luaベース
-- **LSP対応**: 言語サーバープロトコル統合
+- **プラグインマネージャー**: lazy.nvim（Lua ベースのモダン構成）
+- **LSP / 補完 / Treesitter**: 言語サーバープロトコル統合、シンタックスハイライト
+- **主要プラグイン**: telescope（ファジーファインダー）、nvim-tree、gitsigns / fugitive / neogit / diffview、trouble、toggleterm、nvim-dap（デバッガ）、zen-mode、auto-session
+- **AI 連携**: avante.nvim / copilot.lua
+- **カラースキーム**: Rosé Pine（gruvbox / kanagawa / tokyonight / onedark なども同梱）
 
 ### tmux (.tmux.conf)
 
 - **プレフィックスキー**: `Ctrl+a` (デフォルトの `Ctrl+b` から変更)
 - **256色ターミナル**: RGBカラー対応
 - **viモード**: コピーモードでviキーバインド使用
+- **マウス操作**: ペイン端のダブルクリックで分割、それ以外はコピーモード
+- **テーマ / プラグイン**（tpm で管理）: `rose-pine/tmux`（moon）、`tmux-mode-indicator`、`tmux-sensible`、`tmux-logging`
 - **クリップボード統合**:
   - macOS: pbcopy/pbpaste
   - Linux: xsel
+- **ロギング**: `Ctrl+a C-p` 開始 / `Ctrl+a C-o` 停止（`~/.tmux/log` に保存）
 
 #### 主要なキーバインド
 
@@ -441,12 +516,17 @@ export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"  # PHP
 # ペイン操作
 Ctrl+a h/j/k/l  # ペイン間移動 (Vim風)
 Ctrl+a H/J/K/L  # ペイン入れ替え
-Ctrl+a -        # 横分割
-Ctrl+a |        # 縦分割
+Ctrl+a C-h/j/k/l# ペインのリサイズ
+Ctrl+a C-s      # 横分割 (current path)
+Ctrl+a C-v      # 縦分割 (current path)
+Ctrl+a e        # 全ペイン同期 (synchronize-panes)
+Ctrl+a o        # カレント以外のペインを閉じる
+Ctrl+a C-q      # カレントペインを閉じる
 
 # ウィンドウ操作
-Ctrl+a c        # 新規ウィンドウ
-Ctrl+a n/p      # 次/前のウィンドウ
+Ctrl+a c        # 新規ウィンドウ (current path)
+Ctrl+a N        # 'dev' ウィンドウを作成し claude を起動
+Ctrl+a C-c      # 右に幅30%のペインを開き claude を起動
 
 # コピーモード
 Ctrl+a [        # コピーモード開始
@@ -457,11 +537,13 @@ Ctrl+a ]        # ペースト
 
 ### WezTerm (.wezterm.lua)
 
-- **フォント**: Ubuntu Mono (Medium, 14pt)
+- **カラースキーム**: Rosé Pine
+- **フォント**: Ubuntu Mono (Medium, 14pt) — フォールバックに Hiragino Sans
 - **カーソル**: BlinkingBlock
-- **背景透過**: 80%
+- **背景透過**: 90%
+- **タブバー**: タブが1つのときは非表示
 - **日本語入力**: IME対応
-- **キーバインド**: macOS用のバックスラッシュ入力設定
+- **キーバインド**: macOS用のバックスラッシュ入力（`option + ¥` → `\`）、`option + Enter` でフルスクリーン切替
 
 ### Git (.gitconfig)
 
@@ -472,6 +554,14 @@ Ctrl+a ]        # ペースト
   - `git ll`: グラフ付きログ（詳細版）
   - `git la`: グラフ付きログ（完全版）
 - **GitHub CLI統合**: 認証情報ヘルパー
+
+### AI 開発環境の設定（.claude / .codex / .gemini）
+
+各 AI CLI の設定をリポジトリで一元管理しています。`install.sh` は CLI の実行時データ（履歴・セッション等）を巻き込まないよう、ディレクトリ全体ではなく必要なエントリのみを個別にシンボリックリンクします。
+
+- **`.claude/`**: Claude Code のグローバル指示（`CLAUDE.md`）、`settings.json`、カスタムサブエージェント（`agents/`）、スラッシュコマンド（`commands/`）、フック（`hooks/`）、スキル（`skills/`）、ワークフロー / セキュリティルール（`rules/`）、自作 MCP サーバー（`mcp-servers/`）、ステータスライン
+- **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック、`config.toml` / `config.json`
+- **`.gemini/`**: Gemini CLI の指示（`GEMINI.md`）と `settings.json`
 
 ## 🔧 ユーティリティスクリプト
 
@@ -496,6 +586,7 @@ tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペ
 # - Claude Code
 # - Codex
 # - Gemini CLI
+# - GitHub Copilot CLI
 ```
 
 ## 📝 カスタマイズ
@@ -592,7 +683,9 @@ nvim  # lazy.nvimが自動的に再インストールされる
 ### AI Tools
 
 - [Claude Code](https://docs.anthropic.com/claude-code)
+- [Codex](https://github.com/openai/codex)
 - [Gemini API](https://ai.google.dev/)
+- [GitHub Copilot CLI](https://github.com/features/copilot)
 
 ## 📄 ライセンス
 
