@@ -2,7 +2,7 @@
 
 ## Model Selection Strategy
 
-**Fable 5** (main session model, see `settings.json`):
+**Opus 4.8** (main session model, see `settings.json`):
 
 - Main development work
 - Orchestrating multi-agent workflows

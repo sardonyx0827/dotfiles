@@ -1,75 +1,75 @@
 # CLAUDE.md
 
-## 言語ポリシー
+## Language Policy
 
-- すべての対話 / 出力は **日本語** で行うこと
-- **Git のコミットメッセージは英語**で記述すること(`@~/.claude/rules/git-workflow.md` の規約に従う)
+- All interactions / outputs must be in **Japanese**
+- **Git commit messages must be written in English** (follow the conventions in `@~/.claude/rules/git-workflow.md`)
 
-## ブラウザ操作
+## Browser Operations
 
-- Web コンテンツの取得/操作は claude-in-chrome を使うこと
-- fetch / curl が必要な場合は理由を説明してから実行すること
+- Use claude-in-chrome for fetching/operating web content
+- If fetch / curl is needed, explain the reason before executing
 
-## Git 運用
+## Git Operations
 
-push / commit / PR作成 の指示を受けた場合は `@~/.claude/rules/git-workflow.md` の Command Triggers に従うこと
+When instructed to push / commit / create a PR, follow the Command Triggers in `@~/.claude/rules/git-workflow.md`
 
-## 実行レイヤーの選択 (Single / SubAgents / AgentTeams)
+## Execution Layer Selection (Single / SubAgents / AgentTeams)
 
-タスクを受け取ったら、以下の順で判定し、最初に当てはまるレイヤーで実行すること。
+When receiving a task, evaluate in the following order and execute at the first matching layer.
 
-### 1. Single (メインエージェント自身で実行) - デフォルト
+### 1. Single (executed by the main agent itself) - Default
 
-以下のいずれかに該当する場合は SubAgent / AgentTeam に委譲せず、自分で順次実行する。
+If any of the following apply, execute sequentially without delegating to SubAgent / AgentTeam:
 
-- 直前の対話文脈や未確定の前提に強く依存する作業
-- 同一ファイルを連続編集する、または編集箇所が前ステップの結果に依存する
-- 状態遷移が逐次的で、途中結果のレビュー・ユーザー確認を挟みたい
-- 1〜2ファイル程度の小規模変更、対話的なデバッグ、軽微な修正
+- Work that strongly depends on the immediately preceding conversation context or unconfirmed premises
+- Continuously editing the same file, or where edit locations depend on the result of the previous step
+- State transitions are sequential and intermediate results need review / user confirmation
+- Small-scale changes of 1–2 files, interactive debugging, minor fixes
 
-### 2. SubAgents (Agent ツールで並列起動)
+### 2. SubAgents (launched in parallel with the Agent tool)
 
-以下のいずれかに該当する場合は SubAgents を積極的に並列起動する(目安は同時 2〜4)。
+If any of the following apply, actively launch SubAgents in parallel (guideline: 2–4 simultaneously):
 
-- コンテキストを汚染したくない大量探索(Glob/Grep、ログ走査、コード全体把握)
-- 互いに独立して走れる並列タスク(複数案生成、複数観点レビュー、テスト生成)
-- Writer / Reviewer のように役割分離で品質が上がる作業
+- Large-scale exploration where you don't want to pollute the context (Glob/Grep, log scanning, understanding the entire codebase)
+- Parallel tasks that can run independently of each other (generating multiple proposals, multi-perspective reviews, test generation)
+- Work where quality improves through role separation, such as Writer / Reviewer
 
-呼び出し時の規約:
+Conventions when calling:
 
-- 各 SubAgents には「ファイルパス」「返してほしい成果物の形式」を明示
-- 返却は要約(差分・結論)のみ。生ログをメインに戻させない
-- 同じファイルを書き込む SubAgents を同時起動しない(競合上書きを避ける)
+- Specify the "file path" and "format of the artifact to return" for each SubAgent
+- Return only a summary (diff / conclusion). Do not return raw logs to the main agent
+- Do not launch SubAgents that write to the same file simultaneously (to avoid conflicting overwrites)
 
 ### 3. AgentTeams (tmux)
 
-並列処理可能かつ、SubAgents ではコンテキスト維持が困難なSingleとSubAgentsの中間ケースに限定して使う。
-起動条件(いずれかを満たすとき):
+Use only for intermediate cases between Single and SubAgents where parallel processing is possible but context maintenance is difficult with SubAgents alone.
+Launch conditions (when any of the following are met):
 
-- ユーザーから明示的に AgentTeam / team / tmux 起動の指示があった
-- FE / BE / テスト など複数レイヤーをまたぐ変更で、teammate 間で相談しながら進めたい
-- 競合仮説のデバッグなど、独立した teammate に互いの仮説を反証させたい
-- 10 分以上かかる大規模リファクタや横断分析
+- The user has explicitly instructed AgentTeam / team / tmux launch
+- Changes span multiple layers such as FE / BE / tests, and teammates need to consult with each other
+- Debugging competing hypotheses, where independent teammates refute each other's hypotheses
+- Large-scale refactoring or cross-cutting analysis that takes more than 10 minutes
 
-## モデル指定指針(Single / SubAgent / AgentTeam 共通)
+## Model Selection Guidelines (Common to Single / SubAgent / AgentTeam)
 
-- メインセッション: Fable 5(`settings.json` の `model` で指定)
-- Haiku 4.5: Glob/Grep、定型抽出、ドキュメント整合チェックなど推論不要な作業
-- Sonnet 4.6: 実装 / デバッグ / レビュー(SubAgent のデフォルト)
-- Opus 4.8: 設計 / 大規模リファクタ / 全体分析 / team lead
-- 失敗時は一段上のモデルで再試行
+- Main session: Opus 4.8 (specified via `model` in `settings.json`)
+- Haiku 4.5: Tasks requiring no reasoning such as Glob/Grep, template extraction, document consistency checks
+- Sonnet 4.6: Implementation / debugging / review (default for SubAgents)
+- Opus 4.8: Design / large-scale refactoring / overall analysis / team lead
+- On failure, retry with the next higher model
 
-## 開発ワークフロー
+## Development Workflow
 
-- 新機能・バグ修正・リファクタは **tdd-workflow** スキルに従うこと(テストファースト、カバレッジ 80%+)
-- コード作成・変更後は **code-reviewer** エージェント(Go は **go-reviewer**)でレビューすること
-- コードパターン/スタイルの詳細は常時ロードせず、該当スキル(coding-standards / backend-patterns / frontend-patterns 等)に従うこと
+- For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first, 80%+ coverage)
+- After writing or modifying code, review with the **code-reviewer** agent (for Go, use **go-reviewer**)
+- Do not always load code pattern/style details; instead follow the relevant skill (coding-standards / backend-patterns / frontend-patterns, etc.)
 
-## セーフティガード
+## Safety Guards
 
-- 破壊的操作(rm -rf / force push / 本番DB操作等)は実行前に必ず確認
-- 個人情報・秘密情報はブラウザ自動化の対象外
+- Always confirm before executing destructive operations (rm -rf / force push / production DB operations, etc.)
+- Personal information and secrets are excluded from browser automation
 
-## 外部エージェント連携
+## External Agent Integration
 
-仕様検討や設計、バグ修正、テストコード作成を行う場合は **codex-consultation** スキルに従うこと。
+When working on specification review, design, bug fixes, or test code creation, follow the **codex-consultation** skill.
