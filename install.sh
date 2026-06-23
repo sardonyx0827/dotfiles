@@ -513,17 +513,71 @@ create_symlinks() {
       link_entry "$DOTFILES_DIR/.claude/$entry" "$HOME/.claude/$entry"
   done
 
-  # Codex config: symlink individual entries
+  # Codex config.
+  # IMPORTANT: Codex IGNORES symlinks for its directory-scanned config
+  # (skills/, agents/) — both symlinked dirs and symlinked files are
+  # skipped (openai/codex#3637, #4383, #5040, #16452). Those MUST be real files,
+  # so they are COPIED. Single files opened by an exact path (AGENTS.md,
+  # config.toml, hooks.json) and the hooks dir (scripts run by absolute path)
+  # follow symlinks fine, so they stay symlinked.
   mkdir -p "$HOME/.codex"
-  local codex_entries=(
+
+  # Helper: copy a repo entry into a destination, backing up reals/symlinks.
+  copy_entry() {
+    local src="$1"
+    local dest="$2"
+    [ -e "$src" ] || return
+    backup_if_real "$dest" # moves a real path to backup, or removes a symlink
+    rm -rf "$dest"         # clear anything backup_if_real left (defensive)
+    cp -R "$src" "$dest"
+    print_success "Copied $(basename "$dest")"
+  }
+
+  local codex_link_entries=(
     "AGENTS.md"
-    "config.json"
     "config.toml"
-    "agents"
+    "hooks"
+    "hooks.json"
   )
-  for entry in "${codex_entries[@]}"; do
+  for entry in "${codex_link_entries[@]}"; do
     [ -e "$DOTFILES_DIR/.codex/$entry" ] &&
       link_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
+  done
+
+  # Scanned by Codex -> must be real files (copied, not symlinked)
+  local codex_copy_entries=(
+    "agents"
+  )
+  for entry in "${codex_copy_entries[@]}"; do
+    copy_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
+  done
+
+  # Codex skills: share curated, runtime-agnostic skills from .claude/skills.
+  # Copied (not symlinked) so Codex's skill scan picks them up; Codex's managed
+  # .system skills are left untouched.
+  mkdir -p "$HOME/.codex/skills"
+  local codex_skills=(
+    "coding-standards"
+    "backend-patterns"
+    "frontend-patterns"
+    "golang-patterns"
+    "golang-testing"
+    "typescript-testing"
+    "tdd-workflow"
+    "security-review"
+    "docker-patterns"
+    "github-actions-ci"
+    "postgres-patterns"
+    "clickhouse-io"
+    "release-workflow"
+    "migration-playbook"
+    "python-scripting-patterns"
+    "shell-scripting-patterns"
+    "verification-loop"
+    "eval-harness"
+  )
+  for skill in "${codex_skills[@]}"; do
+    copy_entry "$DOTFILES_DIR/.claude/skills/$skill" "$HOME/.codex/skills/$skill"
   done
 
   # Gemini config: symlink individual entries

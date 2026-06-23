@@ -105,9 +105,10 @@
 │   └── statusline-command.sh       # ステータスライン
 ├── .codex/                         # Codex設定
 │   ├── agents/                     # Codexエージェント定義 (.toml)
-│   ├── hooks/                      # Codexフック
+│   ├── hooks/                      # Codexフック (+ hooks.json)
+│   ├── skills/                     # Codexスキル (.system + 厳選共有)
 │   ├── AGENTS.md                   # Codex向け指示
-│   └── config.toml / config.json   # Codex設定
+│   └── config.toml                 # Codex設定
 ├── .config/                        # アプリケーション設定
 │   ├── Antigravity/                # Antigravity (settings / keybindings)
 │   ├── Code/                       # VS Code (settings / keybindings)
@@ -339,7 +340,7 @@ done
 
 # Codex設定
 mkdir -p ~/.codex
-for e in AGENTS.md config.json config.toml agents; do
+for e in AGENTS.md config.toml hooks hooks.json; do
   ln -sf ~/dotfiles/.codex/$e ~/.codex/$e
 done
 
@@ -560,7 +561,7 @@ Ctrl+a ]        # ペースト
 各 AI CLI の設定をリポジトリで一元管理しています。`install.sh` は CLI の実行時データ（履歴・セッション等）を巻き込まないよう、ディレクトリ全体ではなく必要なエントリのみを個別にシンボリックリンクします。
 
 - **`.claude/`**: Claude Code のグローバル指示（`CLAUDE.md`）、`settings.json`、カスタムサブエージェント（`agents/`）、スラッシュコマンド（`commands/`）、フック（`hooks/`）、スキル（`skills/`）、ワークフロー / セキュリティルール（`rules/`）、自作 MCP サーバー（`mcp-servers/`）、ステータスライン
-- **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック、`config.toml` / `config.json`
+- **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック（`hooks/` + `hooks.json`）、スキル（`skills/` — 組込み `.system` と `.claude/skills` から厳選した共有スキル）、`config.toml`
 - **`.gemini/`**: Gemini CLI の指示（`GEMINI.md`）と `settings.json`
 
 ## 🔧 ユーティリティスクリプト

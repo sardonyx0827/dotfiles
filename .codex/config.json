@@ -1,9 +1,0 @@
-{
-  "model": "gpt-5",
-  "approvalMode": "full-auto",
-  "history": {
-    "maxSize": 1000,
-    "saveHistory": true,
-    "sensitivePatterns": []
-  }
-}

@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "python '/Users/sardonyx0827/.codex/hooks/bash-review.py'"
+          },
+          {
+            "type": "command",
+            "command": "bash '/Users/sardonyx0827/.codex/hooks/git-push-review.sh'"
           }
         ]
       }
@@ -22,6 +26,16 @@
           {
             "type": "command",
             "command": "'/Users/sardonyx0827/.codex/hooks/lint.sh'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/sardonyx0827/.codex/hooks/stop-audit.sh'"
           }
         ]
       }
