@@ -1,22 +1,22 @@
 # AGENTS.md
 
-> Claude Code の `~/.claude/CLAUDE.md` を正とし、Codex 向けに整合させた指示書。
-> コーディング規約・テスト・セキュリティ等の詳細はインライン化せず、導入済みスキルに委譲する。
+> An instruction set treating Claude Code's `~/.claude/CLAUDE.md` as the source of truth, aligned for Codex.
+> Details such as coding standards, testing, and security are not inlined here but delegated to the installed skills.
 
-## 1. 言語ポリシー（必須）
+## 1. Language Policy (Required)
 
-- すべての対話・出力は **日本語** で行うこと
-- **Git のコミットメッセージは英語**で記述すること（Conventional Commits に従う）
+- All interactions and outputs must be in **Japanese**
+- **Git commit messages must be written in English** (follow Conventional Commits)
 
-## 2. Web / ブラウザ操作
+## 2. Web / Browser Operations
 
-- Web の検索・取得は Codex の Web 検索機能（`web_search`）を優先して用いること
-- fetch / curl が必要な場合は理由を説明してから実行すること
-- 個人情報・秘密情報は外部送信の対象にしないこと
+- Prefer Codex's web search feature (`web_search`) for searching and fetching web content
+- If fetch / curl is needed, explain the reason before executing
+- Do not send personal information or secrets to external services
 
-## 3. Git ワークフロー
+## 3. Git Workflow
 
-### コミットメッセージのフォーマット
+### Commit Message Format
 
 ```
 <type>: <description>
@@ -24,112 +24,112 @@
 <optional body>
 ```
 
-- 英語で記述し、Conventional Commits に従うこと
-- 要約は約50文字、必要に応じて本文を追加する
-- 種別: feat, fix, refactor, docs, test, chore, perf, ci
+- Written in English, following Conventional Commits
+- Summary ~50 characters, add a body if needed
+- Types: feat, fix, refactor, docs, test, chore, perf, ci
 
-### コマンドトリガー
+### Command Triggers
 
-#### push を要求された場合（例: "push して", "プッシュして", "push this"）
+#### When a push is requested (e.g. "push して", "プッシュして", "push this")
 
-1. 変更内容を確認する（`git status` / `git diff`）
-2. ファイルをステージする（`git add`） — すでにステージ済みの場合はスキップ
-3. 上記のコミットメッセージ形式に従ってコミットする
-4. リモートへプッシュする（デフォルトブランチへの直接プッシュが不適切な場合は PR 作成を提案する）
+1. Review the changes (`git status` / `git diff`)
+2. Stage files (`git add`) — skip if already staged
+3. Commit following the commit message format above
+4. Push to remote (propose PR creation if direct push to the default branch is inappropriate)
 
-#### commit を要求された場合（例: "commit して", "コミットして", "commit this"）
+#### When a commit is requested (e.g. "commit して", "コミットして", "commit this")
 
-1. 変更内容を確認する（`git status` / `git diff`）
-2. ファイルをステージする（`git add`） — すでにステージ済みの場合はスキップ
-3. 上記のコミットメッセージ形式に従ってコミットする
+1. Review the changes (`git status` / `git diff`)
+2. Stage files (`git add`) — skip if already staged
+3. Commit following the commit message format above
 
-#### PR 作成を要求された場合（例: "pr作成して", "PR作って", "create a PR"）
+#### When PR creation is requested (e.g. "pr作成して", "PR作って", "create a PR")
 
-1. 現在の変更内容とブランチ構成を確認する
-2. 現在のブランチから新しいブランチを作成する（命名規則: `fix/`, `feat/`, `style/` のプレフィックス）
-3. 上記のコミットメッセージ形式に従ってコミットする
-4. 新しいブランチをリモートへプッシュする
-5. 元のブランチに対してプルリクエストを作成する（下記の PR 品質基準に従うこと）
-6. 元のブランチに戻る
-7. マージ後に作業ブランチの削除を提案する
+1. Review the current changes and branch structure
+2. Create a new branch from the current branch (naming convention: `fix/`, `feat/`, `style/` prefix)
+3. Commit following the commit message format above
+4. Push the new branch to remote
+5. Create a pull request against the original branch (follow the PR quality standards below)
+6. Switch back to the original branch
+7. Suggest deleting the working branch after merge
 
-### プルリクエスト品質基準
+### Pull Request Quality Standards
 
-1. 最新コミットだけでなく、全コミット履歴を分析する
-2. `git diff [base-branch]...HEAD` を使用してすべての変更を確認する
-3. 日本語で包括的な PR サマリーを作成する
-4. TODO を含むテスト計画を記載する
-5. 新規ブランチの場合は `-u` フラグ付きでプッシュする
-6. デフォルトブランチへの直接プッシュが不適切な場合は、PR 作成を提案する
+1. Analyze the full commit history, not just the latest commit
+2. Use `git diff [base-branch]...HEAD` to review all changes
+3. Draft a comprehensive PR summary in Japanese
+4. Include a test plan with TODOs
+5. Push with the `-u` flag for new branches
+6. If direct push to the default branch is inappropriate, propose PR creation
 
-> `git push` 時は PreToolUse フック（`hooks/git-push-review.sh`）が push 対象コミットのサマリを提示してブロックするため、内容を確認してから再実行すること。
+> On `git push`, the PreToolUse hook (`hooks/git-push-review.sh`) presents a summary of the commits to be pushed and blocks the operation, so review the contents before re-running.
 
-## 4. 実行レイヤの選択（Single / SubAgents）
+## 4. Execution Layer Selection (Single / SubAgents)
 
-タスクを受けたら次の順で評価し、最初に合致したレイヤで実行する。
+When a task is received, evaluate in the following order and execute at the first matching layer.
 
-### 1. Single（メインエージェント自身で実行） — デフォルト
+### 1. Single (executed by the main agent itself) — Default
 
-以下のいずれかに該当する場合は SubAgent に委譲せず逐次実行する:
+If any of the following apply, execute sequentially without delegating to SubAgents:
 
-- 直前の会話文脈や未確定の前提に強く依存する作業
-- 同一ファイルを継続編集する、または編集箇所が前ステップの結果に依存する
-- 状態遷移が逐次的で、中間結果のレビュー／ユーザー確認が必要
-- 1〜2ファイルの小規模変更、対話的デバッグ、軽微な修正
+- Work that strongly depends on the immediately preceding conversation context or unconfirmed premises
+- Continuously editing the same file, or where edit locations depend on the result of the previous step
+- State transitions are sequential and intermediate results need review / user confirmation
+- Small-scale changes of 1–2 files, interactive debugging, minor fixes
 
-### 2. SubAgents（Codex のエージェント機能で並列起動）
+### 2. SubAgents (launched in parallel via Codex's agent feature)
 
-以下のいずれかに該当する場合は SubAgent を積極的に並列起動する（`config.toml` の `[agents]` 設定に従う）:
+If any of the following apply, actively launch SubAgents in parallel (follow the `[agents]` settings in `config.toml`):
 
-- コンテキストを汚したくない大規模探索（Grep/検索、ログ走査、コードベース全体把握）
-- 互いに独立して実行できる並列タスク（複数案生成、多視点レビュー、テスト生成）
-- Writer / Reviewer のような役割分担で品質が上がる作業
+- Large-scale exploration where you don't want to pollute the context (Grep/search, log scanning, understanding the entire codebase)
+- Parallel tasks that can run independently of each other (generating multiple proposals, multi-perspective reviews, test generation)
+- Work where quality improves through role separation, such as Writer / Reviewer
 
-呼び出し時の規約:
+Conventions when calling:
 
-- 各 SubAgent に「対象ファイルパス」と「返却する成果物の形式」を明示する
-- 返すのは要約（差分／結論）のみ。生ログをメインへ返さない
-- 同一ファイルへ同時に書き込む SubAgent を起動しない（上書き競合の回避）
+- Specify the "target file path" and "format of the artifact to return" for each SubAgent
+- Return only a summary (diff / conclusion). Do not return raw logs to the main agent
+- Do not launch SubAgents that write to the same file simultaneously (to avoid conflicting overwrites)
 
-> Codex には Claude のような AgentTeam（tmux）レイヤは無い。並列処理は SubAgents で行う。
+> Codex does not have an AgentTeam (tmux) layer like Claude. Parallel processing is done with SubAgents.
 
-## 5. モデル選択ガイドライン
+## 5. Model Selection Guidelines
 
-- メインセッション: `config.toml` の `model`（既定: gpt-5.5）
-- 推論強度（`model_reasoning_effort`）: Grep/検索・テンプレート抽出など推論不要の軽作業は低め、設計・大規模リファクタ・全体分析は高めに調整する
-- SubAgents: `config.toml` の `[agents]`（`max_threads` / `max_depth`）に従う
-- 失敗時は推論強度を一段上げて再試行する
+- Main session: `model` in `config.toml` (default: gpt-5.5)
+- Reasoning effort (`model_reasoning_effort`): lower it for light work that needs no reasoning, such as Grep/search and template extraction; raise it for design, large-scale refactoring, and overall analysis
+- SubAgents: follow `[agents]` in `config.toml` (`max_threads` / `max_depth`)
+- On failure, raise the reasoning effort by one level and retry
 
-## 6. 開発ワークフロー
+## 6. Development Workflow
 
-- 新機能・バグ修正・リファクタは **tdd-workflow** スキルに従う（テストファースト、カバレッジ80%以上）
-- コードの記述・修正後は **code-reviewer** エージェント（Go は **go-reviewer**）でレビューする
-- コーディング規約やパターンの詳細を常時インライン展開せず、該当スキルに従う
-  （coding-standards / backend-patterns / frontend-patterns / golang-patterns / docker-patterns / postgres-patterns 等）
-- バグ調査・テスト失敗・不可解な挙動の調査時は体系的なデバッグ手順で原因を切り分ける
+- For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first, 80%+ coverage)
+- After writing or modifying code, review with the **code-reviewer** agent (for Go, use **go-reviewer**)
+- Do not constantly inline the details of coding standards or patterns; instead follow the relevant skill
+  (coding-standards / backend-patterns / frontend-patterns / golang-patterns / docker-patterns / postgres-patterns, etc.)
+- When investigating bugs, test failures, or unexplained behavior, isolate the cause with a systematic debugging procedure
 
-## 7. セーフティガード
+## 7. Safety Guards
 
-- 破壊的操作（`rm -rf` / force push / 本番DB操作 等）は実行前に必ずユーザーへ確認すること
-- ファイル編集・依存追加・外部通信はプロジェクトの既定ルールに従うこと
-- 個人情報・秘密情報はブラウザ自動化・外部送信の対象から除外すること
+- Always confirm with the user before executing destructive operations (`rm -rf` / force push / production DB operations, etc.)
+- Follow the project's default rules for file edits, dependency additions, and external communication
+- Exclude personal information and secrets from browser automation and external transmission
 
-## 8. セキュリティ
+## 8. Security
 
-コミット前ゲート（最低限）:
+Pre-commit gate (at minimum):
 
-- [ ] ハードコードされた秘密情報がない（API キー・パスワード・トークン）
-- [ ] すべてのユーザー入力が検証されている
-- [ ] パラメータ化クエリのみ使用（SQL インジェクション防止）
-- [ ] エラーメッセージ・ログが機密情報を漏洩しない
+- [ ] No hardcoded secrets (API keys, passwords, tokens)
+- [ ] All user inputs are validated
+- [ ] Parameterized queries only (SQL injection prevention)
+- [ ] Error messages and logs don't leak sensitive data
 
-認証・ユーザー入力処理・秘密情報・API エンドポイント・決済・ファイルアップロードの実装時は、
-完全なチェックリストと脆弱性パターンを **security-review** スキルに従って確認すること。
+When implementing authentication, user input handling, secrets, API endpoints, payments, or file uploads,
+verify against the full checklist and vulnerability patterns by following the **security-review** skill.
 
-セキュリティ問題を発見した場合:
+If a security issue is found:
 
-1. 直ちに停止する
-2. 根本原因を分析する
-3. 続行前に CRITICAL を修正する
-4. 露出した秘密情報をローテーションする
-5. コードベース全体を類似問題についてレビューする
+1. Stop immediately
+2. Analyze the root cause
+3. Fix CRITICAL issues before continuing
+4. Rotate any exposed secrets
+5. Review the entire codebase for similar issues
