@@ -240,16 +240,6 @@ export OLLAMA_KEEP_ALIVE="-1"
 function update_ai_tools() {
   ~/work/github/dotfiles/update_ai_tools.sh
 }
-## gemini cli
-alias g='gemini'
-alias push='gemini -y -p "pushして"'
-alias commit_message='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
-alias commit='gemini -y -p "commitして"'
-alias pull_request='gemini -y -p "pr作成して"'
-alias explain='gemini -y -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
-function translate() {
-  gemini -y -p  "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
-}
 
 ## Claude CLI
 alias c='claude'
@@ -260,6 +250,17 @@ alias cx='codex'
 alias cop='copilot'
 ## Gemini CLI
 alias ge='gemini'
+alias g='gemini'
+alias push='gemini -y -p "pushして"'
+alias commit_message='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
+alias commit='gemini -y -p "commitして"'
+alias pull_request='gemini -y -p "pr作成して"'
+alias explain='gemini -y -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
+function translate() {
+  gemini -y -p  "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
+}
+## Gemma
+alias gemma='ollama run gemma4:e4b'
 
 ### use claude commands
 function mc() {
