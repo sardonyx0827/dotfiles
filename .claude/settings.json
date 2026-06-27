@@ -222,7 +222,7 @@
   },
   "effortLevel": "xhigh",
   "autoUpdatesChannel": "latest",
-  "tui": "fullscreen",
+  "tui": "default",
   "autoMemoryEnabled": false,
   "skipWorkflowUsageWarning": true,
   "editorMode": "normal",
