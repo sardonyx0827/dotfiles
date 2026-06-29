@@ -53,6 +53,9 @@ vim.keymap.set("n", "<leader>cb", "<cmd>%bdelete<cr>", { noremap = true, silent 
 -- change directory to current file
 vim.keymap.set("n", "<leader>cd", ":cd %:h<CR>", { desc = "change directory to current file" })
 vim.keymap.set("n", "<leader>cu", ":cd ..<CR>", { desc = "change up directory" })
+-- move to next bugger
+vim.keymap.set('n', 'gt', ':bnext<CR>', { noremap = true, silent = true })
+vim.keymap.set('n', 'gT', ':bprev<CR>', { noremap = true, silent = true })
 
 -- move cursor in insert mode
 -- allow <Left>/<Right> to wrap across line boundaries in insert mode
