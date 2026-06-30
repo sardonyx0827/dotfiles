@@ -12,6 +12,10 @@
 --
 -- The UI never invokes a tool itself: `opts.start(tool, done)` is called for
 -- each tab and is expected to kick off the async job and call done(ok,lines,err).
+--
+-- open_report(opts) is the other driver: a single result streamed into a real
+-- vertical split on the right (not a float), with wrap toggling, for long prose
+-- reports you want to keep open and scroll alongside the source buffer.
 ---------------------------------------------------------
 local M = {}
 
@@ -427,6 +431,99 @@ function M.run_multi(opts)
       end
     end)
   end
+end
+
+--- Open a single AI result in a vertical split on the right of the current
+--- window and stream one async job's output into it. Unlike run_multi (a
+--- floating, multi-tool comparison), this is a real window: it stays put,
+--- scrolls, and wraps long lines so prose reports stay readable. `tw` toggles
+--- wrap; `y` yanks the whole report; `q` closes it (cancelling a pending job).
+--- @param opts table {
+---   name = string|nil,         -- buffer name (shown in the statusline)
+---   filetype = string|nil,     -- ft for the result buffer
+---   winbar = string|nil,       -- header/help line pinned above the buffer
+---   wrap = boolean|nil,        -- initial wrap state (default true)
+---   copy_notify = string|nil,  -- notify text on yank
+---   start = fun(done),         -- start the job; done(ok, lines, err)
+--- }
+--- @return table { win, buf, close }
+function M.open_report(opts)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].filetype = opts.filetype or ""
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "[checking buffer...]" })
+  vim.bo[buf].modifiable = false
+  pcall(vim.api.nvim_buf_set_name, buf, opts.name or "[AI Report]")
+
+  -- Open to the right of the current window and show our buffer there.
+  vim.cmd("rightbelow vsplit")
+  local win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(win, buf)
+  pcall(vim.api.nvim_win_set_width, win, math.max(40, math.floor(vim.o.columns * 0.4)))
+
+  vim.wo[win].wrap = opts.wrap ~= false
+  vim.wo[win].linebreak = true
+  vim.wo[win].breakindent = true
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].signcolumn = "no"
+  vim.wo[win].spell = false
+  if opts.winbar then
+    vim.wo[win].winbar = opts.winbar
+  end
+
+  local state = { closed = false, job = nil, status = "pending" }
+  local group = vim.api.nvim_create_augroup("AiReport_" .. win, { clear = true })
+
+  local function close()
+    if state.closed then return end
+    state.closed = true
+    pcall(vim.api.nvim_del_augroup_by_id, group)
+    if state.status == "pending" and state.job and state.job > 0 then
+      pcall(vim.fn.jobstop, state.job)
+    end
+    close_window(win) -- buffer is bufhidden=wipe, so it goes with the window
+  end
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = group,
+    pattern = tostring(win),
+    callback = close,
+  })
+
+  local function yank()
+    copy_to_clipboard(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
+    vim.notify(opts.copy_notify or "Copied to clipboard.")
+  end
+
+  local function toggle_wrap()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.wo[win].wrap = not vim.wo[win].wrap
+      vim.notify("wrap " .. (vim.wo[win].wrap and "on" or "off"))
+    end
+  end
+
+  vim.keymap.set("n", "q", close, { buffer = buf, desc = "Close report" })
+  vim.keymap.set("n", "y", yank, { buffer = buf, desc = "Yank report to clipboard" })
+  vim.keymap.set("n", "tw", toggle_wrap, { buffer = buf, desc = "Toggle line wrap" })
+
+  -- Stream the job's result into the buffer.
+  state.job = opts.start(function(ok, lines, err)
+    if state.closed or not vim.api.nvim_buf_is_valid(buf) then return end
+    vim.bo[buf].modifiable = true
+    if ok and lines and #lines > 0 then
+      state.status = "done"
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    else
+      state.status = "failed"
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+        string.format("[check failed: %s]", err or "unknown error"),
+      })
+    end
+    vim.bo[buf].modifiable = false
+  end)
+
+  return { win = win, buf = buf, close = close }
 end
 
 return M

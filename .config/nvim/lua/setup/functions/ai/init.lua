@@ -79,6 +79,61 @@ map("n", "<leader><leader>a", copy_all_lsp_diagnostics,
   { desc = "Copy all LSP diagnostics to clipboard", noremap = true })
 
 ---------------------------------------------------------
+-- Check the current buffer for typos / syntax errors (claude -> gemini)
+---------------------------------------------------------
+local CHECK_MODELS = { claude = "sonnet", gemini = "gemini-flash-lite-latest" }
+
+local function check_current_buffer()
+  local buf = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  if #lines == 0 or (#lines == 1 and lines[1] == "") then
+    vim.notify("Buffer is empty.", vim.log.levels.WARN)
+    return
+  end
+
+  local filetype = vim.bo[buf].filetype
+  local lang = filetype ~= "" and filetype or "plain text"
+  local filepath = vim.fn.expand("%:.")
+  if filepath == "" then filepath = "[No Name]" end
+  local system = prompt.check_buffer_system(lang, filepath)
+  local input = prompt.number_lines(lines)
+
+  vim.notify("Checking buffer with Claude...", vim.log.levels.INFO)
+
+  -- Report opens in a vertical split on the right with wrap on (`tw` toggles it).
+  ui.open_report({
+    name = "[AI Buffer Check]",
+    filetype = "markdown",
+    winbar = " AI Buffer Check    y:yank  tw:wrap  q:close ",
+    copy_notify = "Buffer check copied to clipboard.",
+    start = function(done)
+      -- claude first; on error fall back to gemini (see backend.run_with_fallback).
+      return backend.run_with_fallback({
+        { tool = "claude", prompt = system, input = input, model = CHECK_MODELS.claude },
+        { tool = "gemini", prompt = system, input = input, model = CHECK_MODELS.gemini },
+      }, function(ok, result, err, tool)
+        if not ok then
+          done(false, {}, err)
+          return
+        end
+        if tool ~= "claude" then
+          vim.notify("Claude failed; fell back to " .. tool .. ".", vim.log.levels.WARN)
+        end
+        -- Prepend a source line so it is clear which tool/model answered.
+        local out = {
+          string.format("> Checked with **%s** (%s)", tool, CHECK_MODELS[tool] or "default"),
+          "",
+        }
+        vim.list_extend(out, result)
+        done(true, out, nil)
+      end)
+    end,
+  })
+end
+map("n", "<leader><leader>k", check_current_buffer,
+  { desc = "Check current buffer for typos/syntax errors (AI)", noremap = true })
+
+---------------------------------------------------------
 -- Copy file + line reference from a visual selection
 ---------------------------------------------------------
 local function get_file_line_info_visual(start_line, end_line)
@@ -183,7 +238,7 @@ map("n", "<leader>cx", function() generate_commit_message("codex") end,
 map("n", "<leader>cg", function() generate_commit_message("gemini") end,
   { desc = "Generate commit message with Gemini", noremap = true })
 map("n", "<leader>cl", function() generate_commit_message("all") end,
-  { desc = "Generate commit message with All (Claude/Codex)", noremap = true })
+  { desc = "Generate commit message with All (Claude/Codex/Copilot)", noremap = true })
 map("n", "<leader>co", function() generate_commit_message("gemma") end,
   { desc = "Generate commit message with Ollama (Gemma)", noremap = true })
 
@@ -321,6 +376,6 @@ map("x", "<C-g>", replace_mapping("gemini"),
 map("x", "<C-p>", replace_mapping("copilot"),
   { desc = "Ask AI(Copilot) and replace selection", noremap = true, silent = true })
 map("x", "<C-l>", replace_mapping("all"),
-  { desc = "Ask AI(All: Claude/Codex/Gemini) and replace selection", noremap = true, silent = true })
+  { desc = "Ask AI(All: Claude/Codex/Gemini/Copilot) and replace selection", noremap = true, silent = true })
 map("x", "<C-o>", replace_mapping("gemma"),
   { desc = "Ask AI(Gemma) and replace selection", noremap = true, silent = true })

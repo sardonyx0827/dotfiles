@@ -147,4 +147,34 @@ function M.run(spec, done)
   return run_cli(spec.tool, model, spec.prompt, spec.input, spec.skip_git_check, done)
 end
 
+--- Run a request with ordered fallbacks: try each spec in turn, stopping at the
+--- first success. On success `done` fires with that spec's tool; if every spec
+--- fails it fires with the last error and the last tool tried.
+---
+--- The returned job id is the FIRST attempt's job (what the UI uses to cancel).
+--- A fallback started after the first failure is not exposed for cancellation,
+--- which only matters in the brief window between a failure and the next result.
+--- @param specs table[] list of run specs (see M.run), tried in order
+--- @param done fun(ok: boolean, lines: string[], err: string|nil, tool: string|nil)
+--- @return integer|nil job_id of the first attempt
+function M.run_with_fallback(specs, done)
+  if not specs or #specs == 0 then
+    done(false, {}, "no tools specified", nil)
+    return nil
+  end
+  local function attempt(i)
+    local spec = specs[i]
+    return M.run(spec, function(ok, lines, err)
+      if ok then
+        done(true, lines, nil, spec.tool)
+      elseif specs[i + 1] then
+        attempt(i + 1)
+      else
+        done(false, {}, err, spec.tool)
+      end
+    end)
+  end
+  return attempt(1)
+end
+
 return M

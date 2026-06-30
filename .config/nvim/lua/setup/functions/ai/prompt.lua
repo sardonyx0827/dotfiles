@@ -40,6 +40,42 @@ function M.format_diagnostics(diags, filepath)
   return lines
 end
 
+--- Prefix each line with its 1-based line number and a "│" separator so an AI
+--- reviewer can cite accurate line numbers. The prefix is NOT valid source; the
+--- accompanying prompt tells the model to ignore it. The caller's list is not
+--- mutated.
+--- @param lines string[]
+--- @return string numbered lines joined by "\n"
+function M.number_lines(lines)
+  local width = #tostring(#lines)
+  local fmt = "%" .. width .. "d │ %s"
+  local out = {}
+  for i, line in ipairs(lines) do
+    out[i] = string.format(fmt, i, line)
+  end
+  return table.concat(out, "\n")
+end
+
+--- System prompt for "check the current buffer for typos / syntax errors".
+--- The buffer content is sent via stdin with M.number_lines line prefixes.
+--- @param lang string filetype (or "plain text")
+--- @param filepath string relative path, shown for context
+--- @return string
+function M.check_buffer_system(lang, filepath)
+  return string.format(
+    "You are a meticulous reviewer integrated into a Neovim editor. "
+    .. "The full contents of a %s buffer (%s) are provided via stdin. "
+    .. "Every line is prefixed with its line number and a '│' separator; "
+    .. "that prefix is NOT part of the file -- ignore it and never report it. "
+    .. "Inspect the buffer for typos, misspellings (in identifiers, comments, and "
+    .. "strings), syntax errors, and other obvious mistakes. "
+    .. "Reply in Japanese, in Markdown only, with no preamble. "
+    .. "List each issue as a bullet of the form `- L<n>: <問題の説明> -> <修正案>`, "
+    .. "ordered by line number. "
+    .. "If you find no problems, reply with exactly: `問題は見つかりませんでした。`",
+    lang, filepath)
+end
+
 --- Instruction for generating a git commit message from a diff.
 --- @return string
 function M.commit_instruction()
