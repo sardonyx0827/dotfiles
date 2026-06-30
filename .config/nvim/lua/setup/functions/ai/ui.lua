@@ -444,6 +444,8 @@ end
 ---   winbar = string|nil,       -- header/help line pinned above the buffer
 ---   wrap = boolean|nil,        -- initial wrap state (default true)
 ---   copy_notify = string|nil,  -- notify text on yank
+---   keymaps = table[]|nil,     -- extra buffer keymaps: { key, desc?, fn(ctx) }
+---                              -- ctx = { buf, win, close, status }
 ---   start = fun(done),         -- start the job; done(ok, lines, err)
 --- }
 --- @return table { win, buf, close }
@@ -506,6 +508,14 @@ function M.open_report(opts)
   vim.keymap.set("n", "q", close, { buffer = buf, desc = "Close report" })
   vim.keymap.set("n", "y", yank, { buffer = buf, desc = "Yank report to clipboard" })
   vim.keymap.set("n", "tw", toggle_wrap, { buffer = buf, desc = "Toggle line wrap" })
+
+  -- Caller-supplied keymaps. Each fn gets a context with the report handle and
+  -- the current job status so it can act only once the report is ready.
+  for _, km in ipairs(opts.keymaps or {}) do
+    vim.keymap.set("n", km.key, function()
+      km.fn({ buf = buf, win = win, close = close, status = state.status })
+    end, { buffer = buf, desc = km.desc })
+  end
 
   -- Stream the job's result into the buffer.
   state.job = opts.start(function(ok, lines, err)

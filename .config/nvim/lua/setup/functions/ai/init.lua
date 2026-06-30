@@ -82,6 +82,8 @@ map("n", "<leader><leader>a", copy_all_lsp_diagnostics,
 -- Check the current buffer for typos / syntax errors (claude -> gemini)
 ---------------------------------------------------------
 local CHECK_MODELS = { claude = "sonnet", gemini = "gemini-flash-lite-latest" }
+-- Same tiers as the check: claude first, gemini as the fallback.
+local FIX_MODELS = { claude = "sonnet", gemini = "gemini-flash-lite-latest" }
 
 local function check_current_buffer()
   local buf = vim.api.nvim_get_current_buf()
@@ -100,12 +102,116 @@ local function check_current_buffer()
 
   vim.notify("Checking buffer with Claude...", vim.log.levels.INFO)
 
+  -- Overwrite the whole checked buffer with the AI's corrected version.
+  local function apply_fix(fixed)
+    if not vim.api.nvim_buf_is_valid(buf) then
+      vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+      return false
+    end
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, fixed)
+    return true
+  end
+
+  -- `f` in the report: feed the issue list + current buffer to the AI, show the
+  -- fix as a diff against the original, and replace the buffer on accept.
+  local function start_fix(report_lines)
+    local report = vim.trim(table.concat(report_lines, "\n"))
+    if report == "" or report:find(prompt.NO_ISSUES, 1, true) then
+      vim.notify("No issues to fix.", vim.log.levels.INFO)
+      return
+    end
+
+    local fix_system = prompt.fix_buffer_system(lang, filepath)
+    -- Numbered source (same "N │" form as the check) so the model's edit ranges
+    -- line up with the issue list's L<n> references.
+    local fix_input = table.concat({
+      "## Issues found",
+      report,
+      "",
+      "## Current file content (each line: <number> │ <text>)",
+      prompt.number_lines(lines),
+    }, "\n")
+
+    vim.notify("Fixing buffer with Claude...", vim.log.levels.INFO)
+
+    ui.run_multi({
+      mode = "diff",
+      tools = { "claude" },
+      filetype = filetype,
+      original = lines,
+      footer = " y:apply fix  Y:merged  q:cancel ",
+      start = function(_, done)
+        -- claude first; on error fall back to gemini (same order as the check).
+        return backend.run_with_fallback({
+          { tool = "claude", prompt = fix_system, input = fix_input, model = FIX_MODELS.claude },
+          { tool = "gemini", prompt = fix_system, input = fix_input, model = FIX_MODELS.gemini },
+        }, function(ok, result, err, tool)
+          if not ok then
+            done(false, {}, err)
+            return
+          end
+          if tool ~= "claude" then
+            vim.notify("Claude failed; fell back to " .. tool .. ".", vim.log.levels.WARN)
+          end
+          -- The model returns only the changed regions; verify each against the
+          -- snapshot and splice locally into the full patched buffer for the diff.
+          local edits, perr = prompt.parse_edits(table.concat(result, "\n"))
+          if not edits then
+            done(false, {}, "修正の解析に失敗しました: " .. perr)
+            return
+          end
+          if #edits == 0 then
+            done(false, {}, "適用できる修正がありませんでした。")
+            return
+          end
+          local patched, applied, skipped = prompt.apply_edits(lines, edits)
+          if applied == 0 then
+            done(false, {}, "修正を安全に適用できませんでした（行が一致しません）。")
+            return
+          end
+          if #skipped > 0 then
+            vim.notify(
+              string.format("%d件の修正をスキップしました（行が一致せず安全に適用できません）。", #skipped),
+              vim.log.levels.WARN)
+          end
+          done(true, patched, nil)
+        end)
+      end,
+      on_accept = function(_, fixed)
+        if apply_fix(fixed) then
+          vim.notify("Buffer fixed with AI's response.")
+        end
+      end,
+      on_accept_merged = function(fixed)
+        if apply_fix(fixed) then
+          vim.notify("Buffer fixed with merged result.")
+        end
+      end,
+    })
+  end
+
   -- Report opens in a vertical split on the right with wrap on (`tw` toggles it).
   ui.open_report({
     name = "[AI Buffer Check]",
     filetype = "markdown",
-    winbar = " AI Buffer Check    y:yank  tw:wrap  q:close ",
+    winbar = " AI Buffer Check    y:yank  f:fix  tw:wrap  q:close ",
     copy_notify = "Buffer check copied to clipboard.",
+    keymaps = {
+      {
+        key = "f",
+        desc = "Fix issues with AI (diff + replace)",
+        fn = function(ctx)
+          if ctx.status ~= "done" then
+            vim.notify("Buffer check is not ready yet.", vim.log.levels.WARN)
+            return
+          end
+          -- Snapshot the report, close the split, then drive the diff UI.
+          local report_lines = vim.api.nvim_buf_get_lines(ctx.buf, 0, -1, false)
+          ctx.close()
+          start_fix(report_lines)
+        end,
+      },
+    },
     start = function(done)
       -- claude first; on error fall back to gemini (see backend.run_with_fallback).
       return backend.run_with_fallback({
