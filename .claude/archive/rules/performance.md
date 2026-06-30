@@ -2,22 +2,22 @@
 
 ## Model Selection Strategy
 
-**Opus 4.8** (main session model, see `settings.json`):
+**Opus** (main session model, see `settings.json`):
 
 - Main development work
 - Orchestrating multi-agent workflows
 
-**Haiku 4.5** (fast, ~3x cost savings):
+**Haiku** (fast, ~3x cost savings):
 
 - Lightweight agents with frequent invocation
 - Glob/Grep sweeps, boilerplate extraction
 - Worker agents in multi-agent systems
 
-**Sonnet 4.6** (balanced coding model):
+**Sonnet** (balanced coding model):
 
 - Implementation / debugging / review subagents (default)
 
-**Opus 4.8** (deepest reasoning):
+**Opus** (deepest reasoning):
 
 - Complex architectural decisions
 - Maximum reasoning requirements

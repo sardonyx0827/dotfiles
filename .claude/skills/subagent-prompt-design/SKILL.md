@@ -197,9 +197,9 @@ the job**, and retry one tier up on failure.
 
 | Task type                           | Model                | Examples                                                                               |
 | ----------------------------------- | -------------------- | -------------------------------------------------------------------------------------- |
-| Mechanical search / extraction      | Haiku 4.5            | Glob/grep sweeps, counting occurrences, checking for console.log, extracting imports   |
-| Implementation / debugging / review | Sonnet 4.6 (default) | Writing a function, reviewing a PR, fixing a failing test                              |
-| Design / architecture / lead role   | Opus 4.8             | Architectural decision, complex refactor plan, multi-file analysis, team-lead SubAgent |
+| Mechanical search / extraction      | Haiku            | Glob/grep sweeps, counting occurrences, checking for console.log, extracting imports   |
+| Implementation / debugging / review | Sonnet (default) | Writing a function, reviewing a PR, fixing a failing test                              |
+| Design / architecture / lead role   | Opus             | Architectural decision, complex refactor plan, multi-file analysis, team-lead SubAgent |
 
 ### Decision shortcut
 
