@@ -180,7 +180,7 @@ when reviewing their own work.
 
 ```
 ✅  Agent A (Sonnet): implement feature in feature.ts
-    Agent B (Opus): review feature.ts after A completes
+    Agent B (Sonnet): review feature.ts after A completes
 ```
 
 ### Concurrency guideline
@@ -195,8 +195,8 @@ merging costs outweigh the parallelism gains.
 Per `performance.md` and `CLAUDE.md`. Assign the **cheapest tier that can do
 the job**, and retry one tier up on failure.
 
-| Task type                           | Model                | Examples                                                                               |
-| ----------------------------------- | -------------------- | -------------------------------------------------------------------------------------- |
+| Task type                           | Model            | Examples                                                                               |
+| ----------------------------------- | ---------------- | -------------------------------------------------------------------------------------- |
 | Mechanical search / extraction      | Haiku            | Glob/grep sweeps, counting occurrences, checking for console.log, extracting imports   |
 | Implementation / debugging / review | Sonnet (default) | Writing a function, reviewing a PR, fixing a failing test                              |
 | Design / architecture / lead role   | Opus             | Architectural decision, complex refactor plan, multi-file analysis, team-lead SubAgent |

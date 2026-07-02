@@ -53,7 +53,7 @@ Launch conditions (when any of the following are met):
 
 ## Model Selection Guidelines (Common to Single / SubAgent / AgentTeam)
 
-- Main session: Opus (specified via `model` in `settings.json`)
+- Main session: Opus (CLI default; not pinned via `model` in `settings.json`)
 - Haiku: Tasks requiring no reasoning such as Glob/Grep, template extraction, document consistency checks
 - Sonnet: Implementation / debugging / review (default for SubAgents)
 - Opus: Design / large-scale refactoring / overall analysis / team lead

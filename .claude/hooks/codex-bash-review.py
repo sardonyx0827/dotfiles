@@ -35,9 +35,7 @@ os.makedirs(os.path.dirname(summary_log), exist_ok=True)
 def log_summary(decision: str, reason: str) -> None:
     """結果をサマリーログに1行で追記し、500行超えたらローテーション"""
     short_cmd = command[:80] + "..." if len(command) > 80 else command
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {decision:5s} | {short_cmd} | {
-        reason
-    }\n"
+    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {decision:5s} | {short_cmd} | {reason}\n"
     with open(summary_log, "a") as f:
         f.write(line)
     # ローテーション

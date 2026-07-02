@@ -74,7 +74,7 @@ js | jsx | ts | tsx | json | css | scss | less | html | htm | md | yaml | yml)
 py)
   # ruff (フォーマッター)
   if command -v ruff >/dev/null 2>&1; then
-    echo "  → Running Black..."
+    echo "  → Running ruff format..."
     ruff format "$FILE_PATH" 2>/dev/null && echo "  ✅ ruff completed"
     FORMATTED=true
   elif command -v autopep8 >/dev/null 2>&1; then

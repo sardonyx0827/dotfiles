@@ -15,8 +15,10 @@
   Primary pass uses the Gemini API (high throughput); if Gemini returns
   ASK/DENY, a secondary pass re-checks with Codex. Logs to
   `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
-  Helper modules: `claude-bash-review.py`, `codex-bash-review.py`,
-  `gemini-api-bash-review.py`.
+  Standalone alternative implementations (not imported by `bash-review.py`;
+  swap the settings.json command to use one): `claude-bash-review.py`
+  (Claude CLI), `codex-bash-review.py` (Codex CLI),
+  `gemini-api-bash-review.py` (Gemini API only).
 - **git-push-review** (`hooks/git-push-review.sh`, matcher: `Bash`,
   if: `Bash(git push*)`):
   Detects `git push` commands and forces a confirmation prompt

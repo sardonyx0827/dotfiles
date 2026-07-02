@@ -15,17 +15,17 @@ Located in `~/.claude/agents/`:
 
 | Agent      | Model  | Purpose                                  | When to Use             |
 | ---------- | ------ | ---------------------------------------- | ----------------------- |
-| tdd-guide  | opus   | Test-driven development (80%+ coverage)  | New features, bug fixes |
+| tdd-guide  | sonnet | Test-driven development (80%+ coverage)  | New features, bug fixes |
 | e2e-runner | sonnet | E2E testing (Agent Browser / Playwright) | Critical user flows     |
 
 ### Review & Quality
 
-| Agent             | Model | Purpose                                   | When to Use                    |
-| ----------------- | ----- | ----------------------------------------- | ------------------------------ |
-| code-reviewer     | opus  | General code review                       | After writing code             |
-| security-reviewer | opus  | Security & OWASP Top 10 analysis          | Before commits                 |
-| go-reviewer       | opus  | Idiomatic Go review (concurrency, errors) | Go code changes                |
-| database-reviewer | opus  | PostgreSQL/Supabase query & schema review | SQL, migrations, schema design |
+| Agent             | Model  | Purpose                                   | When to Use                    |
+| ----------------- | ------ | ----------------------------------------- | ------------------------------ |
+| code-reviewer     | sonnet | General code review                       | After writing code             |
+| security-reviewer | sonnet | Security & OWASP Top 10 analysis          | Before commits                 |
+| go-reviewer       | sonnet | Idiomatic Go review (concurrency, errors) | Go code changes                |
+| database-reviewer | sonnet | PostgreSQL/Supabase query & schema review | SQL, migrations, schema design |
 
 ### Build & Maintenance
 
