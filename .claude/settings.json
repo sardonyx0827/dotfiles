@@ -224,6 +224,5 @@
   "editorMode": "normal",
   "teammateMode": "tmux",
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false,
-  "model": "claude-fable-5[1m]"
+  "voiceEnabled": false
 }
