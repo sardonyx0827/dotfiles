@@ -15,7 +15,7 @@
   editor = nvim
   excludesfile = ~/.gitignore_global
 [http]
-  sslVerify = false
+  sslVerify = true
 [credential]
   helper = osxkeychain
 [merge]
