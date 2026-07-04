@@ -1,7 +1,9 @@
 "*****************************************************************************
-"" Abbreviations
+"" Plugin Settings
 "*****************************************************************************
-"" no one is really happy until you have this shortcuts
+scriptencoding utf-8
+
+"" Abbreviations — no one is really happy until you have these shortcuts
 cnoreabbrev W! w!
 cnoreabbrev Q! q!
 cnoreabbrev Qall! qall!
@@ -15,11 +17,11 @@ cnoreabbrev Qall qall
 cnoreabbrev f Files
 cnoreabbrev gf GFiles
 
-" grep.vim
-nnoremap <silent> <leader>gf :Rgrep<CR>
-let Grep_Default_Options = '-IR'
-let Grep_Skip_Files = '*.log *.db'
-let Grep_Skip_Dirs = '.git node_modules'
+" vim-session (manual :SessionSave / :SessionOpen; no auto load/save)
+let g:session_directory = '~/.vim/session'
+let g:session_autoload = 'no'
+let g:session_autosave = 'no'
+let g:session_command_aliases = 1
 
 " netrw
 let g:netrw_liststyle=3
@@ -72,8 +74,8 @@ let g:nerdtree_tabs_open_on_console_startup=0
 "" NERDTree floating file preview
 "*****************************************************************************
 " While the cursor sits on a file node in NERDTree, show the first lines of
-" that file in a floating window (Neovim: nvim_open_win / Vim: popup_create).
-" Auto-updates on cursor move, closes when leaving the tree. Toggle with P.
+" that file in a floating window (popup_create). Auto-updates on cursor move,
+" closes when leaving the tree. Toggle with P.
 let g:nerdtree_preview_enabled = 1
 let s:nt_preview_win = 0
 
@@ -112,13 +114,7 @@ function! s:NTPreviewClose() abort
   if s:nt_preview_win <= 0
     return
   endif
-  if has('nvim')
-    if nvim_win_is_valid(s:nt_preview_win)
-      call nvim_win_close(s:nt_preview_win, v:true)
-    endif
-  else
-    call popup_close(s:nt_preview_win)
-  endif
+  call popup_close(s:nt_preview_win)
   let s:nt_preview_win = 0
 endfunction
 
@@ -152,41 +148,18 @@ function! s:NTPreviewShow() abort
   let l:col = g:NERDTreeWinSize + 4
 
   call s:NTPreviewClose()
-  if has('nvim')
-    let l:buf = nvim_create_buf(v:false, v:true)
-    call nvim_buf_set_lines(l:buf, 0, -1, v:false, l:lines)
-    if l:ft !=# ''
-      call setbufvar(l:buf, '&filetype', l:ft)
-    endif
-    let l:opts = {
-          \ 'relative': 'editor', 'anchor': 'NW',
-          \ 'width': l:width, 'height': l:height,
-          \ 'row': 2, 'col': l:col,
-          \ 'style': 'minimal', 'border': 'rounded',
-          \ 'focusable': v:false, 'noautocmd': v:true,
-          \ }
-    if has('nvim-0.9')
-      let l:opts.title = ' ' . l:name . ' '
-      let l:opts.title_pos = 'center'
-    endif
-    let s:nt_preview_win = nvim_open_win(l:buf, v:false, l:opts)
-    " Make the float (body + border) background transparent.
-    call setwinvar(s:nt_preview_win, '&winhighlight',
-          \ 'NormalFloat:NTPreviewNormal,FloatBorder:NTPreviewBorder')
-  else
-    let s:nt_preview_win = popup_create(l:lines, {
-          \ 'line': 3, 'col': l:col + 1,
-          \ 'minwidth': l:width, 'maxwidth': l:width,
-          \ 'minheight': l:height, 'maxheight': l:height,
-          \ 'border': [], 'padding': [0, 1, 0, 1],
-          \ 'highlight': 'NTPreviewNormal',
-          \ 'borderhighlight': ['NTPreviewBorder'],
-          \ 'title': ' ' . l:name . ' ',
-          \ 'scrollbar': 0, 'zindex': 200,
-          \ })
-    if l:ft !=# ''
-      call setbufvar(winbufnr(s:nt_preview_win), '&filetype', l:ft)
-    endif
+  let s:nt_preview_win = popup_create(l:lines, {
+        \ 'line': 3, 'col': l:col + 1,
+        \ 'minwidth': l:width, 'maxwidth': l:width,
+        \ 'minheight': l:height, 'maxheight': l:height,
+        \ 'border': [], 'padding': [0, 1, 0, 1],
+        \ 'highlight': 'NTPreviewNormal',
+        \ 'borderhighlight': ['NTPreviewBorder'],
+        \ 'title': ' ' . l:name . ' ',
+        \ 'scrollbar': 0, 'zindex': 200,
+        \ })
+  if l:ft !=# ''
+    call setbufvar(winbufnr(s:nt_preview_win), '&filetype', l:ft)
   endif
 endfunction
 
@@ -215,16 +188,6 @@ augroup NERDTreePreview
   autocmd WinEnter,BufEnter * if &filetype !=# 'nerdtree' | call s:NTPreviewClose() | endif
 augroup END
 
-" set cursor position in new tab(or file) when launch Vim
-autocmd VimEnter * wincmd p
-
-" show buffer list
-nnoremap <silent> <leader>ll <cmd>Buffers<CR>
-" jump to next buffer
-nnoremap <silent> <C-l> :bnext<CR>
-nnoremap <silent> <C-h> :bprevious<CR>
-
-
 "*****************************************************************************
 "" EasyMotion
 "*****************************************************************************
@@ -232,12 +195,10 @@ nnoremap <silent> <C-h> :bprevious<CR>
 let g:EasyMotion_do_mapping = 0
 " Match upper & lower case so you can type the label without worrying about case.
 let g:EasyMotion_smartcase = 1
-" Keep the cursor on the matched line for n/N style repeats.
+" Type punctuation labels without holding shift (US keyboard smartsign).
 let g:EasyMotion_use_smartsign_us = 1
 
 " 1-char search across all visible windows.
 nmap <leader>jc <Plug>(easymotion-overwin-f)
 " line-wise motions
 map <leader>jj <Plug>(easymotion-bd-w)
-
-

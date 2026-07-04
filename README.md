@@ -470,13 +470,14 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 - **プラグインマネージャー**: vim-plug
 - **カラースキーム**: Rosé Pine（`rose-pine/vim`）
 - **主要プラグイン**:
-  - NERDTree: ファイルエクスプローラー
+  - NERDTree: ファイルエクスプローラー（フローティングプレビュー付き）
   - vim-fugitive / vim-rhubarb / vim-gitgutter: Git 統合
   - vim-airline: ステータスライン
-  - fzf: ファジーファインダー
+  - fzf / fzf.vim: ファジーファインダー（Neovim 側 telescope と同一キーマップ）
+  - vim-lsp + vim-lsp-settings + asyncomplete 系: LSP・補完（対象ファイルを開いて `:LspInstallServer` でサーバー導入。キーマップは Neovim 側 `lsp.lua` と同一: `gd` / `K` / `<leader>ra` / `<leader>ca` / `gr` / `[d` / `]d` など）
+  - ALE: 非同期 Lint（LSP 機能は vim-lsp に委譲）
   - tagbar: タグ一覧表示（`F4`）
   - vim-gutentags: 保存時に `tags` を自動生成・更新（`universal-ctags` が必要）
-  - ALE: 非同期 Lint、asyncomplete 系: 補完
   - vim-easymotion: 高速カーソル移動、copilot.vim: GitHub Copilot 補完
 
 #### タグジャンプ（定義ジャンプ）
@@ -490,6 +491,7 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 | `g Ctrl-]`          | 候補が複数あるとき一覧表示してジャンプ |
 
 > `tags` は vim-gutentags が保存時に自動更新します。手動生成する場合は対象ディレクトリで `ctags -R .` を実行してください。
+> LSP が有効なバッファでは `Ctrl-t` / `gd` は LSP の定義ジャンプ（`<plug>(lsp-definition)`）に置き換わります。
 
 ### Neovim (.config/nvim/)
 

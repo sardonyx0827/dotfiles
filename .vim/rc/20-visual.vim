@@ -1,6 +1,8 @@
 "*****************************************************************************
 "" Visual Settings
 "*****************************************************************************
+scriptencoding utf-8
+
 syntax on
 set ruler
 set number
@@ -9,48 +11,32 @@ set cursorline
 set termguicolors
 set signcolumn=yes
 set updatetime=50
+set scrolloff=2
 
-let no_buffers_menu=1
-colorscheme rosepine
+" silent!: survive the very first launch before :PlugInstall has run
+silent! colorscheme rosepine
 
-if has('nvim')
-  " Better command line completion
-  set wildmenu
+"" Cursor shape per mode (DECSCUSR), matching Neovim's guicursor: blinking
+"" block in normal, blinking bar in insert, blinking underline in replace.
+"" On exit/suspend restore the blinking block, like nvim's VimLeave handler.
+let &t_EI = "\e[1 q"
+let &t_SI = "\e[5 q"
+let &t_SR = "\e[3 q"
+augroup vimrc-cursor-shape
+  autocmd!
+  autocmd VimEnter * silent! call echoraw(&t_EI)
+  autocmd VimLeave,VimSuspend * silent! call echoraw("\e[1 q")
+augroup END
 
-  " mouse support
-endif
 set mouse=
 set mousemodel=popup
-set t_Co=256
-set guioptions=egmrti
-set gfn=Monospace\ 10
 
-if has("gui_running")
-  if has("gui_mac") || has("gui_macvim")
-    set guifont=Menlo:h12
-    set transparency=7
-  endif
-else
-  let g:CSApprox_loaded = 1
+" IndentLine
+let g:indentLine_enabled = 1
+let g:indentLine_char = '┆'
+let g:indentLine_faster = 1
 
-  " IndentLine
-  let g:indentLine_enabled = 1
-  "let g:indentLine_concealcursor = 0
-  let g:indentLine_char = '┆'
-  let g:indentLine_faster = 1
-endif
-
-"" Disable the blinking cursor.
-set gcr=a:blinkon0
-
-if has('nvim')
-  au TermEnter * setlocal scrolloff=0
-  au TermLeave * setlocal scrolloff=2
-else
-  set scrolloff=2
-endif
-
-"" Status bar
+"" Status bar (airline renders the actual statusline)
 set laststatus=2
 
 "" Use modeline overrides
@@ -60,17 +46,6 @@ set modelines=10
 set title
 set titleold="Terminal"
 set titlestring=%F
-
-set statusline=%F%m%r%h%w%=(%{&ff}/%Y)\ (line\ %l\/%L,\ col\ %c)\
-
-" Search mappings: These will make it so that going to the next one in a
-" search will center on the line it's found in.
-nnoremap n nzzzv
-nnoremap N Nzzzv
-
-if exists("*fugitive#statusline")
-  set statusline+=%{fugitive#statusline()}
-endif
 
 " vim-airline
 let g:airline_theme = 'powerlineish'
@@ -97,51 +72,44 @@ if !exists('g:airline_powerline_fonts')
   let g:airline#extensions#paste#symbol      = 'ρ'
   let g:airline_symbols.linenr    = '␊'
   let g:airline_symbols.branch    = '⎇'
-  let g:airline_symbols.paste     = 'ρ'
-  let g:airline_symbols.paste     = 'Þ'
   let g:airline_symbols.paste     = '∥'
   let g:airline_symbols.whitespace = 'Ξ'
 else
-  let g:airline#extensions#tabline#left_sep = ''
-  let g:airline#extensions#tabline#left_alt_sep = ''
+  let g:airline#extensions#tabline#left_sep = ''
+  let g:airline#extensions#tabline#left_alt_sep = ''
 
   " powerline symbols
-  let g:airline_left_sep = ''
-  let g:airline_left_alt_sep = ''
-  let g:airline_right_sep = ''
-  let g:airline_right_alt_sep = ''
-  let g:airline_symbols.branch = ''
-  let g:airline_symbols.readonly = ''
-  let g:airline_symbols.linenr = ''
+  let g:airline_left_sep = ''
+  let g:airline_left_alt_sep = ''
+  let g:airline_right_sep = ''
+  let g:airline_right_alt_sep = ''
+  let g:airline_symbols.branch = ''
+  let g:airline_symbols.readonly = ''
+  let g:airline_symbols.linenr = ''
 endif
 
-" Background transparency (match nvim_lazy colorscheme.lua)
-highlight Normal ctermbg=none guibg=NONE
-highlight NormalNC ctermbg=none guibg=NONE
-highlight NormalFloat ctermbg=none guibg=NONE
-highlight FloatBorder ctermbg=none guibg=NONE
-highlight NonText ctermbg=none guibg=NONE
-highlight Terminal ctermbg=none guibg=NONE
-highlight Folded ctermbg=none guibg=NONE
-highlight LineNr ctermbg=none guibg=NONE
-highlight EndOfBuffer ctermbg=none guibg=NONE
-highlight SignColumn ctermbg=none guibg=NONE
-highlight StatusLine cterm=none gui=none
-highlight TabLineFill cterm=none gui=none
+"" Background transparency + whitespace colors (match nvim set.lua /
+"" colorscheme.lua). A colorscheme switch wipes these overrides, so they are
+"" re-applied from a single function on every ColorScheme event.
+function! s:ApplyHighlightOverrides() abort
+  highlight Normal ctermbg=NONE guibg=NONE
+  highlight NormalNC ctermbg=NONE guibg=NONE
+  highlight NormalFloat ctermbg=NONE guibg=NONE
+  highlight FloatBorder ctermbg=NONE guibg=NONE
+  highlight Terminal ctermbg=NONE guibg=NONE
+  highlight Folded ctermbg=NONE guibg=NONE
+  highlight LineNr ctermbg=NONE guibg=NONE
+  highlight EndOfBuffer ctermbg=NONE guibg=NONE
+  highlight SignColumn ctermbg=NONE guibg=NONE
+  highlight StatusLine cterm=NONE gui=NONE
+  highlight TabLineFill cterm=NONE gui=NONE
+  highlight Whitespace ctermfg=red guifg=#Fb7280 ctermbg=NONE guibg=NONE
+  highlight NonText ctermfg=red guifg=#Faa0a6 ctermbg=NONE guibg=NONE
+  highlight SpecialKey ctermfg=red guifg=#Faa0a6 ctermbg=NONE guibg=NONE
+endfunction
+call s:ApplyHighlightOverrides()
 
-" Highlight whitespace characters (match nvim_lazy set.lua)
-highlight Whitespace ctermfg=red guifg=#Fb7280 ctermbg=none guibg=NONE
-highlight NonText ctermfg=red guifg=#Faa0a6 ctermbg=none guibg=NONE
-highlight SpecialKey ctermfg=red guifg=#Faa0a6 ctermbg=none guibg=NONE
-au ColorScheme * highlight Normal ctermbg=none guibg=NONE
-au ColorScheme * highlight NormalNC ctermbg=none guibg=NONE
-au ColorScheme * highlight NormalFloat ctermbg=none guibg=NONE
-au ColorScheme * highlight FloatBorder ctermbg=none guibg=NONE
-au ColorScheme * highlight SignColumn ctermbg=none guibg=NONE
-au ColorScheme * highlight StatusLine cterm=none gui=none
-au ColorScheme * highlight TabLineFill cterm=none gui=none
-au ColorScheme * highlight Whitespace ctermfg=red guifg=#Fb7280 ctermbg=none guibg=NONE
-au ColorScheme * highlight NonText ctermfg=red guifg=#Faa0a6 ctermbg=none guibg=NONE
-au ColorScheme * highlight SpecialKey ctermfg=red guifg=#Faa0a6 ctermbg=none guibg=NONE
-
-
+augroup vimrc-highlight-overrides
+  autocmd!
+  autocmd ColorScheme * call s:ApplyHighlightOverrides()
+augroup END

@@ -6,97 +6,66 @@
 nnoremap <leader>cd :cd %:p:h<CR>
 nnoremap <leader>cu :cd ..<CR>
 
-"" fzf.vim
-set wildmode=list:longest,list:full
+"*****************************************************************************
+"" fzf.vim — keymaps mirror telescope.lua on the Neovim side
+"*****************************************************************************
 set wildignore+=*.o,*.obj,.git,*.rbc,*.pyc,__pycache__
-let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
 
-" The Silver Searcher
-if executable('ag')
-  let $FZF_DEFAULT_COMMAND = 'ag --hidden --ignore .git -g ""'
-  set grepprg=ag\ --nogroup\ --nocolor
-endif
-
-" ripgrep
+" plain-find fallback; overridden by ripgrep below when available
+let $FZF_DEFAULT_COMMAND = "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
 if executable('rg')
   let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --follow --glob "!.git/*"'
   set grepprg=rg\ --vimgrep
+  " Literal (fixed-string) grep, for when :Rg's regex gets in the way
   command! -bang -nargs=* Find call fzf#vim#grep('rg --column --line-number --no-heading --fixed-strings --ignore-case --hidden --follow --glob "!.git/*" --color "always" '.shellescape(<q-args>).'| tr -d "\017"', 1, <bang>0)
 endif
 
-cnoremap <C-P> <C-R>=expand("%:p:h") . "/" <CR>
-"Recovery commands from history through FZF
-nmap <leader>y :History:<CR>
-" execute my ":Files" command by fzf from current dir
-"nmap <leader>sf :call fzf#run(fzf#wrap({'dir': '~'}), {'options':'--hidden'})<CR>
+" :Files with a floating preview pane (install `bat` for syntax highlighting)
 command! -bang -nargs=? -complete=dir Files
       \ call fzf#vim#files(<q-args>, fzf#vim#with_preview(), <bang>0)
 
-function! s:fzf_with_dots(cmd)
-  let $FZF_DEFAULT_COMMAND =  "find . -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f"
-  execute a:cmd
-endfunction
-function! s:fzf_without_dots(cmd)
-  let $FZF_DEFAULT_COMMAND =  "find * -path '*/\.*' -prune -o -path 'node_modules/**' -prune -o -path 'target/**' -prune -o -path 'dist/**' -prune -o -type f -print -o -type l -print 2> /dev/null"
-  execute a:cmd
-endfunction
-" nmap <leader>sf :call <SID>fzf_with_dots('Files ~')<CR>
-" Use :Files (defined above with fzf#vim#with_preview()) so the picker shows a
-" floating preview pane. Neovim renders fzf itself in a floating window; install
-" `bat` for syntax-highlighted previews (falls back to plain text without it).
-nmap <leader>sf :Files<CR>
+nnoremap <silent> <leader>sf :Files<CR>
+nnoremap <silent> <leader>gf :GFiles<CR>
+nnoremap <silent> <leader>sg :GFiles<CR>
+nnoremap <silent> <leader>gs :GFiles?<CR>
+nnoremap <silent> <leader>gl :Commits<CR>
+nnoremap <silent> <leader>gr :Rg<CR>
+nnoremap <silent> <leader>gw :Rg <C-r><C-w><CR>
+nnoremap <silent> <leader>of :History<CR>
+nnoremap <silent> <leader>h/ :History/<CR>
+nnoremap <silent> <leader>h: :History:<CR>
+" recover commands from history through FZF (legacy alias of <leader>h:)
+nnoremap <silent> <leader>y :History:<CR>
+nnoremap <silent> <leader>ll :Buffers<CR>
+nnoremap <silent> <leader>he :Helptags<CR>
 
-" vimgrep search and copen(use vimgrep instead of grep)
-function! s:vimgrep_search(pattern)
-  execute 'lcd ' . expand('%:p:h')
-  let files = systemlist("find . -type d \\( -name .git -o -name node_modules -o -name build \\) -prune -o -type f -print")
-  if empty(files)
-    echo "No target files found"
-    return
-  endif
-  execute 'vimgrep /' . a:pattern . '/gj ' . join(files)
-  if len(getqflist()) > 0
-    copen
-  else
-    echo "No search results found"
-  endif
-endfunction
-nmap <leader>gr :<C-u>call <SID>vimgrep_search(input('Grep Search: '))<CR>
+" insert the directory of the current file into the command line
+cnoremap <C-P> <C-R>=expand("%:p:h") . "/" <CR>
 
-" ale
-let g:ale_linters = {}
+"" Buffer nav (match nvim remap.lua)
+nnoremap <silent> <C-l> :bnext<CR>
+nnoremap <silent> <C-h> :bprevious<CR>
+nnoremap <silent> gt :bnext<CR>
+nnoremap <silent> gT :bprevious<CR>
+
+"" close all buffers
+nnoremap <silent> <leader>cb :%bdelete<CR>
+
+"" Search: center the match on n/N, clear highlight
+nnoremap n nzzzv
+nnoremap N Nzzzv
+nnoremap <silent> <leader><space> :noh<cr>
 
 " Tagbar
 nmap <silent> <F4> :TagbarToggle<CR>
 let g:tagbar_autofocus = 1
 
-" Disable visualbell
-set noerrorbells visualbell t_vb=
-if has('autocmd')
-  autocmd GUIEnter * set visualbell t_vb=
-endif
-
-"" Copy/Paste/Cut
+"" Copy/Paste/Cut through the system clipboard
 if has('unnamedplus')
   set clipboard=unnamed,unnamedplus
+elseif has('clipboard')
+  set clipboard=unnamed
 endif
-
-" noremap <leader>p "+gP<CR>
-
-if has('macunix')
-  " pbcopy for OSX copy/paste
-  vmap <C-x> :!pbcopy<CR>
-  vmap <C-c> :w !pbcopy<CR><CR>
-endif
-
-"" Buffer nav
-noremap <leader>z :bp<CR>
-noremap <leader>q :bp<CR>
-noremap <leader>x :bn<CR>
-noremap <leader>w :bn<CR>
-
-"" Clean search (highlight)
-nnoremap <silent> <leader><space> :noh<cr>
 
 "" Vmap for maintain Visual Mode after shifting > and <
 vmap < <gv
@@ -119,6 +88,7 @@ vnoremap <leader>eb :s/\(\w.*\)/\1<Left><Left>
 inoremap <C-t> <C-v><Tab>
 
 "" tag jump with Ctrl-t (same as Ctrl-]). use Ctrl-o to go back
+"" (LSP-enabled buffers override this with <plug>(lsp-definition), see 35-lsp)
 nnoremap <C-t> <C-]>
 
 "" window resize with arrow keys (match nvim_lazy remap.lua)
@@ -127,10 +97,8 @@ nnoremap <silent> <C-Down> 1<C-w>-
 nnoremap <silent> <C-Right> 1<C-w>>
 nnoremap <silent> <C-Left> 1<C-w><
 
-"" close all buffers
-nnoremap <silent> <leader>cb :%bdelete<CR>
-
-"" move cursor in insert mode
+"" move cursor in insert mode; let <Left>/<Right> wrap across line boundaries
+set whichwrap+=[,]
 inoremap <C-b> <Left>
 inoremap <C-f> <Right>
 
@@ -142,18 +110,7 @@ cnoremap <C-f> <Right>
 nnoremap <leader>tm :if &mouse ==# 'a' \| set mouse= \| else \| set mouse=a \| endif<CR>
 
 "" Open current line on GitHub
-nnoremap <Leader>go :.Gbrowse<CR>
-
-" check documentation on cursor
-" text must contains '()' to detect input and its must be 1 character
-function! ChoseAction(actions) abort
-  echo join(map(copy(a:actions), { _, v -> v.text }), ", ") .. ": "
-  let result = getcharstr()
-  let result = filter(a:actions, { _, v -> v.text =~# printf(".*\(%s\).*", result)})
-  return len(result) ? result[0].value : ""
-endfunction
+nnoremap <Leader>go :.GBrowse<CR>
 
 " save buffer
-noremap <silent> <C-s> :w<CR>
-
-
+nnoremap <silent> <C-s> :w<CR>
