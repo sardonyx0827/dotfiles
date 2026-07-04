@@ -42,6 +42,12 @@ Located in `~/.claude/agents/`:
 | --------------- | ------ | ---------------------------- | ----------------------------------------------------- |
 | codex-delegator | sonnet | Route decisions to Codex MCP | Spec discussion, fix strategy, complex tech decisions |
 
+### Chores (docs/requests)
+
+| Agent          | Model  | Purpose                                                             | When to Use                                                       |
+| -------------- | ------ | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| request-worker | sonnet | Execute one docs/requests ticket end-to-end (request-harness skill) | Parallel processing of independent tickets picked up by /requests |
+
 ## Immediate Agent Usage
 
 No user prompt needed:

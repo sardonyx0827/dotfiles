@@ -575,6 +575,7 @@ create_symlinks() {
     "shell-scripting-patterns"
     "verification-loop"
     "eval-harness"
+    "request-harness"
   )
   for skill in "${codex_skills[@]}"; do
     copy_entry "$DOTFILES_DIR/.claude/skills/$skill" "$HOME/.codex/skills/$skill"
