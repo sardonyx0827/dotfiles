@@ -14,8 +14,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Dotfiles directory
-DOTFILES_DIR="$HOME/dotfiles"
+# Dotfiles directory: resolved from this script's location so the repo can
+# be cloned anywhere (~/dotfiles, ~/work/github/dotfiles, ...)
+DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Function to print colored messages
 print_info() {
@@ -867,6 +868,15 @@ main() {
   echo "  Dotfiles Installation Script"
   echo "================================================"
   echo
+
+  # Guard against a bad DOTFILES_DIR (e.g. script piped into bash instead of
+  # run from a checkout) — otherwise create_symlinks would silently skip
+  # every entry.
+  if [ ! -e "$DOTFILES_DIR/.zshrc" ] || [ ! -d "$DOTFILES_DIR/.claude" ]; then
+    print_error "Dotfiles repository not found at: $DOTFILES_DIR"
+    print_error "Clone the repo and run install.sh from the checkout: git clone <repo> && cd dotfiles && ./install.sh"
+    exit 1
+  fi
 
   detect_os
 
