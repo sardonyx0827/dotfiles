@@ -1,6 +1,8 @@
 # ~/.codex/hooks/bash-review.py
 # 一次処理: Gemini API (高スループット)
 # 二次処理: Gemini が ASK/DENY と判定した場合のみ Codex で再確認
+# Codex は permissionDecision JSON を扱わないため、許可は exit 0 (無出力)、
+# ブロック (ask/deny) は exit 2 + stderr で理由を伝える。
 import json
 import os
 import platform
@@ -118,19 +120,9 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
         pass  # 通知の失敗はメイン処理に影響させない
 
 
-def emit_decision(decision: str, reason: str) -> None:
-    """permissionDecision を stdout に出力"""
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": decision,
-                    "permissionDecisionReason": reason,
-                }
-            }
-        )
-    )
+def emit_block(reason: str) -> None:
+    """ブロック理由を stderr に出力する (exit 2 と組で使う)"""
+    print(reason, file=sys.stderr)
 
 
 # -------------------------------------------------------------------
@@ -221,11 +213,11 @@ for sub_cmd in sub_commands:
     matched, deny_name = _is_deny_command(sub_cmd)
     if matched:
         reason = f"Blocked dangerous command: '{deny_name}'"
-        emit_decision("deny", reason)
+        emit_block(reason)
         write_detail_log({"Result": "DENY (pre-blocked)"})
         log_summary("DENY", "pre", reason)
         notify("Bash Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
-        sys.exit(0)
+        sys.exit(2)
 
 # --- 安全コマンドのスキップ ---
 if sub_commands and all(_can_skip_review(c) for c in sub_commands):
@@ -389,6 +381,9 @@ if codex_verdict == "ALLOW":
     notify("Bash Review", f"Codex 承認: {short_cmd}", 4)
 
 elif codex_verdict == "ASK":
+    emit_block(
+        f"Gemini={gemini_verdict}, Codex requires confirmation: {codex_output.strip()}"
+    )
     write_detail_log(
         {
             "Gemini": gemini_output,
@@ -401,13 +396,12 @@ elif codex_verdict == "ASK":
     sys.exit(2)
 
 elif codex_verdict == "ERROR":
-    # Codex 呼び出し失敗時は Gemini の判定にフォールバック
+    # Codex 呼び出し失敗時は Gemini の判定にフォールバック。
+    # ask / deny のどちらに倒れても Codex ではブロック (exit 2) になる。
     fallback_decision = "ask" if gemini_verdict in ("ASK", "ERROR") else "deny"
-    if fallback_decision == "deny":
-        emit_decision(
-            "deny",
-            f"Gemini={gemini_verdict} ({gemini_output.strip()}), Codex unavailable: {codex_output}",
-        )
+    emit_block(
+        f"Gemini={gemini_verdict} ({gemini_output.strip()}), Codex unavailable: {codex_output}"
+    )
     write_detail_log(
         {
             "Gemini": gemini_output,
@@ -421,14 +415,10 @@ elif codex_verdict == "ERROR":
         f"gemini={gemini_verdict}, codex=ERROR",
     )
     notify("Bash Review", f"Codexエラー: {short_cmd}", 8)
-    if fallback_decision == "ask":
-        sys.exit(2)
+    sys.exit(2)
 
 else:  # DENY
-    emit_decision(
-        "deny",
-        f"Gemini={gemini_verdict}, Codex denied: {codex_output.strip()}",
-    )
+    emit_block(f"Gemini={gemini_verdict}, Codex denied: {codex_output.strip()}")
     write_detail_log(
         {
             "Gemini": gemini_output,
@@ -438,5 +428,6 @@ else:  # DENY
     )
     log_summary("DENY", "codex", f"gemini={gemini_verdict}, codex=DENY")
     notify("Bash Review - 拒否", f"{short_cmd}", 8)
+    sys.exit(2)
 
 sys.exit(0)

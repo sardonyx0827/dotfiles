@@ -514,6 +514,22 @@ tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペ
 # - GitHub Copilot CLI
 ```
 
+## テスト
+
+`tests/` に pytest ベースのテストスイートがあります。Python フック
+(`.claude/hooks/*.py` など) は stdin・外部 API・通知をモックした上で直接実行し、
+シェルスクリプト (`install.sh`、各フック、statusline など) はサブプロセスとして
+一時 HOME + スタブ PATH 環境で実行します。実通知・実 API コール・実ログへの
+書き込みは発生しません。
+
+```bash
+# 全テストを実行
+python3 -m pytest
+
+# 特定ファイルのみ
+python3 -m pytest tests/test_bash_review.py -v
+```
+
 ## カスタマイズ
 
 ### Zshテーマの変更

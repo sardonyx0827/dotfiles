@@ -946,5 +946,9 @@ main() {
   echo
 }
 
-# Run main function
-main "$@"
+# Run main function only when executed directly (not when sourced by tests).
+# BASH_SOURCE[0] is empty when the script is piped into bash; run main there
+# too so the DOTFILES_DIR guard can print its clone-the-repo error.
+if [[ -z "${BASH_SOURCE[0]:-}" ]] || [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
