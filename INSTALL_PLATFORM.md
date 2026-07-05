@@ -142,8 +142,8 @@ wsl --install -d Ubuntu
 
 ```bash
 # WSL内で実行
-git clone https://github.com/yourusername/dotfiles.git ~/dotfiles
-cd ~/dotfiles
+git clone https://github.com/sardonyx0827/dotfiles.git
+cd dotfiles
 ./install.sh
 ```
 
@@ -313,7 +313,7 @@ ls ~/.oh-my-zsh/custom/plugins/
 
 ```bash
 cd ~/dotfiles
-git pull origin main  # または master
+git pull origin main
 ```
 
 ### インストール済みツールの更新

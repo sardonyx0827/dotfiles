@@ -67,5 +67,4 @@ return {
       ft = { "markdown", "Avante" },
     },
   },
-  keys ={}
 }
