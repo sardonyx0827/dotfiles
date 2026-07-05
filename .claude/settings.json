@@ -211,7 +211,11 @@
   },
   "sandbox": {
     "enabled": false,
-    "excludedCommands": ["docker", "docker-compose", "git"],
+    "excludedCommands": [
+      "docker",
+      "docker-compose",
+      "git"
+    ],
     "allowedNetworkHosts": [
       "github.com",
       "api.github.com",
@@ -230,6 +234,5 @@
   "editorMode": "normal",
   "teammateMode": "tmux",
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false,
-  "model": "fable"
+  "voiceEnabled": false
 }
