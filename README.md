@@ -2,93 +2,15 @@
 
 個人用の開発環境設定ファイル（dotfiles）のリポジトリです。Zsh、Vim、Neovim、tmux、WezTerm などの設定に加え、Claude Code・Codex・Gemini CLI・GitHub Copilot CLI といった AI 開発ツールのエージェント／スキル／フック設定とセットアップスクリプトを一括管理しています。全体を [Rosé Pine](https://rosepinetheme.com/) カラースキームで統一し、macOS / Ubuntu / WSL に対応した `install.sh` でシンボリックリンクを自動生成します。
 
-## 🛠️ 技術スタック
+## 技術スタック
 
-<!-- Shell & Terminal -->
+- **シェル / ターミナル**: Zsh, Oh My Zsh, tmux, WezTerm
+- **エディタ**: Neovim (lazy.nvim), Vim (vim-plug), VS Code
+- **バージョン管理**: Git, GitHub
+- **AI開発ツール**: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI
+- **言語**: Lua, Vimscript, Shell Script
 
-[zsh-shield]: https://img.shields.io/badge/Zsh-F15A24?style=for-the-badge&logo=zsh&logoColor=white
-[zsh-url]: https://www.zsh.org/
-[ohmyzsh-shield]: https://img.shields.io/badge/Oh_My_Zsh-1A2C34?style=for-the-badge&logo=ohmyzsh&logoColor=white
-[ohmyzsh-url]: https://ohmyz.sh/
-[tmux-shield]: https://img.shields.io/badge/tmux-1BB91F?style=for-the-badge&logo=tmux&logoColor=white
-[tmux-url]: https://github.com/tmux/tmux
-[wezterm-shield]: https://img.shields.io/badge/WezTerm-4E49EE?style=for-the-badge&logo=wezterm&logoColor=white
-[wezterm-url]: https://wezfurlong.org/wezterm/
-
-<!-- Editors -->
-
-[vim-shield]: https://img.shields.io/badge/Vim-019733?style=for-the-badge&logo=vim&logoColor=white
-[vim-url]: https://www.vim.org/
-[neovim-shield]: https://img.shields.io/badge/Neovim-57A143?style=for-the-badge&logo=neovim&logoColor=white
-[neovim-url]: https://neovim.io/
-[vimplug-shield]: https://img.shields.io/badge/vim--plug-019733?style=for-the-badge&logo=vim&logoColor=white
-[vimplug-url]: https://github.com/junegunn/vim-plug
-[lazy-shield]: https://img.shields.io/badge/lazy.nvim-57A143?style=for-the-badge&logo=neovim&logoColor=white
-[lazy-url]: https://github.com/folke/lazy.nvim
-[vscode-shield]: https://img.shields.io/badge/VS_Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white
-[vscode-url]: https://code.visualstudio.com/
-
-<!-- Git -->
-
-[git-shield]: https://img.shields.io/badge/Git-F05032?style=for-the-badge&logo=git&logoColor=white
-[git-url]: https://git-scm.com/
-[github-shield]: https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white
-[github-url]: https://github.com/
-
-<!-- AI Tools -->
-
-[claude-shield]: https://img.shields.io/badge/Claude_Code-181818?style=for-the-badge&logo=anthropic&logoColor=white
-[claude-url]: https://www.anthropic.com/
-[codex-shield]: https://img.shields.io/badge/Codex-412991?style=for-the-badge&logo=openai&logoColor=white
-[codex-url]: https://openai.com/
-[gemini-shield]: https://img.shields.io/badge/Gemini-8E75B2?style=for-the-badge&logo=google&logoColor=white
-[gemini-url]: https://ai.google.dev/
-[copilot-shield]: https://img.shields.io/badge/GitHub_Copilot-000000?style=for-the-badge&logo=githubcopilot&logoColor=white
-[copilot-url]: https://github.com/features/copilot
-
-<!-- Languages -->
-
-[lua-shield]: https://img.shields.io/badge/Lua-2C2D72?style=for-the-badge&logo=lua&logoColor=white
-[lua-url]: https://www.lua.org/
-[vimlang-shield]: https://img.shields.io/badge/Vimscript-019733?style=for-the-badge&logo=vim&logoColor=white
-[vimlang-url]: https://www.vim.org/
-[shellscript-shield]: https://img.shields.io/badge/Shell_Script-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white
-[shellscript-url]: https://www.gnu.org/software/bash/
-
-### シェル & ターミナル
-
-[![Zsh][zsh-shield]][zsh-url]
-[![Oh My Zsh][ohmyzsh-shield]][ohmyzsh-url]
-[![tmux][tmux-shield]][tmux-url]
-[![WezTerm][wezterm-shield]][wezterm-url]
-
-### エディタ
-
-[![Neovim][neovim-shield]][neovim-url]
-[![lazy.nvim][lazy-shield]][lazy-url]
-[![Vim][vim-shield]][vim-url]
-[![vim-plug][vimplug-shield]][vimplug-url]
-[![vsCode][vscode-shield]][vscode-url]
-
-### バージョン管理
-
-[![Git][git-shield]][git-url]
-[![GitHub][github-shield]][github-url]
-
-### AI開発ツール
-
-[![Claude Code][claude-shield]][claude-url]
-[![Codex][codex-shield]][codex-url]
-[![Gemini][gemini-shield]][gemini-url]
-[![GitHub Copilot][copilot-shield]][copilot-url]
-
-### プログラミング言語
-
-[![Lua][lua-shield]][lua-url]
-[![Vimscript][vimlang-shield]][vimlang-url]
-[![Shell Script][shellscript-shield]][shellscript-url]
-
-## 📁 ファイル構成
+## ファイル構成
 
 ```
 .
@@ -130,7 +52,7 @@
 └── update_ai_tools.sh              # AIツール更新スクリプト
 ```
 
-## 🚀 セットアップ
+## セットアップ
 
 ### 自動インストール（推奨）
 
@@ -182,7 +104,7 @@ cd ~/dotfiles
 nvim
 ```
 
-> **📝 注意**: プラットフォーム固有の詳細な手順やトラブルシューティングについては、[INSTALL_PLATFORM.md](INSTALL_PLATFORM.md)を参照してください。
+> **注意**: プラットフォーム固有の詳細な手順やトラブルシューティングについては、[INSTALL_PLATFORM.md](INSTALL_PLATFORM.md)を参照してください。
 
 ### 手動インストール
 
@@ -389,7 +311,7 @@ nvim  # lazy.nvimが自動的にプラグインをインストール
 </details>
 </details>
 
-## 🤖 AI開発ツールのセットアップ
+## AI開発ツールのセットアップ
 
 ### Claude Code
 
@@ -439,7 +361,7 @@ gh extension install github/gh-copilot
 ./update_ai_tools.sh
 ```
 
-## ⚙️ 主要設定の説明
+## 主要設定の説明
 
 ### Zsh (.zshrc)
 
@@ -566,7 +488,7 @@ Ctrl+a ]        # ペースト
 - **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック（`hooks/` + `hooks.json`）、スキル（`skills/` — 組込み `.system` と `.claude/skills` から厳選した共有スキル）、`config.toml`
 - **`.gemini/`**: Gemini CLI の指示（`GEMINI.md`）と `settings.json`
 
-## 🔧 ユーティリティスクリプト
+## ユーティリティスクリプト
 
 ### tmux_send_to_all_except_nvim.sh
 
@@ -592,7 +514,7 @@ tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペ
 # - GitHub Copilot CLI
 ```
 
-## 📝 カスタマイズ
+## カスタマイズ
 
 ### Zshテーマの変更
 
@@ -627,7 +549,7 @@ bind C-b send-prefix
 unbind C-a
 ```
 
-## 🐛 トラブルシューティング
+## トラブルシューティング
 
 ### Vimプラグインがインストールされない
 
@@ -666,7 +588,7 @@ rm -rf ~/.config/nvim/lazy-lock.json
 nvim  # lazy.nvimが自動的に再インストールされる
 ```
 
-## 📚 参考リンク
+## 参考リンク
 
 ### ドキュメント
 
@@ -690,14 +612,6 @@ nvim  # lazy.nvimが自動的に再インストールされる
 - [Gemini API](https://ai.google.dev/)
 - [GitHub Copilot CLI](https://github.com/features/copilot)
 
-## 📄 ライセンス
+## ライセンス
 
-このdotfilesは個人使用を目的としています。自由に使用・改変してください。
-
-## 🤝 コントリビューション
-
-改善提案やバグ報告は Issue または Pull Request でお願いします。
-
----
-
-**作成者**: [sardonyx0827](https://github.com/sardonyx0827)
+個人使用目的のdotfilesです。自由に使用・改変してください。

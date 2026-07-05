@@ -16,9 +16,8 @@ set scrolloff=2
 " silent!: survive the very first launch before :PlugInstall has run
 silent! colorscheme rosepine
 
-"" Cursor shape per mode (DECSCUSR), matching Neovim's guicursor: blinking
-"" block in normal, blinking bar in insert, blinking underline in replace.
-"" On exit/suspend restore the blinking block, like nvim's VimLeave handler.
+"" Cursor shape per mode (DECSCUSR): blinking block in normal, blinking bar in
+"" insert, blinking underline in replace. On exit/suspend restore the block.
 let &t_EI = "\e[1 q"
 let &t_SI = "\e[5 q"
 let &t_SR = "\e[3 q"
@@ -88,9 +87,9 @@ else
   let g:airline_symbols.linenr = ''
 endif
 
-"" Background transparency + whitespace colors (match nvim set.lua /
-"" colorscheme.lua). A colorscheme switch wipes these overrides, so they are
-"" re-applied from a single function on every ColorScheme event.
+"" Background transparency + whitespace colors. A colorscheme switch wipes these
+"" overrides, so they are re-applied from a single function on every ColorScheme
+"" event.
 function! s:ApplyHighlightOverrides() abort
   highlight Normal ctermbg=NONE guibg=NONE
   highlight NormalNC ctermbg=NONE guibg=NONE

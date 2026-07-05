@@ -1,12 +1,11 @@
 "*****************************************************************************
 "" Terminal
 "*****************************************************************************
-" Vim's :terminal already opens in a split and starts in Terminal-Job mode,
-" and <C-w>N / <C-w>: / <C-w>h,j,k,l work natively — none of the TermOpen /
-" startinsert machinery Neovim needs is required here.
+" Vim's :terminal already opens in a split and starts in Terminal-Job mode, with
+" <C-w>N / <C-w>: / <C-w>h,j,k,l working natively.
 nnoremap <silent> <leader>sh :terminal<CR>
 
-" No line numbers in terminal windows (match nvim's TermOpen settings)
+" No line numbers in terminal windows
 if exists('##TerminalWinOpen')
   augroup vimrc-terminal
     autocmd!

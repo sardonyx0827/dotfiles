@@ -7,7 +7,7 @@ nnoremap <leader>cd :cd %:p:h<CR>
 nnoremap <leader>cu :cd ..<CR>
 
 "*****************************************************************************
-"" fzf.vim — keymaps mirror telescope.lua on the Neovim side
+"" fzf.vim
 "*****************************************************************************
 set wildignore+=*.o,*.obj,.git,*.rbc,*.pyc,__pycache__
 
@@ -42,7 +42,7 @@ nnoremap <silent> <leader>he :Helptags<CR>
 " insert the directory of the current file into the command line
 cnoremap <C-P> <C-R>=expand("%:p:h") . "/" <CR>
 
-"" Buffer nav (match nvim remap.lua)
+"" Buffer nav
 nnoremap <silent> <C-l> :bnext<CR>
 nnoremap <silent> <C-h> :bprevious<CR>
 nnoremap <silent> gt :bnext<CR>
@@ -75,10 +75,10 @@ vmap > >gv
 vnoremap J :m '>+1<CR>gv=gv
 vnoremap K :m '<-2<CR>gv=gv
 
-"" rename text in this file (match nvim_lazy remap.lua)
+"" rename text in this file
 nnoremap <leader>rn :%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>
 
-"" vimgrep and open quickfix window (match nvim_lazy remap.lua)
+"" vimgrep and open quickfix window
 nnoremap <leader>vg :vimgrep /<C-r>=input("Grep For > ")<CR>/ **/*<CR>:copen<CR>
 
 "" edit block, add String to each line
@@ -91,7 +91,7 @@ inoremap <C-t> <C-v><Tab>
 "" (LSP-enabled buffers override this with <plug>(lsp-definition), see 35-lsp)
 nnoremap <C-t> <C-]>
 
-"" window resize with arrow keys (match nvim_lazy remap.lua)
+"" window resize with arrow keys
 nnoremap <silent> <C-Up> 1<C-w>+
 nnoremap <silent> <C-Down> 1<C-w>-
 nnoremap <silent> <C-Right> 1<C-w>>

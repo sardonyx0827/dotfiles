@@ -4,7 +4,7 @@
 " Python: enable all of the built-in syntax highlighting
 let python_highlight_all = 1
 
-" Trim trailing whitespace on save (match nvim_lazy init.lua BufWritePre)
+" Trim trailing whitespace on save
 augroup TrimWhitespace
   autocmd!
   autocmd BufWritePre * :%s/\s\+$//e

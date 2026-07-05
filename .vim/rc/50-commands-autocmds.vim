@@ -44,28 +44,26 @@ augroup END
 
 set autoread
 
-"" Check if file changed when focus is gained (match nvim_lazy init.lua)
+"" Check if file changed when focus is gained
 augroup vimrc-checktime
   autocmd!
   autocmd WinEnter,FocusGained,BufEnter * checktime
 augroup END
 
-"" go/make: use tabs instead of spaces (match nvim_lazy set.lua)
+"" go/make: use tabs instead of spaces
 augroup vimrc-go-make
   autocmd!
   autocmd FileType make,go setlocal noexpandtab
 augroup END
 
-"" Don't auto-continue comments on <CR> / o / O (match nvim_lazy set.lua
-"" `fo-=c fo-=r fo-=o`)
+"" Don't auto-continue comments on <CR> / o / O (fo-=c fo-=r fo-=o)
 augroup vimrc-formatoptions
   autocmd!
   autocmd FileType * setlocal formatoptions-=c formatoptions-=r formatoptions-=o
 augroup END
 
-"" Highlight yanked text — Vim port of nvim's TextYankPost +
-"" vim.highlight.on_yank (init.lua). Briefly flashes the yanked region with
-"" the IncSearch group.
+"" Highlight yanked text. Briefly flashes the yanked region with the IncSearch
+"" group.
 if exists('##TextYankPost')
   function! s:ClearYankHighlight(winid, ids, timer) abort
     for l:id in a:ids
@@ -113,7 +111,7 @@ if exists('##TextYankPost')
     for l:i in range(0, len(l:pos) - 1, 8)
       call add(l:ids, matchaddpos('IncSearch', l:pos[l:i : l:i + 7]))
     endfor
-    " 40ms matches the timeout passed to on_yank in nvim's init.lua
+    " Clear the highlight after a 40ms flash
     call timer_start(40, function('s:ClearYankHighlight', [win_getid(), l:ids]))
   endfunction
 

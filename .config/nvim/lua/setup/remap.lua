@@ -1,26 +1,19 @@
 --- @diagnostic disable: undefined-global
 vim.g.mapleader = ","
 
--- move text
--- In visual mode, shift text left and reselect
+-- move text: keep the visual selection after shifting
 vim.keymap.set("v", "<", "<gv")
--- In visual mode, shift text right and reselect
 vim.keymap.set("v", ">", ">gv")
 
--- search
--- In normal mode, find next match and center
+-- search: keep the match centered
 vim.keymap.set("n", "n", "nzzzv")
--- In normal mode, find previous match and center
 vim.keymap.set("n", "N", "Nzzzv")
--- In normal mode, clear search highlighting
 vim.keymap.set("n", "<leader><Space>", function()
   vim.cmd("noh")
 end)
--- In normal mode, save the current file
 vim.keymap.set("n", "<C-s>", function()
   vim.cmd("w")
 end)
--- In normal mode, rename text in this file
 vim.keymap.set("n", "<leader>rn", [[:%s/\<<C-r><C-w>\>/<C-r><C-w>/gI<Left><Left><Left>]],
   { desc = "rename text in this file" })
 -- vimgrep and open quickfix window
@@ -41,9 +34,9 @@ vim.keymap.set('i', '<C-t>', '<C-v><Tab>', { noremap = true, silent = true })
 vim.keymap.set('n', '<C-up>', '1<C-w>+', { noremap = true, silent = true })
 -- make the window smaller vertically
 vim.keymap.set('n', '<C-Down>', '1<C-w>-', { noremap = true, silent = true })
--- make the window bigger horizontally by pressing shift and =
+-- make the window bigger horizontally
 vim.keymap.set('n', '<C-Right>', '1<C-w>>', { noremap = true, silent = true })
--- make the window smaller horizontally by pressing shift and -
+-- make the window smaller horizontally
 vim.keymap.set('n', '<C-Left>', '1<C-w><', { noremap = true, silent = true })
 -- jump next/prev buffer
 vim.keymap.set("n", "<C-l>", ":bnext<CR>", { noremap = true, silent = true })

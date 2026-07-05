@@ -1,19 +1,7 @@
 --- @diagnostic disable: undefined-global
--- =============================================================================
 -- undotree vimdiff integration
--- =============================================================================
 -- Opens a vimdiff tab comparing a selected undo state with the current buffer
 -- for jiaoshijie/undotree. Supports do (obtain) / dp (put) operations.
---
--- Usage:
---   1. Add this file to your config or require("undotree_vimdiff")
---   2. Open undotree and move the cursor to a node
---   3. Press <C-d> to open a vimdiff in a new tab
---      (left: past undo state, right: current buffer)
---   4. Use do (obtain) to pull hunks from the past state
---   5. Use dp (put) to push hunks to the left side
---   6. Press <C-w>q to close both windows and exit diff
--- =============================================================================
 
 local M = {}
 
@@ -84,27 +72,24 @@ end
 --- Left: past undo state (scratch, read-only)
 --- Right: actual editing buffer (editable, supports do/dp)
 function M.open_vimdiff()
-  -- 1. Get the seq number
   local seq = get_seq_from_line()
   if not seq then
     vim.notify("undotree vimdiff: no undo state found on the current line", vim.log.levels.WARN)
     return
   end
 
-  -- 2. Find the target buffer
   local target_buf = find_target_buf()
   if not target_buf then
     vim.notify("undotree vimdiff: target buffer not found", vim.log.levels.ERROR)
     return
   end
 
-  -- 3. Get buffer info
   local buf_ft = vim.bo[target_buf].filetype
   local buf_name = vim.api.nvim_buf_get_name(target_buf)
   local short_name = vim.fn.fnamemodify(buf_name, ":t")
   if short_name == "" then short_name = "[No Name]" end
 
-  -- 4. Skip if the selected seq is the same as the current state
+  -- Skip if the selected seq is the same as the current state
   local ut = vim.api.nvim_buf_call(target_buf, function()
     return vim.fn.undotree()
   end)
@@ -113,18 +98,15 @@ function M.open_vimdiff()
     return
   end
 
-  -- 5. Retrieve the past state contents
   local old_lines, _ = get_undo_state_lines(target_buf, seq)
   if not old_lines then
     return
   end
 
-  -- 6. Close undotree
   pcall(function()
     require("undotree").close()
   end)
 
-  -- 7. Open vimdiff in a new tab
   vim.cmd("tabnew")
 
   -- Left side: past state (scratch buffer)
@@ -151,7 +133,6 @@ function M.open_vimdiff()
   -- Focus on the right side (real buffer)
   -- so that do (obtain) is immediately usable
 
-  -- 8. Cleanup and keymaps
   local augroup = vim.api.nvim_create_augroup("UndotreeVimdiffCleanup", { clear = true })
   local diff_tab = vim.api.nvim_get_current_tabpage()
   local cleaning_up = false -- re-entrancy guard

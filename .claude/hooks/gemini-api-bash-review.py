@@ -1,4 +1,4 @@
-# ~.claude/hooks/gemini-api-review.py
+# ~/.claude/hooks/gemini-api-bash-review.py
 import json
 import os
 import platform
@@ -9,15 +9,13 @@ import time
 import urllib.error
 import urllib.request
 
-# stdin は非ブロッキングで読む
+# フック入力のJSONをstdinから読み込む
 hook_input = json.loads(sys.stdin.buffer.read())
 tool_name = hook_input.get("tool_name", "")
 tool_input = hook_input.get("tool_input", {})
 command = tool_input.get("command", "")
 
-# -------------------------------------------------------------------
 # ログ設定
-# -------------------------------------------------------------------
 # 詳細ログ（既存: コマンドごとに1ファイル）
 log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/gemini-api-review"  # nosec B108
 os.makedirs(log_dir, exist_ok=True)
@@ -48,9 +46,7 @@ def log_summary(decision: str, reason: str) -> None:
             f.writelines(lines[-500:])
 
 
-# -------------------------------------------------------------------
 # 通知
-# -------------------------------------------------------------------
 def _sanitize_notify(text: str, limit: int = 200) -> str:
     """通知用に制御文字を除去し長さを制限する"""
     cleaned = "".join(ch for ch in text if ch.isprintable())
@@ -112,9 +108,7 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
         pass  # 通知の失敗はメイン処理に影響させない
 
 
-# -------------------------------------------------------------------
 # 安全なコマンドのスキップ判定
-# -------------------------------------------------------------------
 SAFE_COMMANDS = [
     "tmux",
     "ls",
@@ -148,9 +142,7 @@ SAFE_COMMANDS = [
     "jest",
 ]
 
-# -------------------------------------------------------------------
 # 危険なコマンドの拒否判定
-# -------------------------------------------------------------------
 DENY_COMMANDS = [
     "curl",
     "wget",
@@ -228,9 +220,7 @@ if sub_commands and all(_is_safe_command(c) for c in sub_commands):
     sys.exit(0)
 
 
-# -------------------------------------------------------------------
 # Gemini API 呼び出し
-# -------------------------------------------------------------------
 api_key = os.environ.get("GEMINI_API_KEY", "")
 if not api_key:
     print(
@@ -337,9 +327,7 @@ except _API_ERRORS as primary_err:
         sys.exit(0)
 
 
-# -------------------------------------------------------------------
 # 判定結果の処理
-# -------------------------------------------------------------------
 short_cmd = command[:60] + "..." if len(command) > 60 else command
 
 if "ALLOW" in gemini_output:

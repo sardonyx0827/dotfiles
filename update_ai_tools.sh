@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-echo "-----------------------------------"
 echo "Updating AI command-line tools..."
-echo "-----------------------------------"
 echo "# claude code"
 claude update
 echo "# codex"
@@ -11,9 +9,7 @@ npm upgrade -g @google/gemini-cli
 echo "# copilot cli"
 copilot update
 
-echo "-----------------------------------"
 echo "Updated versions:"
-echo "-----------------------------------"
 echo "# claude code"
 claude --version
 echo "# codex"

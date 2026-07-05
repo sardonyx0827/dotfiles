@@ -7,15 +7,13 @@ import subprocess
 import sys
 import time
 
-# stdin は非ブロッキングで読む
+# フック入力のJSONをstdinから読み込む
 hook_input = json.loads(sys.stdin.buffer.read())
 tool_name = hook_input.get("tool_name", "")
 tool_input = hook_input.get("tool_input", {})
 command = tool_input.get("command", "")
 
-# -------------------------------------------------------------------
 # ログ設定
-# -------------------------------------------------------------------
 # 詳細ログ（既存: コマンドごとに1ファイル）
 log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/codex-review"  # nosec B108
 os.makedirs(log_dir, exist_ok=True)
@@ -46,9 +44,7 @@ def log_summary(decision: str, reason: str) -> None:
             f.writelines(lines[-500:])
 
 
-# -------------------------------------------------------------------
 # 通知
-# -------------------------------------------------------------------
 def _sanitize_notify(text: str, limit: int = 200) -> str:
     """通知用に制御文字を除去し長さを制限する"""
     cleaned = "".join(ch for ch in text if ch.isprintable())
@@ -107,9 +103,7 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
         pass  # 通知の失敗はメイン処理に影響させない
 
 
-# -------------------------------------------------------------------
 # 安全なコマンドのスキップ判定
-# -------------------------------------------------------------------
 SAFE_COMMANDS = [
     "tmux",
     "ls",
@@ -143,9 +137,7 @@ SAFE_COMMANDS = [
     "jest",
 ]
 
-# -------------------------------------------------------------------
 # 危険なコマンドの拒否判定
-# -------------------------------------------------------------------
 DENY_COMMANDS = [
     "curl",
     "wget",
@@ -258,9 +250,7 @@ if result.returncode != 0:
     notify("Codex Review Error", "エラーのため確認が必要です", 8)
     sys.exit(0)
 
-# -------------------------------------------------------------------
 # 判定結果の処理
-# -------------------------------------------------------------------
 short_cmd = command[:60] + "..." if len(command) > 60 else command
 
 if "ALLOW" in result.stdout:

@@ -1,17 +1,12 @@
 "*****************************************************************************
-"" [AI solution] Ask AI and replace selection (classic Vim port of nvim ai.lua)
+"" [AI solution] Ask AI and replace selection
 "*****************************************************************************
 " Select a range, type an instruction in a prompt split, send the selection to
 " an AI CLI (claude / codex / gemini) over stdin, preview the result in a diff
-" tab, then replace the original selection. <C-o> instead hits a local Ollama
-" model via its HTTP API.
-"   <C-c> claude   <C-x> codex   <C-g> gemini   <C-l> all (claude|codex)
-"   <C-o> gemma (ollama)
-" Diff tab keys: y=accept AI  Y=accept merged  q=cancel  <Tab>/<S-Tab>/1/2=switch
-" Neovim is handled by lua/setup/functions/ai.lua, so this is Vim-only.
+" tab, then replace the original selection. <C-o> hits a local Ollama model.
 if !has('nvim') && has('job') && has('channel') && has('timers')
 
-  " Map a short tool alias to the actual Ollama model tag (mirrors ai.lua).
+  " Map a short tool alias to the actual Ollama model tag.
   let s:ai_ollama_models = { 'gemma': 'gemma4:e4b' }
 
   function! s:AI_TrimOutput(list) abort

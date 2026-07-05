@@ -1,4 +1,4 @@
-# ~/.claude/hooks/claude-review.py
+# ~/.claude/hooks/claude-bash-review.py
 import json
 import os
 import re
@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 
-# stdin は非ブロッキングで読む
+# フック入力のJSONをstdinから読み込む
 hook_input = json.loads(sys.stdin.buffer.read())
 tool_name = hook_input.get("tool_name", "")
 tool_input = hook_input.get("tool_input", {})

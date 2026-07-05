@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 
-#############################################
 # Dotfiles Installation Script
 # Supports: macOS, Ubuntu/Debian, Windows (WSL/Git Bash)
-#############################################
 
 set -e
 
@@ -864,9 +862,7 @@ change_shell() {
 
 # Main installation flow
 main() {
-  echo "================================================"
   echo "  Dotfiles Installation Script"
-  echo "================================================"
   echo
 
   # Guard against a bad DOTFILES_DIR (e.g. script piped into bash instead of
@@ -929,9 +925,7 @@ main() {
   change_shell
 
   echo
-  echo "================================================"
   print_success "Installation completed!"
-  echo "================================================"
   echo
   print_info "Next steps:"
   echo "  1. Restart your terminal"

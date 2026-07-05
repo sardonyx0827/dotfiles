@@ -44,10 +44,10 @@ set smartcase
 
 set fileformats=unix,dos,mac
 
-"" Treat @-@ as part of file names (match nvim set.lua isfname+=@-@)
+"" Treat @-@ as part of file names
 set isfname+=@-@
 
-"" Command-line completion (on by default in Neovim, not in Vim)
+"" Command-line completion
 set wildmenu
 set wildmode=list:longest,list:full
 
@@ -55,7 +55,7 @@ set wildmode=list:longest,list:full
 set belloff=all
 
 "" Fast key-code timeout so mode changes (and the mode-dependent cursor
-"" shape) apply immediately; 50ms is also Neovim's default.
+"" shape) apply immediately.
 set ttimeout
 set ttimeoutlen=50
 

@@ -1,8 +1,7 @@
 --- @diagnostic disable: undefined-global
 ---------------------------------------------------------
 -- ai.ui
--- A single floating-window driver shared by every AI feature. It replaces the
--- four near-identical UI blocks the old ai.lua carried.
+-- A single floating-window driver shared by every AI feature.
 --
 -- run_multi(opts) handles both layouts and any number of tools (single tool is
 -- just a one-element tab set):

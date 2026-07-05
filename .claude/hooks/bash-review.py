@@ -11,15 +11,13 @@ import time
 import urllib.error
 import urllib.request
 
-# stdin は非ブロッキングで読む
+# フック入力のJSONをstdinから読み込む
 hook_input = json.loads(sys.stdin.buffer.read())
 tool_name = hook_input.get("tool_name", "")
 tool_input = hook_input.get("tool_input", {})
 command = tool_input.get("command", "")
 
-# -------------------------------------------------------------------
 # ログ設定
-# -------------------------------------------------------------------
 # 詳細ログ (コマンドごとに1ファイル)
 log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
 os.makedirs(log_dir, exist_ok=True)
@@ -57,9 +55,7 @@ def write_detail_log(entries: dict) -> None:
             f.write(f"{key}: {value}\n")
 
 
-# -------------------------------------------------------------------
 # 通知
-# -------------------------------------------------------------------
 def _sanitize_notify(text: str, limit: int = 200) -> str:
     """通知用に制御文字を除去し長さを制限する"""
     cleaned = "".join(ch for ch in text if ch.isprintable())
@@ -133,9 +129,7 @@ def emit_decision(decision: str, reason: str) -> None:
     )
 
 
-# -------------------------------------------------------------------
 # 安全/危険コマンドの判定
-# -------------------------------------------------------------------
 SAFE_COMMANDS = [
     "tmux",
     "ls",
@@ -226,9 +220,7 @@ if sub_commands and all(_can_skip_review(c) for c in sub_commands):
     sys.exit(0)
 
 
-# -------------------------------------------------------------------
 # 一次処理: Gemini API
-# -------------------------------------------------------------------
 PROMPT = (
     "以下のツール呼び出しが安全かどうかを判断してください。\n"
     f"ツール: {tool_name}\n"
@@ -305,9 +297,7 @@ def run_gemini_review() -> tuple[str, str]:
     return "DENY", output
 
 
-# -------------------------------------------------------------------
 # 二次処理: Codex
-# -------------------------------------------------------------------
 def run_codex_review(gemini_verdict: str, gemini_output: str) -> tuple[str, str]:
     """Codex の判定結果を (verdict, raw_output) で返す。"""
     codex_prompt = f"""
@@ -342,9 +332,7 @@ Gemini の応答: {gemini_output.strip()}
     return "DENY", output
 
 
-# -------------------------------------------------------------------
 # メインフロー
-# -------------------------------------------------------------------
 short_cmd = command[:60] + "..." if len(command) > 60 else command
 
 gemini_verdict, gemini_output = run_gemini_review()

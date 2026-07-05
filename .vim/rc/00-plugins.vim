@@ -1,8 +1,6 @@
 "*****************************************************************************
 "" Vim-Plug
 "*****************************************************************************
-" This tree is for classic Vim only (Neovim lives in ~/.config/nvim with its
-" own lazy.nvim setup), so there is no has('nvim') branching in .vim/rc.
 
 let s:vimplug_path = expand('~/.vim/autoload/plug.vim')
 if !filereadable(s:vimplug_path)
@@ -49,8 +47,7 @@ else
 endif
 Plug 'junegunn/fzf.vim'
 
-"" LSP / completion — the Vim counterpart of mason + nvim-lspconfig +
-"" blink.cmp on the Neovim side. vim-lsp-settings provides :LspInstallServer.
+"" LSP / completion. vim-lsp-settings provides :LspInstallServer.
 Plug 'prabirshrestha/async.vim'
 Plug 'prabirshrestha/vim-lsp'
 Plug 'mattn/vim-lsp-settings'
