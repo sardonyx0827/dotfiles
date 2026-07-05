@@ -131,7 +131,16 @@ def emit_decision(decision: str, reason: str) -> None:
 
 # 安全/危険コマンドの判定
 SAFE_COMMANDS = [
-    "tmux",
+    # tmux は send-keys / new-session / run-shell で任意コマンド実行が可能な
+    # ため全体をセーフ扱いにせず、読み取り系サブコマンドに限定する
+    "tmux ls",
+    "tmux list-sessions",
+    "tmux list-windows",
+    "tmux list-panes",
+    "tmux has-session",
+    "tmux display-message",
+    "tmux show-options",
+    "tmux capture-pane",
     "ls",
     "cat",
     "pwd",
@@ -275,6 +284,25 @@ _API_ERRORS = (
 )
 
 
+def _parse_verdict(output: str) -> str:
+    """レビュー応答から判定を厳密に抽出する。
+
+    行頭の ALLOW / ASK / DENY トークンのみを判定として採用し、
+    DENY > ASK > ALLOW の優先順で解決する。部分文字列一致では判定しない
+    ("DISALLOW" や DENY の理由文中に現れる "ALLOW" で許可に化けない)。
+    判定トークンが見つからない応答は ASK に倒してユーザー確認へ回す。
+    """
+    verdicts = set()
+    for line in output.splitlines():
+        m = re.match(r'^\s*["\'`*_#>-]*\s*(ALLOW|ASK|DENY)\b', line)
+        if m:
+            verdicts.add(m.group(1))
+    for verdict in ("DENY", "ASK", "ALLOW"):
+        if verdict in verdicts:
+            return verdict
+    return "ASK"
+
+
 def run_gemini_review() -> tuple[str, str]:
     """Gemini の判定結果を (verdict, raw_output) で返す。verdict は ALLOW/ASK/DENY/ERROR。"""
     if not api_key:
@@ -290,11 +318,7 @@ def run_gemini_review() -> tuple[str, str]:
         except _API_ERRORS as fallback_err:
             return "ERROR", f"primary={primary_err}, fallback={fallback_err}"
 
-    if "ALLOW" in output:
-        return "ALLOW", output
-    if "ASK" in output:
-        return "ASK", output
-    return "DENY", output
+    return _parse_verdict(output), output
 
 
 # 二次処理: Codex
@@ -324,12 +348,7 @@ Gemini の応答: {gemini_output.strip()}
     if result.returncode != 0:
         return "ERROR", f"Codex error: {result.stderr.strip()}"
 
-    output = result.stdout
-    if "ALLOW" in output:
-        return "ALLOW", output
-    if "ASK" in output:
-        return "ASK", output
-    return "DENY", output
+    return _parse_verdict(result.stdout), result.stdout
 
 
 # メインフロー

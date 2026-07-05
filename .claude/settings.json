@@ -21,7 +21,14 @@
       "TaskUpdate",
       "TaskList",
       "TaskGet",
-      "Bash(tmux:*)",
+      "Bash(tmux ls:*)",
+      "Bash(tmux list-sessions:*)",
+      "Bash(tmux list-windows:*)",
+      "Bash(tmux list-panes:*)",
+      "Bash(tmux has-session:*)",
+      "Bash(tmux display-message:*)",
+      "Bash(tmux show-options:*)",
+      "Bash(tmux capture-pane:*)",
       "Bash(ls:*)",
       "Bash(sed:*)",
       "Bash(awk:*)",
@@ -59,7 +66,6 @@
       "Bash(whereis:*)",
       "Bash(jq:*)",
       "Bash(gh:*)",
-      "Bash(node:*)",
       "Bash(next:*)",
       "Bash(npx:*)",
       "Bash(pnpm:*)",
@@ -205,11 +211,7 @@
   },
   "sandbox": {
     "enabled": false,
-    "excludedCommands": [
-      "docker",
-      "docker-compose",
-      "git"
-    ],
+    "excludedCommands": ["docker", "docker-compose", "git"],
     "allowedNetworkHosts": [
       "github.com",
       "api.github.com",
@@ -228,5 +230,6 @@
   "editorMode": "normal",
   "teammateMode": "tmux",
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false
+  "voiceEnabled": false,
+  "model": "fable"
 }

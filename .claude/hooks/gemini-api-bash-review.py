@@ -110,7 +110,16 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
 
 # 安全なコマンドのスキップ判定
 SAFE_COMMANDS = [
-    "tmux",
+    # tmux は send-keys / new-session / run-shell で任意コマンド実行が可能な
+    # ため全体をセーフ扱いにせず、読み取り系サブコマンドに限定する
+    "tmux ls",
+    "tmux list-sessions",
+    "tmux list-windows",
+    "tmux list-panes",
+    "tmux has-session",
+    "tmux display-message",
+    "tmux show-options",
+    "tmux capture-pane",
     "ls",
     "cat",
     "pwd",
@@ -170,6 +179,25 @@ def _is_deny_command(cmd: str) -> tuple[bool, str]:
         if cmd == deny or cmd.startswith(deny + " "):
             return True, deny
     return False, ""
+
+
+def _parse_verdict(output: str) -> str:
+    """レビュー応答から判定を厳密に抽出する。
+
+    行頭の ALLOW / ASK / DENY トークンのみを判定として採用し、
+    DENY > ASK > ALLOW の優先順で解決する。部分文字列一致では判定しない
+    ("DISALLOW" や DENY の理由文中に現れる "ALLOW" で許可に化けない)。
+    判定トークンが見つからない応答は ASK に倒してユーザー確認へ回す。
+    """
+    verdicts = set()
+    for line in output.splitlines():
+        m = re.match(r'^\s*["\'`*_#>-]*\s*(ALLOW|ASK|DENY)\b', line)
+        if m:
+            verdicts.add(m.group(1))
+    for verdict in ("DENY", "ASK", "ALLOW"):
+        if verdict in verdicts:
+            return verdict
+    return "ASK"
 
 
 sub_commands = _split_commands(command)
@@ -329,8 +357,9 @@ except _API_ERRORS as primary_err:
 
 # 判定結果の処理
 short_cmd = command[:60] + "..." if len(command) > 60 else command
+verdict = _parse_verdict(gemini_output)
 
-if "ALLOW" in gemini_output:
+if verdict == "ALLOW":
     print(
         json.dumps(
             {
@@ -345,7 +374,7 @@ if "ALLOW" in gemini_output:
     log_summary("ALLOW", "approved by Gemini")
     notify("Gemini Review", f"許可: {short_cmd}", 4)
 
-elif "ASK" in gemini_output:
+elif verdict == "ASK":
     print(
         json.dumps(
             {

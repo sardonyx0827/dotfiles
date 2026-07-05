@@ -251,7 +251,8 @@ alias cop='copilot'
 ## Gemini CLI
 alias ge='gemini'
 alias g='gemini'
-alias push='gemini -y -p "pushして"'
+# push はリモートに影響するため -y (自動承認) は使わず、対話モードで都度確認する
+alias push='gemini -i "pushして"'
 alias commit_message='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
 alias commit='gemini -y -p "commitして"'
 alias pull_request='gemini -y -p "pr作成して"'
