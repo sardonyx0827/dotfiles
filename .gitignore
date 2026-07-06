@@ -1,0 +1,2 @@
+# Codex CLI's own managed system skills (auto-installed at runtime, not ours)
+.codex/skills/.system/
