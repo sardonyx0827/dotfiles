@@ -12,16 +12,12 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _bash_review_common import (
-    _can_skip_review,  # noqa: E402
-    _is_deny_command,
-    _parse_verdict,
-    _split_commands,
-    append_and_rotate,
-    notify,
-    prune_dir,
-)
-from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E402
+from _bash_review_common import _can_skip_review  # noqa: E402
+from _bash_review_common import (_is_deny_command, _parse_verdict,
+                                 _split_commands, append_and_rotate, notify,
+                                 prune_dir)
+from _bash_review_common import \
+    write_detail_log as _write_detail_log  # noqa: E402
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
 api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -146,13 +142,13 @@ try:
 
     # ログ設定
     # 詳細ログ (コマンドごとに1ファイル)
-    log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
+    log_dir = "/tmp/codex_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"bash_cmd_{int(time.time())}.log")
     prune_dir(log_dir)  # 1000件を超えたら古いものから削除
 
     # サマリーログ (1ファイルに追記・500行でローテーション)
-    summary_log = os.path.expanduser("~/.claude/logs/bash-review.log")
+    summary_log = os.path.expanduser("~/.codex/logs/bash-review.log")
     os.makedirs(os.path.dirname(summary_log), exist_ok=True)
 
     # 一次処理: Gemini API 用プロンプト (tool_input に依存するので try 内で組む)

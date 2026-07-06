@@ -139,12 +139,15 @@ def run_hook(tmp_path, capsys):
             s = os.fspath(path)
         except TypeError:
             return path
-        # Matches the literal log dir hardcoded in the hooks so writes are
+        # Matches the literal log dirs hardcoded in the hooks so writes are
         # redirected INTO tmp_path (never actually touching /tmp).
         # NOTE: only open/os.makedirs/os.listdir/os.remove/os.path.expanduser
         # are wrapped. If a hook is ever refactored to use pathlib.Path I/O or
         # shutil, extend this sandbox accordingly or it will write for real.
-        if isinstance(s, str) and s.startswith("/tmp/claude_hooks"):  # nosec B108
+        if isinstance(s, str) and (
+            s.startswith("/tmp/claude_hooks")  # nosec B108
+            or s.startswith("/tmp/codex_hooks")  # nosec B108
+        ):
             return str(fake_tmp) + s.removeprefix("/tmp")  # nosec B108
         return path
 
