@@ -41,8 +41,14 @@ def _log_file(shell_env, hook_path: Path, name: str) -> Path:
 
 
 def _run_with_env(hook_path: Path, stdin: str, env: dict):
+    # Resolve bash to an absolute path via the *real* PATH. `env` here has had
+    # jq's directory stripped from PATH so the hook can't find jq; on Linux CI
+    # bash and jq share /usr/bin, so that same stripping would otherwise leave
+    # subprocess unable to locate the bash interpreter itself (POSIX resolves a
+    # bare program name via env["PATH"], not the parent process's PATH).
+    bash = shutil.which("bash") or "/bin/bash"
     return subprocess.run(
-        ["bash", str(hook_path)],
+        [bash, str(hook_path)],
         input=stdin,
         capture_output=True,
         text=True,
