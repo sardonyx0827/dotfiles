@@ -36,6 +36,7 @@
 │   ├── Code/                       # VS Code (settings / keybindings)
 │   └── nvim/                       # Neovim (lazy.nvim) 設定
 ├── .gemini/                        # Gemini CLI設定 (GEMINI.md, settings.json)
+├── .github/workflows/              # GitHub Actions CI (pytest / ruff / bandit / shellcheck)
 ├── .oh-my-zsh/                     # Oh My Zsh設定
 │   └── custom/themes/              # カスタムテーマ (px-rose-pine)
 ├── .vim/rc/                        # Vim設定本体 (分割ロード: 00-plugins, 10-basic ...)
@@ -48,6 +49,8 @@
 ├── .zshrc                          # Zsh設定
 ├── INSTALL_PLATFORM.md             # プラットフォーム別インストール / トラブルシューティング
 ├── install.sh                      # クロスプラットフォーム対応インストールスクリプト
+├── pytest.ini                      # pytest設定
+├── tests/                          # フック / スクリプトの pytest スイート (hermetic)
 ├── tmux_send_to_all_except_nvim.sh # tmuxユーティリティ
 └── update_ai_tools.sh              # AIツール更新スクリプト
 ```

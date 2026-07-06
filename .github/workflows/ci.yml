@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 最小権限: このワークフローはチェックアウトして検査するだけ
+permissions:
+  contents: read
+
+# 同一 ref の古い実行はキャンセル。ただし main への push は
+# 途中中断しない（開発ブランチの実行は最後まで通す）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip "pytest==9.0.1"
+      # フックは stdin/subprocess/urlopen を全てスタブ化した hermetic テスト。
+      # codex / gemini / tmux 等の実バイナリは不要（conftest.py 参照）
+      - name: Run pytest
+        run: python -m pytest -q
+
+  lint:
+    name: ruff + bandit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - name: Install linters
+        run: python -m pip install --upgrade pip "ruff==0.15.6" "bandit==1.9.4"
+      # スコープは自作 Python のみ（.codex/skills/.system 配下の vendored スクリプトは除外）
+      - name: ruff check
+        run: ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks
+      - name: ruff format --check
+        run: ruff format --check .claude/hooks .claude/mcp-servers tests .codex/hooks
+      - name: bandit (security, medium+ severity)
+        run: bandit -ll -q -r .claude/hooks .claude/mcp-servers tests .codex/hooks
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # shellcheck は ubuntu-latest ランナーにプリインストール済み
+      - name: Run shellcheck
+        run: |
+          shellcheck --version
+          # 自作シェルスクリプトのみ検査（vendored な .codex/skills/.system 配下は除外）
+          files=$(git ls-files '*.sh' | grep -v '^\.codex/skills/\.system/')
+          echo "$files"
+          # shellcheck disable=SC2086  # パスに空白は無いため意図的に単語分割する
+          shellcheck $files

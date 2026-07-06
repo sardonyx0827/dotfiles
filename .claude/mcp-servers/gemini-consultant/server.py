@@ -2,11 +2,12 @@
 # ~/.claude/mcp-servers/gemini-consultant/server.py
 import json
 import os
-import subprocess
 import platform
+import subprocess
 import time
 import urllib.error
 import urllib.request
+
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("gemini-consultant")
@@ -164,7 +165,7 @@ def call_gemini(
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
+            with urllib.request.urlopen(req, timeout=90) as resp:  # nosec: B310
                 body = json.loads(resp.read().decode("utf-8"))
                 parts = (
                     body.get("candidates", [{}])[0].get("content", {}).get("parts", [])
