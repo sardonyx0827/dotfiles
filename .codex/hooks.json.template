@@ -6,11 +6,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python '/Users/sardonyx0827/.codex/hooks/bash-review.py'"
+            "command": "python3 '__HOME__/.codex/hooks/bash-review.py'"
           },
           {
             "type": "command",
-            "command": "bash '/Users/sardonyx0827/.codex/hooks/git-push-review.sh'"
+            "command": "bash '__HOME__/.codex/hooks/git-push-review.sh'"
           }
         ]
       }
@@ -21,11 +21,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'/Users/sardonyx0827/.codex/hooks/auto-format.sh'"
+            "command": "'__HOME__/.codex/hooks/auto-format.sh'"
           },
           {
             "type": "command",
-            "command": "'/Users/sardonyx0827/.codex/hooks/lint.sh'"
+            "command": "'__HOME__/.codex/hooks/lint.sh'"
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash '/Users/sardonyx0827/.codex/hooks/stop-audit.sh'"
+            "command": "bash '__HOME__/.codex/hooks/stop-audit.sh'"
           }
         ]
       }

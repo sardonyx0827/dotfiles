@@ -518,8 +518,10 @@ create_symlinks() {
   # (skills/, agents/) — both symlinked dirs and symlinked files are
   # skipped (openai/codex#3637, #4383, #5040, #16452). Those MUST be real files,
   # so they are COPIED. Single files opened by an exact path (AGENTS.md,
-  # config.toml, hooks.json) and the hooks dir (scripts run by absolute path)
-  # follow symlinks fine, so they stay symlinked.
+  # config.toml) and the hooks dir (scripts run by absolute path) follow
+  # symlinks fine, so they stay symlinked. hooks.json is neither: Codex does
+  # NOT expand ~ or $HOME inside it, so it is install-time RENDERED from
+  # hooks.json.template instead of symlinked (see below).
   mkdir -p "$HOME/.codex"
 
   # Helper: copy a repo entry into a destination, backing up reals/symlinks.
@@ -537,12 +539,20 @@ create_symlinks() {
     "AGENTS.md"
     "config.toml"
     "hooks"
-    "hooks.json"
   )
   for entry in "${codex_link_entries[@]}"; do
     [ -e "$DOTFILES_DIR/.codex/$entry" ] &&
       link_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
   done
+
+  # hooks.json: render from the template, substituting the placeholder for
+  # this machine's real $HOME (Codex does not expand ~ or $HOME itself).
+  if [ -f "$DOTFILES_DIR/.codex/hooks.json.template" ]; then
+    backup_if_real "$HOME/.codex/hooks.json"
+    sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
+      >"$HOME/.codex/hooks.json"
+    print_success "Rendered hooks.json"
+  fi
 
   # Scanned by Codex -> must be real files (copied, not symlinked)
   local codex_copy_entries=(

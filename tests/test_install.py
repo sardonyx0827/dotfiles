@@ -1,5 +1,6 @@
 """Tests for install.sh (sourced; main() is guarded and never runs here)."""
 
+import json
 import subprocess
 
 from conftest import REPO_ROOT
@@ -148,3 +149,40 @@ class TestCreateSymlinks:
         # Fresh HOME: only copy_entry targets existed, and those are new too,
         # so the timestamped backup dir must have been removed as empty.
         assert list(home.glob(".dotfiles_backup_*")) == []
+
+
+class TestHooksJsonTemplate:
+    def test_renders_hooks_json_with_resolved_home(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        rendered = home / ".codex/hooks.json"
+        assert rendered.is_file()
+        assert not rendered.is_symlink()
+        assert not (home / ".codex/hooks.json.template").exists()
+
+        content = rendered.read_text(encoding="utf-8")
+        assert "__HOME__" not in content
+        assert str(home) in content
+        assert json.loads(content)  # must still be valid JSON
+        # Hooks must invoke python3: bare `python` does not exist on stock
+        # Ubuntu or Homebrew installs (same rationale as the MCP registration).
+        assert "python3 '" in content
+        assert "python '" not in content
+
+    def test_rerun_regenerates_hooks_json(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+
+        first = run_sourced("create_symlinks", shell_env.env)
+        assert first.returncode == 0, first.stderr
+        second = run_sourced("create_symlinks", shell_env.env)
+        assert second.returncode == 0, second.stderr
+
+        rendered = home / ".codex/hooks.json"
+        assert rendered.is_file()
+        assert not rendered.is_symlink()
+        assert str(home) in rendered.read_text(encoding="utf-8")
