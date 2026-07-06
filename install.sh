@@ -485,12 +485,28 @@ create_symlinks() {
   # Helper: backup a path if it exists as a real file/dir (not a symlink)
   backup_if_real() {
     local target="$1"
-    if [ -e "$target" ] && [ ! -L "$target" ]; then
-      print_warning "Backing up existing $(basename "$target")"
-      mv "$target" "$backup_dir/"
-    elif [ -L "$target" ]; then
+    # A symlink (even a broken one) is ours to replace, never worth backing up.
+    if [ -L "$target" ]; then
       rm -f "$target"
+      return 0
     fi
+    # Nothing there: return success (a bare `return` would propagate the failed
+    # test's exit status and abort the caller under `set -e`).
+    [ -e "$target" ] || return 0
+    print_warning "Backing up existing $(basename "$target")"
+    # Preserve the path structure under $backup_dir. A flat, basename-only
+    # backup silently overwrites files that share a basename across different
+    # destinations (settings.json / keybindings.json live under Code/,
+    # Antigravity/ and .claude/), so all but the last one moved would be lost.
+    local rel dest_parent
+    case "$target" in
+    "$HOME"/*) rel="${target#"$HOME"/}" ;;
+    /*) rel="${target#/}" ;;
+    *) rel="$target" ;;
+    esac
+    dest_parent="$backup_dir/$(dirname "$rel")"
+    mkdir -p "$dest_parent"
+    mv "$target" "$dest_parent/"
   }
 
   # Helper: symlink a repo entry into a destination directory, backing up reals
@@ -586,6 +602,13 @@ create_symlinks() {
     local src="$1"
     local dest="$2"
     [ -e "$src" ] || return
+    # Idempotent: if dest is already a real copy identical to src, do nothing.
+    # Without this, every re-run moves our own previous copy into a fresh
+    # timestamped backup dir and re-copies it, so ~/.dotfiles_backup_* dirs
+    # accumulate on each run and the empty-dir cleanup at the end never fires.
+    if [ ! -L "$dest" ] && [ -e "$dest" ] && diff -rq "$src" "$dest" >/dev/null 2>&1; then
+      return
+    fi
     backup_if_real "$dest" # moves a real path to backup, or removes a symlink
     rm -rf "$dest"         # clear anything backup_if_real left (defensive)
     cp -R "$src" "$dest"
@@ -605,10 +628,20 @@ create_symlinks() {
   # hooks.json: render from the template, substituting the placeholder for
   # this machine's real $HOME (Codex does not expand ~ or $HOME itself).
   if [ -f "$DOTFILES_DIR/.codex/hooks.json.template" ]; then
-    backup_if_real "$HOME/.codex/hooks.json"
+    local rendered_tmp
+    rendered_tmp="$(mktemp)"
     sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
-      >"$HOME/.codex/hooks.json"
-    print_success "Rendered hooks.json"
+      >"$rendered_tmp"
+    # Only replace (and back up) when the rendered result actually changed, so
+    # re-runs don't move an identical hooks.json into a fresh backup dir.
+    if [ ! -f "$HOME/.codex/hooks.json" ] ||
+      ! cmp -s "$rendered_tmp" "$HOME/.codex/hooks.json"; then
+      backup_if_real "$HOME/.codex/hooks.json"
+      mv "$rendered_tmp" "$HOME/.codex/hooks.json"
+      print_success "Rendered hooks.json"
+    else
+      rm -f "$rendered_tmp"
+    fi
   fi
 
   # Scanned by Codex -> must be real files (copied, not symlinked)
@@ -701,7 +734,15 @@ setup_neovim() {
 
 # Install AI tools (optional)
 install_ai_tools() {
-  read -p "Do you want to install AI development tools? (y/n): " -n 1 -r
+  # Skip cleanly when stdin is not a TTY (piped `curl | bash`, CI, </dev/null):
+  # a bare `read` returns non-zero at EOF and, under `set -e`, would abort the
+  # whole installer here -- skipping the later MCP registration and shell change
+  # while still printing "Installation completed!", which looks like success.
+  if [ ! -t 0 ]; then
+    print_info "Non-interactive shell detected; skipping optional AI tools prompt."
+    return 0
+  fi
+  read -p "Do you want to install AI development tools? (y/n): " -n 1 -r || REPLY=""
   echo
   if [[ $REPLY =~ ^[Yy]$ ]]; then
     print_info "Installing AI development tools..."

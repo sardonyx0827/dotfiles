@@ -167,6 +167,48 @@ class TestCreateSymlinks:
         assert (home / ".zshrc").resolve() == (REPO_ROOT / ".zshrc").resolve()
         assert (home / ".codex/skills/coding-standards").is_dir()
 
+    def test_backup_preserves_files_sharing_a_basename(self, shell_env):
+        # settings.json exists as a real file under BOTH ~/.claude and
+        # ~/.config/Code/User. A flat, basename-only backup would move the
+        # first into $backup_dir/settings.json and then overwrite it with the
+        # second, destroying one of the user's real configs. Both must survive.
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude/settings.json").write_text("CLAUDE-REAL\n", encoding="utf-8")
+        (home / ".config/Code/User").mkdir(parents=True)
+        (home / ".config/Code/User/settings.json").write_text(
+            "CODE-REAL\n", encoding="utf-8"
+        )
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        backups = list(home.glob(".dotfiles_backup_*"))
+        assert len(backups) == 1
+        recovered = sorted(
+            p.read_text(encoding="utf-8") for p in backups[0].rglob("settings.json")
+        )
+        assert recovered == ["CLAUDE-REAL\n", "CODE-REAL\n"], recovered
+
+    def test_rerun_does_not_accumulate_backup_dirs(self, shell_env):
+        # copy_entry targets (Codex agents/skills) and the rendered hooks.json
+        # are real files. A non-idempotent copy backs its own previous output
+        # into a fresh timestamped dir on every run, so ~/.dotfiles_backup_*
+        # piles up. A second no-change run must leave zero backup dirs.
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+
+        first = run_sourced("create_symlinks", shell_env.env)
+        assert first.returncode == 0, first.stderr
+        second = run_sourced("create_symlinks", shell_env.env)
+        assert second.returncode == 0, second.stderr
+
+        assert list(home.glob(".dotfiles_backup_*")) == []
+        # The copies and rendered file are still in place after the no-op rerun.
+        assert (home / ".codex/skills/coding-standards").is_dir()
+        assert (home / ".codex/hooks.json").is_file()
+
     def test_no_backup_dir_left_when_nothing_backed_up(self, shell_env):
         home = shell_env.home
         (home / ".oh-my-zsh").mkdir()
@@ -217,6 +259,18 @@ class TestCreateSymlinks:
         for name in ("settings.json", "keybindings.json"):
             assert (vscode_user / name).is_symlink()
             assert (antigravity_user / name).is_symlink()
+
+
+class TestInstallAiTools:
+    def test_skips_prompt_when_non_interactive(self, shell_env):
+        # Piped/CI runs have no TTY on stdin. A bare `read` returns non-zero at
+        # EOF and, under `set -e`, would abort the whole installer before the
+        # later steps (MCP registration, shell change). The function must skip
+        # cleanly and return 0 instead of aborting.
+        res = run_sourced('install_ai_tools </dev/null; echo "RC=$?"', shell_env.env)
+        assert "RC=0" in res.stdout, res.stdout + res.stderr
+        assert "Non-interactive" in res.stdout
+        assert "Do you want to install" not in res.stdout
 
 
 class TestStrictMode:
