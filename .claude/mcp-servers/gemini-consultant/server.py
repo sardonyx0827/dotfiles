@@ -80,17 +80,41 @@ def log_entry(tool: str, status: str, prompt: str, response: str = "") -> None:
 # -------------------------------------------------------------------
 # 通知
 # -------------------------------------------------------------------
+def _sanitize_notify(text: str, limit: int = 200) -> str:
+    """通知用に制御文字を除去し長さを制限する。
+
+    正典コピーは .claude/hooks/_bash_review_common.py の _sanitize_notify。
+    この MCP サーバーは別インストール先 (~/.claude/mcp-servers/...) に置かれ
+    フックの共有モジュールを import できないため、小さなヘルパーをここに複製する。
+    """
+    cleaned = "".join(ch for ch in text if ch.isprintable())
+    if len(cleaned) > limit:
+        cleaned = cleaned[: limit - 1] + "…"
+    return cleaned
+
+
 def notify(title: str, message: str, timeout: int = 5) -> None:
     try:
         os_name = platform.system()
+        safe_title = _sanitize_notify(title, limit=100)
+        safe_message = _sanitize_notify(message, limit=200)
 
         if os_name == "Darwin":
+            # printenv 経由で値を取得して AppleScript 注入 (title/message 中の
+            # ダブルクォート等でスクリプトを抜け出す攻撃) と、system attribute の
+            # MacRoman 解釈による日本語文字化けの両方を回避する
+            script = (
+                'set titleText to do shell script "printenv CLAUDE_NOTIFY_TITLE || true"\n'
+                'set msgText to do shell script "printenv CLAUDE_NOTIFY_MESSAGE || true"\n'
+                "display notification msgText with title titleText"
+            )
             subprocess.run(
-                [
-                    "/usr/bin/osascript",
-                    "-e",
-                    f'display notification "{message}" with title "{title}"',
-                ],
+                ["/usr/bin/osascript", "-e", script],
+                env={
+                    **os.environ,
+                    "CLAUDE_NOTIFY_TITLE": safe_title,
+                    "CLAUDE_NOTIFY_MESSAGE": safe_message,
+                },
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=timeout,
@@ -102,8 +126,8 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
                     "notify-send",
                     "--expire-time",
                     str(timeout * 1000),
-                    title,
-                    message,
+                    safe_title,
+                    safe_message,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -114,7 +138,7 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
             from win10toast import ToastNotifier
 
             toaster = ToastNotifier()
-            toaster.show_toast(title, message, duration=timeout)
+            toaster.show_toast(safe_title, safe_message, duration=timeout)
 
     except Exception:
         pass

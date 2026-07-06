@@ -6,6 +6,7 @@ tool functions stay plain callables.
 
 import importlib.util
 import json
+import subprocess
 import sys
 import time
 import types
@@ -147,3 +148,33 @@ class TestLogRotation:
         lines = log.read_text(encoding="utf-8").splitlines()
         assert len(lines) == server.MAX_LOG_LINES
         assert lines[-1] == "new line"
+
+
+class TestNotifyInjection:
+    """Caller-controlled title/message must not alter the osascript command."""
+
+    def test_notify_uses_env_indirection_not_interpolation(self, server, monkeypatch):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        malicious_title = 'Title" & do shell script "touch /tmp/pwned'
+        malicious_message = 'Msg"\\ $(whoami)'
+        server.notify(malicious_title, malicious_message)
+
+        assert calls, "osascript should have been invoked on Darwin"
+        cmd, kwargs = calls[0]
+        assert cmd[0] == "/usr/bin/osascript"
+        script = cmd[cmd.index("-e") + 1]
+        # The AppleScript body is a static template; the payload only travels
+        # via the environment, never spliced into the script text.
+        assert "touch /tmp/pwned" not in script
+        assert "whoami" not in script
+        assert "printenv CLAUDE_NOTIFY_TITLE" in script
+        assert kwargs["env"]["CLAUDE_NOTIFY_TITLE"] == malicious_title
+        assert kwargs["env"]["CLAUDE_NOTIFY_MESSAGE"] == malicious_message
