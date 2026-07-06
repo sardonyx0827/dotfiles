@@ -1,6 +1,6 @@
 ---
 name: request-harness
-description: Use this skill when processing requests dropped into docs/requests/ (via /requests, or when the user asks to handle pending requests/依頼). Covers intake, ticket lifecycle, task-type routing (code, visual materials, research, writing, ops), execution, and delivery reports.
+description: Use this skill when processing requests dropped into docs/requests/ (via /requests, /requests-watch, or when the user asks to handle pending requests/依頼). Covers intake, ticket lifecycle, task-type routing (code, visual materials, research, writing, ops), execution, delivery reports, and the unattended watch loop.
 ---
 
 # Request Harness
@@ -25,7 +25,7 @@ docs/requests/
 ```
 
 - **Pick-up rule**: everything at `docs/requests/` root except `README.md`, `in-progress/`, `done/` is a new request. One file or one folder = one request.
-- **Ticket ID**: `YYYYMMDD-<kebab-slug>` — slug is a short English summary (e.g. `20260704-sales-onboarding-slides`).
+- **Ticket ID**: `YYYYMMDD-<kebab-slug>` — slug is a short English summary (e.g. `20260704-sales-onboarding-slides`). On collision append `-2`, `-3`, ….
 - **Scaffolding**: if `docs/requests/` does not exist, create the structure above and write `README.md` from the template at the end of this file.
 
 ## Ticket Format (TICKET.md)
@@ -99,6 +99,38 @@ Execution layers follow the global rules (CLAUDE.md / AGENTS.md; Single by defau
 
 **Reopen**: for follow-up fixes, move the folder back to `in-progress/`, append the new ask to 作業ログ, and continue.
 
+## Watch Mode — Unattended Loop (Claude Code only)
+
+Entry point: the `/requests-watch` command, one invocation = **one unattended pass**. The recurring timer is Claude Code's built-in loop skill — do not build your own scheduler:
+
+```
+/loop 30m /requests-watch
+```
+
+Codex has no `/loop` equivalent; this section does not apply there. Never apply these overrides to a normal `/requests` run.
+
+### Overrides vs. the Normal Workflow
+
+Watch mode follows the standard workflow (scan → intake → execute → deliver) with these overrides, which take precedence:
+
+1. **Unattended**: never use AskUserQuestion or wait for the user. Proceed on recorded assumptions, or set `needs-input` and move on.
+2. **Quiet no-op**: nothing to intake and nothing resumable → output exactly one summary line and end the turn, e.g. `依頼ボックス: 新規なし / in-progress 0 / needs-input 2`. No board, no prose — this output recurs every cycle.
+3. **Pick-up guards** (on top of the pick-up rule):
+   - Ignore hidden files (`.DS_Store` etc.), temp/partial files (`*.tmp`, `*.part`, `*.crdownload`, `*~`), and symlinks.
+   - Quiescence: skip an entry whose newest mtime — including every file inside a dropped folder, recursively — is within the last 2 minutes; it may still be being written and will be picked up next pass.
+4. **Auto-execute safe types only**: `research` / `writing` / `visual` run to completion. For `code` / `ops` / `mixed`, do the full intake (TICKET.md with interpretation, DoD, plan) but set `needs-input` with the note 「watch モードでは自動実行対象外 — `/requests <チケットID>` で実行してください」. Unattended repo mutation is never allowed.
+5. **Destructive or outward-facing asks**: always `needs-input` — confirmation is impossible unattended.
+6. **No auto-retry**: `needs-input` / `blocked` tickets are only counted in the summary, never reprocessed. A ticket re-enters watch processing only when the user answers 未解決の質問 and flips `status` back to `in-progress`, or runs `/requests <チケットID>` directly.
+7. **Failure backoff**: before resuming an `in-progress` ticket, check 作業ログ. If a previous watch pass already attempted it and made no progress, set `status: blocked` with the reason instead of retrying the same failure every cycle.
+8. **Per-pass cap**: intake every new drop (claiming is cheap), but execute at most 3 tickets per pass — oldest first; list deferred tickets in the summary. Keeps a pass bounded so the loop stays responsive.
+9. **Single watcher**: watch loops for the same repo from two or more sessions are unsupported. If a concurrent run becomes evident (a scanned entry disappears mid-pass, a ticket folder changes underneath you), stop and warn instead of continuing.
+
+Parallel execution via request-worker subagents follows the normal rules.
+
+### End-of-Pass Output
+
+When something was processed: a short Japanese board covering only the tickets touched this pass (チケット / 状態 / 種別 / 成果物パス) plus one closing count line (`新規N / 完了N / needs-input N / 繰越N`). Keep it small.
+
 ## Visual Deliverable Guidelines
 
 - One self-contained file: inline CSS/JS, no CDN or network dependencies — must render offline via `file://`.
@@ -115,6 +147,7 @@ This skill is shared between Claude Code (`~/.claude/skills/`) and Codex (`~/.co
 | Capability           | Claude Code                          | Codex                                           |
 | -------------------- | ------------------------------------ | ----------------------------------------------- |
 | Entry point          | `/requests` command                  | skill auto-activates (natural-language request) |
+| Watch loop           | `/loop 30m /requests-watch`          | Not available — ignore Watch Mode section       |
 | Global rules         | CLAUDE.md                            | AGENTS.md                                       |
 | Clarifying questions | AskUserQuestion tool                 | Ask directly in chat                            |
 | Parallel tickets     | request-worker subagent (Agent tool) | request-worker agent (multi-agent feature)      |
@@ -155,4 +188,5 @@ If a capability is missing in the current runtime, fall back to sequential singl
 - `/requests` — 新規取り込み + 未完了チケットの処理
 - `/requests status` — 状況一覧のみ表示
 - `/requests <チケットID>` — 特定チケットのみ処理
+- `/loop 30m /requests-watch` — 30分ごとに自動チェック(常駐監視。research / writing / visual のみ自動実行)
 ```

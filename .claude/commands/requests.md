@@ -12,6 +12,7 @@ Process the `docs/requests/` drop zone. Follow the **request-harness** skill for
 - `/requests status` — show the board only (new / in-progress / needs-input / recently done); no execution
 - `/requests <ticket-id>` — process only the given ticket
 - `/requests init` — scaffold the docs/requests/ structure only
+- Periodic monitoring: `/loop 30m /requests-watch` (see the skill's Watch Mode section)
 
 ## Behavior
 
