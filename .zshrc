@@ -1,5 +1,9 @@
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
+
+# PATH の重複エントリを自動除去する (ネストシェルでの肥大化防止)
+typeset -U path PATH
+
 ## Go
 export PATH=~/go/bin:$PATH
 export PATH=~/.npm-global/bin:$PATH
@@ -95,6 +99,10 @@ plugins=(
 )
 # zsh-autosuggestions (5 or 6)
 export ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=6'
+
+# Docker Desktop の CLI 補完。oh-my-zsh が実行する compinit より前に fpath へ
+# 追加しないと補完が読み込まれないため、ここで設定する。
+fpath=(~/.docker/completions $fpath)
 
 source $ZSH/oh-my-zsh.sh
 
@@ -220,12 +228,9 @@ setopt correct
 bindkey '^]' autosuggest-accept
 bindkey '^n' autosuggest-accept
 
-[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
-# The following lines have been added by Docker Desktop to enable Docker CLI completions.
-fpath=(~/.docker/completions $fpath)
-autoload -Uz compinit
-compinit
-# End of Docker CLI completions
+# fzf は上部で `eval "$(fzf --zsh)"` により初期化済み。旧来の ~/.fzf.zsh の
+# 読み込みと、oh-my-zsh が既に実行済みの compinit の再実行はいずれも重複のため削除した。
+# Docker CLI 補完の fpath 追加は oh-my-zsh の source 前に移動済み。
 
 # When Neovim is closed
 function precmd() {
