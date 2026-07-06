@@ -411,6 +411,17 @@ install_oh_my_zsh() {
     print_success "Oh My Zsh already installed"
   fi
 
+  # Self-heal: older installs symlinked $HOME/.oh-my-zsh/custom straight to
+  # $DOTFILES_DIR/.oh-my-zsh/custom, which only tracks themes/ (no plugins/).
+  # That destroyed cloned plugins on the first run and, on a second run,
+  # cloned new plugins THROUGH the symlink into the dotfiles git checkout.
+  # Ensure custom/ is a real directory before cloning anything into it.
+  if [ -L "$HOME/.oh-my-zsh/custom" ]; then
+    print_warning "Migrating $HOME/.oh-my-zsh/custom from a symlink to a real directory"
+    rm -f "$HOME/.oh-my-zsh/custom"
+  fi
+  mkdir -p "$HOME/.oh-my-zsh/custom"
+
   # Install zsh plugins
   print_info "Installing zsh plugins..."
 
@@ -602,13 +613,19 @@ create_symlinks() {
       link_entry "$DOTFILES_DIR/.gemini/$entry" "$HOME/.gemini/$entry"
   done
 
-  # Oh My Zsh custom: remove existing (real dir or stale symlink) before linking
-  # to prevent `ln -sf` from creating a symlink *inside* the existing directory.
-  if [ -e "$HOME/.oh-my-zsh/custom" ] || [ -L "$HOME/.oh-my-zsh/custom" ]; then
-    backup_if_real "$HOME/.oh-my-zsh/custom"
+  # Oh My Zsh custom: keep a REAL directory (install_oh_my_zsh clones plugins
+  # into custom/plugins/) and symlink only the theme file(s) tracked in the
+  # repo. Symlinking the whole custom/ dir would destroy cloned plugins on
+  # the first run and, on a rerun, clone new plugins straight into the
+  # dotfiles git checkout (see the self-heal in install_oh_my_zsh).
+  if [ -L "$HOME/.oh-my-zsh/custom" ]; then
+    rm -f "$HOME/.oh-my-zsh/custom"
   fi
-  ln -sf "$DOTFILES_DIR/.oh-my-zsh/custom" "$HOME/.oh-my-zsh/custom"
-  print_success "Linked Oh My Zsh custom"
+  mkdir -p "$HOME/.oh-my-zsh/custom/themes"
+  for theme in "$DOTFILES_DIR"/.oh-my-zsh/custom/themes/*; do
+    [ -e "$theme" ] || continue
+    link_entry "$theme" "$HOME/.oh-my-zsh/custom/themes/$(basename "$theme")"
+  done
 
   # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
   mkdir -p "$HOME/.tmux"

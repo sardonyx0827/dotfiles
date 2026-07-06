@@ -117,8 +117,17 @@ class TestCreateSymlinks:
         skills = home / ".codex/skills/coding-standards"
         assert skills.is_dir() and not skills.is_symlink()
 
-        # Oh My Zsh custom dir and the tmux helper.
-        assert (home / ".oh-my-zsh/custom").is_symlink()
+        # Oh My Zsh custom dir stays a REAL directory (install_oh_my_zsh
+        # clones plugins into custom/plugins/); only the theme file(s)
+        # tracked in the repo are symlinked in.
+        assert not (home / ".oh-my-zsh/custom").is_symlink()
+        assert (home / ".oh-my-zsh/custom").is_dir()
+        theme_link = home / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme"
+        assert theme_link.is_symlink()
+        assert (
+            theme_link.resolve()
+            == (REPO_ROOT / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme").resolve()
+        )
         assert (home / ".tmux/tmux_send_to_all_except_nvim.sh").is_symlink()
 
         # The pre-existing real .zshrc was backed up; the stale symlink was not.
@@ -149,6 +158,54 @@ class TestCreateSymlinks:
         # Fresh HOME: only copy_entry targets existed, and those are new too,
         # so the timestamped backup dir must have been removed as empty.
         assert list(home.glob(".dotfiles_backup_*")) == []
+
+
+class TestInstallOhMyZsh:
+    def _stub_git_clone(self, shell_env):
+        # Simulate `git clone URL DEST` by creating an empty DEST dir.
+        body = 'if [ "$1" = "clone" ]; then\n  mkdir -p "${@: -1}"\nfi'
+        shell_env.stub("git", body=body)
+
+    def test_heals_symlinked_custom_dir_before_cloning_plugins(
+        self, shell_env, tmp_path
+    ):
+        # A previous buggy install symlinked $HOME/.oh-my-zsh/custom straight
+        # into the dotfiles checkout, which only ships themes/ (no plugins/).
+        # install_oh_my_zsh must convert it back to a real directory BEFORE
+        # cloning plugins, or the clone lands inside the checkout.
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        fake_dotfiles_custom = tmp_path / "fake-dotfiles" / ".oh-my-zsh" / "custom"
+        (fake_dotfiles_custom / "themes").mkdir(parents=True)
+        (home / ".oh-my-zsh/custom").symlink_to(fake_dotfiles_custom)
+
+        res = run_sourced("install_oh_my_zsh", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        custom = home / ".oh-my-zsh/custom"
+        assert not custom.is_symlink()
+        assert custom.is_dir()
+        assert (custom / "plugins/zsh-autosuggestions").is_dir()
+        assert (custom / "plugins/zsh-syntax-highlighting").is_dir()
+        # The clone must never have landed inside the (simulated) checkout.
+        assert not (fake_dotfiles_custom / "plugins").exists()
+
+    def test_rerun_does_not_reclone_existing_plugins(self, shell_env):
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+
+        first = run_sourced("install_oh_my_zsh", shell_env.env)
+        assert first.returncode == 0, first.stderr
+        clone_calls_1 = [c for c in shell_env.calls if c.startswith("git clone")]
+
+        second = run_sourced("install_oh_my_zsh", shell_env.env)
+        assert second.returncode == 0, second.stderr
+        clone_calls_2 = [c for c in shell_env.calls if c.startswith("git clone")]
+
+        assert clone_calls_2 == clone_calls_1
+        assert not (home / ".oh-my-zsh/custom").is_symlink()
 
 
 class TestHooksJsonTemplate:
