@@ -3,12 +3,12 @@
 # Claude Code Status Line - Rose Pine Theme
 # =============================================================================
 # セットアップ:
-#   chmod +x ~/.claude/statusline.sh
+#   chmod +x ~/.claude/statusline-command.sh
 #   ~/.claude/settings.json に以下を追加:
 #   {
 #     "statusLine": {
 #       "type": "command",
-#       "command": "~/.claude/statusline.sh",
+#       "command": "bash ~/.claude/statusline-command.sh",
 #       "padding": 0
 #     }
 #   }
@@ -129,10 +129,10 @@ SEP="${MUTED} | ${RESET}"
 # --- 出力を組み立て ---
 parts=()
 parts+=("${PINE}${dir_display}${RESET}")
-[ -n "$git_info" ]    && parts+=("${git_info}")
+[ -n "$git_info" ] && parts+=("${git_info}")
 parts+=("${ROSE}${model_display}${RESET}")
 [ -n "$ctx_display" ] && parts+=("${ctx_display}")
-[ -n "$rate_info" ]   && parts+=("${rate_info}")
+[ -n "$rate_info" ] && parts+=("${rate_info}")
 parts+=("${GOLD}${cost_str}${RESET}")
 
 result=""

@@ -85,7 +85,7 @@ await browser.startScreencast()  // Stream viewport frames
 ```
 
 ### Agent Browser with Codex
-If you have the `agent-browser` skill installed, use `/agent-browser` for interactive browser automation tasks.
+If the `agent-browser` CLI is installed, run it directly via shell commands for interactive browser automation tasks.
 
 ---
 

@@ -640,6 +640,8 @@ Before ANY production deployment:
 - [Next.js Security](https://nextjs.org/docs/security)
 - [Supabase Security](https://supabase.com/docs/guides/auth)
 - [Web Security Academy](https://portswigger.net/web-security)
+- クラウドインフラ (IAM / ネットワーク / IaC / コンテナ / ログ監査) のレビュー観点は
+  同ディレクトリの [cloud-infrastructure-security.md](cloud-infrastructure-security.md) を参照
 
 ---
 
