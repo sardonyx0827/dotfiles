@@ -263,11 +263,13 @@ alias cop='copilot'
 ## Gemini CLI
 alias ge='gemini'
 alias g='gemini'
-# push はリモートに影響するため -y (自動承認) は使わず、対話モードで都度確認する
+# push / commit / pull_request はリモートや履歴を変更するため -y (自動承認) は使わず、
+# 対話モード (-i) で都度ユーザーに確認させる。
 alias push='gemini -i "pushして"'
+alias commit='gemini -i "commitして"'
+alias pull_request='gemini -i "pr作成して"'
+# commit_message / explain は変更を伴わない読み取り + テキスト出力のみのため -y を許容する
 alias commit_message='gemini -y -p "現在の変更を確認してCommitメッセージを作成してください。Commitメッセージのみを出力してください。"'
-alias commit='gemini -y -p "commitして"'
-alias pull_request='gemini -y -p "pr作成して"'
 alias explain='gemini -y -p "現在のディレクトリにあるコンテンツを確認して、どんなプロジェクトや構成なのかを要点をまとめて説明してください"'
 function translate() {
   gemini -y -p  "これを日本語であれば英語、日本語以外であれば日本語に翻訳してください: $*"
