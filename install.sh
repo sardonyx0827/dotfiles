@@ -526,6 +526,30 @@ create_symlinks() {
   # Neovim config (repo stores it at .config/nvim)
   link_entry "$DOTFILES_DIR/.config/nvim" "$HOME/.config/nvim"
 
+  # VS Code / Antigravity: both read user settings from an OS-specific
+  # location (not $HOME/.config on macOS). Symlink individual files (not
+  # the whole User/ dir) so editor runtime state (globalStorage,
+  # workspaceStorage, etc.) never ends up in the repo.
+  local vscode_user_dir antigravity_user_dir
+  if [[ "$OS" == "macos" ]]; then
+    vscode_user_dir="$HOME/Library/Application Support/Code/User"
+    antigravity_user_dir="$HOME/Library/Application Support/Antigravity/User"
+  else
+    vscode_user_dir="$HOME/.config/Code/User"
+    antigravity_user_dir="$HOME/.config/Antigravity/User"
+  fi
+  mkdir -p "$vscode_user_dir" "$antigravity_user_dir"
+
+  local editor_config_files=(
+    "settings.json"
+    "keybindings.json"
+  )
+  for entry in "${editor_config_files[@]}"; do
+    # Repo layout differs: Code already nests under User/, Antigravity does not.
+    link_entry "$DOTFILES_DIR/.config/Code/User/$entry" "$vscode_user_dir/$entry"
+    link_entry "$DOTFILES_DIR/.config/Antigravity/$entry" "$antigravity_user_dir/$entry"
+  done
+
   # Claude Code config: symlink individual entries so CLI runtime data
   # (projects/, sessions/, history.jsonl, backups/, etc.) stays out of the repo.
   mkdir -p "$HOME/.claude"

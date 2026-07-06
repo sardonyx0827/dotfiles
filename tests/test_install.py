@@ -177,6 +177,61 @@ class TestCreateSymlinks:
         # so the timestamped backup dir must have been removed as empty.
         assert list(home.glob(".dotfiles_backup_*")) == []
 
+    def test_links_vscode_and_antigravity_configs_on_linux(self, shell_env):
+        # No OS set (mirrors "no OS var in the ambient test env"): the
+        # non-macos / Linux-style ~/.config destinations must be used.
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        vscode_user = home / ".config/Code/User"
+        antigravity_user = home / ".config/Antigravity/User"
+        for name in ("settings.json", "keybindings.json"):
+            code_link = vscode_user / name
+            assert code_link.is_symlink(), f"Code {name} should be linked"
+            assert (
+                code_link.resolve()
+                == (REPO_ROOT / ".config/Code/User" / name).resolve()
+            )
+
+            ag_link = antigravity_user / name
+            assert ag_link.is_symlink(), f"Antigravity {name} should be linked"
+            assert (
+                ag_link.resolve()
+                == (REPO_ROOT / ".config/Antigravity" / name).resolve()
+            )
+
+    def test_links_vscode_and_antigravity_configs_on_macos(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        env = dict(shell_env.env)
+        env["OS"] = "macos"
+
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+
+        vscode_user = home / "Library/Application Support/Code/User"
+        antigravity_user = home / "Library/Application Support/Antigravity/User"
+        for name in ("settings.json", "keybindings.json"):
+            assert (vscode_user / name).is_symlink()
+            assert (antigravity_user / name).is_symlink()
+
+
+class TestStrictMode:
+    def test_pipefail_enabled(self, shell_env):
+        # Pipelines like `curl ... | sudo tee` must not swallow curl's exit
+        # status. Test the actual behavior (not `set -o` text) so it stays
+        # meaningful even if the option is enabled a different way.
+        res = run_sourced(
+            "if false | true; then echo RESULT=swallowed; "
+            "else echo RESULT=pipefail-detected; fi",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "RESULT=pipefail-detected" in res.stdout
+
 
 class TestInstallOhMyZsh:
     def _stub_git_clone(self, shell_env):
