@@ -6,9 +6,29 @@ hooks): allow paths exit 0 silently, blocking paths (ask/deny) exit 2
 with the reason on stderr. Nothing is ever printed to stdout.
 """
 
-from conftest import fake_gemini, fake_run, hook_payload
+import io
+import sys
+import types
+
+from conftest import REPO_ROOT, fake_gemini, fake_run, hook_payload
 
 HOOK = ".codex/hooks/bash-review.py"
+
+
+def _run_raw(hook, raw, capsys, monkeypatch):
+    """Execute a hook against arbitrary raw stdin bytes (malformed-input tests)."""
+    hook_path = REPO_ROOT / hook
+    code = compile(hook_path.read_text(encoding="utf-8"), str(hook_path), "exec")
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(buffer=io.BytesIO(raw)))
+    monkeypatch.setattr("platform.system", lambda: "TestOS")
+    g = {"__name__": "__main__", "__file__": str(hook_path)}
+    exit_code = None
+    try:
+        exec(code, g)  # noqa: S102  # nosec B102
+    except SystemExit as e:
+        exit_code = e.code if e.code is not None else 0
+    return exit_code, capsys.readouterr()
 
 
 class TestAllowPaths:
@@ -85,3 +105,25 @@ class TestBlockingPaths:
         assert res.exit_code == 2
         assert res.stdout == ""
         assert "Codex unavailable" in res.stderr
+
+
+class TestMalformedInput:
+    """Malformed hook input must block (exit 2) toward a human, not crash."""
+
+    def test_non_dict_tool_input_blocks(self, run_hook):
+        res = run_hook(HOOK, {"tool_name": "Bash", "tool_input": "notadict"})
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert res.stderr != ""
+
+    def test_empty_stdin_blocks(self, capsys, monkeypatch):
+        exit_code, captured = _run_raw(HOOK, b"", capsys, monkeypatch)
+        assert exit_code == 2
+        assert captured.err != ""
+
+    def test_garbage_bytes_blocks(self, capsys, monkeypatch):
+        exit_code, captured = _run_raw(
+            HOOK, b"garbage not json {[", capsys, monkeypatch
+        )
+        assert exit_code == 2
+        assert captured.err != ""

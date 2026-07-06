@@ -55,3 +55,15 @@ class TestErrors:
         assert res.exit_code == 0
         assert res.decision == "ask"
         assert "Error during Codex review" in res.reason
+
+
+class TestMalformedInput:
+    def test_non_dict_tool_input_asks(self, run_hook):
+        res = run_hook(HOOK, {"tool_name": "Bash", "tool_input": "notadict"})
+        assert res.exit_code == 0
+        assert res.decision == "ask"
+
+    def test_non_dict_payload_asks(self, run_hook):
+        res = run_hook(HOOK, "not-a-hook-object")
+        assert res.exit_code == 0
+        assert res.decision == "ask"

@@ -1,23 +1,47 @@
 """Tests for .claude/hooks/bash-review.py (Gemini primary + Codex second stage)."""
 
+import io
+import json
 import subprocess
+import sys
+import types
 from urllib.error import URLError
 
 import pytest
-from conftest import fake_gemini, fake_run, hook_payload
+from conftest import REPO_ROOT, fake_gemini, fake_run, hook_payload
 
 HOOK = ".claude/hooks/bash-review.py"
 
+# Pure command/verdict helpers were extracted into the shared module; unit-test
+# them straight from there instead of scraping the hook's globals.
+sys.path.insert(0, str(REPO_ROOT / ".claude" / "hooks"))
+import _bash_review_common as _common  # noqa: E402
+
+
+def _run_raw(hook, raw, capsys, monkeypatch):
+    """Execute a hook against arbitrary raw stdin bytes (malformed-input tests).
+
+    Malformed input fails before any log setup, so the conftest filesystem
+    sandbox is not needed here; a minimal stdin/platform patch suffices.
+    """
+    hook_path = REPO_ROOT / hook
+    code = compile(hook_path.read_text(encoding="utf-8"), str(hook_path), "exec")
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(buffer=io.BytesIO(raw)))
+    monkeypatch.setattr("platform.system", lambda: "TestOS")
+    g = {"__name__": "__main__", "__file__": str(hook_path)}
+    exit_code = None
+    try:
+        exec(code, g)  # noqa: S102  # nosec B102
+    except SystemExit as e:
+        exit_code = e.code if e.code is not None else 0
+    return exit_code, capsys.readouterr()
+
 
 @pytest.fixture
-def hook_fns(run_hook):
-    """Run the hook end-to-end once and return its globals for unit tests."""
-    res = run_hook(
-        HOOK,
-        hook_payload("some-unreviewed-cmd"),
-        urlopen=fake_gemini("ALLOW"),
-    )
-    return res.globals
+def hook_fns():
+    """Expose the shared module's pure functions by name for unit tests."""
+    return vars(_common)
 
 
 class TestPreDeny:
@@ -236,6 +260,37 @@ class TestCommandHelpers:
             ("tmux list-panes", True),
             ("tmux send-keys -t 1 'rm -rf /'", False),
             ("tmux kill-server", False),
+            # npm/pnpm/yarn run were removed from SAFE_COMMANDS (supply-chain).
+            ("npm run build", False),
+            ("pnpm run deploy", False),
+            ("yarn run release", False),
+            # Sensitive-path guard: secret reads never count as safe even when
+            # the leading token (cat/head/grep) is otherwise safe.
+            ("cat .env", False),
+            ("cat .env.local", False),
+            ("cat ~/.ssh/id_rsa", False),
+            ("grep -r password src", False),
+            ("head api_key.txt", False),
+            ("cat config/credentials.json", False),
+            ("tail ~/.bash_history", False),
+            # Quote/escape splitting must not defeat the sensitive match:
+            # the shell reassembles these into `cat .env`.
+            ('cat ".e"nv', False),
+            ("cat '.e'nv", False),
+            ("cat .e\\nv", False),
+            ("cat $'\\x2e'env", False),
+            # Directory targets without a trailing slash still expose secrets.
+            ("grep -r . ~/.ssh", False),
+            ("rg -uu . ~/.aws", False),
+            ("ls ~/.ssh", False),
+            # direnv and backup variants of .env.
+            ("cat .envrc", False),
+            ("cat .env_backup", False),
+            # ...but quoting alone must not disqualify innocent commands,
+            # and .venv must not false-positive on the .env pattern.
+            ('grep "foo" bar.txt', True),
+            ("echo 'hello world'", True),
+            ("ls .venv", True),
         ],
     )
     def test_is_safe_command(self, hook_fns, command, expected):
@@ -267,6 +322,13 @@ class TestCommandHelpers:
             ("cat a < b", False),
             ("sleep 1 & echo bg", False),
             ("not-in-safe-list", False),
+            # Sensitive reads and npm-run must never be skipped.
+            ("cat .env", False),
+            ("cat ~/.ssh/id_rsa", False),
+            ("npm run build", False),
+            # Quote-splitting and slashless directory reads (bypass regression).
+            ('cat ".e"nv', False),
+            ("grep -r . ~/.ssh", False),
         ],
     )
     def test_can_skip_review(self, hook_fns, command, expected):
@@ -281,3 +343,57 @@ class TestSanitizeNotify:
         out = hook_fns["_sanitize_notify"]("x" * 300, limit=200)
         assert len(out) == 200
         assert out.endswith("…")
+
+
+class TestSensitiveGuard:
+    """Secret reads must reach AI review, not the safe-skip fast path."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cat .env",
+            "cat ~/.ssh/id_rsa",
+            "grep AWS_SECRET .env.local",
+            "head ~/.aws/credentials",
+        ],
+    )
+    def test_sensitive_read_is_reviewed_not_skipped(self, run_hook, command):
+        res = run_hook(HOOK, hook_payload(command), urlopen=fake_gemini("ALLOW"))
+        assert res.decision == "allow"
+        # Reviewed by Gemini instead of shortcut-skipped.
+        assert "Gemini reviewed and approved" in res.reason
+
+    def test_npm_run_is_reviewed_not_skipped(self, run_hook):
+        res = run_hook(
+            HOOK, hook_payload("npm run deploy"), urlopen=fake_gemini("ALLOW")
+        )
+        assert res.decision == "allow"
+        assert "Gemini reviewed and approved" in res.reason
+
+
+class TestMalformedInput:
+    """A crashing hook must fail toward a human prompt, never a traceback."""
+
+    def test_non_dict_tool_input_asks(self, run_hook):
+        res = run_hook(HOOK, {"tool_name": "Bash", "tool_input": "notadict"})
+        assert res.exit_code == 0
+        assert res.decision == "ask"
+
+    def test_non_dict_payload_asks(self, run_hook):
+        res = run_hook(HOOK, "not-a-hook-object")
+        assert res.exit_code == 0
+        assert res.decision == "ask"
+
+    def test_empty_stdin_asks(self, capsys, monkeypatch):
+        exit_code, captured = _run_raw(HOOK, b"", capsys, monkeypatch)
+        decision = json.loads(captured.out.strip().splitlines()[-1])
+        assert exit_code == 0
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+    def test_garbage_bytes_asks(self, capsys, monkeypatch):
+        exit_code, captured = _run_raw(
+            HOOK, b"garbage not json {[", capsys, monkeypatch
+        )
+        decision = json.loads(captured.out.strip().splitlines()[-1])
+        assert exit_code == 0
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "ask"

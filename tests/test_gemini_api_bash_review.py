@@ -79,3 +79,22 @@ class TestLogs:
         res = run_hook(HOOK, hook_payload("ls -la"))
         summary = res.home / ".claude/logs/gemini-bash-review.log"
         assert "safe command" in summary.read_text(encoding="utf-8")
+
+
+class TestSensitiveGuard:
+    def test_sensitive_read_is_reviewed_not_skipped(self, run_hook):
+        res = run_hook(HOOK, hook_payload("cat .env"), urlopen=fake_gemini("ALLOW"))
+        assert res.decision == "allow"
+        assert "Gemini reviewed and approved" in res.reason
+
+
+class TestMalformedInput:
+    def test_non_dict_tool_input_asks(self, run_hook):
+        res = run_hook(HOOK, {"tool_name": "Bash", "tool_input": "notadict"})
+        assert res.exit_code == 0
+        assert res.decision == "ask"
+
+    def test_non_dict_payload_asks(self, run_hook):
+        res = run_hook(HOOK, "not-a-hook-object")
+        assert res.exit_code == 0
+        assert res.decision == "ask"
