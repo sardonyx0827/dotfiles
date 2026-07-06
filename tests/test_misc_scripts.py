@@ -1,5 +1,6 @@
 """Tests for utility scripts and syntax checks for all shell configs."""
 
+import shutil
 import subprocess
 
 import pytest
@@ -86,6 +87,8 @@ class TestSyntax:
         assert res.returncode == 0, res.stderr
 
     def test_zshrc_syntax(self):
+        if shutil.which("zsh") is None:
+            pytest.skip("zsh not installed")
         res = subprocess.run(
             ["zsh", "-n", str(REPO_ROOT / ".zshrc")],
             capture_output=True,

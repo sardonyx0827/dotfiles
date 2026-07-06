@@ -48,13 +48,30 @@ class TestSourceGuard:
 
 class TestDetectOs:
     def test_darwin_is_macos(self, shell_env):
-        res = run_sourced('detect_os && echo "OS=$OS"', shell_env.env)
+        # OSTYPE を明示して host OS に依存しない（Linux CI 上でも成立させる）
+        res = run_sourced('OSTYPE=darwin24 detect_os && echo "OS=$OS"', shell_env.env)
         assert "Detected OS: macos" in res.stdout
         assert "OS=macos" in res.stdout
 
     def test_linux_gnu_without_debian_marker_is_linux(self, shell_env):
-        res = run_sourced('OSTYPE=linux-gnu detect_os && echo "OS=$OS"', shell_env.env)
+        # debian マーカーを不在パスに差し替え、host に /etc/debian_version が
+        # あっても linux 分岐を確定的に検証する
+        res = run_sourced(
+            "OSTYPE=linux-gnu DEBIAN_VERSION_FILE=/nonexistent "
+            'detect_os && echo "OS=$OS"',
+            shell_env.env,
+        )
         assert "OS=linux" in res.stdout
+
+    def test_linux_gnu_with_debian_marker_is_ubuntu(self, shell_env, tmp_path):
+        marker = tmp_path / "debian_version"
+        marker.write_text("13\n", encoding="utf-8")
+        res = run_sourced(
+            f'OSTYPE=linux-gnu DEBIAN_VERSION_FILE="{marker}" '
+            'detect_os && echo "OS=$OS"',
+            shell_env.env,
+        )
+        assert "OS=ubuntu" in res.stdout
 
     def test_msys_is_windows(self, shell_env):
         res = run_sourced('OSTYPE=msys detect_os && echo "OS=$OS"', shell_env.env)

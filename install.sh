@@ -38,7 +38,8 @@ detect_os() {
   if [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
   elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    if [ -f /etc/debian_version ]; then
+    # DEBIAN_VERSION_FILE はテストで分岐を検証するための差し込み口（既定は実パス）
+    if [ -f "${DEBIAN_VERSION_FILE:-/etc/debian_version}" ]; then
       OS="ubuntu"
     else
       OS="linux"
