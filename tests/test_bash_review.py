@@ -248,6 +248,20 @@ class TestCommandHelpers:
         assert split("single") == ["single"]
         assert split("  ") == []
 
+    def test_split_commands_ignores_separators_inside_quotes(self, hook_fns):
+        """Separators inside quotes are not shell separators: splitting there
+        turns quoted fragments into fake sub-commands and causes false DENYs
+        (e.g. python3 -c "...; curl ..." pre-blocked as `curl`)."""
+        split = hook_fns["_split_commands"]
+        assert split('python3 -c "import os; os.getcwd()"') == [
+            'python3 -c "import os; os.getcwd()"'
+        ]
+        assert split('echo "a && b" && ls') == ['echo "a && b"', "ls"]
+        assert split("echo 'a; b'; ls") == ["echo 'a; b'", "ls"]
+        assert split("echo a\\;b") == ["echo a\\;b"]
+        # Unterminated quote: treat the rest as one command (goes to review).
+        assert split('echo "a; b') == ['echo "a; b']
+
     @pytest.mark.parametrize(
         ("command", "expected"),
         [
@@ -264,6 +278,19 @@ class TestCommandHelpers:
             ("npm run build", False),
             ("pnpm run deploy", False),
             ("yarn run release", False),
+            # Linters/formatters/test runners can write files (--fix/--write)
+            # or execute arbitrary project code: never safe-skipped.
+            ("eslint --fix .", False),
+            ("prettier --write src/", False),
+            ("tsc --outDir dist", False),
+            ("pytest -q", False),
+            ("vitest run", False),
+            ("jest", False),
+            # `git branch` is safe only as the bare listing form: flagged
+            # variants (-D/-m/...) are destructive and must be reviewed.
+            ("git branch", True),
+            ("git branch -D backup", False),
+            ("git branch -m old new", False),
             # Sensitive-path guard: secret reads never count as safe even when
             # the leading token (cat/head/grep) is otherwise safe.
             ("cat .env", False),

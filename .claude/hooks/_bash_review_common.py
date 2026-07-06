@@ -20,6 +20,9 @@ import subprocess
 # 返し、通常の AI レビュー経路 (API/CLI 不在時は "ask" にフェイルクローズ) へ
 # 回す。npm/pnpm/yarn run は package.json の任意スクリプトを実行できる
 # サプライチェーン経路になり得るため、意図的にセーフ扱いから外している。
+# tsc/eslint/prettier/pytest/vitest/jest などの lint・format・テスト実行系も
+# 読み取り系ではない (--fix/--write によるファイル改変や、テスト/設定コードの
+# 実行による任意コード実行が可能) ため、セーフ扱いにしない。
 SAFE_COMMANDS = [
     # tmux は send-keys / new-session / run-shell で任意コマンド実行が可能な
     # ため全体をセーフ扱いにせず、読み取り系サブコマンドに限定する
@@ -39,7 +42,6 @@ SAFE_COMMANDS = [
     "git status",
     "git log",
     "git diff",
-    "git branch",
     "grep",
     "rg",
     "head",
@@ -51,12 +53,13 @@ SAFE_COMMANDS = [
     "date",
     "tree",
     "jq",
-    "tsc",
-    "eslint",
-    "prettier",
-    "pytest",
-    "vitest",
-    "jest",
+]
+
+# 引数なしの完全一致でのみセーフ扱いするコマンド。
+# `git branch` は一覧表示は読み取り系だが、-d/-D/-m/-M/-c/-C 等の破壊的
+# フラグを取り得るため、プレフィックス一致にせず引数付きは AI レビューへ回す。
+SAFE_EXACT_COMMANDS = [
+    "git branch",
 ]
 
 # DENY_COMMANDS は「明らかに危険なコマンドを AI 呼び出し前に即拒否する」
@@ -112,7 +115,44 @@ SENSITIVE_PATTERNS = re.compile(
 
 
 def _split_commands(cmd: str) -> list[str]:
-    return [p.strip() for p in re.split(r"\s*(?:&&|\|\||[|;])\s*", cmd) if p.strip()]
+    """cmd を && / || / | / ; で分割する (クォート・エスケープ内の区切りは無視)。
+
+    シェルはクォート内の ; や | を区切りとして解釈しないため、ここで分割すると
+    `python3 -c "a; b"` のようなクォート内文字列の断片が独立コマンドとして
+    DENY/SAFE 判定にかかってしまう (安全なコマンドの誤 DENY)。クォート外の
+    区切りのみで分割する。単独の & は従来どおり区切りとして扱わない
+    (バックグラウンド実行はスキップ経路では COMPLEX_SHELL_SYNTAX が拒否する)。
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    in_single = in_double = False
+    i, n = 0, len(cmd)
+    while i < n:
+        ch = cmd[i]
+        # シングルクォート内ではバックスラッシュも通常文字
+        if ch == "\\" and not in_single and i + 1 < n:
+            current.append(cmd[i : i + 2])
+            i += 2
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        if not in_single and not in_double:
+            if cmd.startswith("&&", i) or cmd.startswith("||", i):
+                parts.append("".join(current))
+                current = []
+                i += 2
+                continue
+            if ch in ";|":
+                parts.append("".join(current))
+                current = []
+                i += 1
+                continue
+        current.append(ch)
+        i += 1
+    parts.append("".join(current))
+    return [p.strip() for p in parts if p.strip()]
 
 
 # クォート/バックスラッシュはシェル解釈時に消えるため、除去した正規化文字列でも
@@ -139,6 +179,8 @@ def _is_safe_command(cmd: str) -> bool:
     # 機密パスを含む場合はセーフ扱いにせず AI レビューへ回す (Read deny の迂回防止)
     if _is_sensitive_command(cmd):
         return False
+    if cmd in SAFE_EXACT_COMMANDS:
+        return True
     return any(cmd == safe or cmd.startswith(safe + " ") for safe in SAFE_COMMANDS)
 
 
