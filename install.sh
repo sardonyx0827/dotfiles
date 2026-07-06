@@ -153,6 +153,7 @@ install_brew_packages() {
     make            # gmake for vimproc / treesitter compilation
     python          # python3 for pip-based linters and MCP server
     go              # ~/go/bin tools (goimports, staticcheck), .zshrc PATH
+    pyenv           # Python version manager (install_pyenv covers Ubuntu only)
   )
 
   for package in "${packages[@]}"; do
@@ -759,13 +760,9 @@ install_ai_tools() {
     npm install -g @openai/codex 2>/dev/null || print_warning "Failed to install Codex"
     npm install -g @google/gemini-cli 2>/dev/null || print_warning "Failed to install Gemini CLI"
 
-    # GitHub Copilot CLI is distributed as a `gh` extension, not an npm package.
-    if command_exists gh; then
-      gh extension install github/gh-copilot 2>/dev/null ||
-        print_info "gh-copilot already installed or install skipped"
-    else
-      print_warning "gh CLI not found; install it to use GitHub Copilot CLI (gh extension install github/gh-copilot)"
-    fi
+    # GitHub Copilot CLI (standalone `copilot` command; used by
+    # update_ai_tools.sh and the `cop` alias in .zshrc).
+    npm install -g @github/copilot 2>/dev/null || print_warning "Failed to install Copilot CLI"
 
     print_success "AI tools installation attempted (check warnings above)"
   fi
@@ -1057,7 +1054,7 @@ main() {
   print_info "Secrets / credentials still required (cannot be installed):"
   echo "  - GEMINI_API_KEY : export in your shell for the gemini-api bash-review hook"
   echo "                     and the gemini-consultant MCP server"
-  echo "  - GitHub MCP token: replace the <placeholder> token in .gemini/.claude MCP config"
+  echo "  - GITHUB_ACCESS_TOKEN : export in your shell for the GitHub MCP server (.gemini/settings.json resolves \${GITHUB_ACCESS_TOKEN})"
   echo "  - gh auth login   : authenticate GitHub CLI (used by .gitconfig credential helper)"
   echo
   print_info "Utility scripts:"

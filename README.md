@@ -265,9 +265,14 @@ done
 
 # Codex設定
 mkdir -p ~/.codex
-for e in AGENTS.md config.toml hooks hooks.json; do
+for e in AGENTS.md config.toml hooks; do
   ln -sf ~/dotfiles/.codex/$e ~/.codex/$e
 done
+# hooks.json はテンプレートから生成 (リポジトリに hooks.json 実体は無い)
+sed "s|__HOME__|$HOME|g" ~/dotfiles/.codex/hooks.json.template > ~/.codex/hooks.json
+# agents/ と skills/ は Codex がシンボリックリンクのスキャンを無視するためコピーする
+# (対象スキルの一覧など詳細は install.sh の setup_codex を参照)
+cp -R ~/dotfiles/.codex/agents ~/.codex/agents
 
 # Gemini設定
 mkdir -p ~/.gemini

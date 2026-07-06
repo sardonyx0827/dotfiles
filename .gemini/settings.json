@@ -1,31 +1,22 @@
 {
   "context": {
-    "fileName": [
-      "CLAUDE.md",
-      "GEMINI.md"
-    ]
+    "fileName": ["CLAUDE.md", "GEMINI.md"]
   },
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@executeautomation/playwright-mcp-server"
-      ]
+      "args": ["-y", "@executeautomation/playwright-mcp-server"]
     },
     "github": {
       "httpUrl": "https://api.githubcopilot.com/mcp/",
       "headers": {
-        "Authorization": "Bearer <GITHUB_ACCESS_TOKEN>"
+        "Authorization": "Bearer ${GITHUB_ACCESS_TOKEN}"
       },
       "timeout": 5000
     },
     "context7": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp"
-      ],
+      "args": ["-y", "@upstash/context7-mcp"],
       "env": {}
     }
   },
