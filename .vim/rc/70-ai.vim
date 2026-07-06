@@ -43,7 +43,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     if a:tool ==# 'codex'
       return 'cat ' . shellescape(a:tmpfile) . ' | codex exec --skip-git-repo-check ' . shellescape(a:sys)
     elseif a:tool ==# 'gemini'
-      return 'cat ' . shellescape(a:tmpfile) . ' | gemini -m gemini-3.1-flash-lite-preview -p ' . shellescape(a:sys)
+      return 'cat ' . shellescape(a:tmpfile) . ' | gemini -m gemini-flash-lite-latest -p ' . shellescape(a:sys)
     else
       return 'cat ' . shellescape(a:tmpfile) . ' | claude --model sonnet -p ' . shellescape(a:sys)
     endif
