@@ -3,6 +3,9 @@
 # auto-format.sh実行後に呼び出すことを想定
 # exit 2 でエラー内容をClaudeにフィードバックし、自動修正を促す
 
+# jq が無い環境では処理できないため安全に抜ける
+command -v jq >/dev/null 2>&1 || exit 0
+
 # ログ設定
 LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/lint.log"
@@ -20,20 +23,28 @@ log() {
   fi
 }
 
-# macOS通知センターに通知を送る関数
+# 通知を送る関数（macOS: terminal-notifier/osascript、Linux: notify-send）
 notify() {
   local title="$1"
   local message="$2"
-  # terminal-notifier が入っていれば長めに表示、なければosascriptにフォールバック
+  local timeout="${3:-5}"
+  # terminal-notifier が入っていれば長めに表示、なければosascript/notify-sendにフォールバック
   if command -v terminal-notifier >/dev/null 2>&1; then
     # -timeout: 表示秒数（FAILEDは長め、PASSEDは短め）
-    local timeout="${3:-5}"
     terminal-notifier -title "$title" -message "$message" -timeout "$timeout" 2>/dev/null
-  else
-    osascript -e "display notification \"$message\" with title \"$title\"" 2>/dev/null
+  elif command -v osascript >/dev/null 2>&1; then
+    # 環境変数経由で値を渡すことで AppleScript インジェクションを防ぐ
+    # (system attribute ではなく printenv 経由にすることで日本語の
+    #  文字化け(MacRomanでの解釈)も避けられる)
+    HOOK_NOTIFY_TITLE="$title" HOOK_NOTIFY_MESSAGE="$message" osascript \
+      -e 'set titleText to do shell script "printenv HOOK_NOTIFY_TITLE || true"' \
+      -e 'set msgText to do shell script "printenv HOOK_NOTIFY_MESSAGE || true"' \
+      -e 'display notification msgText with title titleText' \
+      2>/dev/null
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send --expire-time "$((timeout * 1000))" "$title" "$message" 2>/dev/null
   fi
 }
-
 
 # JSONからファイルパスを取得（auto-format.shと同じ方法）
 FILE_PATH=$(jq -r '.tool_input.file_path // empty' 2>/dev/null)
@@ -69,25 +80,25 @@ js | jsx | ts | tsx)
     done
   fi
 
-    ESLINT_BIN=""
-    if [ -n "$PROJECT_ROOT" ] && [ -x "$PROJECT_ROOT/node_modules/.bin/eslint" ]; then
-      ESLINT_BIN="$PROJECT_ROOT/node_modules/.bin/eslint"
-    elif command -v eslint >/dev/null 2>&1; then
-      ESLINT_BIN="eslint"
-    fi
+  ESLINT_BIN=""
+  if [ -n "$PROJECT_ROOT" ] && [ -x "$PROJECT_ROOT/node_modules/.bin/eslint" ]; then
+    ESLINT_BIN="$PROJECT_ROOT/node_modules/.bin/eslint"
+  elif command -v eslint >/dev/null 2>&1; then
+    ESLINT_BIN="eslint"
+  fi
 
-    if $HAS_ESLINT_CONFIG && [ -n "$ESLINT_BIN" ]; then
-      echo "  Running ESLint ($ESLINT_BIN)..."
-      if ! OUTPUT=$("$ESLINT_BIN" "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[ESLint]\n${OUTPUT}\n"
-      else
-        echo "  ESLint passed"
-      fi
-    elif ! $HAS_ESLINT_CONFIG; then
-      echo "  ESLint config not found, skipping"
+  if $HAS_ESLINT_CONFIG && [ -n "$ESLINT_BIN" ]; then
+    echo "  Running ESLint ($ESLINT_BIN)..."
+    if ! OUTPUT=$("$ESLINT_BIN" "$FILE_PATH" 2>&1); then
+      LINT_ERRORS="${LINT_ERRORS}[ESLint]\n${OUTPUT}\n"
     else
-      echo "  ESLint not found"
+      echo "  ESLint passed"
     fi
+  elif ! $HAS_ESLINT_CONFIG; then
+    echo "  ESLint config not found, skipping"
+  else
+    echo "  ESLint not found"
+  fi
 
   # TypeScriptの型チェック（tsconfig.jsonが存在する場合のみ）
   if [[ "$EXTENSION" == "ts" || "$EXTENSION" == "tsx" ]]; then
