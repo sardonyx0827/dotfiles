@@ -7,8 +7,11 @@
 input=$(cat)
 cmd=$(echo "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 
-# コマンド文字列のどこかに git ... push が含まれるか(チェーン・サブシェル含む)
-echo "$cmd" | grep -qE '(^|[;&|[:space:](])git([[:space:]]+-[-[:alnum:]=]+)*[[:space:]]+push([[:space:]]|$)' || exit 0
+# コマンド文字列のどこかに git ... push が含まれるか(チェーン・サブシェル含む)。
+# フラグは「値が = で連結される形式 (--git-dir=/x)」と「スペースで区切られる
+# 形式 (git -C /repo push)」の両方を許容する (値はフラグと誤読しないよう
+# 先頭が - 以外のトークンに限定)。
+echo "$cmd" | grep -qE '(^|[;&|[:space:](])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:]]|$)' || exit 0
 
 summary=""
 if git rev-parse --is-inside-work-tree &>/dev/null; then

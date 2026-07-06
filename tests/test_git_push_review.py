@@ -47,6 +47,25 @@ class TestClaudeVariant:
         decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
         assert decision == "ask"
 
+    def test_push_with_space_separated_flag_value_is_detected(
+        self, shell_env, git_repo
+    ):
+        # `git -C <dir> push` / `git --git-dir <dir> push`: the flag value is a
+        # separate token, which the old regex failed to match (bypass).
+        for command in (
+            "git -C /tmp/repo push",
+            "git --git-dir /tmp/repo/.git push origin main",
+            "git -c user.name=x push",
+        ):
+            res = shell_env.run(CLAUDE_HOOK, stdin=payload(command), cwd=git_repo)
+            output = json.loads(res.stdout)["hookSpecificOutput"]
+            assert output["permissionDecision"] == "ask", command
+
+    def test_local_stash_push_is_not_detected(self, shell_env, git_repo):
+        res = shell_env.run(CLAUDE_HOOK, stdin=payload("git stash push"), cwd=git_repo)
+        assert res.returncode == 0
+        assert res.stdout == ""
+
     def test_quoted_push_text_is_not_detected(self, shell_env, git_repo):
         res = shell_env.run(CLAUDE_HOOK, stdin=payload('echo "git push"'), cwd=git_repo)
         assert res.returncode == 0
