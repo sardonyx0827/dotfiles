@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 
 # Dotfiles Installation Script
-# Supports: macOS, Ubuntu/Debian, Windows (WSL/Git Bash)
+# Supports: macOS, Ubuntu/Debian (WSL is detected and treated as Ubuntu),
+# Windows (Git Bash)
 
-set -e
+# -e: exit on error. -o pipefail: a pipeline (e.g. `curl ... | sudo tee`)
+# fails if ANY stage fails, not just the last one -- without it, a failed
+# curl in front of `sudo tee`/`sudo dd` would go unnoticed.
+# (-u is intentionally omitted: several env vars are read without a
+# default elsewhere in this script -- e.g. $USER in install_docker,
+# $SHELL in change_shell -- and auditing every use would be a much
+# larger change than this pass covers.)
+set -eo pipefail
 
 # Color codes for output
 RED='\033[0;31m'
@@ -44,7 +52,12 @@ detect_os() {
     else
       OS="linux"
     fi
-  elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ -n "$WSL_DISTRO_NAME" ]]; then
+  elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
+    # Note: WSL reports OSTYPE=linux-gnu, so it is always caught by the
+    # linux-gnu branch above (and classified ubuntu/linux there) before
+    # this branch would ever be reached. A `-n "$WSL_DISTRO_NAME"` check
+    # here is therefore dead code -- do not reintroduce one; it would
+    # silently reclassify existing WSL installs as "windows".
     OS="windows"
   else
     print_error "Unsupported operating system: $OSTYPE"
@@ -372,7 +385,16 @@ register_claude_mcp_servers() {
   add_mcp serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
   add_mcp MCP_DOCKER -- docker mcp gateway run
   add_mcp drawio -- npx -y @drawio/mcp
-  add_mcp gemini-consultant -- python "$HOME/.claude/mcp-servers/gemini-consultant/server.py"
+
+  # Bare `python` does not exist on stock Ubuntu or Homebrew installs
+  # (only `python3`); resolve a concrete interpreter instead.
+  local python_cmd
+  python_cmd="$(command -v python3 || command -v python || true)"
+  if [ -n "$python_cmd" ]; then
+    add_mcp gemini-consultant -- "$python_cmd" "$HOME/.claude/mcp-servers/gemini-consultant/server.py"
+  else
+    print_warning "python3/python not found; skipping gemini-consultant MCP server registration"
+  fi
 }
 
 # Install Node.js and npm
@@ -878,8 +900,13 @@ change_shell() {
   if [ "$SHELL" != "$(which zsh)" ]; then
     print_info "Changing default shell to zsh..."
     if command_exists chsh; then
-      chsh -s "$(which zsh)"
-      print_success "Default shell changed to zsh (restart terminal to apply)"
+      # chsh fails if zsh isn't listed in /etc/shells; don't let that abort
+      # the whole script under set -e this close to the finish line.
+      if chsh -s "$(which zsh)"; then
+        print_success "Default shell changed to zsh (restart terminal to apply)"
+      else
+        print_warning "chsh failed; add $(command -v zsh) to /etc/shells and re-run chsh"
+      fi
     else
       print_warning "chsh command not found. Please change shell manually: chsh -s $(which zsh)"
     fi

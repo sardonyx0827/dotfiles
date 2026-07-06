@@ -78,6 +78,24 @@ class TestDetectOs:
         res = run_sourced('OSTYPE=msys detect_os && echo "OS=$OS"', shell_env.env)
         assert "OS=windows" in res.stdout
 
+    def test_wsl_distro_name_does_not_override_ubuntu_detection(
+        self, shell_env, tmp_path
+    ):
+        # WSL always reports OSTYPE=linux-gnu, so it is caught by the
+        # linux-gnu branch (and classified ubuntu/linux there) before the
+        # windows branch is ever reached. Setting WSL_DISTRO_NAME must not
+        # flip detection to "windows" -- this locks in the longstanding
+        # "WSL is treated as Ubuntu" behavior after removing the dead
+        # WSL_DISTRO_NAME check from the windows branch.
+        marker = tmp_path / "debian_version"
+        marker.write_text("13\n", encoding="utf-8")
+        res = run_sourced(
+            f'OSTYPE=linux-gnu WSL_DISTRO_NAME=Ubuntu DEBIAN_VERSION_FILE="{marker}" '
+            'detect_os && echo "OS=$OS"',
+            shell_env.env,
+        )
+        assert "OS=ubuntu" in res.stdout
+
     def test_unknown_os_fails(self, shell_env):
         res = run_sourced("OSTYPE=solaris detect_os", shell_env.env)
         assert res.returncode == 1
@@ -206,6 +224,37 @@ class TestInstallOhMyZsh:
 
         assert clone_calls_2 == clone_calls_1
         assert not (home / ".oh-my-zsh/custom").is_symlink()
+
+
+class TestRegisterClaudeMcpServers:
+    def test_gemini_consultant_uses_resolved_python3(self, shell_env):
+        # `claude mcp get NAME` must fail so add_mcp proceeds to register.
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        shell_env.stub("python3")
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        add_calls = [c for c in shell_env.calls if c.startswith("claude mcp add")]
+        gemini_calls = [c for c in add_calls if "gemini-consultant" in c]
+        assert len(gemini_calls) == 1, add_calls
+
+        python3_path = str(shell_env.stub_bin / "python3")
+        assert f"-- {python3_path} " in gemini_calls[0]
+
+
+class TestChangeShell:
+    def test_chsh_failure_does_not_abort_script(self, shell_env):
+        shell_env.stub("zsh")
+        shell_env.stub("chsh", exit_code=1)
+        env = dict(shell_env.env)
+        env["SHELL"] = "/bin/bash"
+
+        res = run_sourced('change_shell; echo "AFTER_CHANGE_SHELL"', env)
+
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_CHANGE_SHELL" in res.stdout
+        assert "chsh failed" in res.stdout
 
 
 class TestHooksJsonTemplate:
