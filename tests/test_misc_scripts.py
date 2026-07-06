@@ -1,5 +1,6 @@
 """Tests for utility scripts and syntax checks for all shell configs."""
 
+import os
 import shutil
 import subprocess
 
@@ -8,6 +9,7 @@ from conftest import REPO_ROOT
 
 TMUX_SCRIPT = REPO_ROOT / "tmux_send_to_all_except_nvim.sh"
 UPDATE_SCRIPT = REPO_ROOT / "update_ai_tools.sh"
+ZSHRC = REPO_ROOT / ".zshrc"
 
 OWN_BASH_SCRIPTS = sorted(
     [
@@ -96,3 +98,79 @@ class TestSyntax:
             timeout=30,
         )
         assert res.returncode == 0, res.stderr
+
+
+class TestUpdateAiToolsFunction:
+    """Exercises .zshrc's update_ai_tools() in isolation.
+
+    The function is extracted (not the whole .zshrc, which unconditionally
+    sources oh-my-zsh.sh and would need a real Oh My Zsh install) and eval'd
+    under zsh with a fake HOME so the ~/.zshrc :A resolution can be verified
+    hermetically.
+    """
+
+    def _extract_function(self, name: str) -> str:
+        text = ZSHRC.read_text(encoding="utf-8")
+        start = text.index(f"function {name}()")
+        depth = 0
+        started = False
+        for i, ch in enumerate(text[start:], start=start):
+            if ch == "{":
+                depth += 1
+                started = True
+            elif ch == "}":
+                depth -= 1
+                if started and depth == 0:
+                    return text[start : i + 1]
+        raise AssertionError(f"could not find end of function {name}() in .zshrc")
+
+    def test_resolves_dotfiles_dir_from_symlinked_zshrc(self, tmp_path):
+        if shutil.which("zsh") is None:
+            pytest.skip("zsh not installed")
+
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        (checkout / ".zshrc").write_text("# stub\n", encoding="utf-8")
+        marker = tmp_path / "ran.marker"
+        script = checkout / "update_ai_tools.sh"
+        script.write_text(f'#!/bin/sh\necho ran >"{marker}"\n', encoding="utf-8")
+        script.chmod(0o755)
+
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".zshrc").symlink_to(checkout / ".zshrc")
+
+        func_src = self._extract_function("update_ai_tools")
+        env = {**os.environ, "HOME": str(home)}
+        res = subprocess.run(
+            ["zsh", "-c", f"{func_src}\nupdate_ai_tools"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert marker.exists()
+
+    def test_reports_error_when_dotfiles_checkout_not_found(self, tmp_path):
+        if shutil.which("zsh") is None:
+            pytest.skip("zsh not installed")
+
+        # ~/.zshrc points nowhere near a dotfiles checkout with the script.
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".zshrc").write_text("# not a symlink\n", encoding="utf-8")
+
+        func_src = self._extract_function("update_ai_tools")
+        env = {**os.environ, "HOME": str(home)}
+        res = subprocess.run(
+            ["zsh", "-c", f"{func_src}\nupdate_ai_tools"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert res.returncode != 0
+        assert res.stderr.strip() != ""

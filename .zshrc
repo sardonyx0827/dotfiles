@@ -238,7 +238,19 @@ export OLLAMA_KEEP_ALIVE="-1"
 
 ## update
 function update_ai_tools() {
-  ~/work/github/dotfiles/update_ai_tools.sh
+  # Resolve the dotfiles checkout from wherever ~/.zshrc actually points
+  # (install.sh symlinks it there), instead of hardcoding a clone path --
+  # README documents ~/dotfiles, but people also check out to
+  # ~/work/github/dotfiles, etc. ${:-...} lets us apply :A/:h modifiers to
+  # a literal path (there is no real parameter to attach them to).
+  local dotfiles_dir script
+  dotfiles_dir="${${:-$HOME/.zshrc}:A:h}"
+  script="$dotfiles_dir/update_ai_tools.sh"
+  if [ ! -f "$script" ]; then
+    echo "update_ai_tools: could not find update_ai_tools.sh (looked in $dotfiles_dir); is ~/.zshrc a symlink into your dotfiles checkout?" >&2
+    return 1
+  fi
+  "$script"
 }
 
 ## Claude CLI
