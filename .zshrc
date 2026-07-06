@@ -160,7 +160,11 @@ vf () {
 
 # download web contents
 dwc () {
-  wget -r -l $2 --convert-links --restrict-file-names=nocontrol -E $1
+  if [ -z "$1" ]; then
+    echo "Usage: dwc <url> [depth (default: 5)]" >&2
+    return 1
+  fi
+  wget -r -l "${2:-5}" --convert-links --restrict-file-names=nocontrol -E "$1"
 }
 
 # wezterm
@@ -318,7 +322,7 @@ function mc() {
       claude --model "sonnet" -p "pr作成して。mcpを使用してはいけません。"
       ;;
     *)
-      echo "Usage: mc(my_claude) {explain|translate|cx|c} [arguments...]"
+      echo "Usage: mc(my_claude) {explain|translate|execute|cli|push|commit|commit_message|pull_request} [arguments...]"
       return 1
       ;;
   esac
