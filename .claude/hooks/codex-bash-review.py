@@ -7,8 +7,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bash_review_common import (
-    _is_deny_command,  # noqa: E402
-    _is_safe_command,
+    _can_skip_review,  # noqa: E402
+    _is_deny_command,
     _parse_verdict,
     _split_commands,
     append_and_rotate,
@@ -73,8 +73,8 @@ try:
             notify("Codex Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
             sys.exit(0)
 
-    # --- 安全コマンドのスキップ ---
-    if sub_commands and all(_is_safe_command(c) for c in sub_commands):
+    # --- 安全コマンドのスキップ (複雑構文を含む場合はスキップせずレビューへ) ---
+    if sub_commands and all(_can_skip_review(c) for c in sub_commands):
         emit_decision("allow", "Safe command, skipped Codex review")
         with open(log_file, "w") as f:
             f.write(f"Tool Name: {tool_name}\n")

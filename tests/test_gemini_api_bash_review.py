@@ -2,6 +2,7 @@
 
 from urllib.error import URLError
 
+import pytest
 from conftest import fake_gemini, hook_payload
 
 HOOK = ".claude/hooks/gemini-api-bash-review.py"
@@ -18,6 +19,22 @@ class TestPreDecisions:
         res = run_hook(HOOK, hook_payload("git diff --stat"))
         assert res.decision == "allow"
         assert "skipped Gemini review" in res.reason
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls $(whoami)",
+            "ls `whoami`",
+            "cat a > b",
+            "ls & echo hi",
+        ],
+    )
+    def test_complex_syntax_is_not_skipped(self, run_hook, command):
+        # 先頭が安全コマンド名でも、コマンド置換 / リダイレクト / バックグラウンド
+        # 実行などの複雑構文を含む場合はスキップせず必ずレビューへ回す
+        # (safe コマンド判定だけに頼るとレビューを迂回できてしまうため)。
+        res = run_hook(HOOK, hook_payload(command), urlopen=fake_gemini("ALLOW"))
+        assert "Gemini reviewed and approved" in res.reason
 
     def test_missing_api_key_asks_user(self, run_hook):
         res = run_hook(HOOK, hook_payload("make deploy"), env={"GEMINI_API_KEY": None})

@@ -1,5 +1,6 @@
 """Tests for .claude/hooks/claude-bash-review.py (claude CLI review)."""
 
+import pytest
 from conftest import fake_run, hook_payload
 
 HOOK = ".claude/hooks/claude-bash-review.py"
@@ -18,6 +19,22 @@ class TestSafeSkip:
             hook_payload("ls && make deploy"),
             run=fake_run(stdout="ALLOW"),
         )
+        assert "Claude reviewed and approved" in res.reason
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls $(whoami)",
+            "ls `whoami`",
+            "cat a > b",
+            "ls & echo hi",
+        ],
+    )
+    def test_complex_syntax_is_not_skipped(self, run_hook, command):
+        # 先頭が安全コマンド名でも、コマンド置換 / リダイレクト / バックグラウンド
+        # 実行などの複雑構文を含む場合はスキップせず必ずレビューへ回す
+        # (safe コマンド判定だけに頼るとレビューを迂回できてしまうため)。
+        res = run_hook(HOOK, hook_payload(command), run=fake_run(stdout="ALLOW"))
         assert "Claude reviewed and approved" in res.reason
 
 

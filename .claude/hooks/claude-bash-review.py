@@ -7,7 +7,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bash_review_common import (
-    _is_safe_command,  # noqa: E402
+    _can_skip_review,  # noqa: E402
     _parse_verdict,
     _split_commands,
     prune_dir,
@@ -44,8 +44,9 @@ try:
     prune_dir(log_dir)  # 1000ファイルを超えたら古いものから削除
 
     sub_commands = _split_commands(command)
-    # すべてのサブコマンドが安全な場合のみスキップする
-    if sub_commands and all(_is_safe_command(c) for c in sub_commands):
+    # すべてのサブコマンドが安全 かつ 複雑構文を含まない場合のみスキップする
+    # (コマンド置換 / リダイレクト等でのレビュー迂回を防ぐ)
+    if sub_commands and all(_can_skip_review(c) for c in sub_commands):
         emit_decision("allow", "Safe command, skipped Claude review")
         with open(log_file, "w") as f:
             f.write(f"Tool Name: {tool_name}\n")
