@@ -16,6 +16,12 @@ vim.opt.backup = false
 vim.opt.undodir = os.getenv("HOME") .. "/.vim/undodir"
 vim.opt.undofile = true
 
+-- Session persistence (auto-session):
+-- 'localoptions' must be included so buffer-local filetype is saved/restored.
+-- Without it, treesitter highlighting does not re-attach on restored buffers.
+-- Value matches `:checkhealth auto-session` recommendation.
+vim.opt.sessionoptions = "blank,buffers,curdir,folds,help,tabpages,winsize,winpos,terminal,localoptions"
+
 vim.opt.hlsearch = true
 vim.opt.incsearch = true
 vim.opt.list = true
