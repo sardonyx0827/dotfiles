@@ -218,17 +218,17 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting ~/.oh-my-zsh/cust
 </details>
 
 <details>
-<summary>6. vim-plugのインストール</summary>
+<summary>6. vim-plug のインストール（Vim のみ）</summary>
 
 ```bash
-# Vim用
+# Vim 用（Neovim には不要）
 curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
     https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-
-# Neovim用
-curl -fLo ~/.config/nvim/autoload/plug.vim --create-dirs \
-    https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
 ```
+
+> **Neovim は vim-plug を使いません。** プラグインは lazy.nvim 管理で、初回の `nvim`
+> 起動時に lazy.nvim が自動でブートストラップし、プラグインを導入します（`install.sh`
+> も Neovim には vim-plug を入れません）。
 
 </details>
 
