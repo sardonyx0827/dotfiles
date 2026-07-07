@@ -170,6 +170,11 @@ dist
 Pipfile
 __pycache__
 .ruff_cache
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
 # git
 .git/
