@@ -79,6 +79,22 @@ class TestClaudeVariant:
         res = shell_env.run(CLAUDE_HOOK, stdin="{}", cwd=git_repo)
         assert json.loads(res.stdout)["decision"] == "block"
 
+    def test_debug_statement_detected_when_cwd_is_subdirectory(
+        self, shell_env, git_repo
+    ):
+        # git diff/ls-files return repo-root-relative paths regardless of
+        # cwd. Running the hook from a subdirectory must still resolve
+        # those paths against the repo root, not the hook's cwd.
+        sub = git_repo / "sub"
+        sub.mkdir()
+        (git_repo / "app.ts").write_text('console.log("x")\n', encoding="utf-8")
+        res = shell_env.run(CLAUDE_HOOK, stdin="{}", cwd=sub)
+        assert res.returncode == 0
+        result = json.loads(res.stdout)
+        assert result["decision"] == "block"
+        assert "app.ts" in result["reason"]
+        assert "console.log" in result["reason"]
+
 
 class TestCodexVariant:
     def test_debug_statement_blocks_with_exit_two(self, shell_env, git_repo):
@@ -98,3 +114,14 @@ class TestCodexVariant:
     def test_clean_worktree_passes(self, shell_env, git_repo):
         res = shell_env.run(CODEX_HOOK, stdin="{}", cwd=git_repo)
         assert res.returncode == 0
+
+    def test_debug_statement_detected_when_cwd_is_subdirectory(
+        self, shell_env, git_repo
+    ):
+        sub = git_repo / "sub"
+        sub.mkdir()
+        (git_repo / "app.ts").write_text('console.log("x")\n', encoding="utf-8")
+        res = shell_env.run(CODEX_HOOK, stdin="{}", cwd=sub)
+        assert res.returncode == 2
+        assert "app.ts" in res.stderr
+        assert "console.log" in res.stderr
