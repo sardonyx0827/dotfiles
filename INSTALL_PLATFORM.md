@@ -312,7 +312,7 @@ ls ~/.oh-my-zsh/custom/plugins/
 
 ```bash
 cd ~/dotfiles
-git pull origin master
+git pull origin main
 ```
 
 ### インストール済みツールの更新

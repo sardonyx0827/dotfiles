@@ -342,10 +342,10 @@ npm install -g @google/gemini-cli
 
 ### GitHub Copilot CLI
 
-`gh` の拡張機能として配布されています（npm パッケージではありません）。
+npm パッケージ `@github/copilot` として配布されています（単体の `copilot` コマンド）。
 
 ```bash
-gh extension install github/gh-copilot
+npm install -g @github/copilot
 ```
 
 ### MCP サーバーの登録
