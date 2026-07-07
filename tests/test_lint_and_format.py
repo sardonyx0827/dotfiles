@@ -165,15 +165,22 @@ class TestAutoFormat:
         assert res.returncode == 0
         assert "No file path found" in res.stderr
 
-    def test_python_file_runs_ruff_format_and_isort(self, FORMAT, shell_env, tmp_path):
+    def test_python_file_runs_ruff_and_not_isort(self, FORMAT, shell_env, tmp_path):
+        # When ruff is available, imports are sorted via ruff (--select I --fix)
+        # and formatted with ruff format. isort must NOT run afterwards: its
+        # output conflicts with `ruff format` and breaks `ruff format --check`.
         shell_env.stub("ruff")
         shell_env.stub("isort")
         target = tmp_path / "x.py"
         target.write_text("import os\n", encoding="utf-8")
         res = shell_env.run(FORMAT, stdin=payload(target))
         assert res.returncode == 0
+        assert any(
+            c.startswith(f"ruff check --select I --fix {target}")
+            for c in shell_env.calls
+        )
         assert any(c.startswith(f"ruff format {target}") for c in shell_env.calls)
-        assert any(c.startswith(f"isort {target}") for c in shell_env.calls)
+        assert not any(c.startswith(f"isort {target}") for c in shell_env.calls)
         notified = [c for c in shell_env.calls if "Format Done" in c]
         assert notified, "expected a Format Done notification"
 
