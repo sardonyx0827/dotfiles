@@ -2,6 +2,9 @@
 -- undotree vimdiff integration
 -- Opens a vimdiff tab comparing a selected undo state with the current buffer
 -- for jiaoshijie/undotree. Supports do (obtain) / dp (put) operations.
+--
+-- Relocated from after/plugin/undotree.lua so it only loads when undotree does.
+-- The undotree plugin spec calls M.setup() from its config.
 
 local M = {}
 
@@ -232,8 +235,5 @@ function M.setup()
     end,
   })
 end
-
--- Auto-setup
-M.setup()
 
 return M

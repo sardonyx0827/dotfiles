@@ -67,3 +67,22 @@ vim.keymap.set('n', '<leader>tm', function()
     vim.opt.mouse = 'a'
   end
 end, { desc = 'Toggle mouse' })
+
+-- close all buffers (formerly after/plugin/auto-session.lua)
+local function close_all_buffers()
+  vim.cmd("bufdo bd")
+end
+vim.keymap.set("n", "<leader>qq", close_all_buffers,
+  { noremap = true, silent = true, desc = "Close All Buffers" })
+vim.keymap.set("n", "<leader>qa", function()
+  close_all_buffers()
+  vim.cmd("q!")
+end, { noremap = true, silent = true, desc = "Close All Buffers and Exit" })
+
+-- native buffer list (formerly after/plugin/telescope.lua <leader>la)
+vim.keymap.set("n", "<leader>la", ":ls!<CR>", { desc = "List Buffers" })
+
+-- jump to next diagnostic (core diagnostics; formerly after/plugin/trouble.lua <leader>xn)
+vim.keymap.set("n", "<leader>xn", function()
+  vim.diagnostic.jump({ count = 1, on_jump = vim.diagnostic.open_float })
+end, { desc = "Jump to Next Error/Warn" })
