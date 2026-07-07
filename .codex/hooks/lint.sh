@@ -2,6 +2,11 @@
 # Codex HooksのPostToolUse用静的解析スクリプト
 # auto-format.sh実行後に呼び出すことを想定
 # exit 2 でエラー内容をCodexにフィードバックし、自動修正を促す
+#
+# 意図的に `set -e` は使わない: このフックは fail-open 設計であり、個々の
+# linter が未導入/実行失敗でも他の言語のチェックやスクリプト全体を止めては
+# ならない。各コマンドの失敗は `if ! OUTPUT=$(...)` / `command -v` チェックで
+# 個別に処理し、最悪でも exit 0 で抜ける。
 
 # jq が無い環境では処理できないため安全に抜ける
 command -v jq >/dev/null 2>&1 || exit 0
