@@ -13,11 +13,15 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bash_review_common import _can_skip_review  # noqa: E402
-from _bash_review_common import (_is_deny_command, _parse_verdict,
-                                 _split_commands, append_and_rotate, notify,
-                                 prune_dir)
-from _bash_review_common import \
-    write_detail_log as _write_detail_log  # noqa: E402
+from _bash_review_common import (
+    _is_deny_command,
+    _parse_verdict,
+    _split_commands,
+    append_and_rotate,
+    notify,
+    prune_dir,
+)
+from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E402
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
 api_key = os.environ.get("GEMINI_API_KEY", "")
