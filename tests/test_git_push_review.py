@@ -12,6 +12,22 @@ def payload(command: str) -> str:
     return json.dumps({"tool_input": {"command": command}})
 
 
+def make_target_repo(base):
+    """A second throwaway repo (distinct branch/commit) to push -C at."""
+    from conftest import run_git
+
+    target = base / "target-repo"
+    target.mkdir()
+    run_git(target, "init", "-q", "-b", "feature-target")
+    run_git(target, "config", "user.email", "test@example.com")
+    run_git(target, "config", "user.name", "Test User")
+    run_git(target, "config", "commit.gpgsign", "false")
+    (target / "f.txt").write_text("x\n", encoding="utf-8")
+    run_git(target, "add", "f.txt")
+    run_git(target, "commit", "-q", "-m", "target repo commit")
+    return target
+
+
 class TestClaudeVariant:
     def test_non_push_command_passes_through(self, shell_env, git_repo):
         res = shell_env.run(CLAUDE_HOOK, stdin=payload("git status"), cwd=git_repo)
@@ -79,6 +95,76 @@ class TestClaudeVariant:
         decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
         assert decision == "ask"
 
+    def test_git_push_mentioned_only_inside_quoted_message_is_not_detected(
+        self, shell_env, git_repo
+    ):
+        # "git" (the leading command) and "push" only co-occur inside the
+        # quoted commit message here; the actual command is `git commit`.
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload('git commit -m "please dont git push this yet"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        assert res.stdout == ""
+
+    def test_apostrophe_in_double_quoted_message_does_not_hide_real_push(
+        self, shell_env, git_repo
+    ):
+        # Regression: a naive "remove '...' then remove \"...\"" pass lets
+        # the apostrophe in "it's" pair up with the *next* single quote
+        # (opening 'done'), eating everything between them - including the
+        # real, unquoted `git push` - and hiding it from detection.
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload("git commit -m \"it's fine\" && git push && echo 'done'"),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "ask"
+
+    def test_double_quote_in_single_quoted_message_does_not_hide_real_push(
+        self, shell_env, git_repo
+    ):
+        # Mirror-image case: swapping quote kinds must not resurrect the bug.
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload('git commit -m \'it"s fine\' && git push && echo "done"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "ask"
+
+    def test_multiple_fully_quoted_push_mentions_are_not_detected(
+        self, shell_env, git_repo
+    ):
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload("echo \"git push\" && echo 'git push'"),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        assert res.stdout == ""
+
+    def test_dash_c_summary_reflects_target_repo(self, shell_env, tmp_path):
+        # The detection regex already accepts `git -C <dir> push`, but the
+        # confirmation summary must describe <dir>'s branch/commits, not
+        # whatever repo happens to be the hook's cwd.
+        target = make_target_repo(tmp_path)
+        outside = tmp_path / "not-a-repo"
+        outside.mkdir()
+        res = shell_env.run(
+            CLAUDE_HOOK, stdin=payload(f"git -C {target} push"), cwd=outside
+        )
+        assert res.returncode == 0
+        output = json.loads(res.stdout)["hookSpecificOutput"]
+        assert output["permissionDecision"] == "ask"
+        reason = output["permissionDecisionReason"]
+        assert "branch: feature-target" in reason
+        assert "target repo commit" in reason
+
 
 class TestCodexVariant:
     def test_non_push_command_passes_through(self, shell_env, git_repo):
@@ -93,3 +179,58 @@ class TestCodexVariant:
         assert res.returncode == 2
         assert "git push detected" in res.stderr
         assert "branch: main" in res.stderr
+
+    def test_git_push_mentioned_only_inside_quoted_message_is_not_detected(
+        self, shell_env, git_repo
+    ):
+        res = shell_env.run(
+            CODEX_HOOK,
+            stdin=payload('git commit -m "please dont git push this yet"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        assert res.stderr == ""
+
+    def test_apostrophe_in_double_quoted_message_does_not_hide_real_push(
+        self, shell_env, git_repo
+    ):
+        res = shell_env.run(
+            CODEX_HOOK,
+            stdin=payload("git commit -m \"it's fine\" && git push && echo 'done'"),
+            cwd=git_repo,
+        )
+        assert res.returncode == 2
+        assert "git push detected" in res.stderr
+
+    def test_double_quote_in_single_quoted_message_does_not_hide_real_push(
+        self, shell_env, git_repo
+    ):
+        res = shell_env.run(
+            CODEX_HOOK,
+            stdin=payload('git commit -m \'it"s fine\' && git push && echo "done"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 2
+        assert "git push detected" in res.stderr
+
+    def test_multiple_fully_quoted_push_mentions_are_not_detected(
+        self, shell_env, git_repo
+    ):
+        res = shell_env.run(
+            CODEX_HOOK,
+            stdin=payload("echo \"git push\" && echo 'git push'"),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        assert res.stderr == ""
+
+    def test_dash_c_summary_reflects_target_repo(self, shell_env, tmp_path):
+        target = make_target_repo(tmp_path)
+        outside = tmp_path / "not-a-repo"
+        outside.mkdir()
+        res = shell_env.run(
+            CODEX_HOOK, stdin=payload(f"git -C {target} push"), cwd=outside
+        )
+        assert res.returncode == 2
+        assert "branch: feature-target" in res.stderr
+        assert "target repo commit" in res.stderr
