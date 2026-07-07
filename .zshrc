@@ -4,15 +4,28 @@
 # PATH の重複エントリを自動除去する (ネストシェルでの肥大化防止)
 typeset -U path PATH
 
+# OS 判定。Homebrew / macOS 固有のパス・エイリアスを Linux/WSL でそのまま
+# 読み込むと、LDFLAGS/CPPFLAGS が存在しない /opt/homebrew を指してネイティブ
+# ビルド (pip の C 拡張ビルド等) を壊す実害があるため、uname でガードする。
+case "$(uname -s)" in
+  Darwin) _os=macos ;;
+  Linux) _os=linux ;;
+  *) _os=other ;;
+esac
+
 ## Go
 export PATH=~/go/bin:$PATH
 export PATH=~/.npm-global/bin:$PATH
-export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
-## PHP
-export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"
-export PATH="/opt/homebrew/opt/php@8.4/sbin:$PATH"
-export LDFLAGS="-L/opt/homebrew/opt/php@8.4/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/php@8.4/include"
+
+if [[ "$_os" == macos ]]; then
+  # Homebrew (Apple Silicon) 固有のパス群。Linux には存在しないため読み込まない。
+  export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
+  ## PHP (Homebrew php@8.4)
+  export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"
+  export PATH="/opt/homebrew/opt/php@8.4/sbin:$PATH"
+  export LDFLAGS="-L/opt/homebrew/opt/php@8.4/lib"
+  export CPPFLAGS="-I/opt/homebrew/opt/php@8.4/include"
+fi
 
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
@@ -170,8 +183,10 @@ dwc () {
 # wezterm
 alias imgcat="wezterm imgcat"
 
-# restart ibus
-alias restart_ibus="ibus-daemon -drx"
+# restart ibus (Linux/IBus 環境のみ)
+if [[ "$_os" == linux ]]; then
+  alias restart_ibus="ibus-daemon -drx"
+fi
 
 # typo
 alias sl="ls"
@@ -193,8 +208,10 @@ alias cw="cd ~/work"
 alias dsollama="cd ~/work/sandbox/ollama/ && docker compose up -d && cd -"
 alias deollama="cd ~/work/sandbox/ollama/ && docker compose down && cd -"
 
-# gimp
-alias gimp="/Applications/GIMP.app/Contents/MacOS/gimp"
+# gimp (macOS の GIMP.app のみ)
+if [[ "$_os" == macos ]]; then
+  alias gimp="/Applications/GIMP.app/Contents/MacOS/gimp"
+fi
 
 # python environment
 export PYENV_ROOT="$HOME/.pyenv"
