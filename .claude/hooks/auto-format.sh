@@ -86,7 +86,11 @@ js | jsx | ts | tsx | json | css | scss | less | html | htm | md | yaml | yml)
 # Python
 py)
   if command -v ruff >/dev/null 2>&1; then
-    echo "  Running ruff format..."
+    # インポート整列(ruff互換)→整形の順で ruff に一本化する。
+    # ここで isort を併用すると `ruff format` の結果を崩し、CI の
+    # `ruff format --check` が落ちるため、ruff がある場合は isort を使わない。
+    echo "  Running ruff (import sort + format)..."
+    ruff check --select I --fix "$FILE_PATH" >/dev/null 2>&1 || true
     if err=$(ruff format "$FILE_PATH" 2>&1); then
       echo "  ruff completed"
       FORMATTED=true
@@ -103,19 +107,19 @@ py)
       echo "  autopep8 failed" >&2
       [ -n "$err" ] && echo "$err" >&2
     fi
-  else
-    echo "  No Python formatter found (black/autopep8)"
-  fi
-
-  if command -v isort >/dev/null 2>&1; then
-    echo "  Running isort..."
-    if err=$(isort "$FILE_PATH" 2>&1); then
-      echo "  isort completed"
-      FORMATTED=true
-    else
-      echo "  isort failed" >&2
-      [ -n "$err" ] && echo "$err" >&2
+    # ruff が無い環境でのみ isort を併用する (ruff とは排他)
+    if command -v isort >/dev/null 2>&1; then
+      echo "  Running isort..."
+      if err=$(isort "$FILE_PATH" 2>&1); then
+        echo "  isort completed"
+        FORMATTED=true
+      else
+        echo "  isort failed" >&2
+        [ -n "$err" ] && echo "$err" >&2
+      fi
     fi
+  else
+    echo "  No Python formatter found (ruff/autopep8)"
   fi
   ;;
 
