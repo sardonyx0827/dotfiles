@@ -31,8 +31,15 @@ gemini_model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 gemini_fallback_model = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-latest")
 
 
+# 端末判定を stdout に出した後、後続のログ書き込みや通知が例外を投げても、
+# 下の except の fail-safe (ask) でその判定を上書き (格下げ) させないためのフラグ。
+decision_emitted = False
+
+
 def emit_decision(decision: str, reason: str) -> None:
     """permissionDecision を stdout に出力"""
+    global decision_emitted
+    decision_emitted = True
     print(
         json.dumps(
             {
@@ -194,5 +201,8 @@ try:
     sys.exit(0)
 
 except Exception as exc:  # noqa: BLE001  Bash ゲートは何があっても ask に倒す
-    emit_decision("ask", f"bash-review hook error: {exc}")
+    # 判定を出す前の例外だけ ask に倒す。判定を出した後 (ログ/通知) の例外で
+    # deny/allow を ask に格下げしたり、JSON を二重に出力したりしない。
+    if not decision_emitted:
+        emit_decision("ask", f"bash-review hook error: {exc}")
     sys.exit(0)

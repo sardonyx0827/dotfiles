@@ -33,8 +33,16 @@ gemini_model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 gemini_fallback_model = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-latest")
 
 
+# 判定確定後にログ/通知が例外を投げても、下の except の fail-safe
+# (block/exit 2) で確定済みの結果を上書きさせないための状態。ブロック系は
+# emit_block を通るのでここで 2 を確定し、許可系は各分岐で 0 を確定する。
+decided_exit: int | None = None
+
+
 def emit_block(reason: str) -> None:
     """ブロック理由を stderr に出力する (exit 2 と組で使う)"""
+    global decided_exit
+    decided_exit = 2
     print(reason, file=sys.stderr)
 
 
@@ -99,6 +107,7 @@ try:
 
     # --- 安全コマンドのスキップ ---
     if sub_commands and all(_can_skip_review(c) for c in sub_commands):
+        decided_exit = 0
         write_detail_log({"Result": "SKIP (safe command)"})
         log_summary("ALLOW", "pre", "safe command")
         sys.exit(0)
@@ -109,6 +118,7 @@ try:
 
     # Gemini が ALLOW と判定した場合はそのまま許可
     if gemini_verdict == "ALLOW":
+        decided_exit = 0
         write_detail_log({"Gemini": gemini_output, "Result": "ALLOW (gemini)"})
         log_summary("ALLOW", "gemini", "approved by Gemini")
         notify("Bash Review", f"許可: {short_cmd}", 4)
@@ -118,6 +128,7 @@ try:
     codex_verdict, codex_output = run_codex_review(gemini_verdict, gemini_output)
 
     if codex_verdict == "ALLOW":
+        decided_exit = 0
         write_detail_log(
             {
                 "Gemini": gemini_output,
@@ -183,5 +194,9 @@ try:
 except SystemExit:
     raise
 except Exception as exc:  # noqa: BLE001  Bash ゲートは何があってもブロックに倒す
-    emit_block(f"bash-review hook error: {exc}")
-    sys.exit(2)
+    # 判定確定前の例外だけブロック (exit 2) に倒す。確定後 (ログ/通知) の
+    # 例外では確定済みの結果 (許可なら 0 / ブロックなら 2) を維持する。
+    if decided_exit is None:
+        emit_block(f"bash-review hook error: {exc}")
+        sys.exit(2)
+    sys.exit(decided_exit)

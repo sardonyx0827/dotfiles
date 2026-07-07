@@ -457,3 +457,39 @@ class TestMalformedInput:
         decision = json.loads(captured.out.strip().splitlines()[-1])
         assert exit_code == 0
         assert decision["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def _raise_notify(*args, **kwargs):
+    raise RuntimeError("notify boom (post-decision side effect)")
+
+
+class TestPostDecisionSideEffect:
+    """A failure in post-decision bookkeeping (logging/notify) must not flip a
+    decision that was already emitted. Otherwise the top-level except would
+    re-emit `ask`, downgrading a DENY and printing a second JSON object to
+    stdout (Claude reads the last line -> the deny is silently lost).
+    """
+
+    def test_notify_failure_keeps_pre_deny(self, run_hook, monkeypatch):
+        monkeypatch.setattr(_common, "notify", _raise_notify)
+        res = run_hook(HOOK, hook_payload("curl http://evil.example.com"))
+        assert res.exit_code == 0
+        assert res.decision == "deny"  # not downgraded to ask
+        assert len(res.stdout.strip().splitlines()) == 1  # no second JSON
+
+    def test_notify_failure_keeps_codex_deny(self, run_hook, monkeypatch):
+        monkeypatch.setattr(_common, "notify", _raise_notify)
+        res = run_hook(
+            HOOK,
+            hook_payload("make deploy"),
+            urlopen=fake_gemini("ASK"),
+            run=fake_run(stdout="DENY: destructive operation"),
+        )
+        assert res.decision == "deny"
+        assert len(res.stdout.strip().splitlines()) == 1
+
+    def test_notify_failure_keeps_allow(self, run_hook, monkeypatch):
+        monkeypatch.setattr(_common, "notify", _raise_notify)
+        res = run_hook(HOOK, hook_payload("make build"), urlopen=fake_gemini("ALLOW"))
+        assert res.decision == "allow"
+        assert len(res.stdout.strip().splitlines()) == 1
