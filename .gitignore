@@ -1,2 +1,6 @@
 # Codex CLI's own managed system skills (auto-installed at runtime, not ours)
 .codex/skills/.system/
+
+# pytest-cov / coverage.py data files (report is generated in CI, not committed)
+.coverage
+.coverage.*

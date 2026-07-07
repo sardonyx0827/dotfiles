@@ -1,0 +1,19 @@
+# Coverage configuration for the Python hook / MCP test suite.
+# Measured by pytest-cov in CI (see .github/workflows/ci.yml).
+[run]
+branch = true
+omit =
+    # Byte-identical twin of .claude/hooks/_bash_review_common.py, kept in sync
+    # by tests/test_hook_sync.py. Python's module cache means the .claude copy
+    # is the one actually exec'd, so the .codex copy always reports 0% — that is
+    # a measurement artifact, not an untested path. Its equivalence is already
+    # gate-enforced, so exclude it to keep the number honest.
+    .codex/hooks/_bash_review_common.py
+    */.codex/hooks/_bash_review_common.py
+
+[report]
+show_missing = true
+skip_covered = false
+exclude_also =
+    if __name__ == .__main__.:
+    raise NotImplementedError

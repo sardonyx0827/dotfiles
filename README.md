@@ -538,6 +538,19 @@ python3 -m pytest
 python3 -m pytest tests/test_bash_review.py -v
 ```
 
+Python フック（`.claude/hooks` / `.claude/mcp-servers` / `.codex/hooks`）は
+`run_hook` フィクスチャが in-process で `exec` するため、カバレッジを実測できます。
+CI（`.github/workflows/ci.yml`）は `pytest-cov` でブランチカバレッジを測定し、
+**90% を下回るとジョブが失敗**します（実測は約 95%、除外設定は `.coveragerc`）。
+ローカルで測る場合:
+
+```bash
+pip install "pytest-cov==7.0.0"
+python3 -m pytest \
+  --cov=.claude/hooks --cov=.claude/mcp-servers --cov=.codex/hooks \
+  --cov-report=term-missing --cov-fail-under=90
+```
+
 ## カスタマイズ
 
 ### Zshテーマの変更

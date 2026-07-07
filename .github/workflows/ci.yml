@@ -32,14 +32,22 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip "pytest==9.0.1"
+        run: python -m pip install --upgrade pip "pytest==9.0.1" "pytest-cov==7.0.0"
       # .zshrc の構文検査 (zsh -n) に必要。未導入なら該当テストは skip される
       - name: Install zsh
         run: sudo apt-get update && sudo apt-get install -y zsh
       # フックは stdin/subprocess/urlopen を全てスタブ化した hermetic テスト。
-      # codex / gemini / tmux 等の実バイナリは不要（conftest.py 参照）
-      - name: Run pytest
-        run: python -m pytest -q
+      # codex / gemini / tmux 等の実バイナリは不要（conftest.py 参照）。
+      # Python フックは in-process で exec されるためカバレッジを実測でき、
+      # 90% を下回るとジョブが失敗する（設定は .coveragerc、実測は約 95%）。
+      - name: Run pytest (with coverage gate)
+        run: >-
+          python -m pytest -q
+          --cov=.claude/hooks
+          --cov=.claude/mcp-servers
+          --cov=.codex/hooks
+          --cov-report=term-missing
+          --cov-fail-under=90
 
   lint:
     name: ruff + bandit
