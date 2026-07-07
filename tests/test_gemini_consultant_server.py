@@ -138,6 +138,19 @@ class TestTools:
         result = server.consult_gemini("anything")
         assert result.startswith("Gemini API error:")
 
+    def test_review_gemini_reports_missing_key_as_string(self, server, monkeypatch):
+        # ValueError branch of review_gemini (mirror of consult_gemini's).
+        monkeypatch.delenv("GEMINI_API_KEY")
+        result = server.review_gemini("anything")
+        assert result.startswith("Gemini API error:")
+
+    def test_review_gemini_reports_api_error_as_string(self, server, monkeypatch):
+        # API-exception branch of review_gemini (mirror of consult_gemini's).
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini(URLError("boom")))
+        result = server.review_gemini("anything")
+        assert result.startswith("Gemini API error:")
+
 
 class TestLogRotation:
     def test_append_log_trims_to_max_lines(self, server, tmp_path):

@@ -398,6 +398,39 @@ class TestSensitiveGuard:
         assert "Gemini reviewed and approved" in res.reason
 
 
+class TestNotifyInjection:
+    """notify() on Darwin must not splice caller-controlled title/message into
+    the osascript command. Parity with the gemini-consultant server's
+    TestNotifyInjection, but for the shared hook module's notify().
+    """
+
+    def test_notify_uses_env_indirection_not_interpolation(self, monkeypatch):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        malicious_title = 'Title" & do shell script "touch /tmp/pwned'
+        malicious_message = 'Msg"\\ $(whoami)'
+        _common.notify(malicious_title, malicious_message)
+
+        assert calls, "osascript should have been invoked on Darwin"
+        cmd, kwargs = calls[0]
+        assert cmd[0] == "/usr/bin/osascript"
+        script = cmd[cmd.index("-e") + 1]
+        # The AppleScript body is a static template; the payload only travels
+        # via the environment, never spliced into the script text.
+        assert "touch /tmp/pwned" not in script
+        assert "whoami" not in script
+        assert "printenv CLAUDE_NOTIFY_TITLE" in script
+        assert kwargs["env"]["CLAUDE_NOTIFY_TITLE"] == malicious_title
+        assert kwargs["env"]["CLAUDE_NOTIFY_MESSAGE"] == malicious_message
+
+
 class TestMalformedInput:
     """A crashing hook must fail toward a human prompt, never a traceback."""
 
