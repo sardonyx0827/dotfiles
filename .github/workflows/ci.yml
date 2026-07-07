@@ -39,7 +39,8 @@ jobs:
       # フックは stdin/subprocess/urlopen を全てスタブ化した hermetic テスト。
       # codex / gemini / tmux 等の実バイナリは不要（conftest.py 参照）。
       # Python フックは in-process で exec されるためカバレッジを実測でき、
-      # 90% を下回るとジョブが失敗する（設定は .coveragerc、実測は約 95%）。
+      # 集計 90% を下回るとジョブが失敗する（設定は .coveragerc、実測は約 95%）。
+      # 併せて JSON レポートを出力し、後続ステップでファイル単位の床も強制する。
       - name: Run pytest (with coverage gate)
         run: >-
           python -m pytest -q
@@ -47,7 +48,36 @@ jobs:
           --cov=.claude/mcp-servers
           --cov=.codex/hooks
           --cov-report=term-missing
+          --cov-report=json:coverage.json
           --cov-fail-under=90
+      # 集計 90% ゲートはファイル単位の低カバレッジを平均で覆い隠すため、
+      # 各ファイルに最低 80% を別途強制する（.coveragerc の omit 対象は
+      # coverage.json に載らないので自動的に除外される）。
+      - name: Enforce per-file coverage floor (80%)
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+
+          FLOOR = 80.0
+          with open("coverage.json", encoding="utf-8") as fh:
+              data = json.load(fh)
+
+          failures = []
+          for path, meta in sorted(data["files"].items()):
+              pct = meta["summary"]["percent_covered"]
+              print(f"{'OK ' if pct >= FLOOR else 'LOW'} {pct:6.2f}%  {path}")
+              if pct < FLOOR:
+                  failures.append((path, pct))
+
+          if failures:
+              print()
+              for path, pct in failures:
+                  print(f"::error::{path} coverage {pct:.2f}% is below the {FLOOR:.0f}% floor")
+              sys.exit(1)
+
+          print(f"\nAll measured files meet the {FLOOR:.0f}% per-file floor.")
+          PY
 
   lint:
     name: ruff + bandit
