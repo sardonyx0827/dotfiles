@@ -225,7 +225,9 @@ install_gh() {
     sudo apt-get update
     sudo apt-get install -y gh || print_warning "Failed to install gh"
   fi
-  command_exists gh && print_success "gh installed"
+  # Trailing status check must not abort the installer under `set -e`:
+  # a bare `cmd && print_success` returns non-zero when the tool is absent.
+  command_exists gh && print_success "gh installed" || true
 }
 
 # Install uv / uvx (Astral) — required to launch the serena MCP server.
@@ -239,7 +241,7 @@ install_uv() {
     print_warning "Failed to install uv"
   # uv installs to ~/.local/bin; make it visible for the rest of this script.
   export PATH="$HOME/.local/bin:$PATH"
-  command_exists uv && print_success "uv installed"
+  command_exists uv && print_success "uv installed" || true
 }
 
 # Install pyenv (macOS handled by brew packages; this covers Ubuntu).
@@ -252,7 +254,7 @@ install_pyenv() {
     print_info "Installing pyenv..."
     curl -fsSL https://pyenv.run | bash 2>/dev/null ||
       print_warning "Failed to install pyenv"
-    command_exists pyenv || [ -d "$HOME/.pyenv" ] && print_success "pyenv installed"
+    { command_exists pyenv || [ -d "$HOME/.pyenv" ]; } && print_success "pyenv installed" || true
   fi
 }
 
@@ -274,7 +276,7 @@ install_glow() {
       print_warning "go not found; skipping glow"
     fi
   fi
-  command_exists glow && print_success "glow installed"
+  command_exists glow && print_success "glow installed" || true
 }
 
 # Install lazydocker — referenced by nvim toggleterm and editor keybindings.
@@ -290,7 +292,7 @@ install_lazydocker() {
     curl -fsSL https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh |
       bash 2>/dev/null || print_warning "Failed to install lazydocker"
   fi
-  command_exists lazydocker && print_success "lazydocker installed"
+  command_exists lazydocker && print_success "lazydocker installed" || true
 }
 
 # Install Docker — MCP_DOCKER gateway and the dsollama/deollama aliases.
@@ -303,13 +305,16 @@ install_docker() {
   if [[ "$OS" == "macos" ]]; then
     brew install --cask docker || print_warning "Failed to install Docker Desktop"
     print_info "Launch Docker Desktop once and enable the MCP Toolkit for the MCP_DOCKER gateway."
+    # macOS `--cask docker` does not put the `docker` CLI on PATH until Docker
+    # Desktop is launched once, so the trailing check below legitimately fails
+    # on the happy path — `|| true` keeps `set -e` from aborting the installer.
   elif [[ "$OS" == "ubuntu" ]]; then
     curl -fsSL https://get.docker.com | sudo sh 2>/dev/null ||
       print_warning "Failed to install Docker engine"
     sudo usermod -aG docker "$USER" 2>/dev/null || true
     print_info "Log out/in (or 'newgrp docker') for group membership to take effect."
   fi
-  command_exists docker && print_success "Docker installed"
+  command_exists docker && print_success "Docker installed" || true
 }
 
 # Install the tree-sitter CLI — nvim treesitter `auto_install` needs it to
