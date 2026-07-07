@@ -32,7 +32,6 @@
 │   ├── AGENTS.md                   # Codex向け指示
 │   └── config.toml                 # Codex設定
 ├── .config/                        # アプリケーション設定
-│   ├── Antigravity/                # Antigravity (settings / keybindings)
 │   ├── Code/                       # VS Code (settings / keybindings)
 │   └── nvim/                       # Neovim (lazy.nvim) 設定
 ├── .gemini/                        # Gemini CLI設定 (GEMINI.md, settings.json)
