@@ -14,7 +14,7 @@ function _G._toggleterm_open(count)
   end
 end
 
-vim.keymap.set("n", "<leader>sh", ":ToggleTerm 1direction=vertical size=80<cr>")
+vim.keymap.set("n", "<leader>ss", ":ToggleTerm 1direction=vertical size=80<cr>")
 vim.keymap.set("n", "<leader>sh1", ":ToggleTerm<cr>", { desc = "ToggleTerm - toggle session 1" })
 vim.keymap.set("n", "<leader>sh2", ":ToggleTerm 2direction=horizontal<cr>", { desc = "ToggleTerm - toggle session 2" })
 vim.keymap.set("n", "<leader>sh3", ":ToggleTerm 3direction=horizontal<cr>", { desc = "ToggleTerm - toggle session 3" })
