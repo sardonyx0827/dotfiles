@@ -139,10 +139,14 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
 
   function! s:AI_SingleFinish(state, status, timer) abort
     let l:s = a:state
+    " Always remove the tmpfile, even if the diff tab was already closed via
+    " `q` while the job was still pending (closed=1 short-circuits below).
+    " delete() silently no-ops on a missing file, so this stays safe even if
+    " invoked more than once.
+    call delete(l:s.tmpfile)
     if l:s.closed
       return
     endif
-    call delete(l:s.tmpfile)
     if l:s.status !=# 'cancelled'
       let l:out = s:AI_TrimOutput(l:s.output)
       call setbufvar(l:s.resp_buf, '&modifiable', 1)
@@ -272,12 +276,16 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
 
   function! s:AI_AllFinish(state, idx, status, timer) abort
     let l:s = a:state
-    if l:s.closed
-      return
-    endif
+    " Decrement pending and clean up the shared tmpfile regardless of
+    " closed=1 (tab already closed via `q`), so it is removed once the last
+    " outstanding job actually exits. delete() silently no-ops on a missing
+    " file, so this stays safe even if invoked more than once.
     let l:s.pending -= 1
     if l:s.pending <= 0
       call delete(l:s.tmpfile)
+    endif
+    if l:s.closed
+      return
     endif
     if l:s.status[a:idx] ==# 'cancelled'
       return
@@ -378,10 +386,13 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
 
   function! s:AI_OllamaFinish(state, status, timer) abort
     let l:s = a:state
+    " Always remove the tmpfile, even if the diff tab was already closed via
+    " `q` while the job was still pending; delete() no-ops safely on a
+    " missing file. See s:AI_SingleFinish for the same pattern.
+    call delete(l:s.tmpfile)
     if l:s.closed
       return
     endif
-    call delete(l:s.tmpfile)
     if l:s.status !=# 'cancelled'
       " The API returns a single JSON object: { "response": "...", ... }.
       let l:raw = join(l:s.output, "\n")
@@ -564,6 +575,9 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     startinsert
   endfunction
 
+  " Intentional override: <C-c> is conventionally an Esc/abort alias in
+  " visual mode, but here it triggers the Claude AI action instead; use
+  " <Esc> to leave visual mode as usual.
   xnoremap <silent> <C-c> :<C-u>call <SID>AI_Start('claude')<CR>
   xnoremap <silent> <C-x> :<C-u>call <SID>AI_Start('codex')<CR>
   xnoremap <silent> <C-g> :<C-u>call <SID>AI_Start('gemini')<CR>

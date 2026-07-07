@@ -43,7 +43,7 @@ set modeline
 set modelines=10
 
 set title
-set titleold="Terminal"
+set titleold=Terminal
 set titlestring=%F
 
 " vim-airline
