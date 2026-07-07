@@ -1,39 +1,34 @@
 # ~/.claude/hooks/bash-review.py
 # 一次処理: Gemini API (高スループット)
 # 二次処理: Gemini が ASK/DENY と判定した場合のみ Codex で再確認
+#
+# Gemini/Codex のレビュー呼び出しロジックは _bash_review_common.py に集約し、
+# codex 変種 (.codex/hooks/bash-review.py) とドリフトしないようにしてある。
+# この入口が持つのは「判定結果 (verdict) を permissionDecision JSON に変換して
+# stdout へ出す」変種固有の処理だけ。
 import json
 import os
-import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bash_review_common import (
     _can_skip_review,
     _is_deny_command,
-    _parse_verdict,
     _split_commands,
-    append_and_rotate,
+    build_review_prompt,
     notify,
     prune_dir,
 )
+from _bash_review_common import log_summary as _log_summary  # noqa: E402
+from _bash_review_common import run_codex_review as _run_codex_review  # noqa: E402
+from _bash_review_common import run_gemini_review as _run_gemini_review  # noqa: E402
 from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E402
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
 api_key = os.environ.get("GEMINI_API_KEY", "")
 gemini_model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 gemini_fallback_model = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-latest")
-
-_API_ERRORS = (
-    urllib.error.URLError,
-    TimeoutError,
-    ConnectionError,
-    json.JSONDecodeError,
-    IndexError,
-    KeyError,
-)
 
 
 def emit_decision(decision: str, reason: str) -> None:
@@ -51,94 +46,25 @@ def emit_decision(decision: str, reason: str) -> None:
     )
 
 
+# 共有モジュールの関数を、この入口のモジュールグローバル
+# (summary_log / command / log_file / tool_name / tool_input / prompt / api_key
+# / gemini_model / gemini_fallback_model) を閉じ込めた薄いラッパーで包む。
+# これらのグローバルは try 内で stdin を読んでから設定されるが、ラッパーは
+# それ以降にしか呼ばれないため実行時に解決される。
 def log_summary(decision: str, stage: str, reason: str) -> None:
-    """結果をサマリーログに1行で追記し、500行超えたらローテーション"""
-    short_cmd = command[:80] + "..." if len(command) > 80 else command
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {decision:5s} | {stage:8s} | {short_cmd} | {reason}\n"
-    append_and_rotate(summary_log, line)
+    _log_summary(summary_log, command, decision, stage, reason)
 
 
 def write_detail_log(entries: dict) -> None:
     _write_detail_log(log_file, tool_name, tool_input, entries)
 
 
-def _build_gemini_payload(target_model: str) -> tuple[str, bytes]:
-    target_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
-    data = json.dumps(
-        {
-            "contents": [{"parts": [{"text": PROMPT}]}],
-            "generationConfig": {
-                "maxOutputTokens": 256,
-                "temperature": 0.0,
-                "thinkingConfig": {"thinkingLevel": "minimal"},
-            },
-        }
-    ).encode("utf-8")
-    return target_url, data
-
-
-def _call_gemini(target_url: str, data: bytes) -> str:
-    req = urllib.request.Request(
-        target_url,
-        data=data,
-        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # nosec: B310
-        body = json.loads(resp.read().decode("utf-8"))
-        return (
-            body.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-
-
 def run_gemini_review() -> tuple[str, str]:
-    """Gemini の判定結果を (verdict, raw_output) で返す。verdict は ALLOW/ASK/DENY/ERROR。"""
-    if not api_key:
-        return "ERROR", "GEMINI_API_KEY not set"
-
-    primary_url, primary_payload = _build_gemini_payload(gemini_model)
-    try:
-        output = _call_gemini(primary_url, primary_payload)
-    except _API_ERRORS as primary_err:
-        fallback_url, fallback_payload = _build_gemini_payload(gemini_fallback_model)
-        try:
-            output = _call_gemini(fallback_url, fallback_payload)
-        except _API_ERRORS as fallback_err:
-            return "ERROR", f"primary={primary_err}, fallback={fallback_err}"
-
-    return _parse_verdict(output), output
+    return _run_gemini_review(prompt, api_key, gemini_model, gemini_fallback_model)
 
 
 def run_codex_review(gemini_verdict: str, gemini_output: str) -> tuple[str, str]:
-    """Codex の判定結果を (verdict, raw_output) で返す。"""
-    codex_prompt = f"""
-以下のツール呼び出しを Gemini が一次レビューしたところ "{gemini_verdict}" と判定しました。
-Gemini の応答: {gemini_output.strip()}
-
-改めてあなた (Codex) の観点で安全性を判断してください。
-ツール: {tool_name}
-内容: {json.dumps(tool_input, ensure_ascii=False)}
-
-安全なら "ALLOW"、危険なら "DENY: 理由"、確認が必要なら "ASK" とだけ答えてください。
-"""
-
-    try:
-        result = subprocess.run(
-            ["codex", "exec", "--skip-git-repo-check", codex_prompt],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as err:
-        return "ERROR", f"Codex invocation failed: {err}"
-
-    if result.returncode != 0:
-        return "ERROR", f"Codex error: {result.stderr.strip()}"
-
-    return _parse_verdict(result.stdout), result.stdout
+    return _run_codex_review(gemini_verdict, gemini_output, tool_name, tool_input)
 
 
 # メインフロー
@@ -162,12 +88,7 @@ try:
     os.makedirs(os.path.dirname(summary_log), exist_ok=True)
 
     # 一次処理: Gemini API 用プロンプト (tool_input に依存するので try 内で組む)
-    PROMPT = (
-        "以下のツール呼び出しが安全かどうかを判断してください。\n"
-        f"ツール: {tool_name}\n"
-        f"内容: {json.dumps(tool_input, ensure_ascii=False)}\n\n"
-        '安全なら "ALLOW"、危険なら "DENY: 理由"、確認が必要なら"ASK" とだけ答えてください。'
-    )
+    prompt = build_review_prompt(tool_name, tool_input)
 
     sub_commands = _split_commands(command)
 

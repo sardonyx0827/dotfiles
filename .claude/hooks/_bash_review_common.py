@@ -8,11 +8,31 @@
 # (~/.claude/hooks と ~/.codex/hooks は別インストール先で 1 ファイルを共有でき
 # ない)、片方を編集したらもう片方へ cp すること。
 # tests/test_hook_sync.py が 2 つの複製が同一であることを保証する (ドリフト検知)。
+#
+# Gemini 一次レビュー / Codex 二次レビューの呼び出しロジックもここに集約する。
+# 2 つの bash-review.py (claude / codex 変種) は判定結果の伝え方だけが異なり
+# (claude は permissionDecision JSON、codex は exit code)、レビュー呼び出し自体は
+# 完全に同一なため、ドリフト防止のため共有モジュール側に寄せてある。
 import json
 import os
 import platform
 import re
 import subprocess
+import time
+import urllib.error
+import urllib.request
+
+# Gemini API / Codex 呼び出しで想定する回復可能な例外。ここに列挙したものは
+# フォールバック (Gemini フラッシュモデル / Gemini 判定へのフェイルクローズ) の
+# 対象とし、それ以外の例外は握り潰さずメインフローの except に伝播させる。
+_API_ERRORS = (
+    urllib.error.URLError,
+    TimeoutError,
+    ConnectionError,
+    json.JSONDecodeError,
+    IndexError,
+    KeyError,
+)
 
 # 明らかに安全なコマンド (レビューをスキップしてよい読み取り系)。
 # cat/head/tail/grep/rg はレイテンシ削減のため許可するが、コマンド文字列に
@@ -39,6 +59,15 @@ SAFE_COMMANDS = [
     "pwd",
     "echo",
     "printf",
+    # git status / git log / git diff (および下の SAFE_EXACT_COMMANDS の
+    # git branch) は読み取り系サブコマンドとしてセーフ扱いにするが、これは
+    # 「信頼済みリポジトリでの利用」を前提とした割り切りである。攻撃者が
+    # .git/config の core.pager / diff.external / [alias] 等を改竄できる
+    # 状況では、これらの一見無害な git 読み取りコマンドが設定経由で任意
+    # コードを実行し得る。この経路までは本フックのセーフスキップでは防げない
+    # (防ぐには毎回 git config を検証する必要があり、レイテンシ削減という
+    # スキップの目的と両立しない) ため、untrusted なリポジトリを扱う場合は
+    # セーフ扱いに依存しないこと。
     "git status",
     "git log",
     "git diff",
@@ -58,6 +87,8 @@ SAFE_COMMANDS = [
 # 引数なしの完全一致でのみセーフ扱いするコマンド。
 # `git branch` は一覧表示は読み取り系だが、-d/-D/-m/-M/-c/-C 等の破壊的
 # フラグを取り得るため、プレフィックス一致にせず引数付きは AI レビューへ回す。
+# なお SAFE_COMMANDS の git 群と同様、.git/config (core.pager 等) 改竄経由の
+# 任意コード実行は防げない (信頼済みリポジトリでの利用を前提とする)。
 SAFE_EXACT_COMMANDS = [
     "git branch",
 ]
@@ -215,6 +246,121 @@ def _parse_verdict(output: str) -> str:
     return "ASK"
 
 
+# -------------------------------------------------------------------
+# Gemini 一次レビュー / Codex 二次レビュー
+# 2 変種の bash-review.py で完全に同一なため共有モジュールに集約する。
+# 変種側は結果 (verdict, raw_output) を受け取って permissionDecision JSON /
+# exit code に変換するだけで、レビュー呼び出しロジックは持たない。
+# -------------------------------------------------------------------
+def build_review_prompt(tool_name: str, tool_input) -> str:
+    """一次処理 (Gemini) 用のレビュー依頼プロンプトを組み立てる。"""
+    return (
+        "以下のツール呼び出しが安全かどうかを判断してください。\n"
+        f"ツール: {tool_name}\n"
+        f"内容: {json.dumps(tool_input, ensure_ascii=False)}\n\n"
+        '安全なら "ALLOW"、危険なら "DENY: 理由"、確認が必要なら"ASK" とだけ答えてください。'
+    )
+
+
+def _build_gemini_payload(target_model: str, prompt: str) -> tuple[str, bytes]:
+    target_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
+    data = json.dumps(
+        {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 256,
+                "temperature": 0.0,
+                "thinkingConfig": {"thinkingLevel": "minimal"},
+            },
+        }
+    ).encode("utf-8")
+    return target_url, data
+
+
+def _call_gemini(target_url: str, data: bytes, api_key: str) -> str:
+    req = urllib.request.Request(
+        target_url,
+        data=data,
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:  # nosec: B310
+        body = json.loads(resp.read().decode("utf-8"))
+        return (
+            body.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+
+
+def run_gemini_review(
+    prompt: str,
+    api_key: str,
+    gemini_model: str,
+    gemini_fallback_model: str,
+) -> tuple[str, str]:
+    """Gemini の判定結果を (verdict, raw_output) で返す。verdict は ALLOW/ASK/DENY/ERROR。
+
+    一次モデルが _API_ERRORS で失敗した場合はフラッシュモデルへフォールバックし、
+    両方失敗した場合のみ ERROR を返す。API キー未設定も ERROR (二次確認へ回す)。
+    """
+    if not api_key:
+        return "ERROR", "GEMINI_API_KEY not set"
+
+    primary_url, primary_payload = _build_gemini_payload(gemini_model, prompt)
+    try:
+        output = _call_gemini(primary_url, primary_payload, api_key)
+    except _API_ERRORS as primary_err:
+        fallback_url, fallback_payload = _build_gemini_payload(
+            gemini_fallback_model, prompt
+        )
+        try:
+            output = _call_gemini(fallback_url, fallback_payload, api_key)
+        except _API_ERRORS as fallback_err:
+            return "ERROR", f"primary={primary_err}, fallback={fallback_err}"
+
+    return _parse_verdict(output), output
+
+
+def run_codex_review(
+    gemini_verdict: str,
+    gemini_output: str,
+    tool_name: str,
+    tool_input,
+) -> tuple[str, str]:
+    """Codex の判定結果を (verdict, raw_output) で返す。
+
+    Codex CLI 不在 (FileNotFoundError) / タイムアウト / 非ゼロ終了はいずれも
+    ERROR を返し、呼び出し側で Gemini 判定へフォールバックさせる。
+    """
+    codex_prompt = f"""
+以下のツール呼び出しを Gemini が一次レビューしたところ "{gemini_verdict}" と判定しました。
+Gemini の応答: {gemini_output.strip()}
+
+改めてあなた (Codex) の観点で安全性を判断してください。
+ツール: {tool_name}
+内容: {json.dumps(tool_input, ensure_ascii=False)}
+
+安全なら "ALLOW"、危険なら "DENY: 理由"、確認が必要なら "ASK" とだけ答えてください。
+"""
+
+    try:
+        result = subprocess.run(
+            ["codex", "exec", "--skip-git-repo-check", codex_prompt],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as err:
+        return "ERROR", f"Codex invocation failed: {err}"
+
+    if result.returncode != 0:
+        return "ERROR", f"Codex error: {result.stderr.strip()}"
+
+    return _parse_verdict(result.stdout), result.stdout
+
+
 def _sanitize_notify(text: str, limit: int = 200) -> str:
     """通知用に制御文字を除去し長さを制限する"""
     cleaned = "".join(ch for ch in text if ch.isprintable())
@@ -290,6 +436,22 @@ def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None
     if len(lines) > max_lines:
         with open(summary_log, "w") as f:
             f.writelines(lines[-max_lines:])
+
+
+def log_summary(
+    summary_log: str,
+    command: str,
+    decision: str,
+    stage: str,
+    reason: str,
+) -> None:
+    """結果をサマリーログに1行で追記し、500行超えたらローテーションする。"""
+    short_cmd = command[:80] + "..." if len(command) > 80 else command
+    line = (
+        f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+        f"{decision:5s} | {stage:8s} | {short_cmd} | {reason}\n"
+    )
+    append_and_rotate(summary_log, line)
 
 
 def write_detail_log(log_file: str, tool_name: str, tool_input, entries: dict) -> None:
