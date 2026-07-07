@@ -183,6 +183,21 @@ class TestErrorFallbacks:
         assert "Codex unavailable" in res.stderr
 
 
+class TestLogs:
+    def test_detail_log_filename_is_nanosecond_and_pid_unique(self, run_hook):
+        """Codex variant parity: nanosecond + PID uniqueness (bash_cmd_<sec>.log
+        collided within a second and overwrote earlier audit logs)."""
+        import os
+
+        res = run_hook(HOOK, hook_payload("git branch"))
+        detail_dir = res.fake_tmp / "codex_hooks/logs/PreToolUse/Bash/bash-review"
+        names = [p.name for p in detail_dir.iterdir()]
+        assert len(names) == 1
+        name = names[0]
+        assert name.startswith("bash_cmd_")
+        assert name.endswith(f"_{os.getpid()}.log")
+
+
 class TestMalformedInput:
     """Malformed hook input must block (exit 2) toward a human, not crash."""
 

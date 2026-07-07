@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import subprocess
 import sys
 import types
@@ -212,6 +213,22 @@ class TestLogs:
         assert not (detail_dir / "a_00000.log").exists()
         assert not (detail_dir / "a_00001.log").exists()
         assert (detail_dir / "a_00002.log").exists()
+
+    def test_detail_log_filename_is_nanosecond_and_pid_unique(self, run_hook):
+        """`bash_cmd_<sec>.log` collided within the same second and overwrote
+        earlier audit logs. The name now carries nanoseconds + PID so rapid /
+        concurrent reviews never share a filename."""
+        res = run_hook(HOOK, hook_payload("ls -la"))
+        detail_dir = res.fake_tmp / "claude_hooks/logs/PreToolUse/Bash/bash-review"
+        names = [p.name for p in detail_dir.iterdir()]
+        assert len(names) == 1
+        name = names[0]
+        # Hook runs in-process (exec), so its os.getpid() matches this process.
+        assert name.startswith("bash_cmd_")
+        assert name.endswith(f"_{os.getpid()}.log")
+        ts = name[len("bash_cmd_") : -len(f"_{os.getpid()}.log")]
+        # Nanosecond epoch is ~19 digits; second epoch is ~10. Guard the fix.
+        assert ts.isdigit() and len(ts) >= 16
 
 
 class TestParseVerdict:

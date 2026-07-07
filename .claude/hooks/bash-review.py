@@ -87,7 +87,10 @@ try:
     # 詳細ログ (コマンドごとに1ファイル)
     log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
     os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, f"bash_cmd_{int(time.time())}.log")
+    # ナノ秒 + PID でファイル名を一意化する。秒粒度 (int(time.time())) だと
+    # 同一秒内に複数コマンドをレビューした際に同名となり、後のログが前を上書き
+    # して監査ログが失われる。
+    log_file = os.path.join(log_dir, f"bash_cmd_{time.time_ns()}_{os.getpid()}.log")
     prune_dir(log_dir)  # 1000件を超えたら古いものから削除
 
     # サマリーログ (1ファイルに追記・500行でローテーション)
