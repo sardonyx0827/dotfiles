@@ -169,22 +169,34 @@ install_brew_packages() {
 
 # Install WezTerm
 install_wezterm() {
+  # Every brew/network/apt step below can fail transiently. WezTerm is
+  # optional, so failures must warn and continue -- under `set -e` an
+  # unguarded failure here aborts the whole installer (symlinks, MCP, ...).
   if [[ "$OS" == "macos" ]]; then
     if ! brew list --cask wezterm &>/dev/null; then
       print_info "Installing WezTerm..."
-      brew install --cask wezterm
-      print_success "WezTerm installed"
+      brew install --cask wezterm || print_warning "Failed to install WezTerm"
+      if brew list --cask wezterm &>/dev/null; then
+        print_success "WezTerm installed"
+      fi
     else
       print_success "WezTerm already installed"
     fi
   elif [[ "$OS" == "ubuntu" ]]; then
     if ! command_exists wezterm; then
       print_info "Installing WezTerm..."
-      curl -fsSL https://apt.fury.io/wez/gpg.key | sudo gpg --yes --dearmor -o /usr/share/keyrings/wezterm-fury.gpg
-      echo 'deb [signed-by=/usr/share/keyrings/wezterm-fury.gpg] https://apt.fury.io/wez/ * *' | sudo tee /etc/apt/sources.list.d/wezterm.list
-      sudo apt-get update
-      sudo apt-get install -y wezterm
-      print_success "WezTerm installed"
+      if curl -fsSL https://apt.fury.io/wez/gpg.key | sudo gpg --yes --dearmor -o /usr/share/keyrings/wezterm-fury.gpg; then
+        echo 'deb [signed-by=/usr/share/keyrings/wezterm-fury.gpg] https://apt.fury.io/wez/ * *' |
+          sudo tee /etc/apt/sources.list.d/wezterm.list >/dev/null ||
+          print_warning "Failed to add WezTerm apt repository"
+        sudo apt-get update || print_warning "apt-get update failed"
+        sudo apt-get install -y wezterm || print_warning "Failed to install WezTerm"
+      else
+        print_warning "Failed to fetch WezTerm GPG key; skipping WezTerm"
+      fi
+      if command_exists wezterm; then
+        print_success "WezTerm installed"
+      fi
     else
       print_success "WezTerm already installed"
     fi
@@ -193,16 +205,32 @@ install_wezterm() {
 
 # Install fonts
 install_fonts() {
+  # Fonts are optional: a failed brew/apt step warns and continues instead
+  # of aborting the whole installer under `set -e`.
+  local fonts_ok=true
   if [[ "$OS" == "macos" ]]; then
     print_info "Installing fonts..."
     # homebrew/cask-fonts was deprecated in 2024 and folded into homebrew/cask.
-    brew install --cask font-ubuntu-mono
-    brew install --cask font-hack-nerd-font
-    print_success "Fonts installed"
+    brew install --cask font-ubuntu-mono ||
+      {
+        fonts_ok=false
+        print_warning "Failed to install font-ubuntu-mono"
+      }
+    brew install --cask font-hack-nerd-font ||
+      {
+        fonts_ok=false
+        print_warning "Failed to install font-hack-nerd-font"
+      }
+    if [[ "$fonts_ok" == true ]]; then
+      print_success "Fonts installed"
+    fi
   elif [[ "$OS" == "ubuntu" ]]; then
     print_info "Installing fonts..."
-    sudo apt-get install -y fonts-ubuntu fonts-hack-ttf
-    print_success "Fonts installed"
+    if sudo apt-get install -y fonts-ubuntu fonts-hack-ttf; then
+      print_success "Fonts installed"
+    else
+      print_warning "Failed to install fonts"
+    fi
   fi
 }
 
@@ -217,13 +245,20 @@ install_gh() {
   if [[ "$OS" == "macos" ]]; then
     brew install gh || print_warning "Failed to install gh"
   elif [[ "$OS" == "ubuntu" ]]; then
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg |
-      sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-    sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" |
-      sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-    sudo apt-get update
-    sudo apt-get install -y gh || print_warning "Failed to install gh"
+    # Same guard rationale as install_wezterm: gh is optional, so a failed
+    # keyring/apt step must warn and continue, not abort the installer.
+    if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg |
+      sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg; then
+      sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg ||
+        print_warning "Failed to chmod gh keyring"
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" |
+        sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null ||
+        print_warning "Failed to add gh apt repository"
+      sudo apt-get update || print_warning "apt-get update failed"
+      sudo apt-get install -y gh || print_warning "Failed to install gh"
+    else
+      print_warning "Failed to fetch gh keyring; skipping gh"
+    fi
   fi
   # Report success only when present. The `if` (no else) returns 0 when the
   # tool is absent, so a missing tool never aborts the installer under `set -e`

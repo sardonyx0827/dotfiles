@@ -342,6 +342,64 @@ class TestRegisterClaudeMcpServers:
         assert f"-- {python3_path} " in gemini_calls[0]
 
 
+class TestOptionalInstallerFailures:
+    """A transient brew/network/apt failure in one optional installer must
+    warn and move on -- never abort the whole installer via `set -e`."""
+
+    def test_wezterm_brew_failure_does_not_abort_script_macos(self, shell_env):
+        shell_env.stub("brew", exit_code=1)
+        res = run_sourced(
+            'OS=macos install_wezterm; echo "AFTER_WEZTERM"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_WEZTERM" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+    def test_fonts_brew_failure_does_not_abort_script_macos(self, shell_env):
+        shell_env.stub("brew", exit_code=1)
+        res = run_sourced(
+            'OS=macos install_fonts; echo "AFTER_FONTS"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_FONTS" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+    def test_wezterm_curl_failure_does_not_abort_script(self, shell_env):
+        shell_env.stub("curl", exit_code=1)
+        shell_env.stub("sudo")
+        res = run_sourced(
+            "command_exists() { return 1; }; "
+            'OS=ubuntu install_wezterm; echo "AFTER_WEZTERM"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_WEZTERM" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+    def test_gh_curl_failure_does_not_abort_script(self, shell_env):
+        shell_env.stub("curl", exit_code=1)
+        shell_env.stub("sudo")
+        res = run_sourced(
+            'command_exists() { return 1; }; OS=ubuntu install_gh; echo "AFTER_GH"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_GH" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+    def test_fonts_apt_failure_does_not_abort_script(self, shell_env):
+        shell_env.stub("sudo", exit_code=1)
+        res = run_sourced(
+            'OS=ubuntu install_fonts; echo "AFTER_FONTS"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_FONTS" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+
 class TestChangeShell:
     def test_chsh_failure_does_not_abort_script(self, shell_env):
         shell_env.stub("zsh")
