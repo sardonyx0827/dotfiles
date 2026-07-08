@@ -165,6 +165,13 @@ class TestAutoFormat:
         assert res.returncode == 0
         assert "No file path found" in res.stderr
 
+    def test_malformed_json_input_exits_zero(self, FORMAT, shell_env):
+        # Fail-open: garbage stdin (jq parse error) must fall through to the
+        # "no file path" exit, not abort the hook with jq's non-zero status.
+        res = shell_env.run(FORMAT, stdin="not json at all")
+        assert res.returncode == 0
+        assert "No file path found" in res.stderr
+
     def test_python_file_runs_ruff_and_not_isort(self, FORMAT, shell_env, tmp_path):
         # When ruff is available, imports are sorted via ruff (--select I --fix)
         # and formatted with ruff format. isort must NOT run afterwards: its

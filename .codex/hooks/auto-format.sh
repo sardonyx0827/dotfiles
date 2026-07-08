@@ -1,8 +1,11 @@
 #!/bin/bash
-set -e
-
 # Codex HooksのPostToolUse用自動フォーマットスクリプト
 # 標準入力からJSON形式のデータを受け取り、ファイルパスを抽出してフォーマットを実行
+#
+# 意図的に `set -e` は使わない: このフックは fail-open 設計であり、jq の
+# パース失敗や個々のフォーマッターの失敗でフック自体を異常終了させては
+# ならない(lint.sh / git-push-review.sh と同じ方針)。失敗は if 分岐と
+# `|| true` で個別に処理し、最悪でも exit 0 で抜ける。
 
 # jq が無い環境では処理できないため安全に抜ける
 command -v jq >/dev/null 2>&1 || exit 0
