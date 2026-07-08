@@ -8,6 +8,10 @@ __pycache__/
 .coverage.*
 
 # Safety net for environments where ~/.gitignore_global is not wired yet
-# (fresh clone before install.sh, bare containers, worktrees)
+# (fresh clone before install.sh, bare containers, worktrees).
+# .serena/ writes its own .gitignore but it only covers cache/ and
+# project.local.yml, and lazy-lock.json has no self-ignore at all.
 tags
 .DS_Store
+.serena/
+lazy-lock.json
