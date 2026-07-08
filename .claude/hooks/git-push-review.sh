@@ -24,7 +24,7 @@ cmd=$(echo "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 # 無効、ダブルクォート内・クォート外はバックスラッシュが次の1文字をエスケー
 # プ)を状態機械で追ってクォート区間を除去する。
 strip_quoted_ranges() {
-  local str="$1" out="" c state=0 i=0 len
+  local str="$1" out="" c state=0 i=0 len depth=0 sub=""
   len=${#str}
   while [ "$i" -lt "$len" ]; do
     c="${str:i:1}"
@@ -58,8 +58,12 @@ strip_quoted_ranges() {
       i=$((i + 1))
       ;;
     2)
-      # ダブルクォート内: 閉じクォートまで全て破棄。バックスラッシュは
-      # 次の1文字ごと消費し、エスケープされた `"` で閉じないようにする。
+      # ダブルクォート内: 基本は閉じクォートまで破棄するが、$(...) と
+      # バッククォートのコマンド置換は bash がダブルクォート内でも実際に
+      # 実行するため、丸ごと破棄すると `echo "log: $(git push)"` の push が
+      # 検知を素通りする。置換部分だけ state 3/4 で out に残す。
+      # バックスラッシュは次の1文字ごと消費するので、\$( / \` のように
+      # エスケープされた(実行されない)置換は残らない。
       case "$c" in
       "\\")
         i=$((i + 2))
@@ -68,7 +72,77 @@ strip_quoted_ranges() {
         state=0
         i=$((i + 1))
         ;;
+      '$')
+        if [ "${str:i+1:1}" = "(" ]; then
+          sub=""
+          depth=1
+          state=3
+          i=$((i + 2))
+        else
+          i=$((i + 1))
+        fi
+        ;;
+      '`')
+        sub=""
+        state=4
+        i=$((i + 1))
+        ;;
       *)
+        i=$((i + 1))
+        ;;
+      esac
+      ;;
+    3)
+      # ダブルクォート内の $(...): 対応する閉じ括弧まで生のまま sub に集め
+      # (括弧の深さのみ追跡)、閉じたところで再帰的にクォート除去して out に
+      # 残す。置換の中身は bash が独立したコマンドとして再パースするため、
+      # 中のクォート区間 (`git -C "/a b" push` の "/a b" 等) も外側と同じ
+      # 規則で除去しないと push 検知の正規表現がトークンを追えない。
+      case "$c" in
+      "\\")
+        sub+="${str:i:2}"
+        i=$((i + 2))
+        ;;
+      "(")
+        depth=$((depth + 1))
+        sub+="$c"
+        i=$((i + 1))
+        ;;
+      ")")
+        depth=$((depth - 1))
+        i=$((i + 1))
+        if [ "$depth" -eq 0 ]; then
+          out+="\$("
+          out+="$(strip_quoted_ranges "$sub")"
+          out+=")"
+          state=2
+        else
+          sub+="$c"
+        fi
+        ;;
+      *)
+        sub+="$c"
+        i=$((i + 1))
+        ;;
+      esac
+      ;;
+    4)
+      # ダブルクォート内の `...`: 同じく実行されるので、閉じバッククォート
+      # まで sub に集めて再帰的にクォート除去し、out に残す。
+      case "$c" in
+      "\\")
+        sub+="${str:i:2}"
+        i=$((i + 2))
+        ;;
+      '`')
+        out+='`'
+        out+="$(strip_quoted_ranges "$sub")"
+        out+='`'
+        state=2
+        i=$((i + 1))
+        ;;
+      *)
+        sub+="$c"
         i=$((i + 1))
         ;;
       esac
@@ -80,11 +154,15 @@ strip_quoted_ranges() {
 
 cmd_for_match=$(strip_quoted_ranges "$cmd")
 
-# コマンド文字列のどこかに git ... push が含まれるか(チェーン・サブシェル含む)。
+# コマンド文字列のどこかに git ... push が含まれるか(チェーン・サブシェル・
+# コマンド置換含む。バッククォートも $(...) と同様コマンド開始境界になる)。
 # フラグは「値が = で連結される形式 (--git-dir=/x)」と「スペースで区切られる
 # 形式 (git -C /repo push)」の両方を許容する (値はフラグと誤読しないよう
-# 先頭が - 以外のトークンに限定)。
-echo "$cmd_for_match" | grep -qE '(^|[;&|[:space:](])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:]]|$)' || exit 0
+# 先頭が - 以外のトークンに限定)。push の直後は空白・行末だけでなく、
+# `;` `&` `|` `)` と閉じバッククォートも文の終端になり得る
+# (`git push;true` / `(git push)` / `$(git push)` を見逃さない)。
+# shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル(展開させない)
+echo "$cmd_for_match" | grep -qE '(^|[;&|[:space:](`])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:];&|)`]|$)' || exit 0
 
 # `git -C <dir> push` のように push 対象リポジトリが明示されている場合、
 # サマリもフック自身の cwd ではなく同じ <dir> を対象に生成する。

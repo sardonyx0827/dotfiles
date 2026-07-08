@@ -148,6 +148,91 @@ class TestClaudeVariant:
         assert res.returncode == 0
         assert res.stdout == ""
 
+    def test_push_inside_double_quoted_command_substitution_is_detected(
+        self, shell_env, git_repo
+    ):
+        # bash DOES execute $(...) inside double quotes, so a push placed
+        # there is a real push, not inert quoted text. Stripping the whole
+        # double-quoted range used to hide it from detection (bypass).
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload('echo "log: $(git push origin main)"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "ask"
+
+    def test_push_inside_double_quoted_backticks_is_detected(self, shell_env, git_repo):
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload('echo "log: `git push origin main`"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "ask"
+
+    def test_push_inside_bare_backticks_is_detected(self, shell_env, git_repo):
+        # Unquoted backticks are also command substitution; the detection
+        # regex must accept a backtick as a command boundary.
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload("echo `git push origin main`"),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "ask"
+
+    def test_escaped_substitution_in_double_quotes_is_not_detected(
+        self, shell_env, git_repo
+    ):
+        # \$( does not start a command substitution; the text is inert.
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload('echo "costs \\$(git push)"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        assert res.stdout == ""
+
+    def test_substitution_in_single_quotes_is_not_detected(self, shell_env, git_repo):
+        # Single quotes suppress command substitution entirely.
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload("echo 'see $(git push)'"),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        assert res.stdout == ""
+
+    def test_push_followed_by_semicolon_is_detected(self, shell_env, git_repo):
+        # `push` can be terminated by `;` `&` `|` `)` as well as whitespace;
+        # requiring whitespace/EOL after `push` let `git push;true` through.
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload("git push;true"),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "ask"
+
+    def test_nested_quotes_inside_substitution_do_not_hide_push(
+        self, shell_env, git_repo
+    ):
+        # A double-quoted argument INSIDE the substitution flips the naive
+        # quote pairing; the push must still be detected.
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload('echo "$(git -C "/tmp/some repo" push)"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 0
+        decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "ask"
+
     def test_dash_c_summary_reflects_target_repo(self, shell_env, tmp_path):
         # The detection regex already accepts `git -C <dir> push`, but the
         # confirmation summary must describe <dir>'s branch/commits, not
@@ -223,6 +308,26 @@ class TestCodexVariant:
         )
         assert res.returncode == 0
         assert res.stderr == ""
+
+    def test_push_inside_double_quoted_command_substitution_blocks(
+        self, shell_env, git_repo
+    ):
+        res = shell_env.run(
+            CODEX_HOOK,
+            stdin=payload('echo "log: $(git push origin main)"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 2
+        assert "git push detected" in res.stderr
+
+    def test_push_inside_double_quoted_backticks_blocks(self, shell_env, git_repo):
+        res = shell_env.run(
+            CODEX_HOOK,
+            stdin=payload('echo "log: `git push origin main`"'),
+            cwd=git_repo,
+        )
+        assert res.returncode == 2
+        assert "git push detected" in res.stderr
 
     def test_dash_c_summary_reflects_target_repo(self, shell_env, tmp_path):
         target = make_target_repo(tmp_path)
