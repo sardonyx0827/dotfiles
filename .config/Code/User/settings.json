@@ -228,7 +228,10 @@
       ]
     },
     {
-      "before": ["<leader>", "s", "h"],
+      // side terminal (mirrors nvim <leader>ss). NOT <leader>sh: that would
+      // prefix-collide with <leader>sh1..9/shf/shb below and stall on the
+      // VSCodeVim multi-key timeout.
+      "before": ["<leader>", "s", "s"],
       "commands": ["workbench.action.createTerminalEditorSide"]
     },
     {
