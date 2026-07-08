@@ -92,12 +92,14 @@ class TestCallGemini:
         assert sleeps == [1, 2]
 
     def test_raises_after_exhausting_retries(self, server, monkeypatch):
+        # No sleep after the FINAL failed attempt: waiting 4s before giving
+        # up delays the error report without ever retrying again.
         sleeps = []
         monkeypatch.setattr(time, "sleep", sleeps.append)
         monkeypatch.setattr(urllib.request, "urlopen", fake_gemini(URLError("down")))
         with pytest.raises(URLError):
             server.call_gemini("question")
-        assert sleeps == [1, 2, 4]
+        assert sleeps == [1, 2]
 
     def test_uses_requested_model_in_url(self, server, monkeypatch):
         calls = []

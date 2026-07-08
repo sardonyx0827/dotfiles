@@ -197,8 +197,9 @@ def call_gemini(
                 return "".join(p.get("text", "") for p in parts)
         except (urllib.error.URLError, TimeoutError) as e:
             last_error = e
-            wait = 2**attempt  # 指数バックオフ: 1秒 → 2秒 → 4秒
-            time.sleep(wait)
+            # 最終試行の失敗後は再試行しないので待つ意味がない
+            if attempt < max_retries - 1:
+                time.sleep(2**attempt)
 
     raise last_error  # type: ignore[misc]
 
