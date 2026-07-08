@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 -- DAP for Debugging (config + dap-ui formerly in after/plugin/nvim-dap*.lua)
 -- requirements: apt install python3 python3.x-venv, pip3 install debugpy
 return {

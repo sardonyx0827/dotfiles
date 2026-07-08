@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 --- @diagnostic disable: different-requires
 
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"

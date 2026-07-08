@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 return {
   "nvim-tree/nvim-tree.lua",
   lazy = false,

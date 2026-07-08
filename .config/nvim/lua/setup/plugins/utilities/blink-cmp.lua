@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 -- Autocompletion (blink.cmp)
 return {
   'saghen/blink.cmp',

@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 -- undotree vimdiff integration
 -- Opens a vimdiff tab comparing a selected undo state with the current buffer
 -- for jiaoshijie/undotree. Supports do (obtain) / dp (put) operations.

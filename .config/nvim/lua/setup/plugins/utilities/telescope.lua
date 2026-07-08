@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 -- fuzzy search using ripgrep
 local function builtin(name)
   return function()

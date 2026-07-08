@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 ---------------------------------------------------------
 -- ai.backend
 -- Unified AI invocation. Knows how to run each tool (CLI tools over stdin,

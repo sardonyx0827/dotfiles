@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 ---------------------------------------------------------
 -- ai.ui
 -- A single floating-window driver shared by every AI feature.

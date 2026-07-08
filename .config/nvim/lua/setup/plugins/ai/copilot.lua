@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 return {
   "zbirenbaum/copilot.lua",
   event = "InsertEnter",

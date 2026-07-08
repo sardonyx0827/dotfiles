@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 ---------------------------------------------------------
 -- create filepath list from current directory
 ---------------------------------------------------------

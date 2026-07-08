@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 require("setup.lazy")
 require("setup.set")
 require("setup.remap")

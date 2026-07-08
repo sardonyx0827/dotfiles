@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 vim.opt.nu = true
 vim.opt.relativenumber = true
 
@@ -52,17 +51,16 @@ vim.g.netrw_winsize = 80
 
 -- Highlight whitespace characters
 vim.opt.listchars = { tab = "┊ ", trail = "·", extends = "…", precedes = "…" }
-vim.api.nvim_set_hl(0, "Whitespace", { fg = "#Fb7280", bg = "NONE" })
-vim.api.nvim_set_hl(0, "NonText", { fg = "#Faa0a6", bg = "NONE" })
-vim.api.nvim_set_hl(0, "SpecialKey", { fg = "#Faa0a6", bg = "NONE" })
--- Reapply highlight settings on colorscheme change
-vim.api.nvim_create_autocmd("ColorScheme", {
-  callback = function()
-    vim.api.nvim_set_hl(0, "Whitespace", { fg = "#Fb7280", bg = "NONE" })
-    vim.api.nvim_set_hl(0, "NonText", { fg = "#Faa0a6", bg = "NONE" })
-    vim.api.nvim_set_hl(0, "SpecialKey", { fg = "#Faa0a6", bg = "NONE" })
-  end,
-})
+-- Defined once and reapplied on every ColorScheme, because `:colorscheme`
+-- clears user-defined highlight groups; without the autocmd these revert to
+-- the theme defaults whenever the colorscheme (re)loads.
+local function apply_whitespace_highlights()
+  vim.api.nvim_set_hl(0, "Whitespace", { fg = "#Fb7280", bg = "NONE" })
+  vim.api.nvim_set_hl(0, "NonText", { fg = "#Faa0a6", bg = "NONE" })
+  vim.api.nvim_set_hl(0, "SpecialKey", { fg = "#Faa0a6", bg = "NONE" })
+end
+apply_whitespace_highlights()
+vim.api.nvim_create_autocmd("ColorScheme", { callback = apply_whitespace_highlights })
 
 -- go lang has no tabs
 vim.api.nvim_create_autocmd("FileType", {

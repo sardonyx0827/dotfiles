@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 ---------------------------------------------------------
 -- ai (entry point)
 -- Wires the AI features to keymaps. The heavy lifting lives in the sibling

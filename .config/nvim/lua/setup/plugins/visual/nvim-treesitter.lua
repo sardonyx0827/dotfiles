@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 -- Highlitght colors, Indents, etc
 return {
   "nvim-treesitter/nvim-treesitter",

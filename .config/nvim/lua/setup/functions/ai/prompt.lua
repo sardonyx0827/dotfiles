@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 ---------------------------------------------------------
 -- ai.prompt
 -- Pure-ish helpers: prompt builders, diagnostic formatting, and output

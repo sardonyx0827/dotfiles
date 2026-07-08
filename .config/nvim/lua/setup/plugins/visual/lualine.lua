@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 -- Prevent lualine from showing in dashboard-like filetypes by setting laststatus to 0 locally.
 -- This is necessary because lualine's global statusline setting does not apply to special buffers like dashboard.
 vim.api.nvim_create_autocmd("FileType", {

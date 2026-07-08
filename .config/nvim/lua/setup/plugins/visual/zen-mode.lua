@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 -- focus
 return {
   "folke/zen-mode.nvim",

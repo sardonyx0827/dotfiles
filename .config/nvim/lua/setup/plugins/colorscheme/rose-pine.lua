@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 return {
   "rose-pine/neovim",
   name = "rose-pine",

@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 --- @diagnostic disable: different-requires
 -- LSP: mason + mason-lspconfig + lspconfig (formerly after/plugin/lsp.lua).
 -- Loads when a file is opened rather than at startup.

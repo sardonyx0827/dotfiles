@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 vim.g.mapleader = ","
 
 -- move text: keep the visual selection after shifting

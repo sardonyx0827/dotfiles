@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 return {
   "ThePrimeagen/harpoon",
   branch = "harpoon2",

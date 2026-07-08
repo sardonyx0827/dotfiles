@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 -- Terminal
 --
 -- CUI-tool terminals (lazydocker / claude / gemini / codex) are created lazily on

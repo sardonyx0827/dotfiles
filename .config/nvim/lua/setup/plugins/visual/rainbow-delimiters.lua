@@ -1,4 +1,3 @@
---- @diagnostic disable: undefined-global
 return {
   "HiPhish/rainbow-delimiters.nvim",
   event = "VeryLazy",
