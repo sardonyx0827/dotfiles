@@ -209,9 +209,43 @@ def _is_sensitive_command(cmd: str) -> bool:
     return bool(SENSITIVE_PATTERNS.search(cmd) or SENSITIVE_PATTERNS.search(normalized))
 
 
+# SENSITIVE_PATTERNS は既知の機密パスの denylist であり、網羅はできない。
+# /proc/self/environ (フック自身の GEMINI_API_KEY を含む全環境変数を露出) や
+# ~/.config/gh/hosts.yml・~/.kube/config・~/.gnupg/* のように、パターンに載って
+# いない秘匿情報は無数にある。そこで「安全な読み取りツールであっても、引数が
+# カレントツリーの外 (絶対パス / ホーム参照 / 親ディレクトリ遡上 / 変数展開) に
+# 届き得る場合はセーフ扱いにせず AI レビューへ回す」という位置ベースのガードを
+# 併用する。これで denylist のもぐら叩きに頼らず、相対パスのローカル読み取り
+# (cat README.md / grep -r foo src) だけを高速パスに残せる。各枝の意図:
+#   (?:^|[\s=])[/~]     : 先頭・空白・= の直後の / ~ (絶対パス・ホーム参照)。
+#                         = を含めるのは `--file=/etc/shadow` `--file=~/.ssh` 対策。
+#                         git の HEAD~1 は ~ が英数字の直後なので誤検知しない。
+#   (?:^|\s)-[\w-]*[/~] : トークン先頭のフラグに付着した / ~ (`grep -f/etc/shadow`)。
+#                         先頭 - に限定するので `src/my-component/` 等の相対パスに
+#                         含まれるハイフンは誤検知しない。
+#   /\.\.|\.\./          : /.. または ../ (親ディレクトリ遡上。../../etc/shadow 等)。
+#   \$                    : $HOME / ${HOME} / $VAR 等の変数展開。展開結果は静的に
+#                          検証できず任意のパスに化け得るため一律レビューへ回す
+#                          ($( ... ) は COMPLEX_SHELL_SYNTAX が別途拒否)。
+_OUT_OF_TREE_PATH = re.compile(r"(?:^|[\s=])[/~]|(?:^|\s)-[\w-]*[/~]|/\.\.|\.\./|\$")
+
+
+def _references_out_of_tree_path(cmd: str) -> bool:
+    """コマンド引数がカレントツリー外 (絶対/ホーム/親遡上/変数展開) を参照し得るか判定する。
+
+    クォート/バックスラッシュはシェル解釈で消えるため、除去した正規化文字列でも
+    照合する (cat "/proc"/self/environ のような分割による回避の防止)。
+    """
+    normalized = _QUOTE_OR_ESCAPE.sub("", cmd)
+    return bool(_OUT_OF_TREE_PATH.search(cmd) or _OUT_OF_TREE_PATH.search(normalized))
+
+
 def _is_safe_command(cmd: str) -> bool:
     # 機密パスを含む場合はセーフ扱いにせず AI レビューへ回す (Read deny の迂回防止)
     if _is_sensitive_command(cmd):
+        return False
+    # 絶対パス/ホーム参照/親遡上を含む読み取りは denylist を貫通し得るためレビューへ
+    if _references_out_of_tree_path(cmd):
         return False
     if cmd in SAFE_EXACT_COMMANDS:
         return True

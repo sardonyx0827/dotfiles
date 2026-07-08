@@ -77,6 +77,19 @@ class TestSafeSkip:
         assert res.decision == "allow"
         assert "skipped review" in res.reason
 
+    def test_proc_environ_is_not_safe_skipped(self, run_hook):
+        # /proc/self/environ dumps the hook's own GEMINI_API_KEY and is NOT in
+        # SENSITIVE_PATTERNS. A safe read tool (cat) must not fast-path it: it
+        # has to reach AI review, not be auto-allowed by the safe-skip path.
+        res = run_hook(
+            HOOK,
+            hook_payload("cat /proc/self/environ"),
+            urlopen=fake_gemini("ALLOW"),
+        )
+        assert res.decision == "allow"
+        assert "Gemini reviewed and approved" in res.reason
+        assert "skipped review" not in res.reason
+
     @pytest.mark.parametrize(
         "command",
         [
@@ -341,6 +354,38 @@ class TestCommandHelpers:
             ('grep "foo" bar.txt', True),
             ("echo 'hello world'", True),
             ("ls .venv", True),
+            # Out-of-tree path guard: absolute / home / parent-traversal targets
+            # reach secrets the SENSITIVE_PATTERNS denylist does not enumerate
+            # (/proc/self/environ leaks the hook's own GEMINI_API_KEY; ~/.config/gh,
+            # ~/.kube, ~/.gnupg hold live credentials). Safe read tools must not
+            # skip review for them -- only current-tree relative reads stay fast.
+            ("cat /proc/self/environ", False),
+            ("cat /etc/shadow", False),
+            ("cat /etc/passwd", False),
+            ("cat ~/.config/gh/hosts.yml", False),
+            ("cat ~/.kube/config", False),
+            ("head ~/.docker/config.json", False),
+            ("tail ~/.gnupg/secring.gpg", False),
+            ("cat ../../etc/shadow", False),
+            ("grep -i key foo/../../../proc/self/environ", False),
+            ('cat "/proc"/self/environ', False),  # quote-split absolute path
+            # Out-of-tree targets reached via variable expansion or flag-attached
+            # paths bypass a token-anchored check, so they are guarded too.
+            ("cat $HOME/.gnupg/secring.gpg", False),  # $HOME expansion -> home
+            ("cat ${HOME}/.kube/config", False),
+            ("cat ${HOME}/.config/gh/hosts.yml", False),  # ${VAR} form, gh token
+            ("echo $PATH", False),  # any $-expansion is unverifiable
+            ("grep --file=/etc/shadow x", False),  # --flag=/abs
+            ("grep -f/proc/self/environ x", False),  # -f/abs (attached short flag)
+            # ...but ordinary current-tree relative reads and mid-token ~ (git
+            # revision ranges like HEAD~1 / HEAD~5..HEAD) must stay fast, and a
+            # hyphenated relative subdir must not false-positive as a flag path.
+            ("cat README.md", True),
+            ("grep -r foo src", True),
+            ("git diff HEAD~1", True),
+            ("git log HEAD~5..HEAD", True),
+            ("cat src/my-component/index.js", True),
+            ("grep -r foo my-dir", True),
         ],
     )
     def test_is_safe_command(self, hook_fns, command, expected):
@@ -379,6 +424,12 @@ class TestCommandHelpers:
             # Quote-splitting and slashless directory reads (bypass regression).
             ('cat ".e"nv', False),
             ("grep -r . ~/.ssh", False),
+            # Out-of-tree path guard (see _is_safe_command): absolute / home /
+            # parent-traversal reads bypass the sensitive denylist, so they must
+            # never be safe-skipped even with an otherwise-safe leading tool.
+            ("cat /proc/self/environ", False),
+            ("cat ~/.kube/config", False),
+            ("cat ../../etc/shadow", False),
         ],
     )
     def test_can_skip_review(self, hook_fns, command, expected):
