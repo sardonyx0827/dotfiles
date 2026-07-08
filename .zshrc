@@ -171,16 +171,25 @@ export OLLAMA_KEEP_ALIVE="-1"
 
 ## update
 function update_ai_tools() {
-  # Resolve the dotfiles checkout from wherever ~/.zshrc actually points
-  # (install.sh symlinks it there), instead of hardcoding a clone path --
-  # README documents ~/dotfiles, but people also check out to
-  # ~/work/github/dotfiles, etc. ${:-...} lets us apply :A/:h modifiers to
-  # a literal path (there is no real parameter to attach them to).
+  # Resolve the dotfiles checkout. Prefer the location ~/.zshrc points to
+  # if it's a symlink into a dotfiles checkout (as install.sh sets up);
+  # otherwise fall back to known checkout locations, since ~/.zshrc may
+  # instead be a plain copy with no symlink to follow (as on this
+  # machine). ${:-...} lets us apply :A/:h modifiers to a literal path
+  # (there is no real parameter to attach them to).
   local dotfiles_dir script
-  dotfiles_dir="${${:-$HOME/.zshrc}:A:h}"
-  script="$dotfiles_dir/update_ai_tools.sh"
+  local -a candidates=(
+    "${${:-$HOME/.zshrc}:A:h}"
+    "$HOME/work/github/dotfiles"
+    "$HOME/dotfiles"
+    "$HOME/.dotfiles"
+  )
+  for dotfiles_dir in "${candidates[@]}"; do
+    script="$dotfiles_dir/update_ai_tools.sh"
+    [ -f "$script" ] && break
+  done
   if [ ! -f "$script" ]; then
-    echo "update_ai_tools: could not find update_ai_tools.sh (looked in $dotfiles_dir); is ~/.zshrc a symlink into your dotfiles checkout?" >&2
+    echo "update_ai_tools: could not find update_ai_tools.sh (checked: ${(j:, :)candidates})" >&2
     return 1
   fi
   "$script"
