@@ -25,11 +25,18 @@ autocmd("TextYankPost", {
   end,
 })
 
--- Trim trailing whitespace on save
+-- Trim trailing whitespace on save.
+-- Wrapped in winsaveview/winrestview so the cursor and scroll position are
+-- preserved, and `keeppatterns` so the last search pattern is not clobbered by
+-- `\s\+$` (a bare `:%s/.../` would leave the cursor moved and pollute `n`/`N`).
 autocmd({ "BufWritePre" }, {
   group = setupGroup,
   pattern = "*",
-  command = [[%s/\s\+$//e]],
+  callback = function()
+    local view = vim.fn.winsaveview()
+    vim.cmd([[keeppatterns %s/\s\+$//e]])
+    vim.fn.winrestview(view)
+  end,
 })
 
 -- Check if file changed when its buffer is entered or focus is gained
