@@ -427,7 +427,7 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 - **プラグインマネージャー**: lazy.nvim（Lua ベースのモダン構成）
 - **LSP / 補完 / Treesitter**: 言語サーバープロトコル統合、シンタックスハイライト
 - **主要プラグイン**: telescope（ファジーファインダー）、nvim-tree、gitsigns / fugitive / neogit / diffview、trouble、toggleterm、nvim-dap（デバッガ）、zen-mode、auto-session
-- **AI 連携**: avante.nvim / copilot.lua
+- **AI 連携**: copilot.lua
 - **カラースキーム**: Rosé Pine（gruvbox / kanagawa / tokyonight / onedark なども同梱）
 
 ### tmux (.tmux.conf)

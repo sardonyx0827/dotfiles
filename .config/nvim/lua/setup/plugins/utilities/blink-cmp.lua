@@ -82,26 +82,13 @@ return {
     },
 
     sources = {
-      -- 'avante' は avante.lua が依存に持つ blink-cmp-avante の登録名。
-      -- ここに provider として登録しないとプラグインが読み込まれるだけで
-      -- @ / # 補完が一切有効にならない (AvanteInput 以外では自動で無効)。
-      default = { 'avante', 'copilot', 'lsp', 'snippets', 'buffer' },
+      default = { 'copilot', 'lsp', 'snippets', 'buffer' },
       providers = {
         copilot = {
           name = 'copilot',
           module = 'blink-copilot',
           score_offset = 100,
           async = true,
-        },
-        avante = {
-          name = 'Avante',
-          module = 'blink-cmp-avante',
-          -- Avante の入力バッファ以外では無効化する。通常バッファの @ / #
-          -- に反応させず、avante.nvim (と依存の blink-cmp-avante) が
-          -- 未ロードの段階で module を require させないためのガード。
-          enabled = function()
-            return vim.bo.filetype == 'AvanteInput'
-          end,
         },
       },
     },
