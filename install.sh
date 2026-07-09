@@ -591,6 +591,18 @@ create_symlinks() {
     link_entry "$DOTFILES_DIR/$file" "$HOME/$file"
   done
 
+  # OS 別の資格情報ヘルパーを ~/.config/git/os.gitconfig に生成する。
+  # .gitconfig は [include] でこれを読み込む。macOS は osxkeychain、それ以外は
+  # cache を使い、credential-osxkeychain が存在しない Linux/WSL で
+  # 「is not a git command」警告が出るのを防ぐ。生成ファイルなのでバックアップ
+  # 不要 (毎回上書きで冪等)。git は未生成でも include を黙って無視する。
+  mkdir -p "$HOME/.config/git"
+  local git_cred_helper="cache --timeout=3600"
+  [[ "$OS" == "macos" ]] && git_cred_helper="osxkeychain"
+  printf '[credential]\n\thelper = %s\n' "$git_cred_helper" \
+    >"$HOME/.config/git/os.gitconfig"
+  print_success "Rendered os.gitconfig (credential helper: $git_cred_helper)"
+
   # Directories to symlink
   mkdir -p "$HOME/.config"
 

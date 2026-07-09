@@ -16,8 +16,14 @@
   excludesfile = ~/.gitignore_global
 [http]
   sslVerify = true
-[credential]
-  helper = osxkeychain
+# 汎用の資格情報ヘルパーは OS 依存 (macOS: osxkeychain / Linux: cache) のため、
+# tracked な .gitconfig には直書きせず install.sh が生成する
+# ~/.config/git/os.gitconfig に切り出す。osxkeychain を直書きすると
+# credential-osxkeychain が存在しない Linux/WSL で毎回
+# 「git: 'credential-osxkeychain' is not a git command」が出るため。
+# git は存在しない include パスを黙って無視するので、未生成でも壊れない。
+[include]
+  path = ~/.config/git/os.gitconfig
 [merge]
   tool = nvimdiff
 [mergetool]
