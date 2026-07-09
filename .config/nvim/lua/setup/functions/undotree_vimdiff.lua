@@ -56,8 +56,11 @@ local function get_undo_state_lines(buf, seq)
       if current_seq and current_seq > 0 then
         vim.cmd("silent undo " .. current_seq)
       else
-        -- seq_cur is 0 (initial state), redo to the latest
-        vim.cmd("silent later 9999")
+        -- seq_cur is 0 (initial state): return to it. `undo 0` moves to the
+        -- state before the first change (i.e. seq 0). Using `later 9999` here
+        -- would instead redo everything and silently leave the target buffer
+        -- at the LATEST state, not where the user actually was.
+        vim.cmd("silent undo 0")
       end
     end)
   end)
