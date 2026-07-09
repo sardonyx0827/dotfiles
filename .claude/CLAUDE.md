@@ -73,3 +73,7 @@ Launch conditions (when any of the following are met):
 ## External Agent Integration
 
 When working on specification review, design, bug fixes, or test code creation, follow the **codex-consultation** skill.
+
+## Visual Asset Generation
+
+When a task needs a generated bitmap image written to disk (site `public/` assets, hero/OG images, illustrations, mockups), delegate to OpenAI Codex's built-in `image_gen` via the `mcp__codex__codex` tool. Follow the Triggers in `@~/.claude/rules/image-generation.md` (full workflow in the **codex-image-gen** skill). The built-in path needs no `OPENAI_API_KEY`; only true native transparency does — confirm with the user first.
