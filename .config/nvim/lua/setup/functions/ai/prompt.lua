@@ -185,6 +185,51 @@ function M.clean_cli_lines(data)
   return out
 end
 
+--- Strip a markdown code fence that wraps the WHOLE reply, for the "replace
+--- selection" flow. `replace_system` tells the model not to fence its output,
+--- but models (Claude especially) often ignore that and wrap the reply in
+--- ```lang ... ```; those fence lines must never land in the buffer. Only strips
+--- when an opening ```lang line and a matching closing ``` line clearly bracket
+--- the whole output (ignoring surrounding blank lines). Any other shape -- no
+--- fence, or a lone ``` inside otherwise-plain code -- is returned unchanged so
+--- ordinary source is never corrupted. The caller's array is not mutated.
+--- @param lines string[]
+--- @return string[]
+function M.strip_code_fences(lines)
+  if type(lines) ~= "table" then
+    return {}
+  end
+  local out = {}
+  for i = 1, #lines do
+    out[i] = lines[i]
+  end
+  -- Narrow to the first/last non-blank lines so leading/trailing blank lines
+  -- around the fence do not defeat the match.
+  local first, last = 1, #out
+  while first <= last and type(out[first]) == "string" and out[first]:match("^%s*$") do
+    first = first + 1
+  end
+  while last >= first and type(out[last]) == "string" and out[last]:match("^%s*$") do
+    last = last - 1
+  end
+  if first >= last then
+    -- Need at least an opening and a distinct closing fence line to strip.
+    return out
+  end
+  local opens = type(out[first]) == "string"
+      and out[first]:match("^%s*```+%s*[%w_#%+%.%-]*%s*$")
+  local closes = type(out[last]) == "string"
+      and out[last]:match("^%s*```+%s*$")
+  if not (opens and closes) then
+    return out
+  end
+  local inner = {}
+  for i = first + 1, last - 1 do
+    inner[#inner + 1] = out[i]
+  end
+  return inner
+end
+
 --- Parse the JSON object returned by the Ollama /api/generate endpoint.
 --- @param raw string raw stdout
 --- @return string[]|nil lines, string|nil err

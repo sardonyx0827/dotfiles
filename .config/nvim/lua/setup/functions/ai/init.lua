@@ -446,7 +446,13 @@ local function ask_ai_and_replace(start_line, end_line, tool)
       original = selected_lines,
       footer = footer,
       start = function(t, done)
-        return backend.run({ tool = t, prompt = system, input = input, skip_git_check = true }, done)
+        -- Models sometimes ignore replace_system's "no code fences" rule and wrap
+        -- the reply in ```lang ... ```; strip that wrapper before it reaches the
+        -- diff preview and the buffer (see prompt.strip_code_fences).
+        return backend.run({ tool = t, prompt = system, input = input, skip_git_check = true },
+          function(ok, out_lines, err)
+            done(ok, ok and prompt.strip_code_fences(out_lines) or out_lines, err)
+          end)
       end,
       on_accept = function(t, lines)
         if replace_range(lines) then
