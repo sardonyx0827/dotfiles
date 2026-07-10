@@ -77,6 +77,19 @@ class TestSafeSkip:
         assert res.decision == "allow"
         assert "skipped review" in res.reason
 
+    def test_rg_preprocessor_flag_is_not_safe_skipped(self, run_hook):
+        # `rg --pre <cmd>` runs an arbitrary preprocessor on every searched file.
+        # A safe read tool prefix (rg) must not fast-path it: it has to reach AI
+        # review, not be auto-allowed by the safe-skip path.
+        res = run_hook(
+            HOOK,
+            hook_payload("rg --pre sh pattern ."),
+            urlopen=fake_gemini("ALLOW"),
+        )
+        assert res.decision == "allow"
+        assert "Gemini reviewed and approved" in res.reason
+        assert "skipped review" not in res.reason
+
     def test_proc_environ_is_not_safe_skipped(self, run_hook):
         # /proc/self/environ dumps the hook's own GEMINI_API_KEY and is NOT in
         # SENSITIVE_PATTERNS. A safe read tool (cat) must not fast-path it: it
@@ -322,6 +335,23 @@ class TestCommandHelpers:
             # reaches AI review now.
             ("jq -n env", False),
             ("jq '.name' package.json", False),
+            # ripgrep exec/file-reading flags must not be safe-skipped: `rg --pre`
+            # runs an arbitrary preprocessor on every searched file (arbitrary
+            # code execution), fully bypassing AI review. Mirrors jq/npm-run.
+            ("rg --pre sh pattern .", False),
+            ("rg --pre=sh pattern .", False),
+            ("rg -z pattern .", False),
+            ("rg --search-zip foo .", False),
+            ("rg -f patterns.txt src", False),
+            ("rg --file patterns.txt", False),
+            ("rg --hostname-bin id foo", False),
+            ("rg -nz foo", False),  # bundled short cluster containing z
+            # ...but ordinary rg searches (no exec/file flag) stay on the fast path.
+            ("rg foo", True),
+            ("rg -i foo src", True),
+            ("rg -n foo", True),
+            ("rg --fixed-strings foo", True),  # long form, not -f
+            ("rg -F foo", True),  # -F (uppercase) is --fixed-strings, not -f
             # `git branch` is safe only as the bare listing form: flagged
             # variants (-D/-m/...) are destructive and must be reviewed.
             ("git branch", True),
@@ -430,6 +460,9 @@ class TestCommandHelpers:
             ("cat /proc/self/environ", False),
             ("cat ~/.kube/config", False),
             ("cat ../../etc/shadow", False),
+            # rg exec-flag bypass regression (arbitrary preprocessor per file).
+            ("rg --pre sh foo .", False),
+            ("rg foo src", True),
         ],
     )
     def test_can_skip_review(self, hook_fns, command, expected):

@@ -240,12 +240,46 @@ def _references_out_of_tree_path(cmd: str) -> bool:
     return bool(_OUT_OF_TREE_PATH.search(cmd) or _OUT_OF_TREE_PATH.search(normalized))
 
 
+# ripgrep は特定フラグで任意プログラム実行・任意ファイル読取ができるため、
+# これらを含む rg は「安全な読み取り」ではない。セーフスキップに残すと
+# `rg --pre sh <pat> .` が各対象ファイルに対し sh を実行する = AI レビューを
+# 丸ごと回避して任意コード実行に至る。jq / npm run / tsc を SAFE_COMMANDS から
+# 外したのと同じ理由で、危険フラグ付きの rg はレビューへ回す。
+#   --pre / --pre-glob : 各ファイルを通す前処理コマンド (任意実行)
+#   --hostname-bin     : ホスト名解決に実行するコマンド (任意実行)
+#   --search-zip / -z  : 圧縮ファイル展開のためのデコンプレッサ起動
+#   -f / --file        : 検索パターンをファイルから読む (任意ファイル読取)
+_RG_DANGEROUS_FLAGS = frozenset(
+    {"--pre", "--pre-glob", "--hostname-bin", "--search-zip", "-z", "-f", "--file"}
+)
+
+
+def _has_dangerous_rg_flag(cmd: str) -> bool:
+    """rg コマンドが任意実行/任意読取を許すフラグを含むか判定する。"""
+    tokens = cmd.split()
+    if not tokens or tokens[0] != "rg":
+        return False
+    for tok in tokens[1:]:
+        flag = tok.split("=", 1)[0]  # `--pre=foo` -> `--pre`
+        if flag in _RG_DANGEROUS_FLAGS:
+            return True
+        # 束ねられた短フラグ (`-nz` / `-if` 等) に z / f が含まれる場合も危険。
+        # 長フラグ (`--fixed-strings`) や大文字 -F は対象外。
+        if len(flag) >= 2 and flag[0] == "-" and flag[1] != "-":
+            if any(c in "zf" for c in flag[1:]):
+                return True
+    return False
+
+
 def _is_safe_command(cmd: str) -> bool:
     # 機密パスを含む場合はセーフ扱いにせず AI レビューへ回す (Read deny の迂回防止)
     if _is_sensitive_command(cmd):
         return False
     # 絶対パス/ホーム参照/親遡上を含む読み取りは denylist を貫通し得るためレビューへ
     if _references_out_of_tree_path(cmd):
+        return False
+    # rg の任意実行/任意読取フラグはセーフスキップさせない (上の定義参照)
+    if _has_dangerous_rg_flag(cmd):
         return False
     if cmd in SAFE_EXACT_COMMANDS:
         return True
