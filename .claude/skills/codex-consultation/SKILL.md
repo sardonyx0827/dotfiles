@@ -25,7 +25,7 @@ After receiving an answer from Codex MCP, validate its soundness with Claude.
 | `prompt`          | Initial prompt (required) | Detailed description of the problem                                       |
 | `sandbox`         | Sandbox mode              | `read-only`                                                               |
 | `approval-policy` | Shell command approval    | `untrusted`, `on-failure`, `on-request`, `never`                          |
-| `model`           | Model selection           | Reasoning tasks: `gpt-5.4`; tasks involving code reading: `gpt-5.3-codex` |
+| `model`           | Model selection           | `gpt-5.6-terra`                                                           |
 | `cwd`             | Working directory         | Project root path                                                         |
 
 ### `mcp__codex__codex-reply` parameters

@@ -95,7 +95,7 @@ Conventions when calling:
 
 ## 5. Model Selection Guidelines
 
-- Main session: `model` in `config.toml` (default: gpt-5.5)
+- Main session: `model` in `config.toml` (default: gpt-5.6-terra)
 - Reasoning effort (`model_reasoning_effort`): lower it for light work that needs no reasoning, such as Grep/search and template extraction; raise it for design, large-scale refactoring, and overall analysis
 - SubAgents: follow `[agents]` in `config.toml` (`max_threads` / `max_depth`)
 - On failure, raise the reasoning effort by one level and retry

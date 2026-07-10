@@ -85,7 +85,7 @@ Why: it prevents retrying refuted ideas, and it is exactly the "Attempts so far"
 
 Per the `codex-consultation` skill: after **2 consecutive failed fix attempts on the same issue**, stop iterating and escalate for root-cause analysis. Continuing to guess past this point burns context and compounds confusion.
 
-Use the `codex-delegator` agent (or `mcp__codex__codex` directly with `sandbox: read-only`, model `gpt-5.3-codex` for code-reading tasks). Build the prompt from the attempt log:
+Use the `codex-delegator` agent (or `mcp__codex__codex` directly with `sandbox: read-only`, model `gpt-5.6-terra` for code-reading tasks). Build the prompt from the attempt log:
 
 ```text
 Goal: <what correct behavior looks like>
