@@ -235,7 +235,7 @@ local function check_current_buffer()
     end,
   })
 end
-map("n", "<leader><leader>k", check_current_buffer,
+map("n", "<leader>qf", check_current_buffer,
   { desc = "Check current buffer for typos/syntax errors (AI)", noremap = true })
 
 ---------------------------------------------------------
