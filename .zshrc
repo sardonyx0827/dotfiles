@@ -30,10 +30,6 @@ export ZSH="$HOME/.oh-my-zsh"
 export LESS="-i -M -R -x4"
 
 ZSH_THEME="px-rose-pine"
-# ZSH_THEME="kennethreitz" # 1
-#ZSH_THEME="gallois" # 2
-#ZSH_THEME="eastwood" # 3
-#ZSH_THEME="agnoster" # 4
 
 plugins=(
   git
@@ -41,7 +37,7 @@ plugins=(
   zsh-syntax-highlighting
   z
 )
-# zsh-autosuggestions (5 or 6)
+# zsh-autosuggestions のサジェスト文字色 (cyan)
 export ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=6'
 
 # Docker Desktop の CLI 補完。oh-my-zsh が実行する compinit より前に fpath へ
