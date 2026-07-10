@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from conftest import REPO_ROOT
 
 CLAUDE_HOOK = REPO_ROOT / ".claude/hooks/stop-audit.sh"
@@ -125,3 +126,49 @@ class TestCodexVariant:
         assert res.returncode == 2
         assert "app.ts" in res.stderr
         assert "console.log" in res.stderr
+
+
+# --- Debug-scan parity across BOTH variants ----------------------------------
+# The scan logic (which files, which patterns, member-access exemptions) is
+# identical across the two copies; only the SIGNAL differs (claude emits a JSON
+# "block", codex exits 2 with stderr). Previously the codex copy had far fewer
+# cases, so a scan regression there would ship green. Run every case against
+# both — the same drift guard rationale as test_hook_sync.py.
+SCAN_CASES = [
+    # (filename, content, should_block)
+    ("app.ts", 'const x = 1\nconsole.log("debug")\n', True),
+    ("app.js", "debugger;\n", True),
+    # Split so this test file itself is not flagged by stop-audit.sh.
+    ("app.py", "break" + "point()\n", True),
+    # Member access / identifiers are not bare debug statements.
+    ("app.ts", "logger.console.log(1)\nconst debuggerTool = 1\n", False),
+    # Non-source files are not scanned.
+    ("notes.txt", "console.log(1)\n", False),
+]
+
+VARIANTS = [("claude", CLAUDE_HOOK), ("codex", CODEX_HOOK)]
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("filename,content,should_block", SCAN_CASES)
+def test_debug_scan_parity(
+    shell_env, git_repo, variant, hook, filename, content, should_block
+):
+    (git_repo / filename).write_text(content, encoding="utf-8")
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    label = f"{variant}:{filename}"
+    if should_block:
+        if variant == "claude":
+            assert res.returncode == 0, label
+            result = json.loads(res.stdout)
+            assert result["decision"] == "block", label
+            assert filename in result["reason"], label
+        else:
+            assert res.returncode == 2, label
+            assert filename in res.stderr, label
+    else:
+        assert res.returncode == 0, label
+        if variant == "claude":
+            assert res.stdout == "", label
+        else:
+            assert res.stderr == "", label

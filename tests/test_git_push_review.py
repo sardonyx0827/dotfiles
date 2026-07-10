@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from conftest import REPO_ROOT
 
 CLAUDE_HOOK = REPO_ROOT / ".claude/hooks/git-push-review.sh"
@@ -339,3 +340,62 @@ class TestCodexVariant:
         assert res.returncode == 2
         assert "branch: feature-target" in res.stderr
         assert "target repo commit" in res.stderr
+
+
+# --- Detection parity across BOTH variants -----------------------------------
+# The quote / substitution / flag parsing is identical in the two copies; only
+# the SIGNAL differs (claude emits a JSON "ask", codex exits 2 with stderr).
+# Previously only the claude copy exercised these bypass regressions, so a
+# detection regression in the codex copy would ship green. Run every case
+# against both — the same drift guard rationale as test_hook_sync.py.
+DETECTION_CASES = [
+    # (command, should_detect)
+    ("git push origin main", True),
+    ("git add -A && git commit -m x && git push", True),
+    ("git --no-pager push", True),
+    ("git -C /tmp/repo push", True),
+    ("git --git-dir /tmp/repo/.git push origin main", True),
+    ("git -c user.name=x push", True),
+    ("git push;true", True),
+    ('echo "log: $(git push origin main)"', True),
+    ('echo "log: `git push origin main`"', True),
+    ("echo `git push origin main`", True),
+    ('echo "$(git -C "/tmp/some repo" push)"', True),
+    ("git status", False),
+    ("git stash push", False),
+    ('echo "git push"', False),
+    ('git commit -m "please dont git push this yet"', False),
+    ("echo \"git push\" && echo 'git push'", False),
+    ('echo "costs \\$(git push)"', False),
+    ("echo 'see $(git push)'", False),
+]
+
+VARIANTS = [("claude", CLAUDE_HOOK), ("codex", CODEX_HOOK)]
+
+
+def _assert_push_detected(res, variant, command):
+    if variant == "claude":
+        assert res.returncode == 0, command
+        decision = json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "ask", command
+    else:
+        assert res.returncode == 2, command
+        assert "git push detected" in res.stderr, command
+
+
+def _assert_push_not_detected(res, variant, command):
+    assert res.returncode == 0, command
+    if variant == "claude":
+        assert res.stdout == "", command
+    else:
+        assert res.stderr == "", command
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("command,should_detect", DETECTION_CASES)
+def test_detection_parity(shell_env, git_repo, variant, hook, command, should_detect):
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    if should_detect:
+        _assert_push_detected(res, variant, command)
+    else:
+        _assert_push_not_detected(res, variant, command)
