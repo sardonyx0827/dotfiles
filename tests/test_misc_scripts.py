@@ -7,15 +7,15 @@ import subprocess
 import pytest
 from conftest import REPO_ROOT
 
-TMUX_SCRIPT = REPO_ROOT / "tmux_send_to_all_except_nvim.sh"
-UPDATE_SCRIPT = REPO_ROOT / "update_ai_tools.sh"
+TMUX_SCRIPT = REPO_ROOT / "scripts/tmux_send_to_all_except_nvim.sh"
+UPDATE_SCRIPT = REPO_ROOT / "scripts/update_ai_tools.sh"
 ZSHRC = REPO_ROOT / ".zshrc"
 
 OWN_BASH_SCRIPTS = sorted(
     [
         REPO_ROOT / "install.sh",
-        REPO_ROOT / "update_ai_tools.sh",
-        REPO_ROOT / "tmux_send_to_all_except_nvim.sh",
+        REPO_ROOT / "scripts/update_ai_tools.sh",
+        REPO_ROOT / "scripts/tmux_send_to_all_except_nvim.sh",
         REPO_ROOT / ".claude/statusline-command.sh",
         *(REPO_ROOT / ".claude/hooks").glob("*.sh"),
         *(REPO_ROOT / ".codex/hooks").glob("*.sh"),
@@ -132,7 +132,8 @@ class TestUpdateAiToolsFunction:
         checkout.mkdir()
         (checkout / ".zshrc").write_text("# stub\n", encoding="utf-8")
         marker = tmp_path / "ran.marker"
-        script = checkout / "update_ai_tools.sh"
+        script = checkout / "scripts" / "update_ai_tools.sh"
+        script.parent.mkdir()
         script.write_text(f'#!/bin/sh\necho ran >"{marker}"\n', encoding="utf-8")
         script.chmod(0o755)
 

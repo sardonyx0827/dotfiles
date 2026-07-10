@@ -325,7 +325,7 @@ brew update && brew upgrade
 sudo apt-get update && sudo apt-get upgrade
 
 # AIツールの更新
-./update_ai_tools.sh
+./scripts/update_ai_tools.sh
 ```
 
 ---

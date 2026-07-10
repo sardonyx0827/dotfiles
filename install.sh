@@ -771,8 +771,8 @@ create_symlinks() {
 
   # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
   mkdir -p "$HOME/.tmux"
-  link_entry "$DOTFILES_DIR/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
-  chmod +x "$DOTFILES_DIR/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
+  link_entry "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
+  chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
 
   if [ -n "$(ls -A "$backup_dir" 2>/dev/null)" ]; then
     print_info "Backup created at: $backup_dir"
@@ -1120,8 +1120,8 @@ main() {
   echo "  - gh auth login   : authenticate GitHub CLI (used by .gitconfig credential helper)"
   echo
   print_info "Utility scripts:"
-  echo "  - ./update_ai_tools.sh : Update all AI tools"
-  echo "  - ./tmux_send_to_all_except_nvim.sh : Send commands to tmux panes"
+  echo "  - ./scripts/update_ai_tools.sh : Update all AI tools"
+  echo "  - ./scripts/tmux_send_to_all_except_nvim.sh : Send commands to tmux panes"
   echo
 }
 

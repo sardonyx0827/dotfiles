@@ -185,11 +185,11 @@ function update_ai_tools() {
     "$HOME/.dotfiles"
   )
   for dotfiles_dir in "${candidates[@]}"; do
-    script="$dotfiles_dir/update_ai_tools.sh"
+    script="$dotfiles_dir/scripts/update_ai_tools.sh"
     [ -f "$script" ] && break
   done
   if [ ! -f "$script" ]; then
-    echo "update_ai_tools: could not find update_ai_tools.sh (checked: ${(j:, :)candidates})" >&2
+    echo "update_ai_tools: could not find scripts/update_ai_tools.sh (checked: ${(j:, :)candidates})" >&2
     return 1
   fi
   "$script"
