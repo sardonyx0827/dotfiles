@@ -164,8 +164,6 @@ dist
 
 # Compiled Packer.lua
 *packer_compiled.lua
-# Compiled Lazy.lua
-*lazy-lock.json
 
 # python
 Pipfile
