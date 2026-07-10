@@ -637,7 +637,6 @@ create_symlinks() {
     "settings.json"
     "statusline-command.sh"
     "agents"
-    "archive"
     "commands"
     "hooks"
     "mcp-servers"
