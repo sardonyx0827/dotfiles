@@ -1,6 +1,25 @@
 # Dotfiles
 
+[![CI](https://github.com/sardonyx0827/dotfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/sardonyx0827/dotfiles/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 個人用の開発環境設定ファイル（dotfiles）のリポジトリです。Zsh、Vim、Neovim、tmux、WezTerm などの設定に加え、Claude Code・Codex・Gemini CLI・GitHub Copilot CLI といった AI 開発ツールのエージェント／スキル／フック設定とセットアップスクリプトを一括管理しています。全体を [Rosé Pine](https://rosepinetheme.com/) カラースキームで統一し、macOS / Ubuntu / WSL に対応した `install.sh` でシンボリックリンクを自動生成します。
+
+> **English summary**: Personal dotfiles unifying Zsh, Neovim, tmux, and WezTerm under the Rosé Pine theme, plus agent / skill / hook configurations for AI coding tools (Claude Code, Codex, Gemini CLI, Copilot CLI). A cross-platform `install.sh` (macOS / Ubuntu / WSL) symlinks everything, and the hook / installer logic is covered by a pytest suite with a 90% coverage gate in CI. Deep-dive docs (in English): [hook system](.claude/hooks/README.md), [custom agents](.claude/agents/README.md).
+
+## 目次
+
+- [技術スタック](#技術スタック)
+- [ファイル構成](#ファイル構成)
+- [セットアップ](#セットアップ)
+- [AI開発ツールのセットアップ](#ai開発ツールのセットアップ)
+- [主要設定の説明](#主要設定の説明)
+- [ユーティリティスクリプト](#ユーティリティスクリプト)
+- [テスト](#テスト)
+- [カスタマイズ](#カスタマイズ)
+- [トラブルシューティング](#トラブルシューティング)
+- [参考リンク](#参考リンク)
+- [ライセンス](#ライセンス)
 
 ## 技術スタック
 
@@ -16,7 +35,6 @@
 .
 ├── .claude/                        # Claude Code設定
 │   ├── agents/                     # カスタムサブエージェント (architect, code-reviewer 等)
-│   ├── archive/                    # 旧エージェント / コマンド / ルールのアーカイブ
 │   ├── commands/                   # カスタムスラッシュコマンド (tdd, verify 等)
 │   ├── hooks/                      # フック (auto-format, lint, bash-review 等)
 │   ├── mcp-servers/                # 自作MCPサーバー (gemini-consultant)
@@ -39,7 +57,6 @@
 ├── .oh-my-zsh/                     # Oh My Zsh設定
 │   └── custom/themes/              # カスタムテーマ (px-rose-pine)
 ├── .vim/rc/                        # Vim設定本体 (分割ロード: 00-plugins, 10-basic ...)
-├── .vscode/                        # VS Code (ワークスペース) 設定
 ├── .gitconfig                      # Git設定
 ├── .gitignore_global               # グローバルgitignore
 ├── .tmux.conf                      # tmux設定
@@ -47,11 +64,11 @@
 ├── .wezterm.lua                    # WezTerm設定
 ├── .zshrc                          # Zsh設定
 ├── INSTALL_PLATFORM.md             # プラットフォーム別インストール / トラブルシューティング
+├── LICENSE                         # MITライセンス
 ├── install.sh                      # クロスプラットフォーム対応インストールスクリプト
 ├── pytest.ini                      # pytest設定
-├── tests/                          # フック / スクリプトの pytest スイート (hermetic)
-├── tmux_send_to_all_except_nvim.sh # tmuxユーティリティ
-└── update_ai_tools.sh              # AIツール更新スクリプト
+├── scripts/                        # ユーティリティスクリプト (AIツール更新, tmuxヘルパー)
+└── tests/                          # フック / スクリプトの pytest スイート (hermetic)
 ```
 
 ## セットアップ
@@ -155,7 +172,6 @@ sudo apt-get update
 ```bash
 brew install git zsh vim neovim tmux curl wget
 brew install --cask wezterm
-brew tap homebrew/cask-fonts
 brew install --cask font-ubuntu-mono font-hack-nerd-font
 ```
 
@@ -258,7 +274,7 @@ ln -sf ~/dotfiles/.config/nvim ~/.config/nvim
 
 # Claude Code設定 (CLIの実行時データを巻き込まないよう個別にリンク)
 mkdir -p ~/.claude
-for e in CLAUDE.md settings.json statusline-command.sh agents archive commands hooks mcp-servers rules skills; do
+for e in CLAUDE.md settings.json statusline-command.sh agents commands hooks mcp-servers rules skills; do
   ln -sf ~/dotfiles/.claude/$e ~/.claude/$e
 done
 
@@ -270,7 +286,7 @@ done
 # hooks.json はテンプレートから生成 (リポジトリに hooks.json 実体は無い)
 sed "s|__HOME__|$HOME|g" ~/dotfiles/.codex/hooks.json.template > ~/.codex/hooks.json
 # agents/ と skills/ は Codex がシンボリックリンクのスキャンを無視するためコピーする
-# (対象スキルの一覧など詳細は install.sh の setup_codex を参照)
+# (対象スキルの一覧など詳細は install.sh の create_symlinks() 内の Codex 設定処理を参照)
 cp -R ~/dotfiles/.codex/agents ~/.codex/agents
 
 # Gemini設定
@@ -284,7 +300,7 @@ ln -sf ~/dotfiles/.oh-my-zsh/custom ~/.oh-my-zsh/custom
 
 # tmuxヘルパースクリプト (.tmux.conf の `bind S` が参照)
 mkdir -p ~/.tmux
-ln -sf ~/dotfiles/tmux_send_to_all_except_nvim.sh ~/.tmux/tmux_send_to_all_except_nvim.sh
+ln -sf ~/dotfiles/scripts/tmux_send_to_all_except_nvim.sh ~/.tmux/tmux_send_to_all_except_nvim.sh
 ```
 
 </details>
@@ -365,7 +381,7 @@ npm install -g @github/copilot
 
 ```bash
 # すべてのAIツールを更新 (Claude Code / Codex / Gemini CLI / Copilot CLI)
-./update_ai_tools.sh
+./scripts/update_ai_tools.sh
 ```
 
 ## 主要設定の説明
@@ -382,7 +398,7 @@ npm install -g @github/copilot
   - `c` / `cl`: Claude Code、`cx`: Codex、`ge` / `g`: Gemini CLI、`cop`: GitHub Copilot CLI
   - `mc`（補完付き）: `mc explain` / `mc translate` / `mc commit` / `mc push` など Claude を用途別モデルで起動
   - `commit` / `push` / `pull_request` / `translate`: Gemini CLI ベースの Git・翻訳ショートカット
-  - `update_ai_tools`: `update_ai_tools.sh` を実行
+  - `update_ai_tools`: `scripts/update_ai_tools.sh` を実行
 
 ```bash
 # 主要なPATH設定
@@ -497,22 +513,22 @@ Ctrl+a ]        # ペースト
 
 ## ユーティリティスクリプト
 
-### tmux_send_to_all_except_nvim.sh
+### scripts/tmux_send_to_all_except_nvim.sh
 
 tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペインは除外します。
 
 ```bash
 # 使用例
-./tmux_send_to_all_except_nvim.sh "git status"
+./scripts/tmux_send_to_all_except_nvim.sh "git status"
 ```
 
-### update_ai_tools.sh
+### scripts/update_ai_tools.sh
 
 全てのAI開発ツールを一括で更新します。
 
 ```bash
 # 実行
-./update_ai_tools.sh
+./scripts/update_ai_tools.sh
 
 # 対象ツール
 # - Claude Code
@@ -611,7 +627,6 @@ export TERM=xterm-256color
 Powerlineパッチ済みフォントをインストール：
 
 ```bash
-brew tap homebrew/cask-fonts
 brew install --cask font-hack-nerd-font
 ```
 
@@ -650,4 +665,4 @@ nvim  # lazy.nvimが自動的に再インストールされる
 
 ## ライセンス
 
-個人使用目的のdotfilesです。自由に使用・改変してください。
+[MIT License](LICENSE) の下で公開しています。自由に使用・改変してください。

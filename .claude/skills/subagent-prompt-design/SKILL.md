@@ -237,7 +237,7 @@ For complex discovery tasks, apply the `iterative-retrieval` pattern:
 do not send one giant prompt that guesses all the relevant files. Instead,
 instruct the agent to start broad, score relevance (0–1), identify gaps, and
 refine — capped at 3 cycles. See
-`/Users/sardonyx0827/work/github/dotfiles/.claude/skills/iterative-retrieval/SKILL.md`
+`~/.claude/skills/iterative-retrieval/SKILL.md`
 for the full loop specification.
 
 ---
