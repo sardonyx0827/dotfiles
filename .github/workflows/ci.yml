@@ -31,6 +31,10 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
+          # requirements ファイルは無いので、pip のバージョンピンを記述している
+          # このワークフロー自体をキャッシュキーにする
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
       - name: Install test dependencies
         run: python -m pip install --upgrade pip "pytest==9.0.1" "pytest-cov==7.0.0"
       # .zshrc の構文検査 (zsh -n) に必要。未導入なら該当テストは skip される
@@ -88,6 +92,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
       - name: Install linters
         run: python -m pip install --upgrade pip "ruff==0.15.6" "bandit==1.9.4"
       # スコープは自作 Python のみ（.codex/skills/.system 配下の vendored スクリプトは除外）
