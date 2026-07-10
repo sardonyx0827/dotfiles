@@ -511,6 +511,20 @@ Ctrl+a ]        # ペースト
 - **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック（`hooks/` + `hooks.json`）、スキル（`skills/` — 組込み `.system` と `.claude/skills` から厳選した共有スキル）、`config.toml`
 - **`.gemini/`**: Gemini CLI の指示（`GEMINI.md`）と `settings.json`
 
+> **⚠️ セキュリティモデル（`.claude/settings.json` はフックとセットで安全）**
+>
+> `settings.json` の `permissions.allow` は `Bash(npx:*)` / `Bash(pip:*)` /
+> `Bash(cargo:*)` / `Bash(docker:*)` など**任意コード実行になり得るコマンドを自動承認**します。
+> これは単体で安全なのではなく、`PreToolUse` フック `hooks/bash-review.py`
+> が**すべての Bash コマンドを実行前にレビューし、API/CLI 不在時は `ask`
+> にフェイルクローズする**ことと**セットで**成り立っています（機密ファイル読取や
+> `git push` も別フックでガード）。
+>
+> したがって **`settings.json` だけを他環境へコピーし `hooks/` を導入しないと、
+> 実行時ガードが外れて allowlist がそのまま「任意コード実行の自動承認」になります。**
+> 必ず `hooks/`（と `bash-review.py` が使う `GEMINI_API_KEY`）もあわせて配置してください。
+> `install.sh` は両方を同時にリンクするため、正規の手順で導入する限りこの前提は満たされます。
+
 ## ユーティリティスクリプト
 
 ### scripts/tmux_send_to_all_except_nvim.sh
