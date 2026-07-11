@@ -40,8 +40,9 @@
 #### When a commit is requested (e.g. "commit して", "コミットして", "commit this")
 
 1. Review the changes (`git status` / `git diff`)
-2. Stage files (`git add`) — skip if already staged
-3. Commit following the commit message format above
+2. Split by logical unit — if the diff spans multiple unrelated concerns (e.g. an unrelated fix + refactor, or changes to separate features), plan one commit per concern instead of a single mixed commit
+3. For each unit, stage its files (`git add` — skip if already staged)
+4. Commit following the commit message format above, then repeat steps 3-4 for any remaining units
 
 #### When PR creation is requested (e.g. "pr作成して", "PR作って", "create a PR")
 
