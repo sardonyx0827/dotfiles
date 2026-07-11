@@ -1,6 +1,12 @@
 # ~/.codex/hooks/bash-review.py
-# 一次処理: Gemini API (高スループット)
-# 二次処理: Gemini が ASK/DENY と判定した場合のみ Codex で再確認
+# 判定の 3 層構造 (詳細は _bash_review_common.py のヘッダー参照):
+#   1. 静的 DENY: sudo / curl 等、文脈を問わず危険 → 即拒否
+#   2. 高リスク層: rm -r / force push / パッケージ導入等、文脈次第で正当
+#      → Gemini と Codex を並列実行し、両判定を添えて必ずブロック
+#        (モデルの合意で自動実行はしない)
+#   3. 低リスク層: Gemini (高スループット) が ALLOW なら即許可。
+#      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。Gemini の明示的 DENY を
+#      Codex の ALLOW 単独で自動上書きはしない (両判定を添えてブロック)。
 # Codex は permissionDecision JSON を扱わないため、許可は exit 0 (無出力)、
 # ブロック (ask/deny) は exit 2 + stderr で理由を伝える。
 #
@@ -16,15 +22,22 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bash_review_common import (
     _can_skip_review,
-    _is_deny_command,
+    _sanitize_notify,
     _split_commands,
     build_review_prompt,
+    combine_high_risk_verdicts,
+    find_deny_command,
+    format_dual_verdict_reason,
+    high_risk_label,
     notify,
     prune_dir,
 )
 from _bash_review_common import log_summary as _log_summary  # noqa: E402
 from _bash_review_common import run_codex_review as _run_codex_review  # noqa: E402
 from _bash_review_common import run_gemini_review as _run_gemini_review  # noqa: E402
+from _bash_review_common import (  # noqa: E402
+    run_parallel_reviews as _run_parallel_reviews,
+)
 from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E402
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
@@ -67,6 +80,12 @@ def run_codex_review(gemini_verdict: str, gemini_output: str) -> tuple[str, str]
     return _run_codex_review(gemini_verdict, gemini_output, tool_name, tool_input)
 
 
+def run_parallel_reviews() -> tuple[tuple[str, str], tuple[str, str]]:
+    return _run_parallel_reviews(
+        prompt, api_key, gemini_model, gemini_fallback_model, tool_name, tool_input
+    )
+
+
 # -------------------------------------------------------------------
 # メインフロー
 # stdin の破損 (空 / 非JSON / tool_input が非dict) や予期しない例外でも
@@ -97,16 +116,15 @@ try:
 
     sub_commands = _split_commands(command)
 
-    # --- 危険コマンドの即時拒否 ---
-    for sub_cmd in sub_commands:
-        matched, deny_name = _is_deny_command(sub_cmd)
-        if matched:
-            reason = f"Blocked dangerous command: '{deny_name}'"
-            emit_block(reason)
-            write_detail_log({"Result": "DENY (pre-blocked)"})
-            log_summary("DENY", "pre", reason)
-            notify("Bash Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
-            sys.exit(2)
+    # --- 危険コマンドの即時拒否 (改行分割は find_deny_command が捌く) ---
+    matched, deny_name = find_deny_command(sub_commands)
+    if matched:
+        reason = f"Blocked dangerous command: '{deny_name}'"
+        emit_block(reason)
+        write_detail_log({"Result": "DENY (pre-blocked)"})
+        log_summary("DENY", "pre", reason)
+        notify("Bash Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
+        sys.exit(2)
 
     # --- 安全コマンドのスキップ ---
     if sub_commands and all(_can_skip_review(c) for c in sub_commands):
@@ -116,6 +134,45 @@ try:
         sys.exit(0)
 
     short_cmd = command[:60] + "..." if len(command) > 60 else command
+    review_started = time.monotonic()
+
+    # --- 高リスクコマンドの並列二重レビュー (モデル合意でも自動実行しない) ---
+    risk_label = high_risk_label(sub_commands)
+    if risk_label:
+        (gemini_verdict, gemini_output), (codex_verdict, codex_output) = (
+            run_parallel_reviews()
+        )
+        elapsed = time.monotonic() - review_started
+        decision = combine_high_risk_verdicts(gemini_verdict, codex_verdict)
+        reason = format_dual_verdict_reason(
+            risk_label, gemini_verdict, gemini_output, codex_verdict, codex_output
+        )
+        write_detail_log(
+            {
+                "Gemini": gemini_output,
+                "Codex": codex_output,
+                "Result": f"{decision.upper()} (high-risk: {risk_label})",
+                "Elapsed": f"{elapsed:.1f}s",
+            }
+        )
+        log_summary(
+            decision.upper(),
+            "highrisk",
+            f"risk={risk_label}, gemini={gemini_verdict}, "
+            f"codex={codex_verdict}, took={elapsed:.1f}s",
+        )
+        # 両モデル ALLOW 一致のみ許可 (exit 0)。それ以外 (ask/deny) は
+        # Codex ではブロック (exit 2) で理由を stderr に返す。
+        if decision == "allow":
+            decided_exit = 0
+            notify("Bash Review", f"高リスク許可 (両モデル承認): {short_cmd}", 4)
+            sys.exit(0)
+        emit_block(reason)
+        if decision == "deny":
+            notify("Bash Review - 拒否", f"{short_cmd}", 8)
+        else:
+            notify("Bash Review - 確認が必要", f"高リスク: {short_cmd}", 8)
+        sys.exit(2)
 
     gemini_verdict, gemini_output = run_gemini_review()
 
@@ -123,28 +180,64 @@ try:
     if gemini_verdict == "ALLOW":
         decided_exit = 0
         write_detail_log({"Gemini": gemini_output, "Result": "ALLOW (gemini)"})
-        log_summary("ALLOW", "gemini", "approved by Gemini")
+        log_summary(
+            "ALLOW",
+            "gemini",
+            f"approved by Gemini, took={time.monotonic() - review_started:.1f}s",
+        )
         notify("Bash Review", f"許可: {short_cmd}", 4)
         sys.exit(0)
 
     # Gemini が疑わしい (ASK/DENY/ERROR) 場合は Codex に二次確認
     codex_verdict, codex_output = run_codex_review(gemini_verdict, gemini_output)
+    elapsed = time.monotonic() - review_started
 
-    if codex_verdict == "ALLOW":
+    if codex_verdict == "ALLOW" and gemini_verdict == "DENY":
+        # Gemini の明示的 DENY を Codex の ALLOW 単独で自動上書きしない。
+        # 上書きを許すと、攻撃者はどちらか一方のモデルさえ説得すれば実行に
+        # 至れてしまう (実質 OR ゲート化)。両判定を添えてブロックに回す。
+        emit_block(
+            f"Gemini=DENY: {_sanitize_notify(gemini_output.strip(), limit=160)} "
+            f"but Codex approved: {_sanitize_notify(codex_output.strip(), limit=160)}"
+            " — confirm manually"
+        )
+        write_detail_log(
+            {
+                "Gemini": gemini_output,
+                "Codex": codex_output,
+                "Result": "ASK (gemini DENY vs codex ALLOW, override disabled)",
+            }
+        )
+        log_summary(
+            "ASK",
+            "codex",
+            f"gemini=DENY, codex=ALLOW (override disabled), took={elapsed:.1f}s",
+        )
+        notify("Bash Review - 確認が必要", f"判定不一致: {short_cmd}", 8)
+        sys.exit(2)
+
+    elif codex_verdict == "ALLOW":
+        # ASK は不確実、ERROR は不可用であり、どちらも明示的な拒否ではない
+        # ため Codex の ALLOW で解消してよい。
         decided_exit = 0
         write_detail_log(
             {
                 "Gemini": gemini_output,
                 "Codex": codex_output,
-                "Result": f"ALLOW (codex overrides gemini {gemini_verdict})",
+                "Result": f"ALLOW (codex resolves gemini {gemini_verdict})",
             }
         )
-        log_summary("ALLOW", "codex", f"gemini={gemini_verdict}, codex=ALLOW")
+        log_summary(
+            "ALLOW",
+            "codex",
+            f"gemini={gemini_verdict}, codex=ALLOW, took={elapsed:.1f}s",
+        )
         notify("Bash Review", f"Codex 承認: {short_cmd}", 4)
 
     elif codex_verdict == "ASK":
         emit_block(
-            f"Gemini={gemini_verdict}, Codex requires confirmation: {codex_output.strip()}"
+            f"Gemini={gemini_verdict}, Codex requires confirmation: "
+            f"{_sanitize_notify(codex_output.strip(), limit=160)}"
         )
         write_detail_log(
             {
@@ -153,7 +246,9 @@ try:
                 "Result": "ASK (codex)",
             }
         )
-        log_summary("ASK", "codex", f"gemini={gemini_verdict}, codex=ASK")
+        log_summary(
+            "ASK", "codex", f"gemini={gemini_verdict}, codex=ASK, took={elapsed:.1f}s"
+        )
         notify("Bash Review - 確認が必要", f"{short_cmd}", 8)
         sys.exit(2)
 
@@ -162,7 +257,9 @@ try:
         # ask / deny のどちらに倒れても Codex ではブロック (exit 2) になる。
         fallback_decision = "ask" if gemini_verdict in ("ASK", "ERROR") else "deny"
         emit_block(
-            f"Gemini={gemini_verdict} ({gemini_output.strip()}), Codex unavailable: {codex_output}"
+            f"Gemini={gemini_verdict} "
+            f"({_sanitize_notify(gemini_output.strip(), limit=160)}), "
+            f"Codex unavailable: {_sanitize_notify(codex_output, limit=160)}"
         )
         write_detail_log(
             {
@@ -174,13 +271,16 @@ try:
         log_summary(
             fallback_decision.upper(),
             "fallback",
-            f"gemini={gemini_verdict}, codex=ERROR",
+            f"gemini={gemini_verdict}, codex=ERROR, took={elapsed:.1f}s",
         )
         notify("Bash Review", f"Codexエラー: {short_cmd}", 8)
         sys.exit(2)
 
     else:  # DENY
-        emit_block(f"Gemini={gemini_verdict}, Codex denied: {codex_output.strip()}")
+        emit_block(
+            f"Gemini={gemini_verdict}, Codex denied: "
+            f"{_sanitize_notify(codex_output.strip(), limit=160)}"
+        )
         write_detail_log(
             {
                 "Gemini": gemini_output,
@@ -188,7 +288,9 @@ try:
                 "Result": "DENY (codex)",
             }
         )
-        log_summary("DENY", "codex", f"gemini={gemini_verdict}, codex=DENY")
+        log_summary(
+            "DENY", "codex", f"gemini={gemini_verdict}, codex=DENY, took={elapsed:.1f}s"
+        )
         notify("Bash Review - 拒否", f"{short_cmd}", 8)
         sys.exit(2)
 

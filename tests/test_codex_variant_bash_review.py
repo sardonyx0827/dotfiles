@@ -65,6 +65,18 @@ class TestBlockingPaths:
         assert res.stdout == ""
         assert "curl" in res.stderr
 
+    def test_deny_hidden_after_newline_blocks(self, run_hook):
+        # Parity with the claude variant: a denied command hidden past a
+        # newline must block (exit 2), not reach single-model review.
+        res = run_hook(HOOK, hook_payload("ls\nsudo rm -rf /"))
+        assert res.exit_code == 2
+        assert "sudo" in res.stderr
+
+    def test_sudo_is_pre_denied(self, run_hook):
+        res = run_hook(HOOK, hook_payload("sudo reboot"))
+        assert res.exit_code == 2
+        assert "sudo" in res.stderr
+
     def test_codex_ask_blocks_with_stderr(self, run_hook):
         res = run_hook(
             HOOK,
@@ -107,6 +119,87 @@ class TestBlockingPaths:
         assert res.exit_code == 2
         assert res.stdout == ""
         assert "Codex unavailable" in res.stderr
+
+
+class TestHighRisk:
+    """High-risk commands are an AND-gate through the codex variant too: a
+    unanimous ALLOW exits 0 (auto-execute), anything short of that blocks
+    (exit 2) with both verdicts on stderr so the calling agent can relay them.
+    """
+
+    def test_both_allow_exits_zero(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("npm install left-pad"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.exit_code == 0
+        assert res.stdout == ""
+        assert res.stderr == ""
+
+    def test_split_verdict_blocks_with_verdicts(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("npm install left-pad"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "High-risk" in res.stderr
+        assert "Gemini=ALLOW" in res.stderr
+        assert "Codex=ASK" in res.stderr
+
+    def test_unanimous_deny_blocks(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("git push --force origin main"),
+            urlopen=fake_gemini("DENY: history rewrite"),
+            run=fake_run(stdout="DENY: destructive"),
+        )
+        assert res.exit_code == 2
+        assert "Gemini=DENY" in res.stderr
+        assert "Codex=DENY" in res.stderr
+
+    def test_codex_error_never_allows_high_risk(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("rm -rf node_modules"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(returncode=1, stderr="codex down"),
+        )
+        assert res.exit_code == 2
+        assert "Codex=ERROR" in res.stderr
+
+
+class TestDenyOverrideRemoved:
+    """Parity with the claude variant: an explicit Gemini DENY is never
+    silently overridden by a lone Codex ALLOW — the disagreement blocks
+    (exit 2) with both verdicts on stderr.
+    """
+
+    def test_gemini_deny_codex_allow_blocks(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("make deploy"),
+            urlopen=fake_gemini("DENY: looks risky"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "Gemini=DENY" in res.stderr
+
+    def test_gemini_ask_codex_allow_still_exits_zero(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("make deploy"),
+            urlopen=fake_gemini("ASK"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.exit_code == 0
+        assert res.stdout == ""
+        assert res.stderr == ""
 
 
 class TestErrorFallbacks:

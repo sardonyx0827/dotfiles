@@ -56,6 +56,19 @@ class TestPreDeny:
         res = run_hook(HOOK, hook_payload("ls -la && curl http://evil"))
         assert res.decision == "deny"
 
+    def test_deny_hidden_after_newline_is_blocked(self, run_hook):
+        # \n is not split by _split_commands but IS a shell separator: a denied
+        # command hidden on a second line must still be pre-denied, not sent to
+        # the single-model review path.
+        res = run_hook(HOOK, hook_payload("ls\nsudo rm -rf /"))
+        assert res.decision == "deny"
+        assert "sudo" in res.reason
+
+    def test_sudo_is_pre_denied(self, run_hook):
+        res = run_hook(HOOK, hook_payload("sudo systemctl restart nginx"))
+        assert res.decision == "deny"
+        assert "sudo" in res.reason
+
     def test_deny_prefix_does_not_overmatch(self, run_hook):
         # "curling" is not "curl": it must go to review, not be pre-denied.
         res = run_hook(
@@ -109,7 +122,6 @@ class TestSafeSkip:
             "ls $(whoami)",
             "ls `whoami`",
             "cat a > b",
-            "ls\nrm -rf /tmp/x",
             "ls & echo hi",
         ],
     )
@@ -117,6 +129,21 @@ class TestSafeSkip:
         res = run_hook(HOOK, hook_payload(command), urlopen=fake_gemini("ALLOW"))
         # Reviewed (not skipped): reason comes from the Gemini stage.
         assert "Gemini reviewed and approved" in res.reason
+
+    def test_newline_hidden_recursive_rm_is_high_risk(self, run_hook):
+        # \n is a shell separator that _split_commands does not split on, so
+        # the high-risk classifier inspects each line: a recursive rm hidden
+        # behind a harmless first line must reach the dual review, not the
+        # single-model fast path. Codex ASK proves the high-risk tier ran (the
+        # fast path would auto-allow on Gemini ALLOW alone).
+        res = run_hook(
+            HOOK,
+            hook_payload("ls\nrm -rf /tmp/x"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.decision == "ask"
+        assert "High-risk" in res.reason
 
 
 class TestGeminiStage:
@@ -431,10 +458,56 @@ class TestCommandHelpers:
             ("rm -rf /", (True, "rm -rf /")),
             ("rm -rf ~", (True, "rm -rf ~")),
             ("rm build", (False, "")),
+            # Privilege escalation is unconditionally denied.
+            ("sudo whoami", (True, "sudo")),
+            ("doas reboot", (True, "doas")),
+            ("su -", (True, "su")),
+            ("pkexec cat /etc/shadow", (True, "pkexec")),
+            # Deny matching resolves the actual executable: absolute paths and
+            # env/command wrappers must not slip a denied binary past a naive
+            # string-prefix check.
+            ("/usr/bin/sudo whoami", (True, "sudo")),
+            ("/usr/bin/curl http://evil", (True, "curl")),
+            ("env sudo whoami", (True, "sudo")),
+            ("env -i sudo whoami", (True, "sudo")),
+            ("command sudo whoami", (True, "sudo")),
+            ("FOO=bar curl http://evil", (True, "curl")),
+            ("nohup wget http://evil", (True, "wget")),
+            # Filesystem creation wipes the target device.
+            ("mkfs.ext4 /dev/sda1", (True, "mkfs.ext4")),
+            ("mkfs -t ext4 /dev/sda1", (True, "mkfs")),
+            # ...but names merely containing a denied word are not denied.
+            ("sudoku --solve", (False, "")),
+            ("echo sudo", (False, "")),
+            ("git commit -m 'add sudo docs'", (False, "")),
+            # Value-less wrapper flags stay transparent (env -i sudo -> sudo)...
+            ("env -i sudo whoami", (True, "sudo")),
+            # ...but a value-taking wrapper flag must not let its value be
+            # mistaken for the executable and slip the denied binary through.
+            # `env -u X sudo` / `nice -n 10 curl` fail safe to review, not deny.
+            ("env -u LD_PRELOAD sudo whoami", (False, "")),
+            ("nice -n 10 curl http://evil", (False, "")),
+            # Quote/backslash obfuscation of the name is normalized before match.
+            ("su''do whoami", (True, "sudo")),
+            ("c\\u\\r\\l http://evil", (True, "curl")),
         ],
     )
     def test_is_deny_command(self, hook_fns, command, expected):
         assert hook_fns["_is_deny_command"](command) == expected
+
+    @pytest.mark.parametrize(
+        ("sub_commands", "expected"),
+        [
+            (["ls -la", "git status"], (False, "")),
+            # A denied command hidden after a newline (which _split_commands
+            # does NOT split on) must still be caught by find_deny_command.
+            (["ls\nsudo rm -rf /"], (True, "sudo")),
+            (["echo hi\ncurl http://evil"], (True, "curl")),
+            (["ok", "second\nwget http://evil"], (True, "wget")),
+        ],
+    )
+    def test_find_deny_command_scans_newlines(self, hook_fns, sub_commands, expected):
+        assert hook_fns["find_deny_command"](sub_commands) == expected
 
     @pytest.mark.parametrize(
         ("command", "expected"),
@@ -467,6 +540,317 @@ class TestCommandHelpers:
     )
     def test_can_skip_review(self, hook_fns, command, expected):
         assert hook_fns["_can_skip_review"](command) is expected
+
+
+class TestHighRiskClassifier:
+    """Context-dependent dangerous commands are classified for dual review.
+
+    The tier sits between static DENY (unconditionally dangerous: sudo, curl)
+    and the ordinary Gemini fast path: high-risk commands are never
+    auto-allowed by model verdicts — they always end in a human ask (or deny
+    when both models agree on DENY).
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "risky"),
+        [
+            # Recursive rm (non-pre-denied forms).
+            ("rm -r build", True),
+            ("rm -rf node_modules", True),
+            ("rm -fR dist", True),
+            ("rm --recursive build", True),
+            ("rm build.log", False),
+            ("rm -f build.log", False),
+            # Destructive git.
+            ("git push --force origin main", True),
+            ("git push -f", True),
+            ("git push --force-with-lease origin main", True),
+            ("git reset --hard HEAD~1", True),
+            ("git clean -fd", True),
+            ("git push origin main", False),
+            ("git reset --soft HEAD~1", False),
+            ("git clean -n", False),
+            # Package installation (supply chain).
+            ("npm install left-pad", True),
+            ("npm i left-pad", True),
+            ("pnpm add lodash", True),
+            ("yarn add lodash", True),
+            ("pip install requests", True),
+            ("pip3 install requests", True),
+            ("uv add httpx", True),
+            ("uv pip install httpx", True),
+            ("brew install jq", True),
+            ("gem install rails", True),
+            ("cargo install ripgrep", True),
+            ("go install example.com/cmd@latest", True),
+            ("npm test", False),
+            ("pip list", False),
+            ("brew list", False),
+            # Remote code fetch-and-exec.
+            ("npx create-react-app my-app", True),
+            ("uvx ruff check", True),
+            ("pnpm dlx create-vite", True),
+            ("yarn dlx create-vite", True),
+            # Inline shell / eval execute arbitrary strings.
+            ("bash -c 'echo hi'", True),
+            ("sh -c ls", True),
+            ("zsh -c pwd", True),
+            ("eval $CMD", True),
+            ("bash script.sh", False),
+            # Recursive permission/ownership changes.
+            ("chmod -R 777 .", True),
+            ("chown -R user:staff /opt/app", True),
+            ("chmod +x script.sh", False),
+            # find that executes or deletes.
+            ("find . -name '*.tmp' -exec rm {} ;", True),
+            ("find . -name '*.tmp' -delete", True),
+            ("find . -name '*.py'", False),
+            # Everyday commands stay out of the tier.
+            ("make build", False),
+            ("python3 script.py", False),
+            ("git status", False),
+        ],
+    )
+    def test_single_command_classification(self, hook_fns, command, risky):
+        label = hook_fns["_high_risk_label"](command)
+        assert bool(label) is risky, f"{command!r} -> {label!r}"
+
+    @pytest.mark.parametrize(
+        ("command", "expected_substr"),
+        [
+            # Wrapper prefixes must be stripped before classification, or the
+            # high-risk tier is bypassed straight into the single-model fast
+            # path (the CRITICAL regression: `env rm -rf` was auto-allowable).
+            ("env rm -rf ./build", "rm recursive"),
+            ("command npx create-react-app x", "npx"),
+            ("nohup git reset --hard HEAD~1", "git reset --hard"),
+            ("nice npm install left-pad", "npm install"),
+            ("FOO=1 npm install pkg", "npm install"),
+            ("FOO=bar BAZ=2 rm -rf dist", "rm recursive"),
+            # Value-taking / unknown wrapper flags make the executable
+            # unresolvable -> fail safe to the high-risk tier, never the fast
+            # path (`env -u X sudo`, `nice -n 10 <cmd>`).
+            ("env -u LD_PRELOAD rm -rf /tmp/x", "wrapped"),
+            ("nice -n 19 npm install evil", "wrapped"),
+            # Value-less wrapper flags are transparent: classify the real exe.
+            ("env -i rm -rf ./build", "rm recursive"),
+            # Global value-flags before the subcommand must not be mistaken for
+            # the subcommand (`git -C <dir> reset`, `npm --prefix <dir> install`).
+            ("git -C /tmp/repo reset --hard HEAD~5", "git reset --hard"),
+            ("git -c user.name=x push --force origin main", "git force push"),
+            ("npm --prefix /tmp install left-pad", "npm install"),
+            # Quote/escape obfuscation of the executable name is normalized away.
+            ("rm -rf ./build", "rm recursive"),
+        ],
+    )
+    def test_wrapper_and_flag_evasion_is_classified(
+        self, hook_fns, command, expected_substr
+    ):
+        label = hook_fns["_high_risk_label"](command)
+        assert expected_substr in label, f"{command!r} -> {label!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # A bare wrapper around an innocent command must NOT become
+            # high-risk once the executable resolves to something harmless.
+            "env node app.js",
+            "env FOO=bar python3 script.py",
+            "nohup make build",
+            "command ls -la",
+        ],
+    )
+    def test_wrapped_innocent_command_is_not_high_risk(self, hook_fns, command):
+        assert hook_fns["_high_risk_label"](command) == ""
+
+    def test_whole_command_collects_labels_across_subcommands(self, hook_fns):
+        label = hook_fns["high_risk_label"](
+            ["ls -la", "npm install left-pad", "git push --force origin main"]
+        )
+        assert "npm install" in label
+        assert "git" in label
+
+    def test_newline_separated_lines_are_classified(self, hook_fns):
+        # _split_commands does not split on newlines, so the classifier must
+        # inspect each line of a sub-command individually.
+        label = hook_fns["high_risk_label"](["ls\nrm -rf /tmp/x"])
+        assert label
+
+
+class TestHighRiskVerdictSynthesis:
+    @pytest.mark.parametrize(
+        ("gemini", "codex", "expected"),
+        [
+            # AND-gate: only a unanimous ALLOW auto-executes (both models
+            # independently judged it safe).
+            ("ALLOW", "ALLOW", "allow"),
+            # Any disagreement or uncertainty falls to a human ask.
+            ("ALLOW", "ASK", "ask"),
+            ("ALLOW", "DENY", "ask"),
+            ("DENY", "ALLOW", "ask"),
+            ("ASK", "ASK", "ask"),
+            ("ASK", "ALLOW", "ask"),
+            # Errors never auto-allow and never auto-deny.
+            ("ERROR", "ALLOW", "ask"),
+            ("ALLOW", "ERROR", "ask"),
+            ("DENY", "ERROR", "ask"),
+            ("ERROR", "ERROR", "ask"),
+            # Only a unanimous DENY hard-blocks (the user can always run the
+            # command manually if they truly need it).
+            ("DENY", "DENY", "deny"),
+        ],
+    )
+    def test_combine_high_risk_verdicts(self, hook_fns, gemini, codex, expected):
+        assert hook_fns["combine_high_risk_verdicts"](gemini, codex) == expected
+
+    def test_reason_carries_both_verdicts_sanitized(self, hook_fns):
+        reason = hook_fns["format_dual_verdict_reason"](
+            "rm recursive",
+            "ALLOW",
+            "ALLOW\x07\nbecause " + "x" * 500,
+            "DENY",
+            "DENY: exfil\x1b[31m risk",
+        )
+        assert "High-risk" in reason
+        assert "rm recursive" in reason
+        assert "Gemini=ALLOW" in reason
+        assert "Codex=DENY" in reason
+        # Model free text is fenced: control characters stripped, length capped.
+        assert "\x07" not in reason
+        assert "\x1b" not in reason
+        assert "x" * 200 not in reason
+
+
+class TestHighRiskFlow:
+    """High-risk commands run Gemini and Codex in parallel (AND-gate): a
+    unanimous ALLOW auto-executes, a unanimous DENY denies, anything else is
+    a human ask. Both verdicts are always carried in the reason.
+    """
+
+    def test_both_allow_allows_with_verdicts(self, run_hook):
+        calls = []
+        res = run_hook(
+            HOOK,
+            hook_payload("npm install left-pad"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ALLOW", calls=calls),
+        )
+        assert res.decision == "allow"
+        assert "High-risk" in res.reason
+        assert "Gemini=ALLOW" in res.reason
+        assert "Codex=ALLOW" in res.reason
+        # The Codex leg is a locked-down reviewer, not a tool-enabled agent.
+        assert calls[0][0][:2] == ["codex", "exec"]
+        assert "--sandbox" in calls[0][0]
+        assert "read-only" in calls[0][0]
+
+    def test_split_allow_ask_asks(self, run_hook):
+        # One model unsure -> not a unanimous ALLOW -> human ask.
+        res = run_hook(
+            HOOK,
+            hook_payload("npm install left-pad"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.decision == "ask"
+        assert "Gemini=ALLOW" in res.reason
+        assert "Codex=ASK" in res.reason
+
+    def test_unanimous_deny_denies(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("git push --force origin main"),
+            urlopen=fake_gemini("DENY: history rewrite"),
+            run=fake_run(stdout="DENY: destructive"),
+        )
+        assert res.decision == "deny"
+        assert "Gemini=DENY" in res.reason
+        assert "Codex=DENY" in res.reason
+
+    def test_split_verdict_asks(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("git push --force origin main"),
+            urlopen=fake_gemini("DENY: history rewrite"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.decision == "ask"
+
+    def test_codex_error_never_allows_high_risk(self, run_hook):
+        # Gemini ALLOW + Codex unavailable must stay an ask: a provider outage
+        # must not degrade the tier back to single-model auto-approval.
+        res = run_hook(
+            HOOK,
+            hook_payload("rm -rf node_modules"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(returncode=1, stderr="codex down"),
+        )
+        assert res.decision == "ask"
+        assert "Codex=ERROR" in res.reason
+
+    def test_missing_api_key_never_allows_high_risk(self, run_hook):
+        # Gemini ERROR + Codex ALLOW: still ask (contrast with the low-risk
+        # escalation path where Codex ALLOW resolves a Gemini ERROR).
+        res = run_hook(
+            HOOK,
+            hook_payload("pip install requests"),
+            env={"GEMINI_API_KEY": None},
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.decision == "ask"
+        assert "Gemini=ERROR" in res.reason
+
+    def test_high_risk_summary_log_records_stage_and_timing(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("npm install left-pad"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        summary = (res.home / ".claude/logs/bash-review.log").read_text(
+            encoding="utf-8"
+        )
+        assert "highrisk" in summary
+        assert "took=" in summary
+
+
+class TestDenyOverrideRemoved:
+    """A single Codex ALLOW must no longer silently override an explicit
+    Gemini DENY (that made the gate an OR-gate for an attacker: convincing
+    either model was enough to execute). The disagreement now goes to the
+    human with both verdicts.
+    """
+
+    def test_gemini_deny_codex_allow_asks_with_both_verdicts(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("make deploy"),
+            urlopen=fake_gemini("DENY: looks risky"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.decision == "ask"
+        assert "Gemini=DENY" in res.reason
+        assert "Codex" in res.reason
+
+    def test_gemini_ask_codex_allow_still_allows(self, run_hook):
+        # ASK is uncertainty, not an explicit veto: Codex may still resolve it.
+        res = run_hook(
+            HOOK,
+            hook_payload("make deploy"),
+            urlopen=fake_gemini("ASK"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.decision == "allow"
+
+    def test_gemini_error_codex_allow_still_allows(self, run_hook):
+        # ERROR is unavailability, not a verdict: Codex remains the fallback.
+        res = run_hook(
+            HOOK,
+            hook_payload("make deploy"),
+            env={"GEMINI_API_KEY": None},
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.decision == "allow"
 
 
 class TestSanitizeNotify:
