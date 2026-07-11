@@ -74,6 +74,12 @@ Launch conditions (when any of the following are met):
 
 When working on specification review, design, bug fixes, or test code creation, follow the **codex-consultation** skill.
 
+Two second-opinion layers coexist — treat them as depth tiers, not interchangeable:
+
+- **advisor (Opus)** — fast primary self-check over the whole trajectory. Call before substantive work, before declaring done, and when first stuck. Low friction (no prompt to author), so use it as the routine checkpoint.
+- **Codex** — selective escalation for an independent, cross-vendor opinion, limited to the heavier cases the **codex-consultation** / **debugging-protocol** skills define (spec/design proposals, large-scale changes, test strategy, 2+ consecutive failed fixes → root-cause).
+- **On conflicting advice** — do not silently pick a side; surface both opinions to the user.
+
 ## Visual Asset Generation
 
 When a task needs a generated bitmap image written to disk (site `public/` assets, hero/OG images, illustrations, mockups), delegate to OpenAI Codex's built-in `image_gen` via the `mcp__codex__codex` tool. Follow the Triggers in `@~/.claude/rules/image-generation.md` (full workflow in the **codex-image-gen** skill). The built-in path needs no `OPENAI_API_KEY`; only true native transparency does — confirm with the user first.
