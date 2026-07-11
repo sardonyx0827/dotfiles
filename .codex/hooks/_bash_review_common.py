@@ -17,9 +17,10 @@
 #
 # 判定の 3 層構造:
 #   1. 静的 DENY (DENY_EXECUTABLES / DENY_COMMANDS): 文脈を問わず危険 → 即拒否
-#   2. 高リスク層 (high_risk_label): 文脈次第で正当 → Gemini/Codex を並列実行し
-#      両判定を添えて必ず ask (両モデル DENY 一致時のみ deny)。モデルの合意で
-#      自動実行はしない。
+#   2. 高リスク層 (high_risk_label): 文脈次第で正当 → Gemini/Codex を並列実行する
+#      AND ゲート (combine_high_risk_verdicts)。両モデル ALLOW 一致時のみ許可、
+#      両モデル DENY 一致時のみ deny、それ以外 (判定割れ/ASK/ERROR) は両判定を
+#      添えて ask。片方説得での自動実行 (OR ゲート化) はしない。
 #   3. 低リスク層: Gemini ALLOW → 即許可。疑義時のみ Codex 二次確認。ただし
 #      Gemini の明示的 DENY を Codex の ALLOW 単独で自動上書きはしない (ask へ)。
 import concurrent.futures

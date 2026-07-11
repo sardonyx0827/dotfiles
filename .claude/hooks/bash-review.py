@@ -2,8 +2,9 @@
 # 判定の 3 層構造 (詳細は _bash_review_common.py のヘッダー参照):
 #   1. 静的 DENY: sudo / curl 等、文脈を問わず危険 → 即拒否
 #   2. 高リスク層: rm -r / force push / パッケージ導入等、文脈次第で正当
-#      → Gemini と Codex を並列実行し、両判定を添えて必ず ask
-#        (両モデル DENY 一致時のみ deny)。モデルの合意で自動実行はしない。
+#      → Gemini と Codex を並列実行する AND ゲート。両モデル ALLOW 一致時のみ
+#        許可、両モデル DENY 一致時のみ deny、それ以外 (判定割れ/ASK/ERROR) は
+#        両判定を添えて ask。片方説得での自動実行 (OR ゲート化) はしない。
 #   3. 低リスク層: Gemini (高スループット) が ALLOW なら即許可。
 #      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。Gemini の明示的 DENY を
 #      Codex の ALLOW 単独で自動上書きはしない (両判定を添えて ask)。
