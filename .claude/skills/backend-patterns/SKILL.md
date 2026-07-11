@@ -13,32 +13,32 @@ Backend architecture patterns and best practices for scalable server-side applic
 
 ```typescript
 // ✅ Resource-based URLs
-GET    /api/markets                 # List resources
-GET    /api/markets/:id             # Get single resource
-POST   /api/markets                 # Create resource
-PUT    /api/markets/:id             # Replace resource
-PATCH  /api/markets/:id             # Update resource
-DELETE /api/markets/:id             # Delete resource
+GET    /api/products                 # List resources
+GET    /api/products/:id             # Get single resource
+POST   /api/products                 # Create resource
+PUT    /api/products/:id             # Replace resource
+PATCH  /api/products/:id             # Update resource
+DELETE /api/products/:id             # Delete resource
 
 // ✅ Query parameters for filtering, sorting, pagination
-GET /api/markets?status=active&sort=volume&limit=20&offset=0
+GET /api/products?status=active&sort=sales&limit=20&offset=0
 ```
 
 ### Repository Pattern
 
 ```typescript
 // Abstract data access logic
-interface MarketRepository {
-  findAll(filters?: MarketFilters): Promise<Market[]>
-  findById(id: string): Promise<Market | null>
-  create(data: CreateMarketDto): Promise<Market>
-  update(id: string, data: UpdateMarketDto): Promise<Market>
+interface ProductRepository {
+  findAll(filters?: ProductFilters): Promise<Product[]>
+  findById(id: string): Promise<Product | null>
+  create(data: CreateProductDto): Promise<Product>
+  update(id: string, data: UpdateProductDto): Promise<Product>
   delete(id: string): Promise<void>
 }
 
-class SupabaseMarketRepository implements MarketRepository {
-  async findAll(filters?: MarketFilters): Promise<Market[]> {
-    let query = supabase.from('markets').select('*')
+class SupabaseProductRepository implements ProductRepository {
+  async findAll(filters?: ProductFilters): Promise<Product[]> {
+    let query = supabase.from('products').select('*')
 
     if (filters?.status) {
       query = query.eq('status', filters.status)
@@ -62,19 +62,19 @@ class SupabaseMarketRepository implements MarketRepository {
 
 ```typescript
 // Business logic separated from data access
-class MarketService {
-  constructor(private marketRepo: MarketRepository) {}
+class ProductService {
+  constructor(private productRepo: ProductRepository) {}
 
-  async searchMarkets(query: string, limit: number = 10): Promise<Market[]> {
+  async searchProducts(query: string, limit: number = 10): Promise<Product[]> {
     // Business logic
     const embedding = await generateEmbedding(query)
     const results = await this.vectorSearch(embedding, limit)
 
     // Fetch full data
-    const markets = await this.marketRepo.findByIds(results.map(r => r.id))
+    const products = await this.productRepo.findByIds(results.map(r => r.id))
 
     // Sort by similarity
-    return markets.sort((a, b) => {
+    return products.sort((a, b) => {
       const scoreA = results.find(r => r.id === a.id)?.score || 0
       const scoreB = results.find(r => r.id === b.id)?.score || 0
       return scoreA - scoreB
@@ -122,15 +122,15 @@ export default withAuth(async (req, res) => {
 ```typescript
 // ✅ GOOD: Select only needed columns
 const { data } = await supabase
-  .from('markets')
-  .select('id, name, status, volume')
+  .from('products')
+  .select('id, name, status, sales')
   .eq('status', 'active')
-  .order('volume', { ascending: false })
+  .order('sales', { ascending: false })
   .limit(10)
 
 // ❌ BAD: Select everything
 const { data } = await supabase
-  .from('markets')
+  .from('products')
   .select('*')
 ```
 
@@ -138,33 +138,33 @@ const { data } = await supabase
 
 ```typescript
 // ❌ BAD: N+1 query problem
-const markets = await getMarkets()
-for (const market of markets) {
-  market.creator = await getUser(market.creator_id)  // N queries
+const products = await getProducts()
+for (const product of products) {
+  product.creator = await getUser(product.creator_id)  // N queries
 }
 
 // ✅ GOOD: Batch fetch
-const markets = await getMarkets()
-const creatorIds = markets.map(m => m.creator_id)
+const products = await getProducts()
+const creatorIds = products.map(m => m.creator_id)
 const creators = await getUsers(creatorIds)  // 1 query
 const creatorMap = new Map(creators.map(c => [c.id, c]))
 
-markets.forEach(market => {
-  market.creator = creatorMap.get(market.creator_id)
+products.forEach(product => {
+  product.creator = creatorMap.get(product.creator_id)
 })
 ```
 
 ### Transaction Pattern
 
 ```typescript
-async function createMarketWithPosition(
-  marketData: CreateMarketDto,
-  positionData: CreatePositionDto
+async function createProductWithInventory(
+  productData: CreateProductDto,
+  inventoryData: CreateInventoryDto
 ) {
   // Use Supabase transaction
-  const { data, error } = await supabase.rpc('create_market_with_position', {
-    market_data: marketData,
-    position_data: positionData
+  const { data, error } = await supabase.rpc('create_product_with_inventory', {
+    product_data: productData,
+    inventory_data: inventoryData
   })
 
   if (error) throw new Error('Transaction failed')
@@ -172,17 +172,17 @@ async function createMarketWithPosition(
 }
 
 // SQL function in Supabase
-CREATE OR REPLACE FUNCTION create_market_with_position(
-  market_data jsonb,
-  position_data jsonb
+CREATE OR REPLACE FUNCTION create_product_with_inventory(
+  product_data jsonb,
+  inventory_data jsonb
 )
 RETURNS jsonb
 LANGUAGE plpgsql
 AS $$
 BEGIN
   -- Start transaction automatically
-  INSERT INTO markets VALUES (market_data);
-  INSERT INTO positions VALUES (position_data);
+  INSERT INTO products VALUES (product_data);
+  INSERT INTO inventory VALUES (inventory_data);
   RETURN jsonb_build_object('success', true);
 EXCEPTION
   WHEN OTHERS THEN
@@ -197,33 +197,33 @@ $$;
 ### Redis Caching Layer
 
 ```typescript
-class CachedMarketRepository implements MarketRepository {
+class CachedProductRepository implements ProductRepository {
   constructor(
-    private baseRepo: MarketRepository,
+    private baseRepo: ProductRepository,
     private redis: RedisClient
   ) {}
 
-  async findById(id: string): Promise<Market | null> {
+  async findById(id: string): Promise<Product | null> {
     // Check cache first
-    const cached = await this.redis.get(`market:${id}`)
+    const cached = await this.redis.get(`product:${id}`)
 
     if (cached) {
       return JSON.parse(cached)
     }
 
     // Cache miss - fetch from database
-    const market = await this.baseRepo.findById(id)
+    const product = await this.baseRepo.findById(id)
 
-    if (market) {
+    if (product) {
       // Cache for 5 minutes
-      await this.redis.setex(`market:${id}`, 300, JSON.stringify(market))
+      await this.redis.setex(`product:${id}`, 300, JSON.stringify(product))
     }
 
-    return market
+    return product
   }
 
   async invalidateCache(id: string): Promise<void> {
-    await this.redis.del(`market:${id}`)
+    await this.redis.del(`product:${id}`)
   }
 }
 ```
@@ -231,22 +231,22 @@ class CachedMarketRepository implements MarketRepository {
 ### Cache-Aside Pattern
 
 ```typescript
-async function getMarketWithCache(id: string): Promise<Market> {
-  const cacheKey = `market:${id}`
+async function getProductWithCache(id: string): Promise<Product> {
+  const cacheKey = `product:${id}`
 
   // Try cache
   const cached = await redis.get(cacheKey)
   if (cached) return JSON.parse(cached)
 
   // Cache miss - fetch from DB
-  const market = await db.markets.findUnique({ where: { id } })
+  const product = await db.products.findUnique({ where: { id } })
 
-  if (!market) throw new Error('Market not found')
+  if (!product) throw new Error('Product not found')
 
   // Update cache
-  await redis.setex(cacheKey, 300, JSON.stringify(market))
+  await redis.setex(cacheKey, 300, JSON.stringify(product))
 
-  return market
+  return product
 }
 ```
 
@@ -503,18 +503,18 @@ class JobQueue<T> {
   }
 }
 
-// Usage for indexing markets
+// Usage for indexing products
 interface IndexJob {
-  marketId: string
+  productId: string
 }
 
 const indexQueue = new JobQueue<IndexJob>()
 
 export async function POST(request: Request) {
-  const { marketId } = await request.json()
+  const { productId } = await request.json()
 
   // Add to queue instead of blocking
-  await indexQueue.add({ marketId })
+  await indexQueue.add({ productId })
 
   return NextResponse.json({ success: true, message: 'Job queued' })
 }
@@ -568,17 +568,17 @@ const logger = new Logger()
 export async function GET(request: Request) {
   const requestId = crypto.randomUUID()
 
-  logger.info('Fetching markets', {
+  logger.info('Fetching products', {
     requestId,
     method: 'GET',
-    path: '/api/markets'
+    path: '/api/products'
   })
 
   try {
-    const markets = await fetchMarkets()
-    return NextResponse.json({ success: true, data: markets })
+    const products = await fetchProducts()
+    return NextResponse.json({ success: true, data: products })
   } catch (error) {
-    logger.error('Failed to fetch markets', error as Error, { requestId })
+    logger.error('Failed to fetch products', error as Error, { requestId })
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
   }
 }

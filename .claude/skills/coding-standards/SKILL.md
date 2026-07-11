@@ -39,12 +39,12 @@ Universal coding standards applicable across all projects.
 
 ```typescript
 // ✅ GOOD: Descriptive names
-const marketSearchQuery = 'election'
+const productSearchQuery = 'wireless'
 const isUserAuthenticated = true
 const totalRevenue = 1000
 
 // ❌ BAD: Unclear names
-const q = 'election'
+const q = 'wireless'
 const flag = true
 const x = 1000
 ```
@@ -53,12 +53,12 @@ const x = 1000
 
 ```typescript
 // ✅ GOOD: Verb-noun pattern
-async function fetchMarketData(marketId: string) { }
+async function fetchProductData(productId: string) { }
 function calculateSimilarity(a: number[], b: number[]) { }
 function isValidEmail(email: string): boolean { }
 
 // ❌ BAD: Unclear or noun-only
-async function market(id: string) { }
+async function product(id: string) { }
 function similarity(a, b) { }
 function email(e) { }
 ```
@@ -109,15 +109,15 @@ async function fetchData(url) {
 
 ```typescript
 // ✅ GOOD: Parallel execution when possible
-const [users, markets, stats] = await Promise.all([
+const [users, products, stats] = await Promise.all([
   fetchUsers(),
-  fetchMarkets(),
+  fetchProducts(),
   fetchStats()
 ])
 
 // ❌ BAD: Sequential when unnecessary
 const users = await fetchUsers()
-const markets = await fetchMarkets()
+const products = await fetchProducts()
 const stats = await fetchStats()
 ```
 
@@ -125,19 +125,19 @@ const stats = await fetchStats()
 
 ```typescript
 // ✅ GOOD: Proper types
-interface Market {
+interface Product {
   id: string
   name: string
   status: 'active' | 'resolved' | 'closed'
   created_at: Date
 }
 
-function getMarket(id: string): Promise<Market> {
+function getProduct(id: string): Promise<Product> {
   // Implementation
 }
 
 // ❌ BAD: Using 'any'
-function getMarket(id: any): Promise<any> {
+function getProduct(id: any): Promise<any> {
   // Implementation
 }
 ```
@@ -230,15 +230,15 @@ setCount(count + 1)  // Can be stale in async scenarios
 ### REST API Conventions
 
 ```
-GET    /api/markets              # List all markets
-GET    /api/markets/:id          # Get specific market
-POST   /api/markets              # Create new market
-PUT    /api/markets/:id          # Update market (full)
-PATCH  /api/markets/:id          # Update market (partial)
-DELETE /api/markets/:id          # Delete market
+GET    /api/products              # List all products
+GET    /api/products/:id          # Get specific product
+POST   /api/products              # Create new product
+PUT    /api/products/:id          # Update product (full)
+PATCH  /api/products/:id          # Update product (partial)
+DELETE /api/products/:id          # Delete product
 
 # Query parameters for filtering
-GET /api/markets?status=active&limit=10&offset=0
+GET /api/products?status=active&limit=10&offset=0
 ```
 
 ### Response Format
@@ -259,7 +259,7 @@ interface ApiResponse<T> {
 // Success response
 return NextResponse.json({
   success: true,
-  data: markets,
+  data: products,
   meta: { total: 100, page: 1, limit: 10 }
 })
 
@@ -276,7 +276,7 @@ return NextResponse.json({
 import { z } from 'zod'
 
 // ✅ GOOD: Schema validation
-const CreateMarketSchema = z.object({
+const CreateProductSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().min(1).max(2000),
   endDate: z.string().datetime(),
@@ -287,7 +287,7 @@ export async function POST(request: Request) {
   const body = await request.json()
 
   try {
-    const validated = CreateMarketSchema.parse(body)
+    const validated = CreateProductSchema.parse(body)
     // Proceed with validated data
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -309,7 +309,7 @@ export async function POST(request: Request) {
 src/
 ├── app/                    # Next.js App Router
 │   ├── api/               # API routes
-│   ├── markets/           # Market pages
+│   ├── products/           # Product pages
 │   └── (auth)/           # Auth pages (route groups)
 ├── components/            # React components
 │   ├── ui/               # Generic UI components
@@ -330,7 +330,7 @@ src/
 components/Button.tsx          # PascalCase for components
 hooks/useAuth.ts              # camelCase with 'use' prefix
 lib/formatDate.ts             # camelCase for utilities
-types/market.types.ts         # camelCase with .types suffix
+types/product.types.ts         # camelCase with .types suffix
 ```
 
 ## Comments & Documentation
@@ -357,23 +357,23 @@ name = user.name
 
 ```typescript
 /**
- * Searches markets using semantic similarity.
+ * Searches products using semantic similarity.
  *
  * @param query - Natural language search query
  * @param limit - Maximum number of results (default: 10)
- * @returns Array of markets sorted by similarity score
+ * @returns Array of products sorted by similarity score
  * @throws {Error} If OpenAI API fails or Redis unavailable
  *
  * @example
  * ```typescript
- * const results = await searchMarkets('election', 5)
+ * const results = await searchProducts('wireless', 5)
  * console.log(results[0].name) // "Trump vs Biden"
  * ```
  */
-export async function searchMarkets(
+export async function searchProducts(
   query: string,
   limit: number = 10
-): Promise<Market[]> {
+): Promise<Product[]> {
   // Implementation
 }
 ```
@@ -386,9 +386,9 @@ export async function searchMarkets(
 import { useMemo, useCallback } from 'react'
 
 // ✅ GOOD: Memoize expensive computations
-const sortedMarkets = useMemo(() => {
-  return markets.sort((a, b) => b.volume - a.volume)
-}, [markets])
+const sortedProducts = useMemo(() => {
+  return products.sort((a, b) => b.sales - a.sales)
+}, [products])
 
 // ✅ GOOD: Memoize callbacks
 const handleSearch = useCallback((query: string) => {
@@ -418,13 +418,13 @@ export function Dashboard() {
 ```typescript
 // ✅ GOOD: Select only needed columns
 const { data } = await supabase
-  .from('markets')
+  .from('products')
   .select('id, name, status')
   .limit(10)
 
 // ❌ BAD: Select everything
 const { data } = await supabase
-  .from('markets')
+  .from('products')
   .select('*')
 ```
 
@@ -450,7 +450,7 @@ test('calculates similarity correctly', () => {
 
 ```typescript
 // ✅ GOOD: Descriptive test names
-test('returns empty array when no markets match query', () => { })
+test('returns empty array when no products match query', () => { })
 test('throws error when OpenAI API key is missing', () => { })
 test('falls back to substring search when Redis unavailable', () => { })
 
@@ -466,12 +466,12 @@ Watch for these anti-patterns:
 ### 1. Long Functions
 ```typescript
 // ❌ BAD: Function > 50 lines
-function processMarketData() {
+function processProductData() {
   // 100 lines of code
 }
 
 // ✅ GOOD: Split into smaller functions
-function processMarketData() {
+function processProductData() {
   const validated = validateData()
   const transformed = transformData(validated)
   return saveData(transformed)
@@ -483,8 +483,8 @@ function processMarketData() {
 // ❌ BAD: 5+ levels of nesting
 if (user) {
   if (user.isAdmin) {
-    if (market) {
-      if (market.isActive) {
+    if (product) {
+      if (product.isActive) {
         if (hasPermission) {
           // Do something
         }
@@ -496,8 +496,8 @@ if (user) {
 // ✅ GOOD: Early returns
 if (!user) return
 if (!user.isAdmin) return
-if (!market) return
-if (!market.isActive) return
+if (!product) return
+if (!product.isActive) return
 if (!hasPermission) return
 
 // Do something

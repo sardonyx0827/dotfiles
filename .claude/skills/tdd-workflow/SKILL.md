@@ -53,8 +53,8 @@ ALWAYS write tests first, then implement code to make tests pass.
 As a [role], I want to [action], so that [benefit]
 
 Example:
-As a user, I want to search for markets semantically,
-so that I can find relevant markets even without exact keywords.
+As a user, I want to search for products semantically,
+so that I can find relevant products even without exact keywords.
 ```
 
 ### Step 2: Generate Test Cases
@@ -62,7 +62,7 @@ For each user journey, create comprehensive test cases:
 
 ```typescript
 describe('Semantic Search', () => {
-  it('returns relevant markets for query', async () => {
+  it('returns relevant products for query', async () => {
     // Test implementation
   })
 
@@ -91,7 +91,7 @@ Write minimal code to make tests pass:
 
 ```typescript
 // Implementation guided by tests
-export async function searchMarkets(query: string) {
+export async function searchProducts(query: string) {
   // Implementation here
 }
 ```
@@ -149,9 +149,9 @@ describe('Button Component', () => {
 import { NextRequest } from 'next/server'
 import { GET } from './route'
 
-describe('GET /api/markets', () => {
-  it('returns markets successfully', async () => {
-    const request = new NextRequest('http://localhost/api/markets')
+describe('GET /api/products', () => {
+  it('returns products successfully', async () => {
+    const request = new NextRequest('http://localhost/api/products')
     const response = await GET(request)
     const data = await response.json()
 
@@ -161,7 +161,7 @@ describe('GET /api/markets', () => {
   })
 
   it('validates query parameters', async () => {
-    const request = new NextRequest('http://localhost/api/markets?limit=invalid')
+    const request = new NextRequest('http://localhost/api/products?limit=invalid')
     const response = await GET(request)
 
     expect(response.status).toBe(400)
@@ -169,7 +169,7 @@ describe('GET /api/markets', () => {
 
   it('handles database errors gracefully', async () => {
     // Mock database failure
-    const request = new NextRequest('http://localhost/api/markets')
+    const request = new NextRequest('http://localhost/api/products')
     // Test error handling
   })
 })
@@ -179,27 +179,27 @@ describe('GET /api/markets', () => {
 ```typescript
 import { test, expect } from '@playwright/test'
 
-test('user can search and filter markets', async ({ page }) => {
-  // Navigate to markets page
+test('user can search and filter products', async ({ page }) => {
+  // Navigate to products page
   await page.goto('/')
-  await page.click('a[href="/markets"]')
+  await page.click('a[href="/products"]')
 
   // Verify page loaded
-  await expect(page.locator('h1')).toContainText('Markets')
+  await expect(page.locator('h1')).toContainText('Products')
 
-  // Search for markets
-  await page.fill('input[placeholder="Search markets"]', 'election')
+  // Search for products
+  await page.fill('input[placeholder="Search products"]', 'wireless')
 
   // Wait for debounce and results
   await page.waitForTimeout(600)
 
   // Verify search results displayed
-  const results = page.locator('[data-testid="market-card"]')
+  const results = page.locator('[data-testid="product-card"]')
   await expect(results).toHaveCount(5, { timeout: 5000 })
 
   // Verify results contain search term
   const firstResult = results.first()
-  await expect(firstResult).toContainText('election', { ignoreCase: true })
+  await expect(firstResult).toContainText('wireless', { ignoreCase: true })
 
   // Filter by status
   await page.click('button:has-text("Active")')
@@ -208,12 +208,12 @@ test('user can search and filter markets', async ({ page }) => {
   await expect(results).toHaveCount(3)
 })
 
-test('user can create a new market', async ({ page }) => {
+test('user can create a new product', async ({ page }) => {
   // Login first
   await page.goto('/creator-dashboard')
 
-  // Fill market creation form
-  await page.fill('input[name="name"]', 'Test Market')
+  // Fill product creation form
+  await page.fill('input[name="name"]', 'Test Product')
   await page.fill('textarea[name="description"]', 'Test description')
   await page.fill('input[name="endDate"]', '2025-12-31')
 
@@ -221,10 +221,10 @@ test('user can create a new market', async ({ page }) => {
   await page.click('button[type="submit"]')
 
   // Verify success message
-  await expect(page.locator('text=Market created successfully')).toBeVisible()
+  await expect(page.locator('text=Product created successfully')).toBeVisible()
 
-  // Verify redirect to market page
-  await expect(page).toHaveURL(/\/markets\/test-market/)
+  // Verify redirect to product page
+  await expect(page).toHaveURL(/\/products\/test-product/)
 })
 ```
 
@@ -237,17 +237,17 @@ src/
 │   │   ├── Button.tsx
 │   │   ├── Button.test.tsx          # Unit tests
 │   │   └── Button.stories.tsx       # Storybook
-│   └── MarketCard/
-│       ├── MarketCard.tsx
-│       └── MarketCard.test.tsx
+│   └── ProductCard/
+│       ├── ProductCard.tsx
+│       └── ProductCard.test.tsx
 ├── app/
 │   └── api/
-│       └── markets/
+│       └── products/
 │           ├── route.ts
 │           └── route.test.ts         # Integration tests
 └── e2e/
-    ├── markets.spec.ts               # E2E tests
-    ├── trading.spec.ts
+    ├── products.spec.ts               # E2E tests
+    ├── checkout.spec.ts
     └── auth.spec.ts
 ```
 
@@ -260,7 +260,7 @@ jest.mock('@/lib/supabase', () => ({
     from: jest.fn(() => ({
       select: jest.fn(() => ({
         eq: jest.fn(() => Promise.resolve({
-          data: [{ id: 1, name: 'Test Market' }],
+          data: [{ id: 1, name: 'Test Product' }],
           error: null
         }))
       }))
@@ -272,8 +272,8 @@ jest.mock('@/lib/supabase', () => ({
 ### Redis Mock
 ```typescript
 jest.mock('@/lib/redis', () => ({
-  searchMarketsByVector: jest.fn(() => Promise.resolve([
-    { slug: 'test-market', similarity_score: 0.95 }
+  searchProductsByVector: jest.fn(() => Promise.resolve([
+    { slug: 'test-product', similarity_score: 0.95 }
   ])),
   checkRedisHealth: jest.fn(() => Promise.resolve({ connected: true }))
 }))

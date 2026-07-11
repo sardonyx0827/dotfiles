@@ -23,18 +23,18 @@ ClickHouse is a column-oriented database management system (DBMS) for online ana
 ### MergeTree Engine (Most Common)
 
 ```sql
-CREATE TABLE markets_analytics (
+CREATE TABLE products_analytics (
     date Date,
-    market_id String,
-    market_name String,
-    volume UInt64,
-    trades UInt32,
-    unique_traders UInt32,
-    avg_trade_size Float64,
+    product_id String,
+    product_name String,
+    sales UInt64,
+    orders UInt32,
+    unique_buyers UInt32,
+    avg_order_size Float64,
     created_at DateTime
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(date)
-ORDER BY (date, market_id)
+ORDER BY (date, product_id)
 SETTINGS index_granularity = 8192;
 ```
 
@@ -58,26 +58,26 @@ PRIMARY KEY (user_id, event_id);
 
 ```sql
 -- For maintaining aggregated metrics
-CREATE TABLE market_stats_hourly (
+CREATE TABLE product_stats_hourly (
     hour DateTime,
-    market_id String,
-    total_volume AggregateFunction(sum, UInt64),
-    total_trades AggregateFunction(count, UInt32),
+    product_id String,
+    total_sales AggregateFunction(sum, UInt64),
+    total_orders AggregateFunction(count, UInt32),
     unique_users AggregateFunction(uniq, String)
 ) ENGINE = AggregatingMergeTree()
 PARTITION BY toYYYYMM(hour)
-ORDER BY (hour, market_id);
+ORDER BY (hour, product_id);
 
 -- Query aggregated data
 SELECT
     hour,
-    market_id,
-    sumMerge(total_volume) AS volume,
-    countMerge(total_trades) AS trades,
+    product_id,
+    sumMerge(total_sales) AS sales,
+    countMerge(total_orders) AS orders,
     uniqMerge(unique_users) AS users
-FROM market_stats_hourly
+FROM product_stats_hourly
 WHERE hour >= toStartOfHour(now() - INTERVAL 24 HOUR)
-GROUP BY hour, market_id
+GROUP BY hour, product_id
 ORDER BY hour DESC;
 ```
 
@@ -88,18 +88,18 @@ ORDER BY hour DESC;
 ```sql
 -- ✅ GOOD: Use indexed columns first
 SELECT *
-FROM markets_analytics
+FROM products_analytics
 WHERE date >= '2025-01-01'
-  AND market_id = 'market-123'
-  AND volume > 1000
+  AND product_id = 'product-123'
+  AND sales > 1000
 ORDER BY date DESC
 LIMIT 100;
 
 -- ❌ BAD: Filter on non-indexed columns first
 SELECT *
-FROM markets_analytics
-WHERE volume > 1000
-  AND market_name LIKE '%election%'
+FROM products_analytics
+WHERE sales > 1000
+  AND product_name LIKE '%wireless%'
   AND date >= '2025-01-01';
 ```
 
@@ -109,22 +109,22 @@ WHERE volume > 1000
 -- ✅ GOOD: Use ClickHouse-specific aggregation functions
 SELECT
     toStartOfDay(created_at) AS day,
-    market_id,
-    sum(volume) AS total_volume,
-    count() AS total_trades,
-    uniq(trader_id) AS unique_traders,
-    avg(trade_size) AS avg_size
-FROM trades
+    product_id,
+    sum(sales) AS total_sales,
+    count() AS total_orders,
+    uniq(buyer_id) AS unique_buyers,
+    avg(order_size) AS avg_size
+FROM orders
 WHERE created_at >= today() - INTERVAL 7 DAY
-GROUP BY day, market_id
-ORDER BY day DESC, total_volume DESC;
+GROUP BY day, product_id
+ORDER BY day DESC, total_sales DESC;
 
 -- ✅ Use quantile for percentiles (more efficient than percentile)
 SELECT
-    quantile(0.50)(trade_size) AS median,
-    quantile(0.95)(trade_size) AS p95,
-    quantile(0.99)(trade_size) AS p99
-FROM trades
+    quantile(0.50)(order_size) AS median,
+    quantile(0.95)(order_size) AS p95,
+    quantile(0.99)(order_size) AS p99
+FROM orders
 WHERE created_at >= now() - INTERVAL 1 HOUR;
 ```
 
@@ -134,16 +134,16 @@ WHERE created_at >= now() - INTERVAL 1 HOUR;
 -- Calculate running totals
 SELECT
     date,
-    market_id,
-    volume,
-    sum(volume) OVER (
-        PARTITION BY market_id
+    product_id,
+    sales,
+    sum(sales) OVER (
+        PARTITION BY product_id
         ORDER BY date
         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-    ) AS cumulative_volume
-FROM markets_analytics
+    ) AS cumulative_sales
+FROM products_analytics
 WHERE date >= today() - INTERVAL 30 DAY
-ORDER BY market_id, date;
+ORDER BY product_id, date;
 ```
 
 ## Data Insertion Patterns
@@ -163,26 +163,26 @@ const clickhouse = new ClickHouse({
 })
 
 // ✅ Batch insert (efficient)
-async function bulkInsertTrades(trades: Trade[]) {
-  const values = trades.map(trade => `(
-    '${trade.id}',
-    '${trade.market_id}',
-    '${trade.user_id}',
-    ${trade.amount},
-    '${trade.timestamp.toISOString()}'
+async function bulkInsertOrders(orders: Order[]) {
+  const values = orders.map(order => `(
+    '${order.id}',
+    '${order.product_id}',
+    '${order.user_id}',
+    ${order.amount},
+    '${order.timestamp.toISOString()}'
   )`).join(',')
 
   await clickhouse.query(`
-    INSERT INTO trades (id, market_id, user_id, amount, timestamp)
+    INSERT INTO orders (id, product_id, user_id, amount, timestamp)
     VALUES ${values}
   `).toPromise()
 }
 
 // ❌ Individual inserts (slow)
-async function insertTrade(trade: Trade) {
+async function insertOrder(order: Order) {
   // Don't do this in a loop!
   await clickhouse.query(`
-    INSERT INTO trades VALUES ('${trade.id}', ...)
+    INSERT INTO orders VALUES ('${order.id}', ...)
   `).toPromise()
 }
 ```
@@ -195,7 +195,7 @@ import { createWriteStream } from 'fs'
 import { pipeline } from 'stream/promises'
 
 async function streamInserts() {
-  const stream = clickhouse.insert('trades').stream()
+  const stream = clickhouse.insert('orders').stream()
 
   for await (const batch of dataSource) {
     stream.write(batch)
@@ -211,27 +211,27 @@ async function streamInserts() {
 
 ```sql
 -- Create materialized view for hourly stats
-CREATE MATERIALIZED VIEW market_stats_hourly_mv
-TO market_stats_hourly
+CREATE MATERIALIZED VIEW product_stats_hourly_mv
+TO product_stats_hourly
 AS SELECT
     toStartOfHour(timestamp) AS hour,
-    market_id,
-    sumState(amount) AS total_volume,
-    countState() AS total_trades,
+    product_id,
+    sumState(amount) AS total_sales,
+    countState() AS total_orders,
     uniqState(user_id) AS unique_users
-FROM trades
-GROUP BY hour, market_id;
+FROM orders
+GROUP BY hour, product_id;
 
 -- Query the materialized view
 SELECT
     hour,
-    market_id,
-    sumMerge(total_volume) AS volume,
-    countMerge(total_trades) AS trades,
+    product_id,
+    sumMerge(total_sales) AS sales,
+    countMerge(total_orders) AS orders,
     uniqMerge(unique_users) AS users
-FROM market_stats_hourly
+FROM product_stats_hourly
 WHERE hour >= now() - INTERVAL 24 HOUR
-GROUP BY hour, market_id;
+GROUP BY hour, product_id;
 ```
 
 ## Performance Monitoring
@@ -311,9 +311,9 @@ ORDER BY signup_date DESC;
 ```sql
 -- Conversion funnel
 SELECT
-    countIf(step = 'viewed_market') AS viewed,
-    countIf(step = 'clicked_trade') AS clicked,
-    countIf(step = 'completed_trade') AS completed,
+    countIf(step = 'viewed_product') AS viewed,
+    countIf(step = 'clicked_order') AS clicked,
+    countIf(step = 'completed_order') AS completed,
     round(clicked / viewed * 100, 2) AS view_to_click_rate,
     round(completed / clicked * 100, 2) AS click_to_completion_rate
 FROM (
@@ -360,9 +360,9 @@ async function etlPipeline() {
   // 2. Transform
   const transformed = rawData.map(row => ({
     date: new Date(row.created_at).toISOString().split('T')[0],
-    market_id: row.market_slug,
-    volume: parseFloat(row.total_volume),
-    trades: parseInt(row.trade_count)
+    product_id: row.product_slug,
+    sales: parseFloat(row.total_sales),
+    orders: parseInt(row.order_count)
   }))
 
   // 3. Load to ClickHouse
@@ -381,14 +381,14 @@ import { Client } from 'pg'
 
 const pgClient = new Client({ connectionString: process.env.DATABASE_URL })
 
-pgClient.query('LISTEN market_updates')
+pgClient.query('LISTEN product_updates')
 
 pgClient.on('notification', async (msg) => {
   const update = JSON.parse(msg.payload)
 
-  await clickhouse.insert('market_updates', [
+  await clickhouse.insert('product_updates', [
     {
-      market_id: update.id,
+      product_id: update.id,
       event_type: update.operation,  // INSERT, UPDATE, DELETE
       timestamp: new Date(),
       data: JSON.stringify(update.new_data)
