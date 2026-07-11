@@ -1,7 +1,16 @@
 --- @diagnostic disable: different-requires
 -- LSP: mason + mason-lspconfig + lspconfig (formerly after/plugin/lsp.lua).
--- Loads when a file is opened rather than at startup.
-return {
+-- mason loads after startup (VeryLazy) so :Mason is available without opening a file;
+-- mason-lspconfig + lspconfig load lazily when a file is opened.
+local mason = {
+  'williamboman/mason.nvim',
+  event = "VeryLazy",
+  config = function()
+    require('mason').setup()
+  end,
+}
+
+local lspconfig = {
   'neovim/nvim-lspconfig',
   event = { "BufReadPre", "BufNewFile" },
   dependencies = {
@@ -9,7 +18,6 @@ return {
     'williamboman/mason-lspconfig.nvim',
   },
   config = function()
-    require('mason').setup()
     require('mason-lspconfig').setup({
       ensure_installed = {},
       handlers = {
@@ -90,3 +98,5 @@ return {
     })
   end,
 }
+
+return { mason, lspconfig }
