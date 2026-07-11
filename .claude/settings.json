@@ -236,5 +236,6 @@
   "editorMode": "normal",
   "teammateMode": "tmux",
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false
+  "voiceEnabled": false,
+  "advisorModel": "opus"
 }
