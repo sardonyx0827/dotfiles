@@ -5,221 +5,91 @@ disable-model-invocation: true
 user-invocable: false
 ---
 
-# Project Guidelines Skill (Example)
+# Project Guidelines Skill (Template)
 
-This is an example of a project-specific skill. Use this as a template for your own projects.
+A copy-me template for a **project-specific** skill. Drop it into a real project
+as `.claude/skills/<project>-guidelines/SKILL.md`, then replace every section
+below with that project's actual details. Placeholders are written as
+`<YourProject>` / `<...>`.
 
-Based on a real production application: [Zenith](https://zenith.chat) - AI-powered customer discovery platform.
+A project skill captures the things a generic reviewer or coding assistant
+can't guess: the stack, the directory layout, the house patterns, how tests and
+deploys are run, and the non-negotiable rules.
 
 ---
 
 ## When to Use
 
-Reference this skill when working on the specific project it's designed for. Project skills contain:
+Reference this skill when working on the project it describes. It should carry:
 
-- Architecture overview
-- File structure
-- Code patterns
-- Testing requirements
-- Deployment workflow
+- Architecture overview (stack + service topology)
+- File structure (where things live)
+- Code patterns (the house style, shown as short snippets)
+- Testing requirements (how to run tests and what to cover)
+- Deployment workflow (how a change reaches production)
 
 ---
 
 ## Architecture Overview
 
-**Tech Stack:**
+Replace with your real stack. Example shape:
 
-- **Frontend**: Next.js 15 (App Router), TypeScript, React
-- **Backend**: FastAPI (Python), Pydantic models
-- **Database**: Supabase (PostgreSQL)
-- **AI**: Claude API with tool calling and structured output
-- **Deployment**: Google Cloud Run
-- **Testing**: Playwright (E2E), pytest (backend), React Testing Library
+- **Frontend**: `<framework>` (e.g. Next.js App Router + TypeScript)
+- **Backend**: `<framework>` (e.g. FastAPI + Pydantic)
+- **Database**: `<db>` (e.g. PostgreSQL)
+- **Deployment**: `<target>` (e.g. Cloud Run / Vercel)
+- **Testing**: `<tools>` (e.g. Playwright E2E, pytest, React Testing Library)
 
-**Services:**
+Sketch the service topology so a newcomer sees how a request flows:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         Frontend                            │
-│  Next.js 15 + TypeScript + TailwindCSS                      │
-│  Deployed: Vercel / Cloud Run                               │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                         Backend                             │
-│  FastAPI + Python 3.11 + Pydantic                           │
-│  Deployed: Cloud Run                                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-        ┌──────────┐   ┌──────────┐   ┌──────────┐
-        │ Supabase │   │  Claude  │   │  Redis   │
-        │ Database │   │   API    │   │  Cache   │
-        └──────────┘   └──────────┘   └──────────┘
+Client  ->  <frontend>  ->  <backend API>  ->  <database> / <external APIs>
 ```
 
 ---
 
 ## File Structure
 
+Map the directories a contributor needs to find their way around:
+
 ```
-project/
-├── frontend/
-│   └── src/
-│       ├── app/              # Next.js app router pages
-│       │   ├── api/          # API routes
-│       │   ├── (auth)/       # Auth-protected routes
-│       │   └── workspace/    # Main app workspace
-│       ├── components/       # React components
-│       │   ├── ui/           # Base UI components
-│       │   ├── forms/        # Form components
-│       │   └── layouts/      # Layout components
-│       ├── hooks/            # Custom React hooks
-│       ├── lib/              # Utilities
-│       ├── types/            # TypeScript definitions
-│       └── config/           # Configuration
-│
-├── backend/
-│   ├── routers/              # FastAPI route handlers
-│   ├── models.py             # Pydantic models
-│   ├── main.py               # FastAPI app entry
-│   ├── auth_system.py        # Authentication
-│   ├── database.py           # Database operations
-│   ├── services/             # Business logic
-│   └── tests/                # pytest tests
-│
-├── deploy/                   # Deployment configs
-├── docs/                     # Documentation
-└── scripts/                  # Utility scripts
+<project>/
+├── frontend/          # UI (framework, components, hooks, lib, types)
+├── backend/           # API handlers, models, services, tests
+├── deploy/            # Deployment configs
+├── docs/              # Documentation
+└── scripts/           # Utility scripts
 ```
 
 ---
 
 ## Code Patterns
 
-### API Response Format (FastAPI)
+Show the 2-3 patterns most repeated in the codebase so new code matches. Keep
+snippets short and idiomatic. Illustrative example — a typed API-response
+envelope shared by both ends:
 
 ```python
-from pydantic import BaseModel
-from typing import Generic, TypeVar, Optional
-
-T = TypeVar('T')
-
+# backend: a uniform result envelope
 class ApiResponse(BaseModel, Generic[T]):
     success: bool
-    data: Optional[T] = None
-    error: Optional[str] = None
-
-    @classmethod
-    def ok(cls, data: T) -> "ApiResponse[T]":
-        return cls(success=True, data=data)
-
-    @classmethod
-    def fail(cls, error: str) -> "ApiResponse[T]":
-        return cls(success=False, error=error)
+    data: T | None = None
+    error: str | None = None
 ```
 
-### Frontend API Calls (TypeScript)
-
 ```typescript
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
-
+// frontend: same shape, one fetch wrapper that never throws on HTTP errors
 async function fetchApi<T>(
   endpoint: string,
   options?: RequestInit,
 ): Promise<ApiResponse<T>> {
   try {
-    const response = await fetch(`/api${endpoint}`, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-      },
-    });
-
-    if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
-    }
-
-    return await response.json();
-  } catch (error) {
-    return { success: false, error: String(error) };
+    const res = await fetch(`/api${endpoint}`, { ...options });
+    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+    return await res.json();
+  } catch (e) {
+    return { success: false, error: String(e) };
   }
-}
-```
-
-### Claude AI Integration (Structured Output)
-
-```python
-from anthropic import Anthropic
-from pydantic import BaseModel
-
-class AnalysisResult(BaseModel):
-    summary: str
-    key_points: list[str]
-    confidence: float
-
-async def analyze_with_claude(content: str) -> AnalysisResult:
-    client = Anthropic()
-
-    response = client.messages.create(
-        model="claude-sonnet-5",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": content}],
-        tools=[{
-            "name": "provide_analysis",
-            "description": "Provide structured analysis",
-            "input_schema": AnalysisResult.model_json_schema()
-        }],
-        tool_choice={"type": "tool", "name": "provide_analysis"}
-    )
-
-    # Extract tool use result
-    tool_use = next(
-        block for block in response.content
-        if block.type == "tool_use"
-    )
-
-    return AnalysisResult(**tool_use.input)
-```
-
-### Custom Hooks (React)
-
-```typescript
-import { useState, useCallback } from "react";
-
-interface UseApiState<T> {
-  data: T | null;
-  loading: boolean;
-  error: string | null;
-}
-
-export function useApi<T>(fetchFn: () => Promise<ApiResponse<T>>) {
-  const [state, setState] = useState<UseApiState<T>>({
-    data: null,
-    loading: false,
-    error: null,
-  });
-
-  const execute = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true, error: null }));
-
-    const result = await fetchFn();
-
-    if (result.success) {
-      setState({ data: result.data!, loading: false, error: null });
-    } else {
-      setState({ data: null, loading: false, error: result.error! });
-    }
-  }, [fetchFn]);
-
-  return { ...state, execute };
 }
 ```
 
@@ -227,69 +97,16 @@ export function useApi<T>(fetchFn: () => Promise<ApiResponse<T>>) {
 
 ## Testing Requirements
 
-### Backend (pytest)
+State the commands and the coverage bar so nobody has to guess:
 
 ```bash
-# Run all tests
-poetry run pytest tests/
+# backend
+<runner> test            # e.g. pytest tests/
+<runner> test --cov      # coverage report
 
-# Run with coverage
-poetry run pytest tests/ --cov=. --cov-report=html
-
-# Run specific test file
-poetry run pytest tests/test_auth.py -v
-```
-
-**Test structure:**
-
-```python
-import pytest
-from httpx import AsyncClient
-from main import app
-
-@pytest.fixture
-async def client():
-    async with AsyncClient(app=app, base_url="http://test") as ac:
-        yield ac
-
-@pytest.mark.asyncio
-async def test_health_check(client: AsyncClient):
-    response = await client.get("/health")
-    assert response.status_code == 200
-    assert response.json()["status"] == "healthy"
-```
-
-### Frontend (React Testing Library)
-
-```bash
-# Run tests
-npm run test
-
-# Run with coverage
-npm run test -- --coverage
-
-# Run E2E tests
-npm run test:e2e
-```
-
-**Test structure:**
-
-```typescript
-import { render, screen, fireEvent } from '@testing-library/react'
-import { WorkspacePanel } from './WorkspacePanel'
-
-describe('WorkspacePanel', () => {
-  it('renders workspace correctly', () => {
-    render(<WorkspacePanel />)
-    expect(screen.getByRole('main')).toBeInTheDocument()
-  })
-
-  it('handles session creation', async () => {
-    render(<WorkspacePanel />)
-    fireEvent.click(screen.getByText('New Session'))
-    expect(await screen.findByText('Session created')).toBeInTheDocument()
-  })
-})
+# frontend
+<pkg> run test           # unit / component
+<pkg> run test:e2e       # end-to-end
 ```
 
 ---
@@ -299,8 +116,7 @@ describe('WorkspacePanel', () => {
 ### Pre-Deployment Checklist
 
 - [ ] All tests passing locally
-- [ ] `npm run build` succeeds (frontend)
-- [ ] `poetry run pytest` passes (backend)
+- [ ] Build succeeds (frontend + backend)
 - [ ] No hardcoded secrets
 - [ ] Environment variables documented
 - [ ] Database migrations ready
@@ -308,48 +124,40 @@ describe('WorkspacePanel', () => {
 ### Deployment Commands
 
 ```bash
-# Build and deploy frontend
-cd frontend && npm run build
-gcloud run deploy frontend --source .
-
-# Build and deploy backend
-cd backend
-gcloud run deploy backend --source .
+# replace with your real deploy commands
+<deploy frontend>
+<deploy backend>
 ```
 
-### Environment Variables
+List required environment variables by name only — never commit real values:
 
 ```bash
-# Frontend (.env.local)
-NEXT_PUBLIC_API_URL=https://api.example.com
-NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-
-# Backend (.env)
-DATABASE_URL=postgresql://...
-ANTHROPIC_API_KEY=sk-ant-...
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_KEY=eyJ...
+# frontend
+<PUBLIC_API_URL>, <PUBLIC_*_KEY>
+# backend
+<DATABASE_URL>, <PROVIDER_API_KEY>
 ```
 
 ---
 
 ## Critical Rules
 
+Spell out the non-negotiables for the project. Common examples:
+
 1. **No emojis** in code, comments, or documentation
-2. **Immutability** - never mutate objects or arrays
+2. **Immutability** - never mutate objects or arrays in place
 3. **TDD** - write tests before implementation
-4. **80% coverage** minimum
+4. **Coverage floor** - e.g. 80% minimum
 5. **Many small files** - 200-400 lines typical, 800 max
-6. **No console.log** in production code
-7. **Proper error handling** with try/catch
-8. **Input validation** with Pydantic/Zod
+6. **No debug logging** (`console.log` / `print`) in production code
+7. **Proper error handling** on every I/O boundary
+8. **Input validation** at trust boundaries (Pydantic / Zod)
 
 ---
 
 ## Related Skills
 
-- `coding-standards.md` - General coding best practices
-- `backend-patterns.md` - API and database patterns
-- `frontend-patterns.md` - React and Next.js patterns
-- `tdd-workflow/` - Test-driven development methodology
+- `coding-standards/` - general coding best practices
+- `backend-patterns/` - API and database patterns
+- `frontend-patterns/` - React and Next.js patterns
+- `tdd-workflow/` - test-driven development methodology
