@@ -70,11 +70,21 @@ Given that model, the flow is tuned for **latency first**:
    short-circuit is the main latency win.
 3. **Codex = tier-2 arbiter, only for the flagged minority.** When Gemini
    returns `ASK` / `DENY` / `ERROR`, the command is escalated to the slower but
-   more capable Codex, whose verdict is final — **including overriding a Gemini
-   `DENY` back to `ALLOW`**. This is deliberate: a throughput-tuned model
-   over-flags, and re-checking only the flagged minority with a stronger model
-   keeps false positives from becoming constant confirmation prompts. Trusting
-   the better model on the hard cases is the whole point of the second tier.
+   more capable Codex. A throughput-tuned model over-flags, so re-checking only
+   the flagged minority with a stronger model keeps false positives from becoming
+   constant confirmation prompts. How Codex's verdict is applied depends on how
+   hard Gemini's flag was — a lone `ALLOW` clears a soft flag but **not** an
+   explicit refusal:
+   - Gemini **`ASK` / `ERROR`** (soft — uncertainty or unavailability, not a
+     refusal): a Codex `ALLOW` resolves it to `allow`.
+   - Gemini **`DENY`** (an explicit refusal): a lone Codex `ALLOW` does **not**
+     override it back to `allow`. The disagreement resolves to `ask`, put to the
+     human with both verdicts attached. Letting one model's `ALLOW` override the
+     other's `DENY` would turn the cascade into an OR-gate — convincing _either_
+     model would be enough to run the command, the opposite of what a second
+     opinion is for.
+   - Codex `DENY` → `deny`; Codex `ASK` → `ask`; Codex `ERROR` → fall back to
+     Gemini's verdict (`deny` unless Gemini's flag was soft).
 4. **Fail toward the human.** Malformed stdin, an unavailable Codex, or any
    exception raised before a decision is emitted resolves to `ask` / `deny`,
    never a silent allow.
