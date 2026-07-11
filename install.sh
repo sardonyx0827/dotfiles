@@ -71,6 +71,43 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Fetch a remote install script to a temp file, then execute it -- instead of
+# piping curl straight into a shell. A bare `curl ... | sh` executes bytes as
+# they arrive, so a truncated download (connection dropped mid-transfer) runs a
+# PARTIAL script; downloading in full first lets curl's exit status gate whether
+# the script runs at all. stderr from curl and the script is left visible on
+# purpose (no `2>/dev/null`) so a failed or tampered install surfaces instead of
+# being silently swallowed.
+# Usage: fetch_and_run <url> <interpreter> [interpreter-args...]
+#   fetch_and_run https://astral.sh/uv/install.sh sh
+#   fetch_and_run https://get.docker.com sudo sh
+# When called in a guarded context (`|| print_warning`, or `if ...; then`) set -e
+# is disabled inside the function, so the temp-file cleanup at the end always
+# runs. When called bare, a failure propagates and aborts the script (set -e),
+# matching the original unguarded `curl | bash` behavior.
+fetch_and_run() {
+  local url="$1"
+  shift
+  local tmp status
+  tmp="$(mktemp)"
+  if ! curl -fsSL "$url" -o "$tmp"; then
+    print_warning "Failed to download $url"
+    rm -f "$tmp"
+    return 1
+  fi
+  # A blank body can slip past `curl -f` (e.g. an empty 200 response); never
+  # hand an empty script to a (possibly root) shell.
+  if [ ! -s "$tmp" ]; then
+    print_warning "Downloaded empty script from $url"
+    rm -f "$tmp"
+    return 1
+  fi
+  "$@" "$tmp"
+  status=$?
+  rm -f "$tmp"
+  return "$status"
+}
+
 # Install Homebrew (macOS)
 install_homebrew() {
   if ! command_exists brew; then
@@ -275,7 +312,7 @@ install_uv() {
     return
   fi
   print_info "Installing uv (Astral)..."
-  curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null ||
+  fetch_and_run https://astral.sh/uv/install.sh sh ||
     print_warning "Failed to install uv"
   # uv installs to ~/.local/bin; make it visible for the rest of this script.
   export PATH="$HOME/.local/bin:$PATH"
@@ -292,7 +329,7 @@ install_pyenv() {
   fi
   if [[ "$OS" == "ubuntu" ]]; then
     print_info "Installing pyenv..."
-    curl -fsSL https://pyenv.run | bash 2>/dev/null ||
+    fetch_and_run https://pyenv.run bash ||
       print_warning "Failed to install pyenv"
     if command_exists pyenv || [ -d "$HOME/.pyenv" ]; then
       print_success "pyenv installed"
@@ -333,8 +370,8 @@ install_lazydocker() {
   if [[ "$OS" == "macos" ]]; then
     brew install lazydocker || print_warning "Failed to install lazydocker"
   elif [[ "$OS" == "ubuntu" ]]; then
-    curl -fsSL https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh |
-      bash 2>/dev/null || print_warning "Failed to install lazydocker"
+    fetch_and_run https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh bash ||
+      print_warning "Failed to install lazydocker"
   fi
   if command_exists lazydocker; then
     print_success "lazydocker installed"
@@ -356,7 +393,7 @@ install_docker() {
     # nothing on the happy path — the `if` (no else) returns 0, so `set -e`
     # never aborts the installer.
   elif [[ "$OS" == "ubuntu" ]]; then
-    curl -fsSL https://get.docker.com | sudo sh 2>/dev/null ||
+    fetch_and_run https://get.docker.com sudo sh ||
       print_warning "Failed to install Docker engine"
     sudo usermod -aG docker "$USER" 2>/dev/null || true
     print_info "Log out/in (or 'newgrp docker') for group membership to take effect."
@@ -459,7 +496,10 @@ install_nodejs() {
     if [[ "$OS" == "macos" ]]; then
       brew install node
     elif [[ "$OS" == "ubuntu" ]]; then
-      curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+      # Bare (unguarded) call: a NodeSource setup failure aborts the install
+      # under set -e, matching the original `curl | sudo -E bash -`. The `-`
+      # (read from stdin) is dropped because fetch_and_run passes a file path.
+      fetch_and_run https://deb.nodesource.com/setup_lts.x sudo -E bash
       sudo apt-get install -y nodejs
     fi
     print_success "Node.js installed"
