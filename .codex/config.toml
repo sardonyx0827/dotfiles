@@ -1,4 +1,6 @@
-model = "gpt-5.6-terra"
+# model: intentionally unset — inherit the Codex CLI's built-in default,
+# which auto-tracks as the CLI updates (no version string to maintain here).
+# Pin a tier (e.g. "gpt-5.6-terra") only to deliberately override the default.
 model_reasoning_effort = "xhigh"
 
 hide_agent_reasoning = true

@@ -20,13 +20,13 @@ After receiving an answer from Codex MCP, validate its soundness with Claude.
 
 ### `mcp__codex__codex` parameters
 
-| Parameter         | Description               | Example values                                                            |
-| ----------------- | ------------------------- | ------------------------------------------------------------------------- |
-| `prompt`          | Initial prompt (required) | Detailed description of the problem                                       |
-| `sandbox`         | Sandbox mode              | `read-only`                                                               |
-| `approval-policy` | Shell command approval    | `untrusted`, `on-failure`, `on-request`, `never`                          |
-| `model`           | Model selection           | `gpt-5.6-terra`                                                           |
-| `cwd`             | Working directory         | Project root path                                                         |
+| Parameter         | Description               | Example values                                                  |
+| ----------------- | ------------------------- | --------------------------------------------------------------- |
+| `prompt`          | Initial prompt (required) | Detailed description of the problem                             |
+| `sandbox`         | Sandbox mode              | `read-only`                                                     |
+| `approval-policy` | Shell command approval    | `untrusted`, `on-failure`, `on-request`, `never`                |
+| `model`           | Model selection           | omit to inherit the Codex default (pin a tier only to override) |
+| `cwd`             | Working directory         | Project root path                                               |
 
 ### `mcp__codex__codex-reply` parameters
 

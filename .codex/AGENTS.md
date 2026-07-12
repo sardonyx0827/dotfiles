@@ -96,7 +96,7 @@ Conventions when calling:
 
 ## 5. Model Selection Guidelines
 
-- Main session: `model` in `config.toml` (default: gpt-5.6-terra)
+- Main session: `model` is left unset in `config.toml`, so it inherits the Codex CLI's built-in default (auto-tracks on CLI update; pin a tier only to override)
 - Reasoning effort (`model_reasoning_effort`): lower it for light work that needs no reasoning, such as Grep/search and template extraction; raise it for design, large-scale refactoring, and overall analysis
 - SubAgents: follow `[agents]` in `config.toml` (`max_threads` / `max_depth`)
 - On failure, raise the reasoning effort by one level and retry
