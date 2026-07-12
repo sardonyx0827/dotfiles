@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 696" width="1240" height="696" font-family="'Helvetica Neue', Arial, 'Hiragino Sans', 'Noto Sans JP', sans-serif">
+  <defs>
+    <style>.mono { font-family: 'SF Mono', 'Menlo', 'Consolas', 'DejaVu Sans Mono', monospace; }</style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="696" fill="#191724"/>
+  <rect x="8" y="8" width="1224" height="680" rx="18" fill="none" stroke="#26233a" stroke-width="1.5"/>
+
+  <!-- header -->
+  <text x="42" y="70" font-size="32" font-weight="700" fill="#c4a7e7">Multi‑LLM Orchestration</text>
+  <text x="44" y="100" font-size="15" fill="#908caa">Claude Code を主軸に、Gemini・Codex・Copilot・Gemma を役割分担で連携</text>
+
+  <!-- Claude Code primary band -->
+  <rect x="40" y="124" width="1160" height="84" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <rect x="40" y="124" width="6" height="84" rx="3" fill="#ebbcba"/>
+  <text x="66" y="162" font-size="19" font-weight="700" fill="#e0def4">Claude Code</text>
+  <text x="210" y="162" font-size="13" fill="#6e6a86" class="mono">— 主エンジン (Opus session)</text>
+  <text x="66" y="192" font-size="13" fill="#908caa" class="mono">15 agents · 19 commands · 24 skills · hooks · statusline · gemini‑consultant MCP</text>
+
+  <text x="620" y="230" font-size="12.5" fill="#6e6a86" text-anchor="middle">──  4 つの連携面  ──</text>
+
+  <!-- A. Second Opinion (foam) -->
+  <rect x="40" y="244" width="568" height="160" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="64" cy="274" r="6" fill="#9ccfd8"/>
+  <text x="82" y="280" font-size="16" font-weight="700" fill="#e0def4">Second Opinion — 第二意見 (多段)</text>
+  <line x1="62" y1="296" x2="588" y2="296" stroke="#403d52"/>
+  <g class="mono" font-size="13">
+    <text x="64" y="322" fill="#e0def4">advisor (Opus) · 全軌跡の高速セルフチェック</text>
+    <text x="64" y="347" fill="#e0def4">Codex · クロスベンダーの独立レビュー</text>
+    <text x="64" y="372" fill="#e0def4">Gemini · gemini‑consultant MCP で相談</text>
+    <text x="64" y="397" fill="#6e6a86" font-size="12">判定が割れたら両論をユーザーへ提示</text>
+  </g>
+
+  <!-- B. Bash Safety Gate (love) -->
+  <rect x="632" y="244" width="568" height="160" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="656" cy="274" r="6" fill="#eb6f92"/>
+  <text x="674" y="280" font-size="16" font-weight="700" fill="#e0def4">Bash Safety Gate — Bash 安全ゲート</text>
+  <line x1="654" y1="296" x2="1180" y2="296" stroke="#403d52"/>
+  <g class="mono" font-size="13">
+    <text x="656" y="322" fill="#e0def4">PreToolUse フックで全 Bash を審査</text>
+    <text x="656" y="347" fill="#e0def4">Gemini ∥ Codex の並列 AND ゲート</text>
+    <text x="656" y="372" fill="#e0def4">両者 ALLOW のみ自動許可 · 割れは ask</text>
+    <text x="656" y="397" fill="#6e6a86" font-size="12">→ 詳細は bash‑review 3層フロー図</text>
+  </g>
+
+  <!-- C. In-Editor Neovim (gold) -->
+  <rect x="40" y="424" width="568" height="160" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="64" cy="454" r="6" fill="#f6c177"/>
+  <text x="82" y="460" font-size="16" font-weight="700" fill="#e0def4">In‑Editor — Neovim</text>
+  <line x1="62" y1="476" x2="588" y2="476" stroke="#403d52"/>
+  <g class="mono" font-size="13">
+    <text x="64" y="502" fill="#e0def4">統一バックエンドで 5 ツール</text>
+    <text x="64" y="527" fill="#e0def4">Claude · Codex · Gemini · Copilot · Gemma</text>
+    <text x="64" y="552" fill="#e0def4">commit生成 / 選択リライト / 校正</text>
+    <text x="64" y="577" fill="#6e6a86" font-size="12">claude→gemini フォールバック</text>
+  </g>
+
+  <!-- D. Config Parity (iris) -->
+  <rect x="632" y="424" width="568" height="160" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="656" cy="454" r="6" fill="#c4a7e7"/>
+  <text x="674" y="460" font-size="16" font-weight="700" fill="#e0def4">Config Parity — 設定ミラー</text>
+  <line x1="654" y1="476" x2="1180" y2="476" stroke="#403d52"/>
+  <g class="mono" font-size="13">
+    <text x="656" y="502" fill="#e0def4">Claude ⇆ Codex を対で維持</text>
+    <text x="656" y="527" fill="#e0def4">agents (15 ⇆ 14) · hooks · skills</text>
+    <text x="656" y="552" fill="#e0def4">_bash_review_common.py はバイト同一</text>
+    <text x="656" y="577" fill="#6e6a86" font-size="12">test_hook_sync がドリフトを検知</text>
+  </g>
+
+  <!-- vendor -> role legend -->
+  <rect x="40" y="604" width="1160" height="52" rx="12" fill="#1f1d2e" stroke="#403d52"/>
+  <text x="64" y="635" font-size="12.5" font-weight="700" fill="#6e6a86">役割</text>
+  <g font-size="12.5" class="mono">
+    <circle cx="128" cy="630" r="5" fill="#ebbcba"/>
+    <text x="140" y="635"><tspan fill="#ebbcba" font-weight="700">Claude</tspan><tspan fill="#908caa">  主エンジン</tspan></text>
+    <circle cx="350" cy="630" r="5" fill="#9ccfd8"/>
+    <text x="362" y="635"><tspan fill="#9ccfd8" font-weight="700">Codex</tspan><tspan fill="#908caa">  敵対レビュー</tspan></text>
+    <circle cx="590" cy="630" r="5" fill="#f6c177"/>
+    <text x="602" y="635"><tspan fill="#f6c177" font-weight="700">Gemini</tspan><tspan fill="#908caa">  一次審査・相談</tspan></text>
+    <circle cx="852" cy="630" r="5" fill="#c4a7e7"/>
+    <text x="864" y="635"><tspan fill="#c4a7e7" font-weight="700">Copilot</tspan><tspan fill="#908caa">  補完・CLI</tspan></text>
+    <circle cx="1044" cy="630" r="5" fill="#31748f"/>
+    <text x="1056" y="635"><tspan fill="#31748f" font-weight="700">Gemma</tspan><tspan fill="#908caa">  ローカル</tspan></text>
+  </g>
+
+</svg>

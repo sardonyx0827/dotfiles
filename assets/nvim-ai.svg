@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 796" width="1240" height="796" font-family="'Helvetica Neue', Arial, 'Hiragino Sans', 'Noto Sans JP', sans-serif">
+  <defs>
+    <style>.mono { font-family: 'SF Mono', 'Menlo', 'Consolas', 'DejaVu Sans Mono', monospace; }</style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="796" fill="#191724"/>
+  <rect x="8" y="8" width="1224" height="780" rx="18" fill="none" stroke="#26233a" stroke-width="1.5"/>
+
+  <!-- header -->
+  <text x="42" y="70" font-size="32" font-weight="700" fill="#c4a7e7">Neovim AI</text>
+  <text x="44" y="100" font-size="15" fill="#908caa">エディタ内マルチ LLM — 統一バックエンドで補完・生成・校正・リライト</text>
+
+  <!-- tool registry band -->
+  <rect x="40" y="124" width="1160" height="84" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <text x="66" y="150" font-size="13" font-weight="700" fill="#6e6a86">backend registry — 5 tools</text>
+  <g class="mono" font-size="12.5">
+    <rect x="66" y="160" width="210" height="34" rx="8" fill="#26233a" stroke="#403d52"/>
+    <text x="171" y="181" text-anchor="middle"><tspan fill="#ebbcba" font-weight="700">claude</tspan><tspan fill="#908caa"> · sonnet</tspan></text>
+    <rect x="290" y="160" width="210" height="34" rx="8" fill="#26233a" stroke="#403d52"/>
+    <text x="395" y="181" text-anchor="middle"><tspan fill="#9ccfd8" font-weight="700">codex</tspan><tspan fill="#908caa"> · CLI既定</tspan></text>
+    <rect x="514" y="160" width="210" height="34" rx="8" fill="#26233a" stroke="#403d52"/>
+    <text x="619" y="181" text-anchor="middle"><tspan fill="#f6c177" font-weight="700">gemini</tspan><tspan fill="#908caa"> · flash‑lite</tspan></text>
+    <rect x="738" y="160" width="210" height="34" rx="8" fill="#26233a" stroke="#403d52"/>
+    <text x="843" y="181" text-anchor="middle"><tspan fill="#c4a7e7" font-weight="700">copilot</tspan><tspan fill="#908caa"> · gpt‑5‑mini</tspan></text>
+    <rect x="962" y="160" width="210" height="34" rx="8" fill="#26233a" stroke="#403d52"/>
+    <text x="1067" y="181" text-anchor="middle"><tspan fill="#31748f" font-weight="700">gemma</tspan><tspan fill="#908caa"> · Ollama</tspan></text>
+  </g>
+
+  <!-- feature grid row 1 -->
+  <!-- 1. inline completion (foam) -->
+  <rect x="40" y="228" width="373" height="200" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="64" cy="258" r="6" fill="#9ccfd8"/>
+  <text x="80" y="263" font-size="15" font-weight="700" fill="#e0def4">インライン補完 (Copilot)</text>
+  <line x1="62" y1="278" x2="391" y2="278" stroke="#403d52"/>
+  <g class="mono" font-size="13" fill="#e0def4">
+    <text x="62" y="308">panel + NES (copilot‑lsp)</text>
+    <text x="62" y="335">toggle &lt;leader&gt;ce</text>
+    <text x="62" y="362">NES accept &lt;leader&gt;p</text>
+  </g>
+
+  <!-- 2. buffer check/fix (gold) -->
+  <rect x="433" y="228" width="373" height="200" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="457" cy="258" r="6" fill="#f6c177"/>
+  <text x="473" y="263" font-size="15" font-weight="700" fill="#e0def4">バッファ校正 → 修正</text>
+  <line x1="455" y1="278" x2="784" y2="278" stroke="#403d52"/>
+  <g class="mono" font-size="13" fill="#e0def4">
+    <text x="455" y="308">&lt;leader&gt;qf でチェック</text>
+    <text x="455" y="335">claude(sonnet) → gemini</text>
+    <text x="455" y="362">f: 構造化編集で差分適用</text>
+  </g>
+
+  <!-- 3. commit message (iris) -->
+  <rect x="826" y="228" width="374" height="200" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="850" cy="258" r="6" fill="#c4a7e7"/>
+  <text x="866" y="263" font-size="15" font-weight="700" fill="#e0def4">コミットメッセージ生成</text>
+  <line x1="848" y1="278" x2="1178" y2="278" stroke="#403d52"/>
+  <g class="mono" font-size="13" fill="#e0def4">
+    <text x="848" y="308">&lt;leader&gt;cm claude(haiku)</text>
+    <text x="848" y="335">cx codex · cg gemini</text>
+    <text x="848" y="362">cl all · co gemma</text>
+  </g>
+
+  <!-- feature grid row 2 -->
+  <!-- 4. ask & replace (love) -->
+  <rect x="40" y="448" width="373" height="200" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="64" cy="478" r="6" fill="#eb6f92"/>
+  <text x="80" y="483" font-size="15" font-weight="700" fill="#e0def4">選択リライト (visual)</text>
+  <line x1="62" y1="498" x2="391" y2="498" stroke="#403d52"/>
+  <g class="mono" font-size="13" fill="#e0def4">
+    <text x="62" y="528">&lt;C‑c&gt; claude · &lt;C‑x&gt; codex</text>
+    <text x="62" y="555">&lt;C‑g&gt; gemini · &lt;C‑p&gt; copilot</text>
+    <text x="62" y="582">&lt;C‑l&gt; all · &lt;C‑o&gt; gemma</text>
+  </g>
+
+  <!-- 5. diagnostics copy (pine) -->
+  <rect x="433" y="448" width="373" height="200" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="457" cy="478" r="6" fill="#31748f"/>
+  <text x="473" y="483" font-size="15" font-weight="700" fill="#e0def4">LSP 診断コピー</text>
+  <line x1="455" y1="498" x2="784" y2="498" stroke="#403d52"/>
+  <g class="mono" font-size="13" fill="#e0def4">
+    <text x="455" y="528">&lt;leader&gt;&lt;leader&gt;d 現在buf</text>
+    <text x="455" y="555">&lt;leader&gt;&lt;leader&gt;a 全buf</text>
+    <text x="455" y="582">clipboard + tmux buffer</text>
+  </g>
+
+  <!-- 6. file:line ref (rose) -->
+  <rect x="826" y="448" width="374" height="200" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="850" cy="478" r="6" fill="#ebbcba"/>
+  <text x="866" y="483" font-size="15" font-weight="700" fill="#e0def4">ファイル:行 参照</text>
+  <line x1="848" y1="498" x2="1178" y2="498" stroke="#403d52"/>
+  <g class="mono" font-size="13" fill="#e0def4">
+    <text x="848" y="528">&lt;leader&gt;&lt;leader&gt;c 選択範囲</text>
+    <text x="848" y="555">@path#L1‑2 形式</text>
+    <text x="848" y="582">AI へ貼り付け用</text>
+  </g>
+
+  <!-- design notes band -->
+  <rect x="40" y="664" width="1160" height="92" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <text x="66" y="690" font-size="13" font-weight="700" fill="#6e6a86">設計ポイント</text>
+  <g class="mono" font-size="12.5" fill="#908caa">
+    <text x="66" y="714">統一 backend.run — CLI(stdin) / Ollama(HTTP:11434) · run_with_fallback で claude→gemini フォールバック</text>
+    <text x="66" y="738">構造化編集は original を buffer と照合して安全適用（不一致はスキップ） · all は複数ツール同時 → Tab 切替</text>
+  </g>
+
+</svg>

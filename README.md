@@ -7,6 +7,12 @@
 
 > **English summary**: Personal dotfiles unifying Zsh, Neovim, tmux, and WezTerm under the Rosé Pine theme, plus agent / skill / hook configurations for AI coding tools (Claude Code, Codex, Gemini CLI, Copilot CLI). A cross-platform `install.sh` (macOS / Ubuntu / WSL) symlinks everything, and the hook / installer logic is covered by a pytest suite with a 90% coverage gate in CI. Deep-dive docs (in English): [hook system](.claude/hooks/README.md), [custom agents](.claude/agents/README.md).
 
+<p align="center">
+  <img src="assets/architecture.svg" alt="dotfiles アーキテクチャ図 — install.sh が macOS / Ubuntu / WSL を検出し、Shell・Editors・AI Dev Tools・CI を Rosé Pine で統一管理する構成" width="100%">
+</p>
+
+> **AI 連携ドキュメント**: Claude Code を主軸とした複数 LLM（Gemini・Codex・Copilot・Gemma）の連携、Bash 安全ゲート（bash-review）、Neovim のエディタ内 AI の構成図と解説は **[docs/ai-integration.md](docs/ai-integration.md)** にまとめています。
+
 ## 目次
 
 - [技術スタック](#技術スタック)
