@@ -375,12 +375,9 @@ npm install -g @github/copilot
 
 | サーバー            | 用途                            |
 | ------------------- | ------------------------------- |
-| `github`            | GitHub Copilot MCP (HTTP)       |
 | `context7`          | 最新ライブラリドキュメント取得  |
 | `codex`             | Codex 連携                      |
 | `serena`            | コードベース解析 (LSP)          |
-| `MCP_DOCKER`        | Docker MCP ゲートウェイ         |
-| `drawio`            | 図の生成                        |
 | `gemini-consultant` | 自作 Gemini 相談用 MCP サーバー |
 
 ### 一括更新

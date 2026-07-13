@@ -378,7 +378,7 @@ install_lazydocker() {
   fi
 }
 
-# Install Docker — MCP_DOCKER gateway and the dsollama/deollama aliases.
+# Install Docker — used by the dsollama/deollama aliases.
 install_docker() {
   if command_exists docker; then
     print_success "Docker already installed"
@@ -387,7 +387,7 @@ install_docker() {
   print_info "Installing Docker..."
   if [[ "$OS" == "macos" ]]; then
     brew install --cask docker || print_warning "Failed to install Docker Desktop"
-    print_info "Launch Docker Desktop once and enable the MCP Toolkit for the MCP_DOCKER gateway."
+    print_info "Launch Docker Desktop once to put the docker CLI on PATH."
     # macOS `--cask docker` does not put the `docker` CLI on PATH until Docker
     # Desktop is launched once, so the trailing check below legitimately finds
     # nothing on the happy path — the `if` (no else) returns 0, so `set -e`
@@ -471,12 +471,9 @@ register_claude_mcp_servers() {
     fi
   }
 
-  add_mcp github --transport http https://api.githubcopilot.com/mcp/
   add_mcp context7 -- npx -y @upstash/context7-mcp
   add_mcp codex -- codex mcp-server
   add_mcp serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
-  add_mcp MCP_DOCKER -- docker mcp gateway run
-  add_mcp drawio -- npx -y @drawio/mcp
 
   # Bare `python` does not exist on stock Ubuntu or Homebrew installs
   # (only `python3`); resolve a concrete interpreter instead.
