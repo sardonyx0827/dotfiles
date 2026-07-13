@@ -1,7 +1,9 @@
 """Tests for install.sh (sourced; main() is guarded and never runs here)."""
 
 import json
+import re
 import subprocess
+from pathlib import Path
 
 from conftest import REPO_ROOT
 
@@ -449,3 +451,82 @@ class TestHooksJsonTemplate:
         assert rendered.is_file()
         assert not rendered.is_symlink()
         assert str(home) in rendered.read_text(encoding="utf-8")
+
+
+# A curl stub that "downloads" a script by writing it to curl's `-o` target.
+# The written script echoes its own path ($0) and positional args ($*) so the
+# tests can assert both that it ran and how fetch_and_run invoked it.
+_CURL_WRITES_SCRIPT = r"""
+out=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  prev="$a"
+done
+[ -n "$out" ] && printf '%s\n' 'echo "RAN tmp=$0 args=[$*]"' > "$out"
+"""
+
+
+class TestFetchAndRun:
+    """fetch_and_run downloads a remote installer in full before running it, so
+    a truncated/empty download can't execute a partial script."""
+
+    def test_runs_downloaded_script_and_cleans_up(self, shell_env):
+        shell_env.stub("curl", body=_CURL_WRITES_SCRIPT)
+        res = run_sourced("fetch_and_run https://example.test/x.sh bash", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "RAN tmp=" in res.stdout
+        # With no `--`, the script receives no positional args.
+        assert "args=[]" in res.stdout
+        # The temp file must be removed after the run (no accumulation).
+        m = re.search(r"RAN tmp=(\S+) args=", res.stdout)
+        assert m, res.stdout
+        assert not Path(m.group(1)).exists()
+
+    def test_passes_positional_args_after_separator(self, shell_env):
+        # `-- --unattended` must reach the SCRIPT as $1 (Oh My Zsh's flag),
+        # not be consumed as an option to the interpreter.
+        shell_env.stub("curl", body=_CURL_WRITES_SCRIPT)
+        res = run_sourced(
+            "fetch_and_run https://example.test/x.sh bash -- --unattended",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "args=[--unattended]" in res.stdout
+
+    def test_interpreter_flags_before_separator_stay_interpreter_side(self, shell_env):
+        # Args before `--` are the interpreter's own flags and must land BEFORE
+        # the script path (this is how `sudo -E bash` callers work). `sh -x <tmp>`
+        # runs the script under xtrace -- an sh option -- so the script still runs
+        # (marker on stdout) AND the trace on stderr proves `-x` was applied to
+        # sh rather than passed to the script.
+        shell_env.stub("curl", body=_CURL_WRITES_SCRIPT)
+        res = run_sourced(
+            "fetch_and_run https://example.test/x.sh sh -x",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "RAN tmp=" in res.stdout  # script ran
+        assert "+ echo" in res.stderr  # xtrace => -x reached sh, not the script
+
+    def test_rejects_empty_download(self, shell_env):
+        # A curl that succeeds but writes nothing (empty 200) must be refused,
+        # never handed to a (possibly root) shell.
+        shell_env.stub("curl")  # default body leaves the -o target empty
+        res = run_sourced(
+            "fetch_and_run https://example.test/x.sh bash "
+            '&& echo OK || echo "FAILED rc=$?"',
+            shell_env.env,
+        )
+        assert "Downloaded empty script" in res.stdout
+        assert "FAILED rc=1" in res.stdout
+        assert "RAN tmp=" not in res.stdout
+
+    def test_download_failure_returns_nonzero(self, shell_env):
+        shell_env.stub("curl", exit_code=1)
+        res = run_sourced(
+            "fetch_and_run https://example.test/x.sh bash "
+            '&& echo OK || echo "FAILED rc=$?"',
+            shell_env.env,
+        )
+        assert "Failed to download" in res.stdout
+        assert "FAILED rc=1" in res.stdout

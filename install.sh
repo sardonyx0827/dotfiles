@@ -78,9 +78,16 @@ command_exists() {
 # the script runs at all. stderr from curl and the script is left visible on
 # purpose (no `2>/dev/null`) so a failed or tampered install surfaces instead of
 # being silently swallowed.
-# Usage: fetch_and_run <url> <interpreter> [interpreter-args...]
+# Usage: fetch_and_run <url> <interpreter> [interpreter-args...] [-- script-args...]
 #   fetch_and_run https://astral.sh/uv/install.sh sh
 #   fetch_and_run https://get.docker.com sudo sh
+#   fetch_and_run https://.../ohmyzsh/install.sh sh -- --unattended
+# Everything before an optional `--` is the interpreter and its own flags (they
+# run BEFORE the downloaded script path); everything after `--` is handed to the
+# script as positional args (AFTER the path), i.e. `sh <tmp> --unattended`. This
+# lets installers that read `$1`-style flags (Oh My Zsh's --unattended) work the
+# same as their canonical `sh -c "$(curl ...)" "" --unattended` invocation, where
+# the flag is a positional parameter, not an option to the shell itself.
 # When called in a guarded context (`|| print_warning`, or `if ...; then`) set -e
 # is disabled inside the function, so the temp-file cleanup at the end always
 # runs. When called bare, a failure propagates and aborts the script (set -e),
@@ -88,6 +95,23 @@ command_exists() {
 fetch_and_run() {
   local url="$1"
   shift
+  # Split the rest at an optional `--`: interpreter (+ its flags) on the left,
+  # script positional args on the right. No `--` => everything is interpreter
+  # side, so existing `fetch_and_run <url> sh` / `... sudo -E bash` calls are
+  # unchanged.
+  local -a interp=() script_args=()
+  local seen_sep=0 arg
+  for arg in "$@"; do
+    if [ "$seen_sep" -eq 0 ] && [ "$arg" = "--" ]; then
+      seen_sep=1
+      continue
+    fi
+    if [ "$seen_sep" -eq 1 ]; then
+      script_args+=("$arg")
+    else
+      interp+=("$arg")
+    fi
+  done
   local tmp status
   tmp="$(mktemp)"
   if ! curl -fsSL "$url" -o "$tmp"; then
@@ -102,7 +126,7 @@ fetch_and_run() {
     rm -f "$tmp"
     return 1
   fi
-  "$@" "$tmp"
+  "${interp[@]}" "$tmp" "${script_args[@]}"
   status=$?
   rm -f "$tmp"
   return "$status"
@@ -112,7 +136,9 @@ fetch_and_run() {
 install_homebrew() {
   if ! command_exists brew; then
     print_info "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Download-then-run (not `bash -c "$(curl ...)"`) so a truncated download
+    # can't execute a partial installer -- see fetch_and_run's header.
+    fetch_and_run https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh /bin/bash
 
     # Add Homebrew to PATH for Apple Silicon
     if [[ -d "/opt/homebrew/bin" ]]; then
@@ -519,7 +545,11 @@ install_nodejs() {
 install_oh_my_zsh() {
   if [ ! -d "$HOME/.oh-my-zsh" ]; then
     print_info "Installing Oh My Zsh..."
-    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+    # Download-then-run for the same truncation safety as Homebrew. `--unattended`
+    # is a positional arg to the installer (keeps it from starting a shell or
+    # running chsh -- install.sh handles the shell change separately), so it goes
+    # after `--`, yielding `sh <tmp> --unattended`.
+    fetch_and_run https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh sh -- --unattended
     print_success "Oh My Zsh installed"
   else
     print_success "Oh My Zsh already installed"
