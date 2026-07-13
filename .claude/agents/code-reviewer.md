@@ -60,7 +60,7 @@ Do a quick security smell-check during review and flag obvious issues: hardcoded
 
 ## Best Practices (MEDIUM)
 
-- Emoji usage in code/comments
+- Emoji usage in source code, comments, or commit messages (instructional / prompt Markdown such as agent & skill definitions is out of scope — emoji there are an intentional readability aid, not a violation)
 - TODO/FIXME without tickets
 - Missing JSDoc for public APIs
 - Accessibility issues (missing ARIA labels, poor contrast)
@@ -94,6 +94,6 @@ Beyond the generic checklist above, load and enforce the active project's own ru
 
 - Read the project's `CLAUDE.md` (root and nested) for repo-specific conventions
 - Apply the relevant skills (coding-standards, security-review, backend/frontend-patterns, language-specific patterns)
-- Honor stated constraints such as file-size limits, immutability requirements, and "no emojis in the codebase"
+- Honor stated constraints such as file-size limits, immutability requirements, and "no emojis in the codebase" (i.e. shipped source, comments, and commit messages — not internal tooling / prompt docs)
 
 When a project rule conflicts with the generic checklist above, the project rule wins.

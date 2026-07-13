@@ -152,7 +152,7 @@ Files to update:
 website/src/
 ├── app/ # Next.js App Router
 │ ├── api/ # API routes
-│ ├── markets/ # Markets pages
+│ ├── products/ # Products pages
 │ ├── bot/ # Bot interaction
 │ └── creator-dashboard/
 ├── components/ # React components
@@ -161,21 +161,21 @@ website/src/
 
 ## Key Components
 
-| Component         | Purpose           | Location                        |
-| ----------------- | ----------------- | ------------------------------- |
-| HeaderWallet      | Wallet connection | components/HeaderWallet.tsx     |
-| MarketsClient     | Markets listing   | app/markets/MarketsClient.js    |
-| SemanticSearchBar | Search UI         | components/SemanticSearchBar.js |
+| Component         | Purpose          | Location                        |
+| ----------------- | ---------------- | ------------------------------- |
+| HeaderAuth        | Auth connection  | components/HeaderAuth.tsx       |
+| ProductsClient    | Products listing | app/products/ProductsClient.js  |
+| SemanticSearchBar | Search UI        | components/SemanticSearchBar.js |
 
 ## Data Flow
 
-User → Markets Page → API Route → Supabase → Redis (optional) → Response
+User → Products Page → API Route → Supabase → Redis (optional) → Response
 
 ## External Dependencies
 
 - Next.js 15.1.4 - Framework
 - React 19.0.0 - UI library
-- Privy - Authentication
+- Auth0 - Authentication
 - Tailwind CSS 3.4.1 - Styling
 ```
 
@@ -190,12 +190,12 @@ User → Markets Page → API Route → Supabase → Redis (optional) → Respon
 
 ## API Routes
 
-| Route               | Method | Purpose           |
-| ------------------- | ------ | ----------------- |
-| /api/markets        | GET    | List all markets  |
-| /api/markets/search | GET    | Semantic search   |
-| /api/market/[slug]  | GET    | Single market     |
-| /api/market-price   | GET    | Real-time pricing |
+| Route                | Method | Purpose           |
+| -------------------- | ------ | ----------------- |
+| /api/products        | GET    | List all products |
+| /api/products/search | GET    | Semantic search   |
+| /api/product/[slug]  | GET    | Single product    |
+| /api/product-price   | GET    | Real-time pricing |
 
 ## Data Flow
 
@@ -215,9 +215,9 @@ API Route → Supabase Query → Redis (cache) → Response
 
 **Last Updated:** YYYY-MM-DD
 
-## Authentication (Privy)
+## Authentication
 
-- Wallet connection (Solana, Ethereum)
+- Social login (Google, GitHub)
 - Email authentication
 - Session management
 
@@ -233,11 +233,11 @@ API Route → Supabase Query → Redis (cache) → Response
 - Semantic search (KNN)
 - Fallback to substring search
 
-## Blockchain (Solana)
+## Payments (Stripe)
 
-- Wallet integration
+- Payment method integration
 - Transaction handling
-- Meteora CP-AMM SDK
+- Stripe SDK
 ```
 
 ## README Update Template

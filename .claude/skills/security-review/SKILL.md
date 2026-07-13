@@ -356,25 +356,29 @@ catch (error) {
 - [ ] Detailed errors only in server logs
 - [ ] No stack traces exposed to users
 
-### 9. Blockchain Security (Solana)
+### 9. Cryptographic Signature & Transaction Integrity
 
-#### Wallet Verification
+Applies to any feature that trusts a client-provided signature or submits
+value-bearing operations (signed webhooks, sign-in-with-signature, payments).
+
+#### Signature / Ownership Verification
 
 ```typescript
-import { verify } from "@solana/web3.js";
+import nacl from "tweetnacl";
 
-async function verifyWalletOwnership(
+// Verify a client-provided signature actually proves control of the key /
+// identity it claims — never trust the claim without checking it server-side.
+function verifySignatureOwnership(
   publicKey: string,
   signature: string,
   message: string,
 ) {
   try {
-    const isValid = verify(
+    return nacl.sign.detached.verify(
       Buffer.from(message),
       Buffer.from(signature, "base64"),
       Buffer.from(publicKey, "base64"),
     );
-    return isValid;
   } catch (error) {
     return false;
   }
@@ -407,10 +411,10 @@ async function verifyTransaction(transaction: Transaction) {
 
 #### Verification Steps
 
-- [ ] Wallet signatures verified
-- [ ] Transaction details validated
-- [ ] Balance checks before transactions
-- [ ] No blind transaction signing
+- [ ] Client-provided signatures verified server-side
+- [ ] Transaction details validated (recipient, amount)
+- [ ] Balance / limit checks before value-bearing operations
+- [ ] No blind trust of client-submitted transaction data
 
 ### 10. Dependency Security
 
@@ -632,7 +636,7 @@ Before ANY production deployment:
 - [ ] **Row Level Security**: Enabled in Supabase
 - [ ] **CORS**: Properly configured
 - [ ] **File Uploads**: Validated (size, type)
-- [ ] **Wallet Signatures**: Verified (if blockchain)
+- [ ] **Signatures**: Client-provided signatures verified server-side (payments, signed webhooks)
 
 ## Resources
 

@@ -135,7 +135,7 @@ When Agent Browser isn't available or for complex test suites, fall back to Play
 npx playwright test
 
 # Run specific test file
-npx playwright test tests/markets.spec.ts
+npx playwright test tests/products.spec.ts
 
 # Run tests in headed mode (see browser)
 npx playwright test --headed
@@ -168,7 +168,7 @@ npx playwright test --project=webkit
 ```
 a) Identify critical user journeys
    - Authentication flows (login, logout, registration)
-   - Core features (market creation, trading, searching)
+   - Core features (product creation, ordering, searching)
    - Payment flows (deposits, withdrawals)
    - Data integrity (CRUD operations)
 
@@ -237,64 +237,66 @@ tests/
 │   │   ├── login.spec.ts
 │   │   ├── logout.spec.ts
 │   │   └── register.spec.ts
-│   ├── markets/               # Market features
+│   ├── products/              # Product features
 │   │   ├── browse.spec.ts
 │   │   ├── search.spec.ts
 │   │   ├── create.spec.ts
-│   │   └── trade.spec.ts
-│   ├── wallet/                # Wallet operations
+│   │   └── order.spec.ts
+│   ├── payment/               # Payment operations
 │   │   ├── connect.spec.ts
 │   │   └── transactions.spec.ts
 │   └── api/                   # API endpoint tests
-│       ├── markets-api.spec.ts
+│       ├── products-api.spec.ts
 │       └── search-api.spec.ts
 ├── fixtures/                  # Test data and helpers
 │   ├── auth.ts                # Auth fixtures
-│   ├── markets.ts             # Market test data
-│   └── wallets.ts             # Wallet fixtures
+│   ├── products.ts            # Product test data
+│   └── payments.ts            # Payment fixtures
 └── playwright.config.ts       # Playwright configuration
 ```
 
 ### Page Object Model Pattern
 
 ```typescript
-// pages/MarketsPage.ts
+// pages/ProductsPage.ts
 import { Page, Locator } from "@playwright/test";
 
-export class MarketsPage {
+export class ProductsPage {
   readonly page: Page;
   readonly searchInput: Locator;
-  readonly marketCards: Locator;
-  readonly createMarketButton: Locator;
+  readonly productCards: Locator;
+  readonly createProductButton: Locator;
   readonly filterDropdown: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.searchInput = page.locator('[data-testid="search-input"]');
-    this.marketCards = page.locator('[data-testid="market-card"]');
-    this.createMarketButton = page.locator('[data-testid="create-market-btn"]');
+    this.productCards = page.locator('[data-testid="product-card"]');
+    this.createProductButton = page.locator(
+      '[data-testid="create-product-btn"]',
+    );
     this.filterDropdown = page.locator('[data-testid="filter-dropdown"]');
   }
 
   async goto() {
-    await this.page.goto("/markets");
+    await this.page.goto("/products");
     await this.page.waitForLoadState("networkidle");
   }
 
-  async searchMarkets(query: string) {
+  async searchProducts(query: string) {
     await this.searchInput.fill(query);
     await this.page.waitForResponse((resp) =>
-      resp.url().includes("/api/markets/search"),
+      resp.url().includes("/api/products/search"),
     );
     await this.page.waitForLoadState("networkidle");
   }
 
-  async getMarketCount() {
-    return await this.marketCards.count();
+  async getProductCount() {
+    return await this.productCards.count();
   }
 
-  async clickMarket(index: number) {
-    await this.marketCards.nth(index).click();
+  async clickProduct(index: number) {
+    await this.productCards.nth(index).click();
   }
 
   async filterByStatus(status: string) {
@@ -307,32 +309,32 @@ export class MarketsPage {
 ### Example Test with Best Practices
 
 ```typescript
-// tests/e2e/markets/search.spec.ts
+// tests/e2e/products/search.spec.ts
 import { test, expect } from "@playwright/test";
-import { MarketsPage } from "../../pages/MarketsPage";
+import { ProductsPage } from "../../pages/ProductsPage";
 
-test.describe("Market Search", () => {
-  let marketsPage: MarketsPage;
+test.describe("Product Search", () => {
+  let productsPage: ProductsPage;
 
   test.beforeEach(async ({ page }) => {
-    marketsPage = new MarketsPage(page);
-    await marketsPage.goto();
+    productsPage = new ProductsPage(page);
+    await productsPage.goto();
   });
 
-  test("should search markets by keyword", async ({ page }) => {
+  test("should search products by keyword", async ({ page }) => {
     // Arrange
-    await expect(page).toHaveTitle(/Markets/);
+    await expect(page).toHaveTitle(/Products/);
 
     // Act
-    await marketsPage.searchMarkets("trump");
+    await productsPage.searchProducts("laptop");
 
     // Assert
-    const marketCount = await marketsPage.getMarketCount();
-    expect(marketCount).toBeGreaterThan(0);
+    const productCount = await productsPage.getProductCount();
+    expect(productCount).toBeGreaterThan(0);
 
     // Verify first result contains search term
-    const firstMarket = marketsPage.marketCards.first();
-    await expect(firstMarket).toContainText(/trump/i);
+    const firstProduct = productsPage.productCards.first();
+    await expect(firstProduct).toContainText(/laptop/i);
 
     // Take screenshot for verification
     await page.screenshot({ path: "artifacts/search-results.png" });
@@ -340,26 +342,26 @@ test.describe("Market Search", () => {
 
   test("should handle no results gracefully", async ({ page }) => {
     // Act
-    await marketsPage.searchMarkets("xyznonexistentmarket123");
+    await productsPage.searchProducts("xyznonexistentproduct123");
 
     // Assert
     await expect(page.locator('[data-testid="no-results"]')).toBeVisible();
-    const marketCount = await marketsPage.getMarketCount();
-    expect(marketCount).toBe(0);
+    const productCount = await productsPage.getProductCount();
+    expect(productCount).toBe(0);
   });
 
   test("should clear search results", async ({ page }) => {
     // Arrange - perform search first
-    await marketsPage.searchMarkets("trump");
-    await expect(marketsPage.marketCards.first()).toBeVisible();
+    await productsPage.searchProducts("laptop");
+    await expect(productsPage.productCards.first()).toBeVisible();
 
     // Act - clear search
-    await marketsPage.searchInput.clear();
+    await productsPage.searchInput.clear();
     await page.waitForLoadState("networkidle");
 
-    // Assert - all markets shown again
-    const marketCount = await marketsPage.getMarketCount();
-    expect(marketCount).toBeGreaterThan(10); // Should show all markets
+    // Assert - all products shown again
+    const productCount = await productsPage.getProductCount();
+    expect(productCount).toBeGreaterThan(10); // Should show all products
   });
 });
 ```
@@ -368,24 +370,24 @@ test.describe("Market Search", () => {
 
 ### Critical User Journeys for Example Project
 
-**1. Market Browsing Flow**
+**1. Product Browsing Flow**
 
 ```typescript
-test("user can browse and view markets", async ({ page }) => {
-  // 1. Navigate to markets page
-  await page.goto("/markets");
-  await expect(page.locator("h1")).toContainText("Markets");
+test("user can browse and view products", async ({ page }) => {
+  // 1. Navigate to products page
+  await page.goto("/products");
+  await expect(page.locator("h1")).toContainText("Products");
 
-  // 2. Verify markets are loaded
-  const marketCards = page.locator('[data-testid="market-card"]');
-  await expect(marketCards.first()).toBeVisible();
+  // 2. Verify products are loaded
+  const productCards = page.locator('[data-testid="product-card"]');
+  await expect(productCards.first()).toBeVisible();
 
-  // 3. Click on a market
-  await marketCards.first().click();
+  // 3. Click on a product
+  await productCards.first().click();
 
-  // 4. Verify market details page
-  await expect(page).toHaveURL(/\/markets\/[a-z0-9-]+/);
-  await expect(page.locator('[data-testid="market-name"]')).toBeVisible();
+  // 4. Verify product details page
+  await expect(page).toHaveURL(/\/products\/[a-z0-9-]+/);
+  await expect(page.locator('[data-testid="product-name"]')).toBeVisible();
 
   // 5. Verify chart loads
   await expect(page.locator('[data-testid="price-chart"]')).toBeVisible();
@@ -396,45 +398,47 @@ test("user can browse and view markets", async ({ page }) => {
 
 ```typescript
 test("semantic search returns relevant results", async ({ page }) => {
-  // 1. Navigate to markets
-  await page.goto("/markets");
+  // 1. Navigate to products
+  await page.goto("/products");
 
   // 2. Enter search query
   const searchInput = page.locator('[data-testid="search-input"]');
-  await searchInput.fill("election");
+  await searchInput.fill("wireless keyboard");
 
   // 3. Wait for API call
   await page.waitForResponse(
     (resp) =>
-      resp.url().includes("/api/markets/search") && resp.status() === 200,
+      resp.url().includes("/api/products/search") && resp.status() === 200,
   );
 
-  // 4. Verify results contain relevant markets
-  const results = page.locator('[data-testid="market-card"]');
+  // 4. Verify results contain relevant products
+  const results = page.locator('[data-testid="product-card"]');
   await expect(results).not.toHaveCount(0);
 
   // 5. Verify semantic relevance (not just substring match)
   const firstResult = results.first();
   const text = await firstResult.textContent();
-  expect(text?.toLowerCase()).toMatch(/election|trump|biden|president|vote/);
+  expect(text?.toLowerCase()).toMatch(
+    /keyboard|wireless|bluetooth|mechanical|typing/,
+  );
 });
 ```
 
-**3. Wallet Connection Flow**
+**3. Payment Method Connection Flow**
 
 ```typescript
-test("user can connect wallet", async ({ page, context }) => {
-  // Setup: Mock Privy wallet extension
+test("user can connect payment method", async ({ page, context }) => {
+  // Setup: Mock the payment provider SDK
   await context.addInitScript(() => {
     // @ts-ignore
-    window.ethereum = {
-      isMetaMask: true,
+    window.paymentProvider = {
+      isReady: true,
       request: async ({ method }) => {
-        if (method === "eth_requestAccounts") {
-          return ["0x1234567890123456789012345678901234567890"];
+        if (method === "connect_account") {
+          return ["acct_1234567890123456789012345678901234567890"];
         }
-        if (method === "eth_chainId") {
-          return "0x1";
+        if (method === "account_status") {
+          return "active";
         }
       },
     };
@@ -443,27 +447,27 @@ test("user can connect wallet", async ({ page, context }) => {
   // 1. Navigate to site
   await page.goto("/");
 
-  // 2. Click connect wallet
-  await page.locator('[data-testid="connect-wallet"]').click();
+  // 2. Click connect payment method
+  await page.locator('[data-testid="connect-payment"]').click();
 
-  // 3. Verify wallet modal appears
-  await expect(page.locator('[data-testid="wallet-modal"]')).toBeVisible();
+  // 3. Verify payment modal appears
+  await expect(page.locator('[data-testid="payment-modal"]')).toBeVisible();
 
-  // 4. Select wallet provider
-  await page.locator('[data-testid="wallet-provider-metamask"]').click();
+  // 4. Select payment provider
+  await page.locator('[data-testid="payment-provider-default"]').click();
 
   // 5. Verify connection successful
-  await expect(page.locator('[data-testid="wallet-address"]')).toBeVisible();
-  await expect(page.locator('[data-testid="wallet-address"]')).toContainText(
-    "0x1234",
+  await expect(page.locator('[data-testid="payment-account"]')).toBeVisible();
+  await expect(page.locator('[data-testid="payment-account"]')).toContainText(
+    "acct_1234",
   );
 });
 ```
 
-**4. Market Creation Flow (Authenticated)**
+**4. Product Creation Flow (Authenticated)**
 
 ```typescript
-test("authenticated user can create market", async ({ page }) => {
+test("authenticated user can create product", async ({ page }) => {
   // Prerequisites: User must be authenticated
   await page.goto("/creator-dashboard");
 
@@ -473,66 +477,66 @@ test("authenticated user can create market", async ({ page }) => {
     .isVisible();
   test.skip(!isAuthenticated, "User not authenticated");
 
-  // 1. Click create market button
-  await page.locator('[data-testid="create-market"]').click();
+  // 1. Click create product button
+  await page.locator('[data-testid="create-product"]').click();
 
-  // 2. Fill market form
-  await page.locator('[data-testid="market-name"]').fill("Test Market");
+  // 2. Fill product form
+  await page.locator('[data-testid="product-name"]').fill("Test Product");
   await page
-    .locator('[data-testid="market-description"]')
-    .fill("This is a test market");
-  await page.locator('[data-testid="market-end-date"]').fill("2025-12-31");
+    .locator('[data-testid="product-description"]')
+    .fill("This is a test product");
+  await page.locator('[data-testid="product-end-date"]').fill("2025-12-31");
 
   // 3. Submit form
-  await page.locator('[data-testid="submit-market"]').click();
+  await page.locator('[data-testid="submit-product"]').click();
 
   // 4. Verify success
   await expect(page.locator('[data-testid="success-message"]')).toBeVisible();
 
-  // 5. Verify redirect to new market
-  await expect(page).toHaveURL(/\/markets\/test-market/);
+  // 5. Verify redirect to new product
+  await expect(page).toHaveURL(/\/products\/test-product/);
 });
 ```
 
-**5. Trading Flow (Critical - Real Money)**
+**5. Order Flow (Critical - Real Money)**
 
 ```typescript
-test("user can place trade with sufficient balance", async ({ page }) => {
-  // WARNING: This test involves real money - use testnet/staging only!
+test("user can place order with sufficient balance", async ({ page }) => {
+  // WARNING: This test involves real money - use sandbox/staging only!
   test.skip(process.env.NODE_ENV === "production", "Skip on production");
 
-  // 1. Navigate to market
-  await page.goto("/markets/test-market");
+  // 1. Navigate to product
+  await page.goto("/products/test-product");
 
-  // 2. Connect wallet (with test funds)
-  await page.locator('[data-testid="connect-wallet"]').click();
-  // ... wallet connection flow
+  // 2. Connect payment method (with test funds)
+  await page.locator('[data-testid="connect-payment"]').click();
+  // ... payment method connection flow
 
-  // 3. Select position (Yes/No)
-  await page.locator('[data-testid="position-yes"]').click();
+  // 3. Select product variant
+  await page.locator('[data-testid="variant-default"]').click();
 
-  // 4. Enter trade amount
-  await page.locator('[data-testid="trade-amount"]').fill("1.0");
+  // 4. Enter order amount
+  await page.locator('[data-testid="order-amount"]').fill("1.0");
 
-  // 5. Verify trade preview
-  const preview = page.locator('[data-testid="trade-preview"]');
-  await expect(preview).toContainText("1.0 SOL");
-  await expect(preview).toContainText("Est. shares:");
+  // 5. Verify order preview
+  const preview = page.locator('[data-testid="order-preview"]');
+  await expect(preview).toContainText("1.0 USD");
+  await expect(preview).toContainText("Est. total:");
 
-  // 6. Confirm trade
-  await page.locator('[data-testid="confirm-trade"]').click();
+  // 6. Confirm order
+  await page.locator('[data-testid="confirm-order"]').click();
 
-  // 7. Wait for blockchain transaction
+  // 7. Wait for payment transaction
   await page.waitForResponse(
-    (resp) => resp.url().includes("/api/trade") && resp.status() === 200,
-    { timeout: 30000 }, // Blockchain can be slow
+    (resp) => resp.url().includes("/api/orders") && resp.status() === 200,
+    { timeout: 30000 }, // Payment provider can be slow
   );
 
   // 8. Verify success
-  await expect(page.locator('[data-testid="trade-success"]')).toBeVisible();
+  await expect(page.locator('[data-testid="order-success"]')).toBeVisible();
 
   // 9. Verify balance updated
-  const balance = page.locator('[data-testid="wallet-balance"]');
+  const balance = page.locator('[data-testid="account-balance"]');
   await expect(balance).not.toContainText("--");
 });
 ```
@@ -595,24 +599,24 @@ export default defineConfig({
 
 ```bash
 # Run test multiple times to check stability
-npx playwright test tests/markets/search.spec.ts --repeat-each=10
+npx playwright test tests/products/search.spec.ts --repeat-each=10
 
 # Run specific test with retries
-npx playwright test tests/markets/search.spec.ts --retries=3
+npx playwright test tests/products/search.spec.ts --retries=3
 ```
 
 ### Quarantine Pattern
 
 ```typescript
 // Mark flaky test for quarantine
-test("flaky: market search with complex query", async ({ page }) => {
+test("flaky: product search with complex query", async ({ page }) => {
   test.fixme(true, "Test is flaky - Issue #123");
 
   // Test code here...
 });
 
 // Or use conditional skip
-test("market search with complex query", async ({ page }) => {
+test("product search with complex query", async ({ page }) => {
   test.skip(process.env.CI, "Test is flaky in CI - Issue #123");
 
   // Test code here...
@@ -638,7 +642,7 @@ await page.locator('[data-testid="button"]').click(); // Built-in auto-wait
 await page.waitForTimeout(5000);
 
 // ✅ STABLE: Wait for specific condition
-await page.waitForResponse((resp) => resp.url().includes("/api/markets"));
+await page.waitForResponse((resp) => resp.url().includes("/api/products"));
 ```
 
 **3. Animation Timing**
@@ -725,7 +729,7 @@ jobs:
       - name: Run E2E tests
         run: npx playwright test
         env:
-          BASE_URL: https://staging.pmx.trade
+          BASE_URL: https://staging.example.com
 
       - name: Upload artifacts
         if: always()
@@ -762,20 +766,20 @@ jobs:
 
 ## Test Results by Suite
 
-### Markets - Browse & Search
+### Products - Browse & Search
 
-- ✅ user can browse markets (2.3s)
+- ✅ user can browse products (2.3s)
 - ✅ semantic search returns relevant results (1.8s)
 - ✅ search handles no results (1.2s)
 - ❌ search with special characters (0.9s)
 
-### Wallet - Connection
+### Payment - Connection
 
-- ✅ user can connect MetaMask (3.1s)
-- ⚠️ user can connect Phantom (2.8s) - FLAKY
-- ✅ user can disconnect wallet (1.5s)
+- ✅ user can connect primary provider (3.1s)
+- ⚠️ user can connect secondary provider (2.8s) - FLAKY
+- ✅ user can disconnect payment method (1.5s)
 
-### Trading - Core Flows
+### Orders - Core Flows
 
 - ✅ user can place buy order (5.2s)
 - ❌ user can place sell order (4.8s)
@@ -785,15 +789,15 @@ jobs:
 
 ### 1. search with special characters
 
-**File:** `tests/e2e/markets/search.spec.ts:45`
+**File:** `tests/e2e/products/search.spec.ts:45`
 **Error:** Expected element to be visible, but was not found
 **Screenshot:** artifacts/search-special-chars-failed.png
 **Trace:** artifacts/trace-123.zip
 
 **Steps to Reproduce:**
 
-1. Navigate to /markets
-2. Enter search query with special chars: "trump & biden"
+1. Navigate to /products
+2. Enter search query with special chars: "laptop & keyboard"
 3. Verify results
 
 **Recommended Fix:** Escape special characters in search query
@@ -802,17 +806,17 @@ jobs:
 
 ### 2. user can place sell order
 
-**File:** `tests/e2e/trading/sell.spec.ts:28`
-**Error:** Timeout waiting for API response /api/trade
+**File:** `tests/e2e/orders/sell.spec.ts:28`
+**Error:** Timeout waiting for API response /api/orders
 **Video:** artifacts/videos/sell-order-failed.webm
 
 **Possible Causes:**
 
-- Blockchain network slow
-- Insufficient gas
-- Transaction reverted
+- Payment provider network slow
+- Payment declined
+- Transaction failed
 
-**Recommended Fix:** Increase timeout or check blockchain logs
+**Recommended Fix:** Increase timeout or check payment provider logs
 
 ## Artifacts
 

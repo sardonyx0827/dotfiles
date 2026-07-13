@@ -37,23 +37,23 @@ The planner agent will:
 ## Example Usage
 
 ```
-User: /plan I need to add real-time notifications when markets resolve
+User: /plan I need to add real-time notifications when an order they're watching ships
 
 Agent (planner):
-# Implementation Plan: Real-Time Market Resolution Notifications
+# Implementation Plan: Real-Time Order Status Notifications
 
 ## Requirements Restatement
-- Send notifications to users when markets they're watching resolve
+- Send notifications to users when orders they're watching ship
 - Support multiple notification channels (in-app, email, webhook)
 - Ensure notifications are delivered reliably
-- Include market outcome and user's position result
+- Include order status and tracking details
 
 ## Implementation Phases
 
 ### Phase 1: Database Schema
-- Add notifications table with columns: id, user_id, market_id, type, status, created_at
+- Add notifications table with columns: id, user_id, order_id, type, status, created_at
 - Add user_notification_preferences table for channel preferences
-- Create indexes on user_id and market_id for performance
+- Create indexes on user_id and order_id for performance
 
 ### Phase 2: Notification Service
 - Create notification service in lib/notifications.ts
@@ -62,8 +62,8 @@ Agent (planner):
 - Create notification templates
 
 ### Phase 3: Integration Points
-- Hook into market resolution logic (when status changes to "resolved")
-- Query all users with positions in market
+- Hook into order status update logic (when status changes to "shipped")
+- Query all users watching the order
 - Enqueue notifications for each user
 
 ### Phase 4: Frontend Components
@@ -79,8 +79,8 @@ Agent (planner):
 
 ## Risks
 - HIGH: Email deliverability (SPF/DKIM required)
-- MEDIUM: Performance with 1000+ users per market
-- MEDIUM: Notification spam if markets resolve frequently
+- MEDIUM: Performance with 1000+ users per order
+- MEDIUM: Notification spam if orders update frequently
 - LOW: Real-time subscription overhead
 
 ## Estimated Complexity: MEDIUM
