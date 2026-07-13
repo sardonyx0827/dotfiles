@@ -69,7 +69,7 @@
   <line x1="850" y1="292" x2="1176" y2="292" stroke="#403d52"/>
   <g class="mono">
     <text x="852" y="326" font-size="14" fill="#e0def4">pytest · ruff · bandit · shellcheck</text>
-    <text x="852" y="354" font-size="12.5" fill="#908caa">13 test suites · 90% coverage gate</text>
+    <text x="852" y="354" font-size="12.5" fill="#908caa">12 test suites · 90% coverage gate</text>
     <text x="852" y="382" font-size="12.5" fill="#908caa">GitHub Actions CI</text>
   </g>
 
@@ -85,7 +85,7 @@
   <circle cx="84" cy="552" r="5" fill="#eb6f92"/>
   <text x="98" y="557" font-size="15" font-weight="700" fill="#e0def4">Claude Code</text>
   <g class="mono" fill="#908caa" font-size="12.5">
-    <text x="84" y="584">15 agents · 19 commands</text>
+    <text x="84" y="584">14 agents · 21 commands</text>
     <text x="84" y="604">24 skills · 5 hooks</text>
     <text x="84" y="624">settings.json · statusline</text>
   </g>

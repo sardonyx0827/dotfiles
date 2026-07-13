@@ -11,12 +11,12 @@
 ### PreToolUse
 
 - **bash-review** (`hooks/bash-review.py`, matcher: `Bash`):
-  Reviews every Bash command before execution.
-  Primary pass uses the Gemini API (high throughput); if Gemini returns
-  ASK/DENY, a secondary pass re-checks with Codex. Logs to
-  `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
+  Reviews every Bash command before execution in three tiers — static
+  allow/deny fast-paths (no AI call), a parallel Gemini+Codex AND-gate for
+  high-risk commands, and a Gemini→Codex cascade for the low-risk majority.
+  Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
   See **bash-review — design rationale & threat model** below for why the
-  cascade is structured this way and what it does (and does not) defend against.
+  tiers are structured this way and what they do (and do not) defend against.
 - **git-push-review** (`hooks/git-push-review.sh`, matcher: `Bash`,
   if: `Bash(git push*)`):
   Detects `git push` commands and forces a confirmation prompt
@@ -54,7 +54,8 @@ to defeat it. The hard boundary is `permissions.deny` in `settings.json`
 (`rm -rf`, `sudo`, `curl`/`wget`, reads of `*.key` / `.env`, …); this hook is an
 advisory layer on top of it.
 
-Given that model, the flow is tuned for **latency first**:
+Given that model, the flow is tuned by **how dangerous the command is**, keeping
+latency low for the common case:
 
 1. **Fast pre-block / safe-skip (no AI call).** Obvious-dangerous prefixes
    (`curl`, `dd`, `rm -rf /`, …) are denied outright and obvious read-only
@@ -63,18 +64,24 @@ Given that model, the flow is tuned for **latency first**:
    an absolute path like `/usr/bin/curl` intentionally falls through to review,
    and anything touching a sensitive path (`.env`, `id_rsa`, `.ssh`, …) is forced
    to review even when its prefix looks safe.
-2. **Gemini = tier-1 reviewer (the cascade).** Almost every command is benign,
-   so it is gated by a single call to a fast, cheap model. A Gemini `ALLOW`
-   short-circuits and Codex is never called. Reviewing _every_ command with two
-   models would be too slow to sit in front of every Bash call — this
-   short-circuit is the main latency win.
-3. **Codex = tier-2 arbiter, only for the flagged minority.** When Gemini
-   returns `ASK` / `DENY` / `ERROR`, the command is escalated to the slower but
-   more capable Codex. A throughput-tuned model over-flags, so re-checking only
-   the flagged minority with a stronger model keeps false positives from becoming
-   constant confirmation prompts. How Codex's verdict is applied depends on how
-   hard Gemini's flag was — a lone `ALLOW` clears a soft flag but **not** an
-   explicit refusal:
+2. **High-risk commands → parallel two-model AND-gate.** Commands that are
+   dangerous _depending on context_ (`rm -r`, package installs like
+   `pip install` / `npm i`, …; see `high_risk_label`) are reviewed by Gemini
+   **and** Codex run _in parallel_, and their verdicts are combined as an
+   AND-gate (`combine_high_risk_verdicts`): `allow` only when **both** return
+   `ALLOW`, `deny` only when **both** return `DENY`, and everything else —
+   disagreement, `ASK`, or `ERROR` — resolves to `ask` with both verdicts
+   attached. A single model's approval never auto-runs a high-risk command;
+   convincing just one is not enough. Reserving both models for this
+   dangerous-but-ambiguous minority is what keeps the AND-gate's latency cost off
+   the common path.
+3. **Low-risk commands → Gemini tier-1 cascade.** Everything else — the vast
+   majority — is gated by a single call to a fast, cheap model. A Gemini `ALLOW`
+   short-circuits and Codex is never called; that short-circuit is the main
+   latency win. When Gemini returns `ASK` / `DENY` / `ERROR`, the command is
+   escalated to the slower but more capable Codex, and how Codex's verdict is
+   applied depends on how hard Gemini's flag was — a lone `ALLOW` clears a soft
+   flag but **not** an explicit refusal:
    - Gemini **`ASK` / `ERROR`** (soft — uncertainty or unavailability, not a
      refusal): a Codex `ALLOW` resolves it to `allow`.
    - Gemini **`DENY`** (an explicit refusal): a lone Codex `ALLOW` does **not**
@@ -91,8 +98,9 @@ Given that model, the flow is tuned for **latency first**:
 
 **Accepted tradeoffs (chosen, not overlooked):**
 
-- A command that convinces the _single_ tier-1 model is allowed without a second
-  opinion — accepted in exchange for latency.
+- On the **low-risk path**, a command that convinces the _single_ tier-1 model is
+  allowed without a second opinion — accepted in exchange for latency. High-risk
+  commands never get this treatment (step 2).
 - LLM reviewers can be swayed by prompt-injection text inside the command; this
   layer is heuristic by nature, which is exactly why the enforced boundary lives
   in `permissions.deny`.
@@ -101,9 +109,12 @@ Given that model, the flow is tuned for **latency first**:
   scope — verifying it on every call would defeat the point of the skip. See the
   inline comments in `_bash_review_common.py`.
 
-> Do not "harden" this into an AND-gate (block unless _both_ models allow) without
-> re-checking the latency budget: the two-tier cascade with a Gemini short-circuit
-> is an intentional speed/precision tradeoff, not an oversight.
+> The **low-risk cascade** (step 3) is single-model-with-short-circuit on purpose:
+> don't "harden" _it_ into an AND-gate without re-checking the latency budget — a
+> two-model review in front of _every_ Bash call would be too slow. The
+> **high-risk tier** (step 2) already _is_ a parallel AND-gate; that is the whole
+> point of spending both models only on the dangerous-but-context-dependent
+> minority.
 
 ## Auto-Accept Permissions
 

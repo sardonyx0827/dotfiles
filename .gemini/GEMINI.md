@@ -74,7 +74,7 @@ Gemini CLI has no SubAgent / parallel-agent primitive like Claude Code's Task to
 
 ## 5. Model Selection Guidelines
 
-- Main session model: `model.name` in `settings.json` (currently `gemini-3.1-flash-lite-latest`)
+- Main session model: `model.name` in `settings.json` (currently `gemini-flash-lite-latest`)
 - Prefer a stronger model for design, large-scale refactoring, and overall analysis; the lighter default is fine for mechanical search/template work
 - On failure, retry once with a stronger model before giving up
 
