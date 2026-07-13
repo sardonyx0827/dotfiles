@@ -123,6 +123,12 @@
       "Bash(rm -fr:*)",
       "Bash(rm -r -f:*)",
       "Bash(rm -f -r:*)",
+      "Bash(rm -r:*)",
+      "Bash(rm -R:*)",
+      "Bash(rm -Rf:*)",
+      "Bash(rm -fR:*)",
+      "Bash(rm --recursive:*)",
+      "Bash(rm --no-preserve-root:*)",
       "Read(**/id_rsa*)",
       "Read(**/id_ed25519*)",
       "Read(**/id_ecdsa*)",
@@ -213,11 +219,7 @@
   },
   "sandbox": {
     "enabled": false,
-    "excludedCommands": [
-      "docker",
-      "docker-compose",
-      "git"
-    ],
+    "excludedCommands": ["docker", "docker-compose", "git"],
     "allowedNetworkHosts": [
       "github.com",
       "api.github.com",
