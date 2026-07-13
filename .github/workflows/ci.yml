@@ -20,6 +20,11 @@ concurrency:
 jobs:
   test:
     name: pytest (py${{ matrix.python-version }})
+    # 単一 OS (ubuntu) は意図的な選択。フックと install.sh は hermetic テストで、
+    # OS 依存分岐は差し込み口 (例: DEBIAN_VERSION_FILE、OS 変数を強制する sourced
+    # 関数テスト) 経由で host 非依存に検証している。macOS/Windows ランナーを足しても
+    # 追加で得られる実カバレッジは小さく CI コスト/保守負荷に見合わないため採用せず、
+    # macOS 実機での確認は手元の実行に委ねる。
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
