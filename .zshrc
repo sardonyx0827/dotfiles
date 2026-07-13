@@ -48,11 +48,6 @@ source $ZSH/oh-my-zsh.sh
 
 export EDITOR=nvim
 
-# create work container on docker
-cdi () {
-  wezterm start -- bash -c "cd ~/work/github/first_boot_setup/docker/; bash create_docker_image.sh"
-}
-
 # using fzf
 sshs () {
   t=$(cat ~/.ssh/config | grep 'Host ' | cut -f2 -d' ' | fzf --preview "cat ~/.ssh/config | sed -ne '/^Host {}$/,/^\s*$/p'")
@@ -106,10 +101,6 @@ alias nvim_attach="nvim --remote-ui --server localhost:22222"
 
 # change directory to workspace
 alias cw="cd ~/work"
-
-# ollama commands
-alias dsollama="cd ~/work/sandbox/ollama/ && docker compose up -d && cd -"
-alias deollama="cd ~/work/sandbox/ollama/ && docker compose down && cd -"
 
 # gimp (macOS の GIMP.app のみ)
 if [[ "$_os" == macos ]]; then
