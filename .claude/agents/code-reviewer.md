@@ -34,16 +34,9 @@ Provide feedback organized by priority:
 
 Include specific examples of how to fix issues.
 
-## Security Checks (CRITICAL)
+## Security (lightweight pass — delegate depth)
 
-- Hardcoded credentials (API keys, passwords, tokens)
-- SQL injection risks (string concatenation in queries)
-- XSS vulnerabilities (unescaped user input)
-- Missing input validation
-- Insecure dependencies (outdated, vulnerable)
-- Path traversal risks (user-controlled file paths)
-- CSRF vulnerabilities
-- Authentication bypasses
+Do a quick security smell-check during review and flag obvious issues: hardcoded secrets, string-built SQL, or unescaped user input. Do NOT reproduce a full security audit here — for anything beyond a surface flag, hand off to the **security-reviewer** agent and the **security-review** skill, which own injection, SSRF, auth, crypto, and OWASP Top 10 coverage. Always route auth, user-input, API-endpoint, secret-handling, payment, and file-upload code to them.
 
 ## Code Quality (HIGH)
 
