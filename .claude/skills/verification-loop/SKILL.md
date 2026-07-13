@@ -1,6 +1,6 @@
 ---
 name: verification-loop
-description: Build, type check, lint, test, security scan, and diff review verification system for code quality gates
+description: Build, type-check, lint, test, security-scan, and diff-review quality gate for code changes. Use this skill whenever you have finished a feature or significant change, are about to open a PR, or want to confirm quality gates pass after refactoring — running the full verify sequence and reporting pass/fail per phase. For the one-shot slash command, see /verify.
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob
 ---

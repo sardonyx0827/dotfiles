@@ -1,6 +1,6 @@
 ---
 name: clickhouse-io
-description: ClickHouse database patterns, query optimization, analytics, and data engineering best practices for high-performance analytical workloads.
+description: ClickHouse (OLAP / column-oriented) patterns for high-performance analytics and data engineering. Use this skill whenever designing ClickHouse tables and engines (MergeTree family), writing or optimizing analytical queries, modeling partitioning and ordering keys, setting up materialized views, or ingesting large datasets for real-time analytics.
 ---
 
 # ClickHouse Analytics Patterns
@@ -12,6 +12,7 @@ ClickHouse-specific patterns for high-performance analytics and data engineering
 ClickHouse is a column-oriented database management system (DBMS) for online analytical processing (OLAP). It's optimized for fast analytical queries on large datasets.
 
 **Key Features:**
+
 - Column-oriented storage
 - Data compression
 - Parallel query execution
@@ -151,39 +152,51 @@ ORDER BY product_id, date;
 ### Bulk Insert (Recommended)
 
 ```typescript
-import { ClickHouse } from 'clickhouse'
+import { ClickHouse } from "clickhouse";
 
 const clickhouse = new ClickHouse({
   url: process.env.CLICKHOUSE_URL,
   port: 8123,
   basicAuth: {
     username: process.env.CLICKHOUSE_USER,
-    password: process.env.CLICKHOUSE_PASSWORD
-  }
-})
+    password: process.env.CLICKHOUSE_PASSWORD,
+  },
+});
 
 // ✅ Batch insert (efficient)
 async function bulkInsertOrders(orders: Order[]) {
-  const values = orders.map(order => `(
+  const values = orders
+    .map(
+      (order) => `(
     '${order.id}',
     '${order.product_id}',
     '${order.user_id}',
     ${order.amount},
     '${order.timestamp.toISOString()}'
-  )`).join(',')
+  )`,
+    )
+    .join(",");
 
-  await clickhouse.query(`
+  await clickhouse
+    .query(
+      `
     INSERT INTO orders (id, product_id, user_id, amount, timestamp)
     VALUES ${values}
-  `).toPromise()
+  `,
+    )
+    .toPromise();
 }
 
 // ❌ Individual inserts (slow)
 async function insertOrder(order: Order) {
   // Don't do this in a loop!
-  await clickhouse.query(`
+  await clickhouse
+    .query(
+      `
     INSERT INTO orders VALUES ('${order.id}', ...)
-  `).toPromise()
+  `,
+    )
+    .toPromise();
 }
 ```
 
@@ -191,17 +204,17 @@ async function insertOrder(order: Order) {
 
 ```typescript
 // For continuous data ingestion
-import { createWriteStream } from 'fs'
-import { pipeline } from 'stream/promises'
+import { createWriteStream } from "fs";
+import { pipeline } from "stream/promises";
 
 async function streamInserts() {
-  const stream = clickhouse.insert('orders').stream()
+  const stream = clickhouse.insert("orders").stream();
 
   for await (const batch of dataSource) {
-    stream.write(batch)
+    stream.write(batch);
   }
 
-  await stream.end()
+  await stream.end();
 }
 ```
 
@@ -355,72 +368,77 @@ ORDER BY cohort, months_since_signup;
 // Extract, Transform, Load
 async function etlPipeline() {
   // 1. Extract from source
-  const rawData = await extractFromPostgres()
+  const rawData = await extractFromPostgres();
 
   // 2. Transform
-  const transformed = rawData.map(row => ({
-    date: new Date(row.created_at).toISOString().split('T')[0],
+  const transformed = rawData.map((row) => ({
+    date: new Date(row.created_at).toISOString().split("T")[0],
     product_id: row.product_slug,
     sales: parseFloat(row.total_sales),
-    orders: parseInt(row.order_count)
-  }))
+    orders: parseInt(row.order_count),
+  }));
 
   // 3. Load to ClickHouse
-  await bulkInsertToClickHouse(transformed)
+  await bulkInsertToClickHouse(transformed);
 }
 
 // Run periodically
-setInterval(etlPipeline, 60 * 60 * 1000)  // Every hour
+setInterval(etlPipeline, 60 * 60 * 1000); // Every hour
 ```
 
 ### Change Data Capture (CDC)
 
 ```typescript
 // Listen to PostgreSQL changes and sync to ClickHouse
-import { Client } from 'pg'
+import { Client } from "pg";
 
-const pgClient = new Client({ connectionString: process.env.DATABASE_URL })
+const pgClient = new Client({ connectionString: process.env.DATABASE_URL });
 
-pgClient.query('LISTEN product_updates')
+pgClient.query("LISTEN product_updates");
 
-pgClient.on('notification', async (msg) => {
-  const update = JSON.parse(msg.payload)
+pgClient.on("notification", async (msg) => {
+  const update = JSON.parse(msg.payload);
 
-  await clickhouse.insert('product_updates', [
+  await clickhouse.insert("product_updates", [
     {
       product_id: update.id,
-      event_type: update.operation,  // INSERT, UPDATE, DELETE
+      event_type: update.operation, // INSERT, UPDATE, DELETE
       timestamp: new Date(),
-      data: JSON.stringify(update.new_data)
-    }
-  ])
-})
+      data: JSON.stringify(update.new_data),
+    },
+  ]);
+});
 ```
 
 ## Best Practices
 
 ### 1. Partitioning Strategy
+
 - Partition by time (usually month or day)
 - Avoid too many partitions (performance impact)
 - Use DATE type for partition key
 
 ### 2. Ordering Key
+
 - Put most frequently filtered columns first
 - Consider cardinality (high cardinality first)
 - Order impacts compression
 
 ### 3. Data Types
+
 - Use smallest appropriate type (UInt32 vs UInt64)
 - Use LowCardinality for repeated strings
 - Use Enum for categorical data
 
 ### 4. Avoid
-- SELECT * (specify columns)
+
+- SELECT \* (specify columns)
 - FINAL (merge data before query instead)
 - Too many JOINs (denormalize for analytics)
 - Small frequent inserts (batch instead)
 
 ### 5. Monitoring
+
 - Track query performance
 - Monitor disk usage
 - Check merge operations

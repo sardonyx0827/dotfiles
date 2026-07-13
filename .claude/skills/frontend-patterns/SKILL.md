@@ -1,6 +1,6 @@
 ---
 name: frontend-patterns
-description: Frontend development patterns for React, Next.js, state management, performance optimization, and UI best practices.
+description: React and Next.js frontend patterns for components, state management, performance, and UI. Use this skill whenever writing or refactoring React components, choosing a state-management approach, fixing re-render/performance issues, structuring hooks or data fetching, or reviewing frontend code — even for a small component, since composition and rendering pitfalls compound quickly.
 ---
 
 # Frontend Development Patterns
@@ -127,100 +127,101 @@ export function DataLoader<T>({ url, children }: DataLoaderProps<T>) {
 
 ```typescript
 export function useToggle(initialValue = false): [boolean, () => void] {
-  const [value, setValue] = useState(initialValue)
+  const [value, setValue] = useState(initialValue);
 
   const toggle = useCallback(() => {
-    setValue(v => !v)
-  }, [])
+    setValue((v) => !v);
+  }, []);
 
-  return [value, toggle]
+  return [value, toggle];
 }
 
 // Usage
-const [isOpen, toggleOpen] = useToggle()
+const [isOpen, toggleOpen] = useToggle();
 ```
 
 ### Async Data Fetching Hook
 
 ```typescript
 interface UseQueryOptions<T> {
-  onSuccess?: (data: T) => void
-  onError?: (error: Error) => void
-  enabled?: boolean
+  onSuccess?: (data: T) => void;
+  onError?: (error: Error) => void;
+  enabled?: boolean;
 }
 
 export function useQuery<T>(
   key: string,
   fetcher: () => Promise<T>,
-  options?: UseQueryOptions<T>
+  options?: UseQueryOptions<T>,
 ) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState<Error | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const refetch = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
 
     try {
-      const result = await fetcher()
-      setData(result)
-      options?.onSuccess?.(result)
+      const result = await fetcher();
+      setData(result);
+      options?.onSuccess?.(result);
     } catch (err) {
-      const error = err as Error
-      setError(error)
-      options?.onError?.(error)
+      const error = err as Error;
+      setError(error);
+      options?.onError?.(error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [fetcher, options])
+  }, [fetcher, options]);
 
   useEffect(() => {
     if (options?.enabled !== false) {
-      refetch()
+      refetch();
     }
-  }, [key, refetch, options?.enabled])
+  }, [key, refetch, options?.enabled]);
 
-  return { data, error, loading, refetch }
+  return { data, error, loading, refetch };
 }
 
 // Usage
-const { data: products, loading, error, refetch } = useQuery(
-  'products',
-  () => fetch('/api/products').then(r => r.json()),
-  {
-    onSuccess: data => console.log('Fetched', data.length, 'products'),
-    onError: err => console.error('Failed:', err)
-  }
-)
+const {
+  data: products,
+  loading,
+  error,
+  refetch,
+} = useQuery("products", () => fetch("/api/products").then((r) => r.json()), {
+  onSuccess: (data) => console.log("Fetched", data.length, "products"),
+  onError: (err) => console.error("Failed:", err),
+});
 ```
 
 ### Debounce Hook
 
 ```typescript
 export function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value)
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
 
   useEffect(() => {
     const handler = setTimeout(() => {
-      setDebouncedValue(value)
-    }, delay)
+      setDebouncedValue(value);
+    }, delay);
 
-    return () => clearTimeout(handler)
-  }, [value, delay])
+    return () => clearTimeout(handler);
+  }, [value, delay]);
 
-  return debouncedValue
+  return debouncedValue;
 }
 
 // Usage
-const [searchQuery, setSearchQuery] = useState('')
-const debouncedQuery = useDebounce(searchQuery, 500)
+const [searchQuery, setSearchQuery] = useState("");
+const debouncedQuery = useDebounce(searchQuery, 500);
 
 useEffect(() => {
   if (debouncedQuery) {
-    performSearch(debouncedQuery)
+    performSearch(debouncedQuery);
   }
-}, [debouncedQuery])
+}, [debouncedQuery]);
 ```
 
 ## State Management Patterns
