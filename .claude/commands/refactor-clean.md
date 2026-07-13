@@ -4,6 +4,8 @@ description: Find and safely remove dead code using knip, depcheck, and ts-prune
 
 # Refactor Clean
 
+This command invokes the **refactor-cleaner** agent to find and safely remove dead code, verifying tests at each step.
+
 Safely identify and remove dead code with test verification:
 
 1. Run dead code analysis tools:
@@ -30,3 +32,7 @@ Safely identify and remove dead code with test verification:
 6. Show summary of cleaned items
 
 Never delete code without running tests first!
+
+## Related
+
+- Agent: `agents/refactor-cleaner.md`

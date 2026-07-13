@@ -4,6 +4,8 @@ description: Scan the codebase structure and regenerate token-lean architecture 
 
 # Update Codemaps
 
+This command invokes the **doc-updater** agent to scan the codebase and regenerate token-lean architecture codemaps. The agent does the work directly — it does not call this command back.
+
 Analyze the codebase structure and update architecture documentation:
 
 1. Scan all source files for imports, exports, and dependencies
@@ -19,3 +21,8 @@ Analyze the codebase structure and update architecture documentation:
 6. Save reports to .reports/codemap-diff.txt
 
 Use TypeScript/Node.js for analysis. Focus on high-level structure, not implementation details.
+
+## Related
+
+- Agent: `agents/doc-updater.md`
+- Related command: `/update-docs`

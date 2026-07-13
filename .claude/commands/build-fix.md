@@ -1,8 +1,10 @@
 ---
-description: Incrementally fix TypeScript and build errors. Runs the build, groups errors by file, applies minimal fixes, and re-verifies after each change.
+description: Incrementally fix TypeScript and build errors. Invokes the build-error-resolver agent to run the build, group errors by file, apply minimal fixes, and re-verify after each change.
 ---
 
 # Build and Fix
+
+This command invokes the **build-error-resolver** agent to incrementally fix TypeScript and build errors with minimal, surgical changes.
 
 Incrementally fix TypeScript and build errors:
 
@@ -31,3 +33,8 @@ Incrementally fix TypeScript and build errors:
    - New errors introduced
 
 Fix one error at a time for safety!
+
+## Related
+
+- Agent: `agents/build-error-resolver.md`
+- Related commands: `/verify`, `/tdd`

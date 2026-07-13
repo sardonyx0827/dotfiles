@@ -4,6 +4,8 @@ description: Sync documentation from source of truth - scripts reference, enviro
 
 # Update Documentation
 
+This command invokes the **doc-updater** agent to sync documentation from source-of-truth. The agent does the work directly — it does not call this command back.
+
 Sync documentation from source-of-truth:
 
 1. Read package.json scripts section
@@ -33,3 +35,8 @@ Sync documentation from source-of-truth:
 6. Show diff summary
 
 Single source of truth: package.json and .env.example
+
+## Related
+
+- Agent: `agents/doc-updater.md`
+- Related command: `/update-codemaps`
