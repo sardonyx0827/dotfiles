@@ -171,7 +171,12 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     call timer_start(0, function('s:AI_SingleFinish', [a:state, a:status]))
   endfunction
 
-  function! s:AI_RunSingle(ctx, sys, tmpfile) abort
+  " Shared scaffolding for single-response tools (CLI or local Ollama): open the
+  " diff tab + response window, seed the shared state, and start the job. Only
+  " the shell command and the exit callback differ per backend, so both
+  " s:AI_RunSingle and s:AI_RunOllama funnel through here instead of each
+  " duplicating this window/state setup.
+  function! s:AI_RunJob(ctx, tmpfile, cmd, exit_cb) abort
     tabnew
     setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted
     call setline(1, a:ctx.selected)
@@ -200,12 +205,16 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     call setbufvar(l:resp_buf, 'ai_state', l:state)
     call s:AI_SingleStatus(l:state)
 
-    let l:cmd = s:AI_BuildCmd(a:ctx.tool, a:tmpfile, a:sys)
-    let l:state.job = job_start(['sh', '-c', l:cmd], {
+    let l:state.job = job_start(['sh', '-c', a:cmd], {
           \ 'out_cb': function('s:AI_JobOut', [l:state.output]),
           \ 'out_mode': 'nl',
-          \ 'exit_cb': function('s:AI_SingleExit', [l:state]),
+          \ 'exit_cb': function(a:exit_cb, [l:state]),
           \ })
+  endfunction
+
+  function! s:AI_RunSingle(ctx, sys, tmpfile) abort
+    call s:AI_RunJob(a:ctx, a:tmpfile,
+          \ s:AI_BuildCmd(a:ctx.tool, a:tmpfile, a:sys), 's:AI_SingleExit')
   endfunction
 
   " ---- all mode (claude | codex in parallel) ------------------------------
@@ -437,40 +446,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   endfunction
 
   function! s:AI_RunOllama(ctx, tmpfile) abort
-    tabnew
-    setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted
-    call setline(1, a:ctx.selected)
-    let &l:filetype = a:ctx.ft
-    let l:orig_buf = bufnr('%')
-    let l:orig_win = win_getid()
-    call s:AI_SetMaps('single')
-
-    rightbelow vnew
-    setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted
-    call setline(1, printf('[%s: waiting for response...]', a:ctx.tool))
-    let &l:filetype = a:ctx.ft
-    setlocal nomodifiable
-    let l:resp_buf = bufnr('%')
-    let l:resp_win = win_getid()
-    call s:AI_SetMaps('single')
-
-    let l:state = {
-          \ 'mode': 'single', 'tool': a:ctx.tool,
-          \ 'target_buf': a:ctx.target_buf, 'start': a:ctx.start, 'end': a:ctx.end,
-          \ 'orig_buf': l:orig_buf, 'orig_win': l:orig_win,
-          \ 'resp_buf': l:resp_buf, 'resp_win': l:resp_win,
-          \ 'status': 'pending', 'output': [], 'closed': 0, 'tmpfile': a:tmpfile,
-          \ }
-    call setbufvar(l:orig_buf, 'ai_state', l:state)
-    call setbufvar(l:resp_buf, 'ai_state', l:state)
-    call s:AI_SingleStatus(l:state)
-
-    let l:cmd = s:AI_BuildOllamaCmd(a:tmpfile)
-    let l:state.job = job_start(['sh', '-c', l:cmd], {
-          \ 'out_cb': function('s:AI_JobOut', [l:state.output]),
-          \ 'out_mode': 'nl',
-          \ 'exit_cb': function('s:AI_OllamaExit', [l:state]),
-          \ })
+    call s:AI_RunJob(a:ctx, a:tmpfile,
+          \ s:AI_BuildOllamaCmd(a:tmpfile), 's:AI_OllamaExit')
   endfunction
 
   " ---- buffer-local keymaps for the diff tab ------------------------------

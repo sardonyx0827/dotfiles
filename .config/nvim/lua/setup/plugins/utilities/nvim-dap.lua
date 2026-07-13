@@ -74,11 +74,11 @@ return {
       cpp = {
         {
           -- The first three options are required by nvim-dap
-          type = 'codelldb', -- the type here established the link to the adapter definition: `dap.adapters.python`
+          type = 'codelldb', -- the type here established the link to the adapter definition: `dap.adapters.codelldb`
           request = 'launch',
           name = "Launch file",
 
-          -- Options below are for debugpy, see https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings for supported options
+          -- Options below are for codelldb, see https://github.com/vadimcn/codelldb/blob/master/MANUAL.md for supported options
           program = function()
             return vim.fn.input('Path to executable: ', vim.fn.getcwd() .. '/a.out', 'file')
           end,

@@ -22,27 +22,30 @@ vim.api.nvim_create_autocmd("BufEnter", {
 -- command line position when using lualine
 vim.opt.cmdheight = 0
 -- Show Statusline
+-- Rosé Pine (main) palette — kept in sync with the active colorscheme
+-- (rose-pine.lua) so the statusline matches the rest of the UI. bg is 'None'
+-- on purpose: the statusline stays transparent like the terminal.
 local my_transparent_theme = {
   normal = {
-    a = { fg = '#7aa2f7', bg = 'None', gui = 'bold' },
-    b = { fg = '#c0caf5', bg = 'None' },
-    c = { fg = '#a9b1d6', bg = 'None' },
-    x = { fg = '#a9b1d6', bg = 'None' },
-    y = { fg = '#c0caf5', bg = 'None' },
-    z = { fg = '#7aa2f7', bg = 'None' },
+    a = { fg = '#c4a7e7', bg = 'None', gui = 'bold' }, -- iris
+    b = { fg = '#e0def4', bg = 'None' },               -- text
+    c = { fg = '#908caa', bg = 'None' },               -- subtle
+    x = { fg = '#908caa', bg = 'None' },               -- subtle
+    y = { fg = '#e0def4', bg = 'None' },               -- text
+    z = { fg = '#c4a7e7', bg = 'None' },               -- iris
   },
   inactive = {
-    a = { fg = '#545c7e', bg = 'None', gui = 'bold' },
-    b = { fg = '#727a9a', bg = 'None' },
-    c = { fg = '#727a9a', bg = 'None' },
-    x = { fg = '#727a9a', bg = 'None' },
-    y = { fg = '#727a9a', bg = 'None' },
-    z = { fg = '#545c7e', bg = 'None' },
+    a = { fg = '#6e6a86', bg = 'None', gui = 'bold' }, -- muted
+    b = { fg = '#6e6a86', bg = 'None' },
+    c = { fg = '#6e6a86', bg = 'None' },
+    x = { fg = '#6e6a86', bg = 'None' },
+    y = { fg = '#6e6a86', bg = 'None' },
+    z = { fg = '#6e6a86', bg = 'None' },
   },
-  insert = { a = { fg = '#9ece6a', bg = 'None', gui = 'bold' } },
-  visual = { a = { fg = '#ff9e64', bg = 'None', gui = 'bold' } },
-  replace = { a = { fg = '#f7768e', bg = 'None', gui = 'bold' } },
-  command = { a = { fg = '#e0af68', bg = 'None', gui = 'bold' } },
+  insert = { a = { fg = '#9ccfd8', bg = 'None', gui = 'bold' } },  -- foam
+  visual = { a = { fg = '#f6c177', bg = 'None', gui = 'bold' } },  -- gold
+  replace = { a = { fg = '#eb6f92', bg = 'None', gui = 'bold' } }, -- love
+  command = { a = { fg = '#ebbcba', bg = 'None', gui = 'bold' } }, -- rose
 }
 return {
   "nvim-lualine/lualine.nvim",
@@ -92,7 +95,7 @@ return {
               end
               return true
             end,
-            color = { fg = "#ff9e64" },
+            color = { fg = "#f6c177" }, -- Rosé Pine gold
           },
         },
         lualine_x = {
@@ -109,15 +112,15 @@ return {
                   warning = " ",
                 },
                 hl = {
-                  enabled = "#50FA7B",
-                  sleep = "#AEB7D0",
-                  disabled = "#6272A4",
-                  warning = "#FFB86C",
-                  unknown = "#FF5555"
+                  enabled = "#9ccfd8",  -- foam
+                  sleep = "#908caa",    -- subtle
+                  disabled = "#6e6a86", -- muted
+                  warning = "#f6c177",  -- gold
+                  unknown = "#eb6f92"   -- love
                 }
               },
               spinners = require("copilot-lualine.spinners").dots,
-              spinner_color = "#6272A4"
+              spinner_color = "#6e6a86" -- muted
             },
             show_colors = true,
             show_loading = true
