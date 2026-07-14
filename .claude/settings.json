@@ -219,7 +219,11 @@
   },
   "sandbox": {
     "enabled": false,
-    "excludedCommands": ["docker", "docker-compose", "git"],
+    "excludedCommands": [
+      "docker",
+      "docker-compose",
+      "git"
+    ],
     "allowedNetworkHosts": [
       "github.com",
       "api.github.com",
@@ -231,6 +235,7 @@
     ]
   },
   "effortLevel": "xhigh",
+  "advisorModel": "opus",
   "autoUpdatesChannel": "latest",
   "tui": "default",
   "autoMemoryEnabled": false,
@@ -238,6 +243,5 @@
   "editorMode": "normal",
   "teammateMode": "tmux",
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false,
-  "advisorModel": "opus"
+  "voiceEnabled": false
 }
