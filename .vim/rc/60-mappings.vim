@@ -109,6 +109,9 @@ cnoremap <C-f> <Right>
 "" toggle mouse
 nnoremap <leader>tm :if &mouse ==# 'a' \| set mouse= \| else \| set mouse=a \| endif<CR>
 
+"" toggle word wrap (window-local); echoes the resulting state
+nnoremap <silent> <leader>ww :setlocal wrap!<Bar>setlocal wrap?<CR>
+
 "" Open current line on GitHub
 nnoremap <Leader>go :.GBrowse<CR>
 

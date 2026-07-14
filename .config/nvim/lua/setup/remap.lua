@@ -67,6 +67,12 @@ vim.keymap.set('n', '<leader>tm', function()
   end
 end, { desc = 'Toggle mouse' })
 
+-- toggle word wrap (window-local)
+vim.keymap.set('n', '<leader>ww', function()
+  vim.wo.wrap = not vim.wo.wrap
+  vim.notify('wrap ' .. (vim.wo.wrap and 'on' or 'off'))
+end, { desc = 'Toggle word wrap' })
+
 -- close all buffers (formerly after/plugin/auto-session.lua)
 local function close_all_buffers()
   vim.cmd("bufdo bd")
