@@ -45,6 +45,18 @@ autocmd({ "WinEnter", "FocusGained", "BufEnter" }, {
   command = "checktime",
 })
 
+-- Soft-wrap Markdown: visual folding only (no hard line breaks); keep the
+-- indent of wrapped list/quote lines. Toggle off per-window with <leader>ww.
+autocmd("FileType", {
+  group = setupGroup,
+  pattern = "markdown",
+  callback = function()
+    vim.opt_local.wrap = true
+    vim.opt_local.linebreak = true
+    vim.opt_local.breakindent = true
+  end,
+})
+
 -- Stop insert mode when switching buffers (e.g. when used telescope buffer)
 vim.api.nvim_create_autocmd("BufWinEnter", {
   callback = function()

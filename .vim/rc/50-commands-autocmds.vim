@@ -14,6 +14,13 @@ function! s:setupWrapping() abort
   setlocal textwidth=79
 endfunction
 
+" Soft wrap: visual folding only (no hard line breaks); keep list/quote indent.
+function! s:setupSoftWrapping() abort
+  setlocal wrap
+  setlocal linebreak
+  setlocal breakindent
+endfunction
+
 
 "*****************************************************************************
 "" Autocmd Rules
@@ -34,6 +41,12 @@ augroup END
 augroup vimrc-wrapping
   autocmd!
   autocmd BufRead,BufNewFile *.txt call s:setupWrapping()
+augroup END
+
+"" markdown: soft wrap (visual only; no hard line breaks)
+augroup vimrc-markdown-wrapping
+  autocmd!
+  autocmd FileType markdown call s:setupSoftWrapping()
 augroup END
 
 "" cmake
