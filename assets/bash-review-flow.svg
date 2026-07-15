@@ -83,6 +83,6 @@
   <rect x="40" y="846" width="1160" height="54" rx="12" fill="#1f1d2e" stroke="#403d52"/>
   <rect x="40" y="846" width="6" height="54" rx="3" fill="#908caa"/>
   <text x="66" y="869" font-size="12.5" fill="#908caa" class="mono">FAIL‑SAFE · 判定を出す前の例外 (stdin 破損等) は必ず ask に倒す · API/CLI 不在も ask へフェイルクローズ</text>
-  <text x="66" y="889" font-size="12.5" fill="#6e6a86" class="mono">claude / codex 2 変種は _bash_review_common.py をバイト同一で共有し、test_hook_sync がドリフトを検知</text>
+  <text x="66" y="889" font-size="12.5" fill="#6e6a86" class="mono">claude / codex 2 変種は _bash_review_common.py の実体 1 つを symlink で共有 (ドリフトは構造的に不可能)</text>
 
 </svg>

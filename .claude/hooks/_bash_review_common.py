@@ -1,13 +1,30 @@
 # _bash_review_common.py
 # bash-review 系フックで共有する定数・判定ロジック・通知・ログ処理。
 #
-# このファイルは 2 か所に「バイト単位で同一」の複製として置かれる:
-#   .claude/hooks/_bash_review_common.py
-#   .codex/hooks/_bash_review_common.py
-# install.sh が 2 つのフックディレクトリをディレクトリごと symlink するため
-# (~/.claude/hooks と ~/.codex/hooks は別インストール先で 1 ファイルを共有でき
-# ない)、片方を編集したらもう片方へ cp すること。
-# tests/test_hook_sync.py が 2 つの複製が同一であることを保証する (ドリフト検知)。
+# このファイルが実体で、.codex/hooks/_bash_review_common.py は
+# ../../.claude/hooks/_bash_review_common.py への相対 symlink。編集はここだけでよい。
+#
+# 以前はバイト単位で同一の複製 2 つを tests/test_hook_sync.py で突き合わせていたが、
+# その守り方は事後検知であり、監視対象に名指ししたファイルしか見ない。実際 52fdba4 で
+# 「ガード導入の翌日に、共有ロジック約 80 行がガード外へ漏れていた」ことが判明した。
+# symlink なら実体が 1 つなのでドリフトが構造的に起こらない。
+#
+# Codex の symlink 無視バグ (openai/codex#3637, #4383, #5040, #16452) はここには
+# 適用されない。あれは Codex 自身のスキャナが走査する設定 (skills/, agents/) の話で、
+# このモジュールを開くのは CPython の import 機構。hooks.json は絶対パスで
+# bash-review.py を起動するだけで、そこから先に Codex は関与しない。install.sh も
+# 「hooks dir (scripts run by absolute path) follow symlinks fine」と同じ線引きをしている。
+#
+# 既知の非対応 (意図的に受け入れたトレードオフ): core.symlinks=false — Git for Windows
+# の既定 — で clone すると、git は symlink をパス文字列入りのテキストファイルとして
+# 展開するため import が失敗する。symlink 化前は実ファイルだったので動いていた。
+# つまりこの変更は Windows/Git Bash の clone 者に対する退行であり、install.sh の
+# OS="windows" (msys/cygwin) は宣言済みスコープなので、黙って落とすのではなくここに書く。
+# tests/test_hook_sync.py は形を検査するが、これは救済にならない: CI は ubuntu なので
+# 緑のままで、Windows 側の利用者は自分で pytest を回さない限り気付けない。
+# 移植性が必要になったら symlink をやめ、.codex/hooks/bash-review.py 側で
+# realpath(__file__) から ../../.claude/hooks を sys.path に足す方式にすれば、
+# 複製も core.symlinks 依存も無くせる。
 #
 # Gemini 一次レビュー / Codex 二次レビュー / 高リスク並列レビューの呼び出し
 # ロジックもここに集約する。2 つの bash-review.py (claude / codex 変種) は

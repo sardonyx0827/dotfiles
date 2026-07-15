@@ -2,14 +2,10 @@
 # Measured by pytest-cov in CI (see .github/workflows/ci.yml).
 [run]
 branch = true
-omit =
-    # Byte-identical twin of .claude/hooks/_bash_review_common.py, kept in sync
-    # by tests/test_hook_sync.py. Python's module cache means the .claude copy
-    # is the one actually exec'd, so the .codex copy always reports 0% — that is
-    # a measurement artifact, not an untested path. Its equivalence is already
-    # gate-enforced, so exclude it to keep the number honest.
-    .codex/hooks/_bash_review_common.py
-    */.codex/hooks/_bash_review_common.py
+# .codex/hooks/_bash_review_common.py used to be omitted here: it was a
+# byte-identical twin that always reported 0% because Python's module cache
+# exec'd only the .claude copy. It is now a symlink to that copy, so there is
+# a single measured file and nothing left to exclude.
 
 [report]
 show_missing = true

@@ -63,8 +63,8 @@
   <g class="mono" font-size="13">
     <text x="656" y="502" fill="#e0def4">Claude ⇆ Codex を対で維持</text>
     <text x="656" y="527" fill="#e0def4">agents (14 ⇆ 14) · hooks · skills</text>
-    <text x="656" y="552" fill="#e0def4">_bash_review_common.py はバイト同一</text>
-    <text x="656" y="577" fill="#6e6a86" font-size="12">test_hook_sync がドリフトを検知</text>
+    <text x="656" y="552" fill="#e0def4">_bash_review_common.py は実体 1 つを symlink 共有</text>
+    <text x="656" y="577" fill="#6e6a86" font-size="12">test_hook_sync がリンクの形を固定</text>
   </g>
 
   <!-- vendor -> role legend -->

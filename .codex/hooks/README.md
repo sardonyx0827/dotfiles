@@ -143,5 +143,9 @@ sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 ```
 
 スクリプトは `~/.codex/hooks/` から本リポジトリの `.codex/hooks/` へシンボリック
-リンクを張る(`bash-review.py` は同ディレクトリの `_bash_review_common.py` を
-import するため、リンク先の実体ディレクトリに両方が揃っている必要がある)。
+リンクを張る。`bash-review.py` は同ディレクトリの `_bash_review_common.py` を
+import するが、その実体は `.claude/hooks/` 側にあり、`.codex/hooks/` に置いてある
+のは相対シンボリックリンク。Python は sys.path[0] を realpath で解決するため、
+`~/.codex/hooks/` 経由で起動してもリポジトリ内のリンクを辿って解決される
+(Codex の symlink 無視は skills/ · agents/ のスキャンにのみ適用され、import には
+関与しない)。

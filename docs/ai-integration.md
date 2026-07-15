@@ -29,7 +29,7 @@ Bash コマンドは PreToolUse フックで審査され、**3 層構造**で `A
 </p>
 
 - **実装**: [`.claude/hooks/bash-review.py`](../.claude/hooks/bash-review.py)（入口）/ 判定ロジック共有モジュール [`_bash_review_common.py`](../.claude/hooks/_bash_review_common.py)
-- Claude 変種と Codex 変種 (`.codex/hooks/`) は共有モジュールを **バイト単位で同一**の複製として持ち、[`tests/test_hook_sync.py`](../tests/test_hook_sync.py) がドリフトを検知します。
+- Claude 変種と Codex 変種 (`.codex/hooks/`) は共有モジュールの**実体を 1 つだけ持つ**: `.codex/hooks/_bash_review_common.py` は `.claude/hooks/` 側への相対シンボリックリンクで、ドリフトは検知するまでもなく構造的に起こりません。[`tests/test_hook_sync.py`](../tests/test_hook_sync.py) はそのリンクの形（symlink であること / 相対であること / import 可能であること）を固定します。
 - 詳細な脅威モデルと設計判断は [`.claude/hooks/README.md`](../.claude/hooks/README.md) を参照。
 
 ---
