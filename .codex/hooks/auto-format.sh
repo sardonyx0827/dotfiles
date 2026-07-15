@@ -44,37 +44,21 @@
 # -------------------------------------------------------------------
 LOG_DIR="$HOME/.codex/logs"
 LOG_FILE="$LOG_DIR/format.log"
-MAX_LOG_LINES=500
 mkdir -p "$LOG_DIR"
 
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
-  local lines
-  lines=$(wc -l <"$LOG_FILE")
-  if [ "$lines" -gt "$MAX_LOG_LINES" ]; then
-    tail -n "$MAX_LOG_LINES" "$LOG_FILE" >"${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
-  fi
-}
-
-notify() {
-  local title="$1"
-  local message="$2"
-  local timeout="${3:-5}"
-  if command -v terminal-notifier >/dev/null 2>&1; then
-    terminal-notifier -title "$title" -message "$message" -timeout "$timeout" 2>/dev/null
-  elif command -v osascript >/dev/null 2>&1; then
-    # 環境変数経由で値を渡すことで AppleScript インジェクションを防ぐ
-    # (system attribute ではなく printenv 経由にすることで日本語の
-    #  文字化け(MacRomanでの解釈)も避けられる)
-    HOOK_NOTIFY_TITLE="$title" HOOK_NOTIFY_MESSAGE="$message" osascript \
-      -e 'set titleText to do shell script "printenv HOOK_NOTIFY_TITLE || true"' \
-      -e 'set msgText to do shell script "printenv HOOK_NOTIFY_MESSAGE || true"' \
-      -e 'display notification msgText with title titleText' \
-      2>/dev/null
-  elif command -v notify-send >/dev/null 2>&1; then
-    notify-send --expire-time "$((timeout * 1000))" "$title" "$message" 2>/dev/null
-  fi
-}
+# 共有ヘルパー(hook_log / hook_notify)と整形マトリクス(hook_format_file)。
+# 実体は .claude/hooks/ 側、こちらは symlink。source する側で `exec 1>/dev/null`
+# する前に読み込むため、共有ファイルは source 時に何も出力しない契約。
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../.claude/hooks/_hook_common.sh
+. "$HOOK_DIR/_hook_common.sh"
+# shellcheck source=../../.claude/hooks/_format_common.sh
+. "$HOOK_DIR/_format_common.sh"
+if ! declare -F hook_log >/dev/null 2>&1 ||
+  ! declare -F hook_format_file >/dev/null 2>&1; then
+  echo "auto-format.sh: could not load shared hook helpers from $HOOK_DIR" >&2
+  exit 0
+fi
 
 # -------------------------------------------------------------------
 # 対象ファイルの特定
@@ -107,221 +91,9 @@ collect_targets() {
 }
 
 # 1 ファイルをフォーマットする。実際にフォーマッターが走って成功したら 0 を返す。
+# 1 ファイル整形は共有マトリクスに委譲する。対象の集約は Codex 固有なのでここ。
 format_file() {
-  local FILE_PATH="$1"
-  local EXTENSION="${FILE_PATH##*.}"
-  local BASENAME
-  BASENAME=$(basename "$FILE_PATH")
-  local FORMATTED=false # フォーマッターが実際に実行され、かつ成功したか
-  local err
-
-  log "--- format start: $FILE_PATH ---"
-  echo "Auto-formatting: $BASENAME"
-
-  # 拡張子に応じてフォーマッターを実行
-  case "$EXTENSION" in
-  # JavaScript/TypeScript/JSON/CSS/HTML/Markdown
-  js | jsx | ts | tsx | json | css | scss | less | html | htm | md | yaml | yml)
-    if command -v prettier >/dev/null 2>&1; then
-      echo "  Running Prettier..."
-      if err=$(prettier --write "$FILE_PATH" 2>&1); then
-        echo "  Prettier completed"
-        FORMATTED=true
-      else
-        echo "  Prettier failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    else
-      echo "  Prettier not found, skipping JS/TS formatting"
-    fi
-    ;;
-
-  # Python
-  py)
-    # ruff (import整列 + フォーマッター)
-    if command -v ruff >/dev/null 2>&1; then
-      # インポート整列(ruff互換)→整形の順で ruff に一本化する。
-      # ここで isort を併用すると `ruff format` の結果を崩し、CI の
-      # `ruff format --check` が落ちるため、ruff がある場合は isort を使わない。
-      echo "  Running ruff (import sort + format)..."
-      ruff check --select I --fix "$FILE_PATH" >/dev/null 2>&1 || true
-      if err=$(ruff format "$FILE_PATH" 2>&1); then
-        echo "  ruff completed"
-        FORMATTED=true
-      else
-        echo "  ruff failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    elif command -v autopep8 >/dev/null 2>&1; then
-      echo "  Running autopep8..."
-      if err=$(autopep8 --in-place "$FILE_PATH" 2>&1); then
-        echo "  autopep8 completed"
-        FORMATTED=true
-      else
-        echo "  autopep8 failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-      # ruff が無い環境でのみ isort を併用する (ruff とは排他)
-      if command -v isort >/dev/null 2>&1; then
-        echo "  Running isort..."
-        if err=$(isort "$FILE_PATH" 2>&1); then
-          echo "  isort completed"
-          FORMATTED=true
-        else
-          echo "  isort failed" >&2
-          [ -n "$err" ] && echo "$err" >&2
-        fi
-      fi
-    else
-      echo "  No Python formatter found (ruff/autopep8)"
-    fi
-    ;;
-
-  # Rust
-  rs)
-    if command -v rustfmt >/dev/null 2>&1; then
-      echo "  Running rustfmt..."
-      if err=$(rustfmt "$FILE_PATH" 2>&1); then
-        echo "  rustfmt completed"
-        FORMATTED=true
-      else
-        echo "  rustfmt failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    elif command -v cargo >/dev/null 2>&1; then
-      echo "  Running cargo fmt..."
-      if err=$(cd "$(dirname "$FILE_PATH")" && cargo fmt 2>&1); then
-        echo "  cargo fmt completed"
-        FORMATTED=true
-      else
-        echo "  cargo fmt failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    else
-      echo "  No Rust formatter found (rustfmt/cargo)"
-    fi
-    ;;
-
-  # Go
-  go)
-    if command -v gofmt >/dev/null 2>&1; then
-      echo "  Running gofmt..."
-      if err=$(gofmt -w "$FILE_PATH" 2>&1); then
-        echo "  gofmt completed"
-        FORMATTED=true
-      else
-        echo "  gofmt failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    fi
-    if command -v goimports >/dev/null 2>&1; then
-      echo "  Running goimports..."
-      if err=$(goimports -w "$FILE_PATH" 2>&1); then
-        echo "  goimports completed"
-        FORMATTED=true
-      else
-        echo "  goimports failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    fi
-    ;;
-
-  # Java
-  java)
-    if command -v google-java-format >/dev/null 2>&1; then
-      echo "  Running google-java-format..."
-      if err=$(google-java-format --replace "$FILE_PATH" 2>&1); then
-        echo "  google-java-format completed"
-        FORMATTED=true
-      else
-        echo "  google-java-format failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    else
-      echo "  google-java-format not found"
-    fi
-    ;;
-
-  # C/C++
-  c | cpp | cc | cxx | h | hpp)
-    if command -v clang-format >/dev/null 2>&1; then
-      echo "  Running clang-format..."
-      if err=$(clang-format -i "$FILE_PATH" 2>&1); then
-        echo "  clang-format completed"
-        FORMATTED=true
-      else
-        echo "  clang-format failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    else
-      echo "  clang-format not found"
-    fi
-    ;;
-
-  # Ruby
-  rb)
-    if command -v rubocop >/dev/null 2>&1; then
-      echo "  Running rubocop..."
-      if err=$(rubocop --auto-correct "$FILE_PATH" 2>&1); then
-        echo "  rubocop completed"
-        FORMATTED=true
-      else
-        echo "  rubocop failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    else
-      echo "  rubocop not found"
-    fi
-    ;;
-
-  # PHP
-  php)
-    if command -v php-cs-fixer >/dev/null 2>&1; then
-      echo "  Running php-cs-fixer..."
-      if err=$(php-cs-fixer fix "$FILE_PATH" 2>&1); then
-        echo "  php-cs-fixer completed"
-        FORMATTED=true
-      else
-        echo "  php-cs-fixer failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    else
-      echo "  php-cs-fixer not found"
-    fi
-    ;;
-
-  # Shell scripts
-  sh | bash)
-    if command -v shfmt >/dev/null 2>&1; then
-      echo "  Running shfmt..."
-      if err=$(shfmt -i 2 -w "$FILE_PATH" 2>&1); then
-        echo "  shfmt completed"
-        FORMATTED=true
-      else
-        echo "  shfmt failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
-      fi
-    else
-      echo "  shfmt not found"
-    fi
-    ;;
-
-  *)
-    echo "  No formatter configured for .$EXTENSION files"
-    ;;
-  esac
-
-  # stdout は捨てているため、フォーマッターが実際に走ったのか、それとも
-  # 見つからず素通りしたのかはログにしか残らない。両者を必ず区別する
-  # (でないと「DONE なのに整形されていない」が診断不能になる)。
-  if $FORMATTED; then
-    log "DONE: $BASENAME (formatted)"
-  else
-    log "DONE: $BASENAME (フォーマッター未実行: 未導入か対象外拡張子)"
-  fi
-
-  # フォーマッターが走って成功していれば 0、そうでなければ 1 を返す
-  $FORMATTED
+  hook_format_file "$1" "$LOG_FILE"
 }
 
 # -------------------------------------------------------------------
@@ -348,7 +120,7 @@ while IFS= read -r -d '' target; do
 
   target_count=$((target_count + 1))
   if [ "$target_count" -gt "$MAX_FILES" ]; then
-    log "SKIP: 対象が $MAX_FILES 件を超えたため以降を打ち切り"
+    hook_log "$LOG_FILE" "SKIP: 対象が $MAX_FILES 件を超えたため以降を打ち切り"
     break
   fi
 
@@ -360,9 +132,9 @@ done < <(collect_targets)
 
 # フォーマッターが実行された場合のみ通知（対象外の拡張子では通知しない）
 if [ "$formatted_count" -eq 1 ]; then
-  notify "Format Done" "$last_basename をフォーマットしました" 4
+  hook_notify "Format Done" "$last_basename をフォーマットしました" 4
 elif [ "$formatted_count" -gt 1 ]; then
-  notify "Format Done" "$formatted_count 件をフォーマットしました" 4
+  hook_notify "Format Done" "$formatted_count 件をフォーマットしました" 4
 fi
 
 exit 0

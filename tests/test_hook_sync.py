@@ -31,6 +31,7 @@ SHARED_FILES = [
     ("_bash_review_common.py", "python", []),
     ("_hook_common.sh", "bash", ["hook_log", "hook_notify"]),
     ("_lint_common.sh", "bash", ["hook_lint_file"]),
+    ("_format_common.sh", "bash", ["hook_format_file"]),
 ]
 
 
