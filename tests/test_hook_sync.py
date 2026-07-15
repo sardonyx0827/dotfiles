@@ -24,10 +24,13 @@ import sys
 import pytest
 from conftest import REPO_ROOT
 
-# (relative path under each hooks dir, loader used to prove it resolves)
+# (file under each hooks dir, loader that proves it resolves, functions it must
+# define). The .sh entries only need sourcing to succeed -- they call each other
+# at runtime, not at source time, so each can be loaded on its own.
 SHARED_FILES = [
-    ("_bash_review_common.py", "python"),
-    ("_hook_common.sh", "bash"),
+    ("_bash_review_common.py", "python", []),
+    ("_hook_common.sh", "bash", ["hook_log", "hook_notify"]),
+    ("_lint_common.sh", "bash", ["hook_lint_file"]),
 ]
 
 
@@ -39,20 +42,22 @@ def _codex(name: str):
     return REPO_ROOT / ".codex/hooks" / name
 
 
-@pytest.mark.parametrize("name,loader", SHARED_FILES, ids=[f[0] for f in SHARED_FILES])
+@pytest.mark.parametrize(
+    "name,loader,functions", SHARED_FILES, ids=[f[0] for f in SHARED_FILES]
+)
 class TestSharedFileIsSymlinked:
-    def test_claude_side_is_the_real_file(self, name, loader):
+    def test_claude_side_is_the_real_file(self, name, loader, functions):
         real = _claude(name)
         assert real.is_file()
         assert not real.is_symlink(), f"{name}: the .claude copy must be the real file"
 
-    def test_codex_side_is_a_symlink(self, name, loader):
+    def test_codex_side_is_a_symlink(self, name, loader, functions):
         # A regular file here means either a checkout with core.symlinks=false
         # or someone re-introducing the duplicate. Both silently resurrect
         # drift, and the core.symlinks case additionally breaks the hook.
         assert _codex(name).is_symlink(), f"{name}: the .codex entry must be a symlink"
 
-    def test_codex_symlink_is_relative(self, name, loader):
+    def test_codex_symlink_is_relative(self, name, loader, functions):
         # An absolute target would embed this machine's $DOTFILES_DIR and break
         # for every other clone location.
         target = _codex(name).readlink()
@@ -60,10 +65,10 @@ class TestSharedFileIsSymlinked:
             f"{name}: symlink target must be relative, got {target}"
         )
 
-    def test_codex_symlink_resolves_to_claude_side(self, name, loader):
+    def test_codex_symlink_resolves_to_claude_side(self, name, loader, functions):
         assert _codex(name).resolve() == _claude(name).resolve()
 
-    def test_loads_through_the_symlink(self, name, loader):
+    def test_loads_through_the_symlink(self, name, loader, functions):
         # The contract that actually matters. Both hook trees put their own
         # directory on the search path and load these by name, so the link has
         # to be traversable by the loader, not merely present on disk.
@@ -88,7 +93,7 @@ class TestSharedFileIsSymlinked:
             out=$(. "$1/{name}" 2>&1) || {{ echo "source failed" >&2; exit 1; }}
             [ -z "$out" ] || {{ echo "sourcing emitted output: $out" >&2; exit 1; }}
             . "$1/{name}"
-            for fn in hook_log hook_notify; do
+            for fn in {" ".join(functions)}; do
               declare -F "$fn" >/dev/null || {{ echo "$fn undefined" >&2; exit 1; }}
             done
             """
