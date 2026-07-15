@@ -36,10 +36,35 @@ hook_log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$log_file"
 
   local lines
-  lines=$(wc -l <"$log_file")
-  if [ "$lines" -gt "$max_lines" ]; then
-    tail -n "$max_lines" "$log_file" >"${log_file}.tmp" && mv "${log_file}.tmp" "$log_file"
+  lines=$(wc -l <"$log_file" 2>/dev/null) || return 0
+  [ "$lines" -gt "$max_lines" ] 2>/dev/null || return 0
+
+  # ローテーションは読んで書き戻す操作なので、フックが並行して走ると衝突する
+  # (Claude と Codex のセッションが同時に動く、1 ターンで複数ファイルが処理
+  # される、など珍しくない)。
+  #
+  # 固定名の ${log_file}.tmp を使っていた頃は、2 つのプロセスが同じ中間ファイル
+  # を開いて互いの内容を潰し合い、上限 50 行のログが 15 行まで削れた。さらに
+  # 先に mv した側に負けたプロセスの `mv: ... No such file or directory` が
+  # stderr へ漏れていた。lint.sh の stderr はモデルへの指摘を返す経路なので、
+  # これは lint の出力に化ける。
+  #
+  # プロセスごとに一意な中間ファイルを作れば衝突しない。mv は同一ディレクトリ内
+  # なので rename(2) 相当で不可分に差し替わり、ログは常にどちらかの完全な
+  # スナップショットになる(競り負けた側の数行が落ちることはあるが、ローテーション
+  # とはそういうものなので許容する)。
+  #
+  # flock は macOS に無いのでロックは使わない。また、ここで何が失敗しても
+  # 呼び出し元に影響させない: ログ取りがフックの成否を変えてはならないので、
+  # エラーは捨てて必ず 0 で返す。
+  local tmp
+  tmp=$(mktemp "${log_file}.XXXXXX" 2>/dev/null) || return 0
+  if tail -n "$max_lines" "$log_file" >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$log_file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  else
+    rm -f "$tmp" 2>/dev/null
   fi
+  return 0
 }
 
 # hook_notify <title> <message> [timeout_seconds]
