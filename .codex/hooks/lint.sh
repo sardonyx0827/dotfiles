@@ -84,25 +84,26 @@ PASSED_COUNT=0
 LAST_BASENAME=""
 
 # パッチ内のパスは cwd 相対で入ってくるため絶対パスに直す。
+# 対象リストは NUL 区切りで受け渡す(改行を含むファイル名でも壊れないように)。
 resolve_path() {
   local p="$1" root
   case "$p" in
   /*)
-    printf '%s\n' "$p"
+    printf '%s\0' "$p"
     return 0
     ;;
   esac
   if [ -f "$PWD/$p" ]; then
-    printf '%s\n' "$PWD/$p"
+    printf '%s\0' "$PWD/$p"
     return 0
   fi
   root=$(git rev-parse --show-toplevel 2>/dev/null)
   if [ -n "$root" ] && [ -f "$root/$p" ]; then
-    printf '%s\n' "$root/$p"
+    printf '%s\0' "$root/$p"
     return 0
   fi
   # 解決できなければそのまま返す(呼び出し元の -f チェックで落ちる)
-  printf '%s\n' "$p"
+  printf '%s\0' "$p"
 }
 
 collect_targets() {
@@ -111,7 +112,7 @@ collect_targets() {
 
   # Claude の Write/Edit/MultiEdit 経路: 単一ファイルが直接渡ってくる
   if [ -n "$file_path" ]; then
-    printf '%s\n' "$file_path"
+    printf '%s\0' "$file_path"
     return 0
   fi
 
@@ -146,13 +147,15 @@ collect_targets() {
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
   [ -z "$repo_root" ] && return 0
 
-  # 変更ファイル + 未追跡ファイル。git は cwd 相対のパスを返すため、
-  # リポジトリルートを基点に絶対パス化する。
-  (
-    git -C "$repo_root" diff --name-only HEAD 2>/dev/null
-    git -C "$repo_root" ls-files --others --exclude-standard 2>/dev/null
-  ) | sort -u | while IFS= read -r f; do
-    [ -n "$f" ] && printf '%s/%s\n' "$repo_root" "$f"
+  # 変更ファイル + 未追跡ファイル。両者は排他なので重複しない。
+  # -z が必須: 既定の core.quotePath が有効だと、引用符や非 ASCII(日本語の
+  # ファイル名など)を含むパスを `"evil\".sh"` のようにクォートして返すため、
+  # そのままでは開けず黙って対象から漏れる。
+  {
+    git -C "$repo_root" diff --name-only -z HEAD 2>/dev/null
+    git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
+  } | while IFS= read -r -d '' f; do
+    [ -n "$f" ] && printf '%s/%s\0' "$repo_root" "$f"
   done
 }
 
@@ -433,7 +436,7 @@ exec 1>/dev/null
 
 target_count=0
 
-while IFS= read -r target; do
+while IFS= read -r -d '' target; do
   [ -z "$target" ] && continue
   # apply_patch はファイル削除も行うため、実体が無いものは対象外
   [ -f "$target" ] || continue

@@ -91,13 +91,18 @@ collect_targets() {
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
   [ -z "$repo_root" ] && return 0
 
-  # 変更ファイル + 未追跡ファイル(新規作成も拾う)。git は cwd 相対のパスを
-  # 返すため、リポジトリルートを基点に絶対パス化する。
-  (
-    git -C "$repo_root" diff --name-only HEAD 2>/dev/null
-    git -C "$repo_root" ls-files --others --exclude-standard 2>/dev/null
-  ) | sort -u | while IFS= read -r f; do
-    [ -n "$f" ] && printf '%s/%s\n' "$repo_root" "$f"
+  # 変更ファイル + 未追跡ファイル(apply_patch は新規作成も行う)。両者は排他
+  # なので重複しない。git はリポジトリルート相対のパスを返すため絶対パス化する。
+  #
+  # -z が必須: 既定の core.quotePath が有効だと、引用符や非 ASCII(日本語の
+  # ファイル名など)を含むパスを `"evil\".sh"` のようにクォートして返すため、
+  # そのままでは開けず黙って整形対象から漏れる。出力も NUL 区切りにして、
+  # 改行を含むファイル名でも壊れないようにする。
+  {
+    git -C "$repo_root" diff --name-only -z HEAD 2>/dev/null
+    git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
+  } | while IFS= read -r -d '' f; do
+    [ -n "$f" ] && printf '%s/%s\0' "$repo_root" "$f"
   done
 }
 
@@ -336,7 +341,7 @@ formatted_count=0
 target_count=0
 last_basename=""
 
-while IFS= read -r target; do
+while IFS= read -r -d '' target; do
   [ -z "$target" ] && continue
   # apply_patch はファイル削除も行うため、実体が無いものは対象外
   [ -f "$target" ] || continue
