@@ -137,7 +137,7 @@
       "Read(**/*.token)",
       "Read(.env)",
       "Read(.env.*)",
-      "Write(**/secrets/**)",
+      "Edit(**/secrets/**)",
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(nc:*)",
