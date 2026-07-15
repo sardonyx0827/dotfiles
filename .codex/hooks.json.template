@@ -21,10 +21,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'__HOME__/.codex/hooks/auto-format.sh'"
-          },
-          {
-            "type": "command",
             "command": "'__HOME__/.codex/hooks/lint.sh'"
           }
         ]
@@ -33,6 +29,10 @@
     "Stop": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "'__HOME__/.codex/hooks/auto-format.sh'"
+          },
           {
             "type": "command",
             "command": "bash '__HOME__/.codex/hooks/stop-audit.sh'"
