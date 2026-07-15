@@ -188,6 +188,23 @@ winget install Microsoft.WindowsTerminal
 # 設定 → 更新とセキュリティ → 開発者向け → 開発者モード
 ```
 
+#### リポジトリ内のシンボリックリンクがテキストファイルになる
+
+開発者モード（OS 権限）と `core.symlinks`（Git の設定）は別物で、前者だけ有効でも
+後者が無効だと clone 時にシンボリックリンクがリンク先パスの入ったテキストファイル
+として展開される。Git for Windows はインストーラのチェックボックス次第で
+`core.symlinks=false` になっているため、有効化する：
+
+```bash
+git config --global core.symlinks true
+# 設定済みのクローンには遡って効かないので、クローンし直す
+```
+
+本リポジトリは `.codex/hooks/_bash_review_common.py` をリポジトリ内シンボリック
+リンクとして追跡している（実体は `.claude/hooks/` 側）。これがテキスト化すると
+Codex の bash-review フックが import に失敗する。`pytest tests/test_hook_sync.py`
+で検出できる。
+
 #### 文字コードの問題
 
 UTF-8を有効にする：
