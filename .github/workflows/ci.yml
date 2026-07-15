@@ -122,5 +122,9 @@ jobs:
           # 自作シェルスクリプトのみ検査（vendored な .codex/skills/.system 配下は除外）
           files=$(git ls-files '*.sh' | grep -v '^\.codex/skills/\.system/')
           echo "$files"
+          # -x: source 先を追って検査する。フックは _hook_common.sh 等を sibling
+          # として読み込むため、無いと SC1091 (Not following) で落ちる。
+          # -P SCRIPTDIR: source 先をスクリプト自身のディレクトリ基準で探す
+          # （実行時の cwd に依存させない）。
           # shellcheck disable=SC2086  # パスに空白は無いため意図的に単語分割する
-          shellcheck $files
+          shellcheck -x -P SCRIPTDIR $files

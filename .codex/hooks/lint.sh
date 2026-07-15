@@ -23,46 +23,29 @@
 command -v jq >/dev/null 2>&1 || exit 0
 
 # -------------------------------------------------------------------
+# 共有ヘルパー(hook_log / hook_notify)
+#
+# 実体は .claude/hooks/_hook_common.sh で、こちらの _hook_common.sh はそこへの
+# symlink。source 側で `exec 1>/dev/null` する前に読み込むため、共有ファイルは
+# source 時に何も出力しない契約になっている(詳細は _hook_common.sh のヘッダ)。
+# -------------------------------------------------------------------
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../.claude/hooks/_hook_common.sh
+. "$HOOK_DIR/_hook_common.sh"
+# 読み込めていなければ fail-open で抜ける。checkout で symlink がテキスト化した
+# 場合(core.symlinks=false)もここに落ちる。黙って進むと macOS では `log` が
+# /usr/bin/log に解決されてしまい、記録が静かにシステムログへ消える。
+if ! declare -F hook_log >/dev/null 2>&1; then
+  echo "lint.sh: could not load _hook_common.sh from $HOOK_DIR" >&2
+  exit 0
+fi
+
+# -------------------------------------------------------------------
 # ログ設定
 # -------------------------------------------------------------------
 LOG_DIR="$HOME/.codex/logs"
 LOG_FILE="$LOG_DIR/lint.log"
-MAX_LOG_LINES=500 # これを超えたら古い行を削除
 mkdir -p "$LOG_DIR"
-
-# タイムスタンプ付きでログに書き込み、行数が上限を超えたらローテーション
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
-  # 行数チェックして超過分を削除（tailで末尾MAX_LOG_LINES行だけ残す）
-  local lines
-  lines=$(wc -l <"$LOG_FILE")
-  if [ "$lines" -gt "$MAX_LOG_LINES" ]; then
-    tail -n "$MAX_LOG_LINES" "$LOG_FILE" >"${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
-  fi
-}
-
-# 通知を送る関数（macOS: terminal-notifier/osascript、Linux: notify-send）
-notify() {
-  local title="$1"
-  local message="$2"
-  local timeout="${3:-5}"
-  # terminal-notifier が入っていれば長めに表示、なければosascript/notify-sendにフォールバック
-  if command -v terminal-notifier >/dev/null 2>&1; then
-    # -timeout: 表示秒数（FAILEDは長め、PASSEDは短め）
-    terminal-notifier -title "$title" -message "$message" -timeout "$timeout" 2>/dev/null
-  elif command -v osascript >/dev/null 2>&1; then
-    # 環境変数経由で値を渡すことで AppleScript インジェクションを防ぐ
-    # (system attribute ではなく printenv 経由にすることで日本語の
-    #  文字化け(MacRomanでの解釈)も避けられる)
-    HOOK_NOTIFY_TITLE="$title" HOOK_NOTIFY_MESSAGE="$message" osascript \
-      -e 'set titleText to do shell script "printenv HOOK_NOTIFY_TITLE || true"' \
-      -e 'set msgText to do shell script "printenv HOOK_NOTIFY_MESSAGE || true"' \
-      -e 'display notification msgText with title titleText' \
-      2>/dev/null
-  elif command -v notify-send >/dev/null 2>&1; then
-    notify-send --expire-time "$((timeout * 1000))" "$title" "$message" 2>/dev/null
-  fi
-}
 
 # -------------------------------------------------------------------
 # 対象ファイルの特定
@@ -141,7 +124,7 @@ collect_targets() {
   # 対象リストを汚さないようログはファイルにだけ残す。
   local tool_name
   tool_name=$(printf '%s' "$INPUT" | jq -r '.tool_name // "?"' 2>/dev/null)
-  log "unknown payload: tool_name=$tool_name -> git 差分にフォールバック" >/dev/null
+  hook_log "$LOG_FILE" "unknown payload: tool_name=$tool_name -> git 差分にフォールバック" >/dev/null
 
   local repo_root
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
@@ -172,7 +155,7 @@ lint_file() {
   local LINT_ERRORS=""
   local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
 
-  log "--- lint start: $FILE_PATH ---"
+  hook_log "$LOG_FILE" "--- lint start: $FILE_PATH ---"
   echo "Linting: $BASENAME"
 
   case "$EXTENSION" in
@@ -395,7 +378,7 @@ lint_file() {
   sh | bash)
     if command -v shellcheck >/dev/null 2>&1; then
       echo "  Running shellcheck..."
-      if ! OUTPUT=$(shellcheck "$FILE_PATH" 2>&1); then
+      if ! OUTPUT=$(shellcheck -x -P SCRIPTDIR "$FILE_PATH" 2>&1); then
         LINT_ERRORS="${LINT_ERRORS}[shellcheck]\n${OUTPUT}\n"
       else
         echo "  shellcheck passed"
@@ -411,14 +394,14 @@ lint_file() {
   esac
 
   if [ -n "$LINT_ERRORS" ]; then
-    log "FAILED: $BASENAME"
+    hook_log "$LOG_FILE" "FAILED: $BASENAME"
     printf "%b" "$LINT_ERRORS" >>"$LOG_FILE"
     # 呼び出し元でまとめて stderr に出すため、ここでは積むだけにする
     ALL_ERRORS="${ALL_ERRORS}Lint errors found in ${BASENAME}:\n---\n${LINT_ERRORS}---\n"
     return 1
   fi
 
-  log "PASSED: $BASENAME"
+  hook_log "$LOG_FILE" "PASSED: $BASENAME"
   echo "All lint checks passed for $BASENAME"
   return 0
 }
@@ -443,7 +426,7 @@ while IFS= read -r -d '' target; do
 
   target_count=$((target_count + 1))
   if [ "$target_count" -gt "$MAX_FALLBACK_FILES" ]; then
-    log "SKIP: 対象が $MAX_FALLBACK_FILES 件を超えたため以降を打ち切り"
+    hook_log "$LOG_FILE" "SKIP: 対象が $MAX_FALLBACK_FILES 件を超えたため以降を打ち切り"
     break
   fi
 
@@ -461,9 +444,9 @@ done < <(collect_targets)
 
 if [ -n "$ALL_ERRORS" ]; then
   if [ "$FAILED_COUNT" -eq 1 ]; then
-    notify "Lint Failed" "$LAST_BASENAME に問題が見つかりました" 15
+    hook_notify "Lint Failed" "$LAST_BASENAME に問題が見つかりました" 15
   else
-    notify "Lint Failed" "$FAILED_COUNT 件のファイルに問題が見つかりました" 15
+    hook_notify "Lint Failed" "$FAILED_COUNT 件のファイルに問題が見つかりました" 15
   fi
 
   echo "" >&2
@@ -474,8 +457,8 @@ fi
 
 # 解析対象が 1 件も無かった場合は通知しない(対象外の拡張子など)
 if [ "$PASSED_COUNT" -eq 1 ]; then
-  notify "Lint Passed" "$LAST_BASENAME のチェックが完了しました" 5
+  hook_notify "Lint Passed" "$LAST_BASENAME のチェックが完了しました" 5
 elif [ "$PASSED_COUNT" -gt 1 ]; then
-  notify "Lint Passed" "$PASSED_COUNT 件のチェックが完了しました" 5
+  hook_notify "Lint Passed" "$PASSED_COUNT 件のチェックが完了しました" 5
 fi
 exit 0
