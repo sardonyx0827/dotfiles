@@ -189,6 +189,244 @@ class TestLint:
         assert "HOOK_NOTIFY_MESSAGE" in call
 
 
+def _env_hiding(shell_env, *names: str) -> dict | None:
+    """PATH with every directory providing `names` removed, stubs still first.
+
+    Returns None when jq would be hidden as collateral: several of these tools
+    share a directory with it (php and jq are both in /opt/homebrew/bin here),
+    and without jq the hook bails out at payload parsing, so the test would
+    pass for entirely the wrong reason.
+    """
+    path = shell_env.env["PATH"]
+    for name in names:
+        path = _path_without_executable(path, name)
+    has_jq = any(
+        os.access(os.path.join(d, "jq"), os.X_OK) for d in path.split(os.pathsep) if d
+    )
+    if not has_jq:
+        return None
+    return {**shell_env.env, "PATH": f"{shell_env.stub_bin}{os.pathsep}{path}"}
+
+
+# (extension, tool under test, expected argv prefix, error tag, companions).
+# `companions` are the other tools the same branch invokes; they get neutral
+# stubs so a real one on the developer's machine cannot decide the outcome.
+EXIT_CODE_LINTERS = [
+    ("go", "go", "go vet ", "[go vet]", ["staticcheck"]),
+    ("rb", "rubocop", "rubocop --no-color ", "[rubocop]", []),
+    ("php", "phpstan", "phpstan analyse ", "[phpstan]", []),
+]
+
+# Linters whose failure is detected by grepping the tool's OUTPUT instead of
+# its exit status. The stub exits 0 and must still be treated as a failure --
+# this is the matrix's least obvious contract and the easiest thing to break.
+GREP_LINTERS = [
+    ("java", "checkstyle", "Foo.java:1: [ERROR] missing javadoc", "[checkstyle]"),
+    ("cpp", "cppcheck", "x.cpp:1:1: (error) null pointer dereference", "[cppcheck]"),
+]
+
+
+@pytest.mark.parametrize("LINT", LINT_HOOKS, ids=["claude", "codex"])
+class TestLintLanguageMatrix:
+    """Characterization of the per-language dispatch table.
+
+    Only .py and .sh had coverage; js/ts, rs, go, java, c/c++, rb and php --
+    roughly 230 lines duplicated verbatim between the two copies -- had none,
+    so a mechanical edit there could not be caught. These pin *which* tool each
+    extension dispatches to and *how* its failure is recognised, which is what
+    an extraction has to preserve.
+    """
+
+    @pytest.mark.parametrize(
+        "ext,tool,argv_prefix,tag,companions",
+        EXIT_CODE_LINTERS,
+        ids=[t[1] for t in EXIT_CODE_LINTERS],
+    )
+    def test_exit_code_linter_failure_blocks(
+        self, LINT, shell_env, tmp_path, ext, tool, argv_prefix, tag, companions
+    ):
+        shell_env.stub(tool, body='echo "problem found"', exit_code=1)
+        for companion in companions:
+            shell_env.stub(companion)
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert tag in res.stderr
+        assert "problem found" in res.stderr
+        assert any(c.startswith(argv_prefix) for c in shell_env.calls), (
+            f"expected {tool} to be invoked as '{argv_prefix}...', got {shell_env.calls}"
+        )
+        log = _log_file(shell_env, LINT, "lint.log")
+        assert f"FAILED: x.{ext}" in log.read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize(
+        "ext,tool,argv_prefix,tag,companions",
+        EXIT_CODE_LINTERS,
+        ids=[t[1] for t in EXIT_CODE_LINTERS],
+    )
+    def test_exit_code_linter_success_passes(
+        self, LINT, shell_env, tmp_path, ext, tool, argv_prefix, tag, companions
+    ):
+        shell_env.stub(tool)
+        for companion in companions:
+            shell_env.stub(companion)
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0
+        log = _log_file(shell_env, LINT, "lint.log")
+        assert f"PASSED: x.{ext}" in log.read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize(
+        "ext,tool,trigger,tag", GREP_LINTERS, ids=[t[1] for t in GREP_LINTERS]
+    )
+    def test_grep_linter_fails_on_output_despite_exit_zero(
+        self, LINT, shell_env, tmp_path, ext, tool, trigger, tag
+    ):
+        # exit_code=0 on purpose: these tools report findings on stdout while
+        # exiting successfully, so the matrix greps their output.
+        shell_env.stub(tool, body=f'echo "{trigger}"', exit_code=0)
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2, (
+            f"{tool} findings on stdout must block even when it exits 0"
+        )
+        assert tag in res.stderr
+
+    @pytest.mark.parametrize(
+        "ext,tool,trigger,tag", GREP_LINTERS, ids=[t[1] for t in GREP_LINTERS]
+    )
+    def test_grep_linter_passes_on_clean_output(
+        self, LINT, shell_env, tmp_path, ext, tool, trigger, tag
+    ):
+        shell_env.stub(tool, body='echo "no issues"', exit_code=0)
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0
+
+    # Every tool the branch could reach must be hidden, not merely left
+    # un-stubbed: this machine really has go, staticcheck, php, cargo, eslint
+    # and tsc, so "no stub" tests the developer's $PATH rather than the hook.
+    @pytest.mark.parametrize(
+        "ext,tools",
+        [
+            ("go", ["go", "staticcheck"]),
+            ("rb", ["rubocop"]),
+            ("php", ["phpstan", "php"]),
+            ("java", ["checkstyle"]),
+            ("cpp", ["cppcheck"]),
+            ("rs", ["cargo"]),
+            ("ts", ["eslint", "tsc"]),
+        ],
+    )
+    def test_missing_linter_is_skipped_not_fatal(
+        self, LINT, shell_env, tmp_path, ext, tools
+    ):
+        env = _env_hiding(shell_env, *tools)
+        if env is None:
+            pytest.skip(f"cannot hide {tools} without also hiding jq on this host")
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = _run_with_env(LINT, payload(target), env)
+        assert res.returncode == 0, (
+            f"a missing linter must degrade to a pass, got: {res.stderr}"
+        )
+        log = _log_file(shell_env, LINT, "lint.log")
+        assert f"PASSED: x.{ext}" in log.read_text(encoding="utf-8")
+
+    def test_php_falls_back_to_php_lint_without_phpstan(
+        self, LINT, shell_env, tmp_path
+    ):
+        # phpstan absent -> `php -l` syntax check is the documented fallback.
+        shell_env.stub("php", body='echo "Parse error: syntax error"', exit_code=1)
+        target = tmp_path / "x.php"
+        target.write_text("<?php\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "[php syntax]" in res.stderr
+        assert any(c.startswith("php -l ") for c in shell_env.calls)
+
+    def test_phpstan_wins_over_php_lint_when_both_exist(
+        self, LINT, shell_env, tmp_path
+    ):
+        shell_env.stub("phpstan")
+        shell_env.stub("php")
+        target = tmp_path / "x.php"
+        target.write_text("<?php\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0
+        assert any(c.startswith("phpstan analyse ") for c in shell_env.calls)
+        assert not any(c.startswith("php -l") for c in shell_env.calls), (
+            "php -l is a fallback and must not run when phpstan is available"
+        )
+
+    def test_clippy_skipped_without_cargo_toml(self, LINT, shell_env, git_repo):
+        shell_env.stub("cargo")
+        target = git_repo / "x.rs"
+        target.write_text("fn main() {}\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0
+        assert not any(c.startswith("cargo clippy") for c in shell_env.calls), (
+            "clippy must not run outside a Cargo project"
+        )
+
+    def test_clippy_fails_on_error_line_despite_exit_zero(
+        self, LINT, shell_env, git_repo
+    ):
+        # Like checkstyle/cppcheck, clippy's result is read off its output.
+        shell_env.stub("cargo", body='echo "error: borrow of moved value"', exit_code=0)
+        (git_repo / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+        target = git_repo / "x.rs"
+        target.write_text("fn main() {}\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "[clippy]" in res.stderr
+
+    def test_eslint_skipped_without_config(self, LINT, shell_env, git_repo):
+        shell_env.stub("eslint", exit_code=1)
+        target = git_repo / "x.js"
+        target.write_text("var x = 1\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0, "no ESLint config -> skip, not fail"
+        assert not any(c.startswith("eslint") for c in shell_env.calls)
+
+    def test_eslint_runs_when_config_present(self, LINT, shell_env, git_repo):
+        shell_env.stub("eslint", body='echo "1:1 error Unexpected var"', exit_code=1)
+        (git_repo / "eslint.config.js").write_text(
+            "export default []\n", encoding="utf-8"
+        )
+        target = git_repo / "x.js"
+        target.write_text("var x = 1\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "[ESLint]" in res.stderr
+
+    def test_local_eslint_preferred_over_path(self, LINT, shell_env, git_repo):
+        # A project-local eslint must win over one merely on PATH, so the file
+        # is linted with the project's own version/plugins.
+        shell_env.stub("eslint", body='echo "from PATH"', exit_code=1)
+        (git_repo / "eslint.config.js").write_text(
+            "export default []\n", encoding="utf-8"
+        )
+        local_bin = git_repo / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        local_eslint = local_bin / "eslint"
+        local_eslint.write_text(
+            f'#!/bin/bash\necho "local-eslint $*" >> "{shell_env.calls_file}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        local_eslint.chmod(0o755)
+        target = git_repo / "x.js"
+        target.write_text("var x = 1\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0, "local eslint exits 0, so the hook must pass"
+        assert any(c.startswith("local-eslint ") for c in shell_env.calls)
+        assert not any(c.startswith("eslint ") for c in shell_env.calls)
+
+
 # Claude's copy runs on PostToolUse and formats the single file named in the
 # payload. The Codex copy cannot share these cases -- it runs on Stop and reads
 # the git working tree instead. See TestCodexAutoFormat.
