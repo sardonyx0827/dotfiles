@@ -427,6 +427,106 @@ class TestLintLanguageMatrix:
         assert not any(c.startswith("eslint ") for c in shell_env.calls)
 
 
+# (extension, formatter stub, expected argv prefix). One entry per branch of
+# auto-format.sh's dispatch table. Only py and sh had coverage before; the rest
+# is ~190 lines duplicated between the two copies, so nothing caught an edit.
+FORMATTERS = [
+    ("js", "prettier", "prettier --write "),
+    ("md", "prettier", "prettier --write "),
+    ("rs", "rustfmt", "rustfmt "),
+    ("go", "gofmt", "gofmt -w "),
+    ("java", "google-java-format", "google-java-format "),
+    ("cpp", "clang-format", "clang-format "),
+    ("rb", "rubocop", "rubocop "),
+    ("php", "php-cs-fixer", "php-cs-fixer "),
+]
+
+
+@pytest.mark.parametrize("FORMAT", [CLAUDE_FORMAT], ids=["claude"])
+class TestAutoFormatMatrix:
+    """Characterization of auto-format.sh's per-language dispatch table.
+
+    Same gap as the lint matrix had: ten branches, coverage on two. These pin
+    which formatter each extension reaches for and that a missing or failing
+    one degrades to a pass, so the matrix can be moved into a shared file and
+    proven unchanged.
+    """
+
+    @pytest.mark.parametrize(
+        "ext,tool,argv_prefix", FORMATTERS, ids=[f"{f[0]}-{f[1]}" for f in FORMATTERS]
+    )
+    def test_extension_dispatches_to_formatter(
+        self, FORMAT, shell_env, tmp_path, ext, tool, argv_prefix
+    ):
+        shell_env.stub(tool)
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = shell_env.run(FORMAT, stdin=payload(target))
+        assert res.returncode == 0
+        assert any(c.startswith(argv_prefix) for c in shell_env.calls), (
+            f".{ext} must reach {tool}, got {shell_env.calls}"
+        )
+
+    @pytest.mark.parametrize(
+        "ext,tool,argv_prefix", FORMATTERS, ids=[f"{f[0]}-{f[1]}" for f in FORMATTERS]
+    )
+    def test_failing_formatter_does_not_block(
+        self, FORMAT, shell_env, tmp_path, ext, tool, argv_prefix
+    ):
+        # auto-format is fail-open by design: a formatter blowing up must not
+        # take the hook -- or the user's edit -- down with it.
+        shell_env.stub(tool, body='echo "boom" >&2', exit_code=1)
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = shell_env.run(FORMAT, stdin=payload(target))
+        assert res.returncode == 0
+        assert f"{tool} failed" in res.stderr or "boom" in res.stderr
+
+    def test_rustfmt_preferred_over_cargo_fmt(self, FORMAT, shell_env, tmp_path):
+        shell_env.stub("rustfmt")
+        shell_env.stub("cargo")
+        target = tmp_path / "x.rs"
+        target.write_text("fn main() {}\n", encoding="utf-8")
+        shell_env.run(FORMAT, stdin=payload(target))
+        assert any(c.startswith("rustfmt ") for c in shell_env.calls)
+        assert not any(c.startswith("cargo fmt") for c in shell_env.calls), (
+            "cargo fmt is the fallback and must not run when rustfmt exists"
+        )
+
+    def test_goimports_runs_after_gofmt(self, FORMAT, shell_env, tmp_path):
+        # Both run for Go: gofmt formats, goimports fixes the import block.
+        shell_env.stub("gofmt")
+        shell_env.stub("goimports")
+        target = tmp_path / "x.go"
+        target.write_text("package main\n", encoding="utf-8")
+        shell_env.run(FORMAT, stdin=payload(target))
+        assert any(c.startswith("gofmt -w ") for c in shell_env.calls)
+        assert any(c.startswith("goimports -w ") for c in shell_env.calls)
+
+    @pytest.mark.parametrize(
+        "ext,tools",
+        [
+            ("js", ["prettier"]),
+            ("rs", ["rustfmt", "cargo"]),
+            ("go", ["gofmt", "goimports"]),
+            ("rb", ["rubocop"]),
+            ("php", ["php-cs-fixer"]),
+        ],
+    )
+    def test_missing_formatter_is_skipped(
+        self, FORMAT, shell_env, tmp_path, ext, tools
+    ):
+        # Hide real tools rather than just not stubbing them: gofmt and cargo
+        # exist on this machine, so "no stub" would test the developer's PATH.
+        env = _env_hiding(shell_env, *tools)
+        if env is None:
+            pytest.skip(f"cannot hide {tools} without also hiding jq on this host")
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = _run_with_env(FORMAT, payload(target), env)
+        assert res.returncode == 0
+
+
 # Claude's copy runs on PostToolUse and formats the single file named in the
 # payload. The Codex copy cannot share these cases -- it runs on Stop and reads
 # the git working tree instead. See TestCodexAutoFormat.
