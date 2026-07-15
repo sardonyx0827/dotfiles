@@ -45,6 +45,26 @@ Matcher: `Write|Edit|MultiEdit` (runs in order):
   and blocks once with the findings so Claude removes them.
   `stop_hook_active` guards against infinite loops.
 
+## Shared libraries (`_`-prefixed, not hooks themselves)
+
+The Codex hooks in `.codex/hooks/` run the same per-file logic as these, and
+differ only in how they pick targets and report verdicts. That shared logic
+lives here as the real file; `.codex/hooks/` holds relative symlinks to it, so
+the two cannot drift apart. See `.codex/hooks/README.md` for the full table.
+
+- **`_hook_common.sh`**: `hook_log` (timestamped, size-capped) and
+  `hook_notify` (terminal-notifier / osascript / notify-send).
+- **`_lint_common.sh`**: `hook_lint_file` — the per-language lint matrix.
+- **`_format_common.sh`**: `hook_format_file` — the per-language formatter matrix.
+- **`_bash_review_common.py`**: bash-review's verdict logic and review calls.
+
+Contract for the shell ones: they define functions and nothing else. Sourcing
+must not print, `mkdir`, or touch `set`/`IFS`/`trap`/cwd — the Codex `lint.sh`
+sources them before `exec 1>/dev/null`, so any output at source time would land
+in the structured-output channel Codex parses and fail the hook. Names are
+namespaced `hook_`/`HOOK_` because bash is dynamically scoped and a collision
+with a caller's local fails silently.
+
 ## bash-review — design rationale & threat model
 
 `bash-review` is a **guardrail against an over-eager agent**, not an adversarial

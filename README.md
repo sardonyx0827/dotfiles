@@ -576,7 +576,15 @@ python3 -m pytest tests/test_bash_review.py -v
 Python フック（`.claude/hooks` / `.claude/mcp-servers` / `.codex/hooks`）は
 `run_hook` フィクスチャが in-process で `exec` するため、カバレッジを実測できます。
 CI（`.github/workflows/ci.yml`）は `pytest-cov` でブランチカバレッジを測定し、
-**90% を下回るとジョブが失敗**します（実測は約 95%、除外設定は `.coveragerc`）。
+**90% を下回るとジョブが失敗**します（実測は約 97%、設定は `.coveragerc`）。
+集計値は低い個別ファイルを平均で覆い隠すため、CI はファイル単位の 80% 床も別途
+強制します。
+
+> **カバレッジが測るのは Python だけです。** フックの実体はシェルにもあり
+> （`lint.sh` / `auto-format.sh` / `stop-audit.sh` / `git-push-review.sh` と
+> 共有ライブラリ `_hook_common.sh` / `_lint_common.sh` / `_format_common.sh`)、
+> coverage.py はシェルを計装できません。これらはサブプロセス経由のブラック
+> ボックステストで検証しており、上の数値には含まれません。
 
 > **CI ランナーは `ubuntu-latest` 単独です（意図的）。** フックと `install.sh` は
 > OS 依存分岐を差し込み口（`DEBIAN_VERSION_FILE`、OS 変数を強制する sourced 関数

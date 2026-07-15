@@ -48,7 +48,7 @@ jobs:
       # フックは stdin/subprocess/urlopen を全てスタブ化した hermetic テスト。
       # codex / gemini / tmux 等の実バイナリは不要（conftest.py 参照）。
       # Python フックは in-process で exec されるためカバレッジを実測でき、
-      # 集計 90% を下回るとジョブが失敗する（設定は .coveragerc、実測は約 95%）。
+      # 集計 90% を下回るとジョブが失敗する（設定は .coveragerc、実測は約 97%）。
       # 併せて JSON レポートを出力し、後続ステップでファイル単位の床も強制する。
       - name: Run pytest (with coverage gate)
         run: >-
@@ -60,8 +60,9 @@ jobs:
           --cov-report=json:coverage.json
           --cov-fail-under=90
       # 集計 90% ゲートはファイル単位の低カバレッジを平均で覆い隠すため、
-      # 各ファイルに最低 80% を別途強制する（.coveragerc の omit 対象は
-      # coverage.json に載らないので自動的に除外される）。
+      # 各ファイルに最低 80% を別途強制する（測定された全ファイルが対象。
+      # 以前あった .coveragerc の omit は、対象だった .codex 側の複製が
+      # symlink になり測定上 1 ファイルへ統合されたため不要になった）。
       - name: Enforce per-file coverage floor (80%)
         run: |
           python - <<'PY'

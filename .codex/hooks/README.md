@@ -143,9 +143,25 @@ sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 ```
 
 スクリプトは `~/.codex/hooks/` から本リポジトリの `.codex/hooks/` へシンボリック
-リンクを張る。`bash-review.py` は同ディレクトリの `_bash_review_common.py` を
-import するが、その実体は `.claude/hooks/` 側にあり、`.codex/hooks/` に置いてある
-のは相対シンボリックリンク。Python は sys.path[0] を realpath で解決するため、
-`~/.codex/hooks/` 経由で起動してもリポジトリ内のリンクを辿って解決される
-(Codex の symlink 無視は skills/ · agents/ のスキャンにのみ適用され、import には
-関与しない)。
+リンクを張る。
+
+`.codex/hooks/` にある次の 4 つは、いずれも `.claude/hooks/` 側の実体への相対
+シンボリックリンク (Claude 版と完全に同一のロジックなので、実体を 1 つにして
+ドリフトを構造的に起こらなくしてある):
+
+| ファイル                 | 中身                           | 読み込む側                             |
+| ------------------------ | ------------------------------ | -------------------------------------- |
+| `_bash_review_common.py` | 判定ロジック・レビュー呼び出し | `bash-review.py` が import             |
+| `_hook_common.sh`        | `hook_log` / `hook_notify`     | `lint.sh` / `auto-format.sh` が source |
+| `_lint_common.sh`        | 言語別 静的解析マトリクス      | `lint.sh` が source                    |
+| `_format_common.sh`      | 言語別 フォーマッタマトリクス  | `auto-format.sh` が source             |
+
+`~/.codex/hooks/` 経由で起動しても解決される。Python は sys.path[0] を realpath
+で解決してリポジトリ内に入り、bash の `source` は OS がリンクを透過的に辿る
+(Codex の symlink 無視は skills/ · agents/ のスキャンにのみ適用され、スクリプトの
+読み込みには関与しない — install.sh も同じ線引きをしている)。
+
+`tests/test_hook_sync.py` が 4 つすべてについてリンクの形 (symlink であること /
+相対であること / 実体に解決すること / 実際にロードできること) を固定する。
+`core.symlinks=false` の clone ではリンクがテキストファイルとして展開されて壊れる
+ため、各 wrapper は読み込み後に関数の存在を確認して落ちる (INSTALL_PLATFORM.md 参照)。
