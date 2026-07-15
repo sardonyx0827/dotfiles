@@ -22,15 +22,17 @@ git rev-parse --is-inside-work-tree &>/dev/null || exit 0
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$repo_root" ] && exit 0
 
-# 作業ツリーの変更ファイル + 未追跡ファイル
-files=$( (
-  git -C "$repo_root" diff --name-only HEAD 2>/dev/null
-  git -C "$repo_root" ls-files --others --exclude-standard 2>/dev/null
-) | sort -u)
-[ -z "$files" ] && exit 0
-
+# 作業ツリーの変更ファイル + 未追跡ファイル(両者は排他なので重複しない)。
+#
+# -z が必須: 既定の core.quotePath が有効だと、引用符や非 ASCII を含むパスを
+# `"evil\".ts"` のようにクォートして返す。そのままでは開けず、監査から黙って
+# 漏れてしまう(見逃すゲートは、うるさいゲートより質が悪い)。
+#
+# NUL 区切りの一覧はコマンド置換では受け取れない(bash が NUL を捨てる)ため、
+# プロセス置換でループへ直接流し込む。パイプにすると findings がサブシェルに
+# 閉じ込められて失われるので使えない。
 findings=""
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   path="$repo_root/$f"
   [ -f "$path" ] || continue
   case "$f" in
@@ -45,7 +47,10 @@ while IFS= read -r f; do
     ;;
   esac
   [ -n "$hits" ] && findings="${findings}${f}:\n${hits}\n"
-done <<<"$files"
+done < <(
+  git -C "$repo_root" diff --name-only -z HEAD 2>/dev/null
+  git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
+)
 
 [ -z "$findings" ] && exit 0
 

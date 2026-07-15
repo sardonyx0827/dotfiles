@@ -172,3 +172,23 @@ def test_debug_scan_parity(
             assert res.stdout == "", label
         else:
             assert res.stderr == "", label
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("filename", ["日本語.ts", 'evil".ts'])
+def test_audits_paths_needing_git_quoting(shell_env, git_repo, variant, hook, filename):
+    # git's core.quotePath is on by default and renders non-ASCII or quote
+    # characters as "\346\227\245..." / "evil\".ts". Split on newlines, those
+    # paths cannot be opened and the file drops out of the audit silently --
+    # a gate that under-reports is worse than one that is merely noisy.
+    (git_repo / filename).write_text('console.log("debug")\n', encoding="utf-8")
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    label = f"{variant}:{filename}"
+    if variant == "claude":
+        assert res.returncode == 0, label
+        result = json.loads(res.stdout)
+        assert result["decision"] == "block", label
+        assert filename in result["reason"], label
+    else:
+        assert res.returncode == 2, label
+        assert filename in res.stderr, label
