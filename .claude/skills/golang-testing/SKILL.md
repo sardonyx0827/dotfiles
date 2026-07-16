@@ -541,12 +541,9 @@ go test -race -coverprofile=coverage.out ./...
 
 ### Coverage Targets
 
-| Code Type               | Target  |
-| ----------------------- | ------- |
-| Critical business logic | 100%    |
-| Public APIs             | 90%+    |
-| General code            | 80%+    |
-| Generated code          | Exclude |
+The coverage policy — targets per code type, and the rule that the project's own CI gate
+overrides them — is defined in the **tdd-workflow** skill. Do not restate a threshold
+here.
 
 ### Excluding Generated Code from Coverage
 

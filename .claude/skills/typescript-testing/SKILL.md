@@ -15,7 +15,7 @@ description: >
 Reliable, maintainable tests in TypeScript using Vitest as the primary runner.
 Jest equivalents are noted where syntax differs.
 
-For TDD methodology and the 80% coverage policy, see the **tdd-workflow** skill.
+For TDD methodology and the coverage policy, see the **tdd-workflow** skill.
 
 ---
 
@@ -306,7 +306,7 @@ it("returns all matching records", async () => {
 ## 9. Coverage Configuration
 
 Configure coverage in `vitest.config.ts` using the `v8` provider (built into
-Node, no extra install). See the **tdd-workflow** skill for the 80% policy.
+Node, no extra install). See the **tdd-workflow** skill for the coverage policy.
 
 ```ts
 // vitest.config.ts

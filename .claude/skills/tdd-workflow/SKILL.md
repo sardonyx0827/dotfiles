@@ -1,6 +1,6 @@
 ---
 name: tdd-workflow
-description: Use this skill when writing new features, fixing bugs, or refactoring code. Enforces test-driven development with 80%+ coverage including unit, integration, and E2E tests.
+description: Use this skill when writing new features, fixing bugs, or refactoring code. Enforces test-driven development across unit, integration, and E2E tests, and defines the coverage policy.
 ---
 
 # Test-Driven Development Workflow
@@ -32,10 +32,33 @@ ALWAYS write tests first, then implement code to make tests pass.
 
 ### 2. Coverage Requirements
 
-- Minimum 80% coverage (unit + integration + E2E)
+**This section is the single source of truth for the coverage policy.** Other skills,
+agents, and commands reference it rather than restating a number — if the policy changes,
+it changes here only.
+
+**The project's own gate always wins.** Before quoting any number below, check the
+project's CI config and test tooling (`.github/workflows/`, `.coveragerc`, `pytest.ini`,
+`jest.config`, `vitest.config`). If the project enforces a threshold, that is the
+threshold — the defaults here apply only where the project sets none. Never report
+"coverage requirement met" against a default that is looser than the project's gate.
+
+Defaults, absent a project gate:
+
+| Code type               | Target  |
+| ----------------------- | ------- |
+| Critical business logic | 100%    |
+| Public APIs             | 90%+    |
+| General code            | 80%+    |
+| Generated code          | Exclude |
+
+Beyond the number:
+
 - All edge cases covered
 - Error scenarios tested
 - Boundary conditions verified
+
+Coverage is a floor, not a goal. A green percentage with no error-path assertions is a
+worse signal than a lower number with meaningful ones.
 
 ### 3. Test Types
 
@@ -134,7 +157,7 @@ Improve code quality while keeping tests green:
 
 ```bash
 npm run test:coverage
-# Verify 80%+ coverage achieved
+# Verify coverage against the threshold (see Coverage Requirements above)
 ```
 
 ## Testing Patterns
@@ -332,6 +355,11 @@ npm run test:coverage
 
 ### Coverage Thresholds
 
+An illustration of _how_ to wire a gate, not a statement of the policy — the numbers
+come from Coverage Requirements above, or from the project's existing config if it has
+one. A project may also stack gates (e.g. an aggregate floor plus a stricter per-file
+floor, since an aggregate hides individual files below it):
+
 ```json
 {
   "jest": {
@@ -446,7 +474,7 @@ npm test && npm run lint
 
 ## Success Metrics
 
-- 80%+ code coverage achieved
+- Coverage meets the threshold defined in Coverage Requirements above
 - All tests passing (green)
 - No skipped or disabled tests
 - Fast test execution (< 30s for unit tests)

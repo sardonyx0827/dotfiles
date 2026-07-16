@@ -103,7 +103,7 @@ Conventions when calling:
 
 ## 6. Development Workflow
 
-- For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first, 80%+ coverage)
+- For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first; it defines the coverage policy)
 - After writing or modifying code, review with the **code-reviewer** agent (for Go, use **go-reviewer**)
 - Do not constantly inline the details of coding standards or patterns; instead follow the relevant skill
   (coding-standards / backend-patterns / frontend-patterns / golang-patterns / docker-patterns / postgres-patterns, etc.)

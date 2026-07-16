@@ -13,10 +13,10 @@ Located in `~/.claude/agents/`:
 
 ### Implementation & TDD
 
-| Agent      | Model  | Purpose                                  | When to Use             |
-| ---------- | ------ | ---------------------------------------- | ----------------------- |
-| tdd-guide  | sonnet | Test-driven development (80%+ coverage)  | New features, bug fixes |
-| e2e-runner | sonnet | E2E testing (Agent Browser / Playwright) | Critical user flows     |
+| Agent      | Model  | Purpose                                    | When to Use             |
+| ---------- | ------ | ------------------------------------------ | ----------------------- |
+| tdd-guide  | sonnet | Test-driven development (see tdd-workflow) | New features, bug fixes |
+| e2e-runner | sonnet | E2E testing (Agent Browser / Playwright)   | Critical user flows     |
 
 ### Review & Quality
 

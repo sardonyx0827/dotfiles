@@ -59,8 +59,8 @@ ruff check . 2>&1 | head -30
 # Run tests with coverage
 npm run test -- --coverage 2>&1 | tail -50
 
-# Check coverage threshold
-# Target: 80% minimum
+# Check coverage against the project's threshold.
+# Policy and defaults: the tdd-workflow skill. The project's CI gate wins.
 ```
 
 Report:

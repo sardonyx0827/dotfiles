@@ -61,7 +61,7 @@ Launch conditions (when any of the following are met):
 
 ## Development Workflow
 
-- For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first, 80%+ coverage)
+- For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first; it defines the coverage policy)
 - After writing or modifying code, review with the **code-reviewer** agent (for Go, use **go-reviewer**)
 - Do not always load code pattern/style details; instead follow the relevant skill (coding-standards / backend-patterns / frontend-patterns, etc.)
 
