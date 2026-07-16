@@ -1,32 +1,33 @@
 ---
-description: Analyze test coverage, identify files below the 80% threshold, and generate missing tests for uncovered code paths.
+description: Analyze test coverage, identify files below the project's threshold, and generate missing tests for uncovered code paths.
 ---
 
-# Test Coverage
+# /test-coverage
 
-Analyze test coverage and generate missing tests:
+Analyze test coverage and fill the gaps for `$ARGUMENTS` (default: the whole project).
 
-1. Run tests with coverage: npm test --coverage or pnpm test --coverage
+The coverage policy — targets per code type, and the rule that the project's own CI gate
+overrides the defaults — is defined in the **tdd-workflow** skill. Read it first and use
+the project's actual threshold, not a remembered number.
 
-2. Analyze coverage report (coverage/coverage-summary.json)
-
-3. Identify files below 80% coverage threshold
-
-4. For each under-covered file:
+1. Determine the threshold: check the project's CI config and test tooling
+   (`.github/workflows/`, `.coveragerc`, `pytest.ini`, `jest.config`, `vitest.config`)
+2. Run tests with coverage (e.g. `npm test -- --coverage`, `go test -cover ./...`)
+3. Analyze the coverage report
+4. Identify files below the threshold
+5. For each under-covered file:
    - Analyze untested code paths
    - Generate unit tests for functions
    - Generate integration tests for APIs
    - Generate E2E tests for critical flows
-
-5. Verify new tests pass
-
-6. Show before/after coverage metrics
-
-7. Ensure project reaches 80%+ overall coverage
+6. Verify new tests pass
+7. Report before/after coverage against the threshold, quoting the measured numbers
 
 Focus on:
 
-- Happy path scenarios
-- Error handling
+- Error handling and failure paths — not just the happy path
 - Edge cases (null, undefined, empty)
 - Boundary conditions
+
+Note: this command fills coverage gaps in existing code. For the full RED-GREEN-REFACTOR
+cycle on new work, use `/tdd` (or `/go-test` for Go).
