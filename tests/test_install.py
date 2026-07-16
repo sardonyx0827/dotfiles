@@ -2,6 +2,7 @@
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -599,6 +600,57 @@ class TestOptionalInstallerFailures:
         assert res.returncode == 0, res.stderr
         assert "AFTER_FONTS" in res.stdout
         assert "[WARNING]" in res.stdout
+
+
+class TestInstallNodejs:
+    """npm can legitimately be absent by the time the prefix is configured:
+    the installs above are best-effort (brew/NodeSource failures only warn)
+    and the windows branch never installs node at all. A bare `npm config
+    set` then exits 127 and `set -e` takes the whole run down with it,
+    skipping every step after install_nodejs."""
+
+    @staticmethod
+    def _env_without_node(shell_env) -> dict:
+        """shell_env's PATH keeps the real one appended, so a host npm would
+        satisfy `npm config set` and hide the very abort under test. Drop
+        every directory that provides node or npm instead of stubbing them:
+        absence is the condition, and a stub would only prove it exists."""
+        env = dict(shell_env.env)
+        while True:
+            found = shutil.which("npm", path=env["PATH"]) or shutil.which(
+                "node", path=env["PATH"]
+            )
+            if not found:
+                return env
+            drop = str(Path(found).parent)
+            env["PATH"] = ":".join(p for p in env["PATH"].split(":") if p != drop)
+
+    def test_missing_npm_does_not_abort_script(self, shell_env):
+        # windows never installs node, so this is the ordinary path there.
+        env = self._env_without_node(shell_env)
+        res = run_sourced('OS=windows install_nodejs; echo "AFTER_NODEJS"', env)
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_NODEJS" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+    def test_missing_npm_after_failed_install_does_not_abort_script(self, shell_env):
+        shell_env.stub("brew", exit_code=1)
+        env = self._env_without_node(shell_env)
+        res = run_sourced('OS=macos install_nodejs; echo "AFTER_NODEJS"', env)
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_NODEJS" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+    def test_configures_prefix_when_npm_present(self, shell_env):
+        # The guard must not cost the happy path its prefix.
+        shell_env.stub("node")
+        shell_env.stub("npm")
+        res = run_sourced('OS=macos install_nodejs; echo "AFTER_NODEJS"', shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_NODEJS" in res.stdout
+        expected = f"npm config set prefix {shell_env.home}/.npm-global"
+        assert expected in shell_env.calls
+        assert (shell_env.home / ".npm-global").is_dir()
 
 
 class TestChangeShell:

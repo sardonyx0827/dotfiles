@@ -539,15 +539,23 @@ install_nodejs() {
     print_success "Node.js already installed ($(node --version))"
   fi
 
-  # Setup npm global directory
-  mkdir -p "$HOME/.npm-global"
-  npm config set prefix "$HOME/.npm-global"
-  # Ensure the npm-global bin is visible to the rest of this script so subsequent
-  # `command_exists` checks and direct invocations of globally installed tools
-  # (prettier, eslint, claude, etc.) resolve correctly. .zshrc already exports
-  # this for interactive shells.
-  export PATH="$HOME/.npm-global/bin:$PATH"
-  print_success "npm global directory configured"
+  # Setup npm global directory. Guarded: everything above is best-effort --
+  # brew/NodeSource failures only warn, and the windows branch never installs
+  # node at all -- so npm is legitimately absent here. Unguarded, `npm config
+  # set` exits 127 and `set -e` aborts the whole run, skipping every step
+  # after this one (gh, pyenv, docker, linters, oh-my-zsh, the symlinks).
+  if command_exists npm; then
+    mkdir -p "$HOME/.npm-global"
+    npm config set prefix "$HOME/.npm-global"
+    # Ensure the npm-global bin is visible to the rest of this script so subsequent
+    # `command_exists` checks and direct invocations of globally installed tools
+    # (prettier, eslint, claude, etc.) resolve correctly. .zshrc already exports
+    # this for interactive shells.
+    export PATH="$HOME/.npm-global/bin:$PATH"
+    print_success "npm global directory configured"
+  else
+    print_warning "npm not found; skipping npm global directory setup (continuing)"
+  fi
 }
 
 # Install Oh My Zsh
