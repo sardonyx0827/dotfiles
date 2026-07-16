@@ -404,6 +404,47 @@ class TestLintLanguageMatrix:
         assert res.returncode == 2
         assert "[ESLint]" in res.stderr
 
+    def _tsc_project(self, shell_env, git_repo, filename: str):
+        """A tsc that reports one error against `filename`, exiting non-zero."""
+        (git_repo / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+        target = git_repo / filename
+        target.write_text("export const x: number = 'no'\n", encoding="utf-8")
+        shell_env.stub(
+            "tsc",
+            body=f"echo \"src/{filename}(1,14): error TS2322: Type 'string' is not"
+            " assignable to type 'number'.\"",
+            exit_code=1,
+        )
+        return target
+
+    def test_tsc_error_blocks(self, LINT, shell_env, git_repo):
+        # Control for the bracketed-filename case below: an ordinary name must
+        # reach the gate, so a failure there is the filename, not the harness.
+        target = self._tsc_project(shell_env, git_repo, "page.tsx")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "[TypeScript]" in res.stderr
+
+    def test_tsc_error_blocks_for_a_bracketed_filename(self, LINT, shell_env, git_repo):
+        """tsc output was filtered with `grep "$BASENAME"` -- the filename went in
+        as an ERE, not a literal.
+
+        Next.js dynamic routes make this routine: `[id].tsx` parses as a
+        character class ("one char, i or d"), which never matches tsc's own
+        error line for that file. The extraction came back empty, so nothing
+        was appended to LINT_ERRORS and the hook returned 0 -- the gate went
+        green on code tsc had just rejected. A quality gate that misses is
+        worse than a noisy one, so pin the literal match.
+        """
+        target = self._tsc_project(shell_env, git_repo, "[id].tsx")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2, (
+            "tsc failed, so the hook must block regardless of how the filename "
+            "reads as a regex"
+        )
+        assert "[TypeScript]" in res.stderr
+        assert "TS2322" in res.stderr, "the real tsc diagnostic must reach the caller"
+
     def test_local_eslint_preferred_over_path(self, LINT, shell_env, git_repo):
         # A project-local eslint must win over one merely on PATH, so the file
         # is linted with the project's own version/plugins.

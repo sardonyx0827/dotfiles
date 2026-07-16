@@ -99,8 +99,15 @@ hook_lint_file() {
         if command -v tsc >/dev/null 2>&1; then
           echo "  Running tsc (type check)..."
           if ! OUTPUT=$(cd "$PROJECT_ROOT" && tsc --noEmit 2>&1); then
-            # 変更ファイルに関連するエラーのみ抽出
-            RELATED=$(echo "$OUTPUT" | grep "$BASENAME")
+            # 変更ファイルに関連するエラーのみ抽出。
+            # -F 必須: ファイル名はパターンではなくリテラルとして照合する。素の
+            # grep だと BASENAME が ERE として解釈され、Next.js の動的ルート
+            # `[id].tsx` は `[id]` が文字クラス (i か d の 1 文字) になって tsc
+            # 自身のエラー行に一致しない。すると RELATED が空になり、LINT_ERRORS
+            # へ何も積まれないまま return 0 ——「tsc が弾いたコードでゲートが緑を
+            # 返す」という、このファイル冒頭が戒めている最悪の壊れ方をする。
+            # -- は BASENAME が `-` で始まる場合にオプション扱いされないため。
+            RELATED=$(echo "$OUTPUT" | grep -F -- "$BASENAME")
             if [ -n "$RELATED" ]; then
               LINT_ERRORS="${LINT_ERRORS}[TypeScript]\n${RELATED}\n"
             fi
