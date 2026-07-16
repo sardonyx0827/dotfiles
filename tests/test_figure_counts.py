@@ -2,8 +2,8 @@
 architecture diagrams must match the actual files in the repo.
 
 The prose in README.md deliberately avoids hardcoding these counts, but the SVG
-figures embed them as literal text (`14 agents · 21 commands`, `12 test suites`,
-`agents (14 ⇆ 14)`, ...). Unlike the hook duplicates (guarded byte-for-byte by
+figures embed them as literal text (`N agents · N commands`, `N test suites`,
+`agents (N ⇆ N)`, ...). Unlike the hook duplicates (guarded byte-for-byte by
 test_hook_sync) or the config paths (checked by test_config_wiring), nothing
 stopped those figures from drifting as agents / commands / tests were added or
 removed -- and they did. This test closes that gap: every count rendered in a
