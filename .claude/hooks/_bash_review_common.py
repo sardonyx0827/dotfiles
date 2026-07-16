@@ -9,11 +9,9 @@
 # 「ガード導入の翌日に、共有ロジック約 80 行がガード外へ漏れていた」ことが判明した。
 # symlink なら実体が 1 つなのでドリフトが構造的に起こらない。
 #
-# Codex の symlink 無視バグ (openai/codex#3637, #4383, #5040, #16452) はここには
-# 適用されない。あれは Codex 自身のスキャナが走査する設定 (skills/, agents/) の話で、
-# このモジュールを開くのは CPython の import 機構。hooks.json は絶対パスで
-# bash-review.py を起動するだけで、そこから先に Codex は関与しない。install.sh も
-# 「hooks dir (scripts run by absolute path) follow symlinks fine」と同じ線引きをしている。
+# このモジュールを開くのは CPython の import 機構で、symlink は透過的に辿られる。
+# hooks.json は絶対パスで bash-review.py を起動するだけで、そこから先に Codex は
+# 関与しない。
 #
 # 既知の非対応 (意図的に受け入れたトレードオフ): core.symlinks=false — Git for Windows
 # の既定 — で clone すると、git は symlink をパス文字列入りのテキストファイルとして

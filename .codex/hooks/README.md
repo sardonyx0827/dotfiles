@@ -157,9 +157,7 @@ sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 | `_format_common.sh`      | 言語別 フォーマッタマトリクス  | `auto-format.sh` が source             |
 
 `~/.codex/hooks/` 経由で起動しても解決される。Python は sys.path[0] を realpath
-で解決してリポジトリ内に入り、bash の `source` は OS がリンクを透過的に辿る
-(Codex の symlink 無視は skills/ · agents/ のスキャンにのみ適用され、スクリプトの
-読み込みには関与しない — install.sh も同じ線引きをしている)。
+で解決してリポジトリ内に入り、bash の `source` は OS がリンクを透過的に辿る。
 
 `tests/test_hook_sync.py` が 4 つすべてについてリンクの形 (symlink であること /
 相対であること / 実体に解決すること / 実際にロードできること) を固定する。

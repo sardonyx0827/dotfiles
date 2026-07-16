@@ -7,11 +7,8 @@ lines of shared review logic that had leaked outside it the day after the
 guard landed).
 
 A relative symlink makes divergence structurally impossible instead: there is
-only one file. Codex's symlink-skipping bug (openai/codex#3637, #4383, #5040,
-#16452) does not apply here -- it affects config Codex's own scanner walks
-(skills/, agents/), whereas these files are opened by CPython's import
-machinery and by bash's `source`, both of which follow symlinks like any other
-file. install.sh draws the same distinction for the hooks dir.
+only one file. These files are opened by CPython's import machinery and by
+bash's `source`, both of which follow symlinks like any other file.
 
 What still needs guarding is each symlink's *shape*, so this pins it: relative
 (an absolute link breaks on every other clone path), pointing at the .claude

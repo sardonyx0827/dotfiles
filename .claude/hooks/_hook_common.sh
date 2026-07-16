@@ -3,9 +3,7 @@
 # lint.sh / auto-format.sh が共有するログ出力とデスクトップ通知。
 #
 # このファイルが実体で、.codex/hooks/_hook_common.sh は相対 symlink。編集はここだけ。
-# 経緯と Codex の symlink 無視バグが適用されない理由は _bash_review_common.py の
-# ヘッダを参照(あちらと同じ理屈: このファイルを開くのはシェルであって Codex の
-# 設定スキャナではない)。
+# 実体を 1 つにしてドリフトを構造的に防ぐ経緯は _bash_review_common.py のヘッダを参照。
 #
 # ■ source 側との契約
 #
