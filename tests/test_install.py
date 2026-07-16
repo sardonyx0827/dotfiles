@@ -129,13 +129,24 @@ class TestCreateSymlinks:
             REPO_ROOT / ".config/nvim"
         ).resolve()
 
-        # Codex: exact-path entries are symlinked, scanned dirs are copied.
+        # Codex resolves symlinks when scanning agents/ and skills/, so both
+        # are linked as whole directories rather than copied.
         assert (home / ".codex/AGENTS.md").is_symlink()
         assert (home / ".codex/hooks").is_symlink()
-        assert not (home / ".codex/agents").is_symlink()
-        assert (home / ".codex/agents").is_dir()
-        skills = home / ".codex/skills/backend-patterns"
-        assert skills.is_dir() and not skills.is_symlink()
+        for name in ("agents", "skills"):
+            link = home / ".codex" / name
+            assert link.is_symlink(), f".codex/{name} should be a symlink"
+            assert link.resolve() == (REPO_ROOT / ".codex" / name).resolve()
+
+        # A shared skill resolves through BOTH hops -- the linked skills dir and
+        # the repo's own .codex/skills/<name> -> ../../.claude/skills/<name>
+        # link -- landing on the single source of truth under .claude/skills.
+        skill = home / ".codex/skills/backend-patterns"
+        assert skill.is_dir()
+        assert (
+            skill.resolve() == (REPO_ROOT / ".claude/skills/backend-patterns").resolve()
+        )
+        assert (skill / "SKILL.md").is_file()
 
         # Oh My Zsh custom dir stays a REAL directory (install_oh_my_zsh
         # clones plugins into custom/plugins/); only the theme file(s)
@@ -194,10 +205,10 @@ class TestCreateSymlinks:
         assert recovered == ["CLAUDE-REAL\n", "CODE-REAL\n"], recovered
 
     def test_rerun_does_not_accumulate_backup_dirs(self, shell_env):
-        # copy_entry targets (Codex agents/skills) and the rendered hooks.json
-        # are real files. A non-idempotent copy backs its own previous output
-        # into a fresh timestamped dir on every run, so ~/.dotfiles_backup_*
-        # piles up. A second no-change run must leave zero backup dirs.
+        # The rendered hooks.json is the one real file install.sh writes under
+        # ~/.codex. Re-rendering it unconditionally would back its own previous
+        # output into a fresh timestamped dir on every run, so ~/.dotfiles_backup_*
+        # would pile up. A second no-change run must leave zero backup dirs.
         home = shell_env.home
         (home / ".oh-my-zsh").mkdir()
 
@@ -207,7 +218,7 @@ class TestCreateSymlinks:
         assert second.returncode == 0, second.stderr
 
         assert list(home.glob(".dotfiles_backup_*")) == []
-        # The copies and rendered file are still in place after the no-op rerun.
+        # The links and rendered file are still in place after the no-op rerun.
         assert (home / ".codex/skills/backend-patterns").is_dir()
         assert (home / ".codex/hooks.json").is_file()
 
@@ -217,97 +228,69 @@ class TestCreateSymlinks:
 
         res = run_sourced("create_symlinks", shell_env.env)
         assert res.returncode == 0
-        # Fresh HOME: only copy_entry targets existed, and those are new too,
-        # so the timestamped backup dir must have been removed as empty.
+        # Fresh HOME: nothing real pre-existed, so the timestamped backup dir
+        # must have been removed as empty.
         assert list(home.glob(".dotfiles_backup_*")) == []
 
-    def test_reports_stale_codex_skill_without_deleting_it(self, shell_env):
-        # Codex skills are COPIED, so dropping one from the shared set does not
-        # remove the deployed copy -- it stays live in Codex. install.sh reports
-        # that and stops there: it never deletes under $HOME, because this
-        # installer runs on other people's machines and a stale file is a
-        # two-second manual fix, while a wrong delete is unrecoverable.
+    def test_migration_off_copies_backs_up_rather_than_deletes(self, shell_env):
+        # THE safety invariant, under the linked-directory layout: install.sh
+        # never DELETES under $HOME. Upgrading from the old copy-based install
+        # finds a REAL ~/.codex/skills, and linking the directory moves the whole
+        # thing aside -- our stale copies, Codex's managed .system, and any
+        # hand-written skill alike. That is the unavoidable cost of linking the
+        # dir rather than its entries, so the entire contents must survive in the
+        # backup: this installer runs on other people's machines, where a wrong
+        # delete is unrecoverable.
         home = shell_env.home
         (home / ".oh-my-zsh").mkdir()
         skills = home / ".codex/skills"
-        stale = skills / "retired-skill"
-        stale.mkdir(parents=True)
-        (stale / "SKILL.md").write_text("stale\n", encoding="utf-8")
-        (skills / ".dotfiles-managed").write_text(
-            "retired-skill\nbackend-patterns\n", encoding="utf-8"
+        (skills / ".system").mkdir(parents=True)
+        (skills / ".system/SKILL.md").write_text("codex managed\n", encoding="utf-8")
+        (skills / "my-own-skill").mkdir(parents=True)
+        (skills / "my-own-skill/SKILL.md").write_text(
+            "user authored\n", encoding="utf-8"
         )
 
         res = run_sourced("create_symlinks", shell_env.env)
         assert res.returncode == 0, res.stderr
 
-        assert stale.is_dir(), "install.sh must never delete under $HOME"
-        assert (stale / "SKILL.md").read_text(encoding="utf-8") == "stale\n"
-        assert "retired-skill" in res.stdout
-        assert "rm -rf ~/.codex/skills/retired-skill" in res.stdout
+        # The destination is now our link into the checkout...
+        assert skills.is_symlink()
+        assert skills.resolve() == (REPO_ROOT / ".codex/skills").resolve()
 
-    def test_stale_skill_notice_is_not_repeated_on_rerun(self, shell_env):
-        # The manifest is rewritten to the current set, so the notice fires once
-        # rather than nagging on every install. Left undeleted deliberately.
+        # ...and everything that was there is recoverable, byte for byte.
+        backups = list(home.glob(".dotfiles_backup_*"))
+        assert len(backups) == 1
+        saved = backups[0] / ".codex/skills"
+        assert (saved / "my-own-skill/SKILL.md").read_text(
+            encoding="utf-8"
+        ) == "user authored\n"
+        assert (saved / ".system/SKILL.md").read_text(
+            encoding="utf-8"
+        ) == "codex managed\n"
+
+    def test_shared_codex_skills_resolve_to_claude_sources(self, shell_env):
+        # The shared set lives in the repo tree (.codex/skills/<name> ->
+        # ../../.claude/skills/<name>), not in an install.sh array. Every entry
+        # must resolve to a real skill: a dangling link deploys a skill Codex
+        # cannot read, and nothing in install.sh would catch that.
         home = shell_env.home
         (home / ".oh-my-zsh").mkdir()
-        skills = home / ".codex/skills"
-        (skills / "retired-skill").mkdir(parents=True)
-        (skills / ".dotfiles-managed").write_text("retired-skill\n", encoding="utf-8")
-
-        first = run_sourced("create_symlinks", shell_env.env)
-        assert first.returncode == 0, first.stderr
-        assert "retired-skill" in first.stdout
-
-        second = run_sourced("create_symlinks", shell_env.env)
-        assert second.returncode == 0, second.stderr
-        assert "retired-skill" not in second.stdout
-        assert (skills / "retired-skill").is_dir()
-
-    def test_never_reports_skills_the_installer_did_not_deploy(self, shell_env):
-        # THE safety invariant. ~/.codex/skills holds three kinds of entry: our
-        # copies, Codex's managed .system skills, and whatever the user wrote by
-        # hand. Only manifest-recorded names are ever candidates -- "not in the
-        # shared array" is NOT grounds to touch or even mention an entry.
-        home = shell_env.home
-        (home / ".oh-my-zsh").mkdir()
-        skills = home / ".codex/skills"
-        system = skills / ".system"
-        system.mkdir(parents=True)
-        (system / "SKILL.md").write_text("codex managed\n", encoding="utf-8")
-        handmade = skills / "my-own-skill"
-        handmade.mkdir(parents=True)
-        (handmade / "SKILL.md").write_text("user authored\n", encoding="utf-8")
-        # Manifest names a different skill entirely: neither entry above is ours.
-        (skills / ".dotfiles-managed").write_text("retired-skill\n", encoding="utf-8")
 
         res = run_sourced("create_symlinks", shell_env.env)
         assert res.returncode == 0, res.stderr
 
-        assert system.is_dir(), "Codex's managed .system skills must never be touched"
-        assert (system / "SKILL.md").read_text(encoding="utf-8") == "codex managed\n"
-        assert handmade.is_dir(), "a user-authored skill must never be touched"
-        assert (handmade / "SKILL.md").read_text(encoding="utf-8") == "user authored\n"
-        assert "my-own-skill" not in res.stdout
-        assert ".system" not in res.stdout
-
-    def test_first_run_seeds_manifest_without_reporting(self, shell_env):
-        # No manifest = no record of installing anything, so nothing is ours to
-        # report on. Pre-existing entries are left alone and unmentioned; the
-        # manifest is seeded so future removals are detected.
-        home = shell_env.home
-        (home / ".oh-my-zsh").mkdir()
-        skills = home / ".codex/skills"
-        preexisting = skills / "unknown-origin"
-        preexisting.mkdir(parents=True)
-
-        res = run_sourced("create_symlinks", shell_env.env)
-        assert res.returncode == 0, res.stderr
-
-        assert preexisting.is_dir()
-        assert "unknown-origin" not in res.stdout
-        manifest = (skills / ".dotfiles-managed").read_text(encoding="utf-8").split()
-        assert "backend-patterns" in manifest
-        assert "unknown-origin" not in manifest
+        shared = [p for p in (REPO_ROOT / ".codex/skills").iterdir() if p.is_symlink()]
+        assert shared, "expected .codex/skills to hold symlinks into .claude/skills"
+        for link in shared:
+            target = link.resolve()
+            assert target.is_dir(), f"{link.name} is dangling: {target}"
+            assert target.parent == (REPO_ROOT / ".claude/skills").resolve(), (
+                f"{link.name} points outside .claude/skills: {target}"
+            )
+            assert (target / "SKILL.md").is_file(), f"{link.name} has no SKILL.md"
+            # And it is reachable through the deployed link, as Codex sees it.
+            assert (home / ".codex/skills" / link.name / "SKILL.md").is_file()
 
     def test_links_vscode_configs_on_linux(self, shell_env):
         # No OS set (mirrors "no OS var in the ambient test env"): the

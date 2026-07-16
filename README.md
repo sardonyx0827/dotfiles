@@ -52,7 +52,7 @@
 ├── .codex/                         # Codex設定
 │   ├── agents/                     # Codexエージェント定義 (.toml)
 │   ├── hooks/                      # Codexフック (+ hooks.json)
-│   ├── skills/                     # Codexスキル (.system + 厳選共有)
+│   ├── skills/                     # Codexスキル (.claude/skillsへの厳選リンク + .system)
 │   ├── AGENTS.md                   # Codex向け指示
 │   └── config.toml                 # Codex設定
 ├── .config/                        # アプリケーション設定
@@ -284,16 +284,14 @@ for e in CLAUDE.md settings.json statusline-command.sh agents commands hooks mcp
   ln -sf ~/dotfiles/.claude/$e ~/.claude/$e
 done
 
-# Codex設定
+# Codex設定 (agents/ と skills/ もディレクトリごとリンク。
+#             共有スキルの実体は .codex/skills/ 内の .claude/skills への相対リンク)
 mkdir -p ~/.codex
-for e in AGENTS.md config.toml hooks; do
+for e in AGENTS.md config.toml hooks agents skills; do
   ln -sf ~/dotfiles/.codex/$e ~/.codex/$e
 done
 # hooks.json はテンプレートから生成 (リポジトリに hooks.json 実体は無い)
 sed "s|__HOME__|$HOME|g" ~/dotfiles/.codex/hooks.json.template > ~/.codex/hooks.json
-# agents/ と skills/ は Codex がシンボリックリンクのスキャンを無視するためコピーする
-# (対象スキルの一覧など詳細は install.sh の create_symlinks() 内の Codex 設定処理を参照)
-cp -R ~/dotfiles/.codex/agents ~/.codex/agents
 
 # Gemini設定
 mkdir -p ~/.gemini
@@ -511,7 +509,9 @@ Ctrl+a ]        # ペースト
 各 AI CLI の設定をリポジトリで一元管理しています。`install.sh` は CLI の実行時データ（履歴・セッション等）を巻き込まないよう、ディレクトリ全体ではなく必要なエントリのみを個別にシンボリックリンクします。
 
 - **`.claude/`**: Claude Code のグローバル指示（`CLAUDE.md`）、`settings.json`、カスタムサブエージェント（`agents/`）、スラッシュコマンド（`commands/`）、フック（`hooks/`）、スキル（`skills/`）、ワークフロー / セキュリティルール（`rules/`）、自作 MCP サーバー（`mcp-servers/`）、ステータスライン
-- **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック（`hooks/` + `hooks.json`）、スキル（`skills/` — 組込み `.system` と `.claude/skills` から厳選した共有スキル）、`config.toml`
+- **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック（`hooks/` + `hooks.json`）、スキル（`skills/`）、`config.toml`
+  - `agents/` と `skills/` はディレクトリごとリンクします。共有スキルはリポジトリ内の相対シンボリックリンク（`.codex/skills/<name>` → `../../.claude/skills/<name>`）として定義しており、`.codex/hooks/_*.sh` と同じ方式です。共有の追加・削除はこのリンクの増減で行い、`install.sh` 側にスキル一覧は持ちません
+  - `~/.codex/skills` はチェックアウト内を指すため、Codex が書き込む組込みスキル `.system/` はリポジトリ配下に出現します（`.gitignore` 済み）
 - **`.gemini/`**: Gemini CLI の指示（`GEMINI.md`）と `settings.json`
 
 > **⚠️ セキュリティモデル（`.claude/settings.json` はフックとセットで安全）**

@@ -715,39 +715,34 @@ create_symlinks() {
       link_entry "$DOTFILES_DIR/.claude/$entry" "$HOME/.claude/$entry"
   done
 
-  # Codex config.
-  # IMPORTANT: Codex IGNORES symlinks for its directory-scanned config
-  # (skills/, agents/) — both symlinked dirs and symlinked files are
-  # skipped (openai/codex#3637, #4383, #5040, #16452). Those MUST be real files,
-  # so they are COPIED. Single files opened by an exact path (AGENTS.md,
-  # config.toml) and the hooks dir (scripts run by absolute path) follow
-  # symlinks fine, so they stay symlinked. hooks.json is neither: Codex does
-  # NOT expand ~ or $HOME inside it, so it is install-time RENDERED from
-  # hooks.json.template instead of symlinked (see below).
+  # Codex config. Every entry is symlinked, including the directories Codex
+  # scans for itself (skills/, agents/). hooks.json is the sole exception:
+  # Codex does NOT expand ~ or $HOME inside it, so it is install-time RENDERED
+  # from hooks.json.template (see below).
+  #
+  # The shared skill set is defined in the repo tree, not here: .codex/skills
+  # holds relative symlinks into .claude/skills (same convention as the
+  # .codex/hooks/_*.sh helpers). Share or drop a skill by adding or removing a
+  # link there.
+  #
+  # Note that ~/.codex/skills and ~/.codex/agents resolve into the checkout, so
+  # whatever Codex writes there lands in the repo working tree: its managed
+  # .system skills (gitignored) and anything installed via skill-installer
+  # (which shows up as untracked).
+  #
+  # A REAL ~/.codex/skills (or agents/) is moved to $backup_dir wholesale --
+  # Codex's .system and any hand-written skill alike. Nothing is deleted, but a
+  # hand-written skill stops being live in Codex until it is moved back into
+  # .codex/skills here. That is the cost of linking the directory rather than
+  # its entries.
   mkdir -p "$HOME/.codex"
-
-  # Helper: copy a repo entry into a destination, backing up reals/symlinks.
-  copy_entry() {
-    local src="$1"
-    local dest="$2"
-    [ -e "$src" ] || return
-    # Idempotent: if dest is already a real copy identical to src, do nothing.
-    # Without this, every re-run moves our own previous copy into a fresh
-    # timestamped backup dir and re-copies it, so ~/.dotfiles_backup_* dirs
-    # accumulate on each run and the empty-dir cleanup at the end never fires.
-    if [ ! -L "$dest" ] && [ -e "$dest" ] && diff -rq "$src" "$dest" >/dev/null 2>&1; then
-      return
-    fi
-    backup_if_real "$dest" # moves a real path to backup, or removes a symlink
-    rm -rf "$dest"         # clear anything backup_if_real left (defensive)
-    cp -R "$src" "$dest"
-    print_success "Copied $(basename "$dest")"
-  }
 
   local codex_link_entries=(
     "AGENTS.md"
     "config.toml"
     "hooks"
+    "agents"
+    "skills"
   )
   for entry in "${codex_link_entries[@]}"; do
     [ -e "$DOTFILES_DIR/.codex/$entry" ] &&
@@ -772,80 +767,6 @@ create_symlinks() {
       rm -f "$rendered_tmp"
     fi
   fi
-
-  # Scanned by Codex -> must be real files (copied, not symlinked)
-  local codex_copy_entries=(
-    "agents"
-  )
-  for entry in "${codex_copy_entries[@]}"; do
-    copy_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
-  done
-
-  # Codex skills: share curated, runtime-agnostic skills from .claude/skills.
-  # Copied (not symlinked) so Codex's skill scan picks them up; Codex's managed
-  # .system skills are left untouched.
-  mkdir -p "$HOME/.codex/skills"
-  local codex_skills=(
-    "backend-patterns"
-    "frontend-patterns"
-    "golang-patterns"
-    "golang-testing"
-    "typescript-testing"
-    "tdd-workflow"
-    "security-review"
-    "docker-patterns"
-    "github-actions-ci"
-    "postgres-patterns"
-    "clickhouse-io"
-    "release-workflow"
-    "migration-playbook"
-    "python-scripting-patterns"
-    "shell-scripting-patterns"
-    "verification-loop"
-    "eval-harness"
-    "request-harness"
-  )
-  for skill in "${codex_skills[@]}"; do
-    copy_entry "$DOTFILES_DIR/.claude/skills/$skill" "$HOME/.codex/skills/$skill"
-  done
-
-  # Codex skills are copied, not symlinked, so dropping one from codex_skills
-  # leaves the deployed copy live in Codex. Report that; do NOT delete it.
-  #
-  # Deliberate: this installer runs on other people's machines, where a wrong
-  # delete under $HOME is unrecoverable, while a stale skill costs one manual
-  # `rm`. The manifest records what we copied so the notice can never point at
-  # Codex's managed .system skills or a skill the user wrote by hand -- "not in
-  # codex_skills" is not grounds to even mention an entry. A first run has no
-  # manifest, so it reports nothing and just records what it deployed.
-  local skills_manifest="$HOME/.codex/skills/.dotfiles-managed"
-  if [ -f "$skills_manifest" ]; then
-    local managed shared_skill keep
-    # `|| [ -n "$managed" ]` so a hand-edited manifest lacking a trailing
-    # newline does not silently drop its last entry.
-    while IFS= read -r managed || [ -n "$managed" ]; do
-      # A manifest entry is a bare directory name. Anything else (a path, a
-      # dotfile such as .system, . or ..) is refused rather than interpreted.
-      case "$managed" in
-      "" | .* | */*) continue ;;
-      esac
-      keep=0
-      for shared_skill in "${codex_skills[@]}"; do
-        [ "$shared_skill" = "$managed" ] && {
-          keep=1
-          break
-        }
-      done
-      [ "$keep" -eq 1 ] && continue
-      [ -e "$HOME/.codex/skills/$managed" ] || continue
-      print_warning "Codex skill no longer shared: $managed"
-      print_warning "  Left in place. Remove it yourself if you want it gone:"
-      print_warning "    rm -rf ~/.codex/skills/$managed"
-    done <"$skills_manifest"
-  fi
-  # Rewrite to the current set: the notice above fires once, rather than
-  # nagging on every install.
-  printf '%s\n' "${codex_skills[@]}" >"$skills_manifest"
 
   # Gemini config: symlink individual entries
   mkdir -p "$HOME/.gemini"
