@@ -727,5 +727,3 @@ test:
         go tool cover -func=coverage.out | grep total | awk '{print $3}' | \
         awk -F'%' '{if ($1 < 80) exit 1}'
 ```
-
-**Remember**: Tests are documentation. They show how your code is meant to be used. Write them clearly and keep them up to date.

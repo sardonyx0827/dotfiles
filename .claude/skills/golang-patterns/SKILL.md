@@ -685,5 +685,3 @@ func (c Counter) Value() int { return c.n }    // Value receiver
 func (c *Counter) Increment() { c.n++ }        // Pointer receiver
 // Pick one style and be consistent
 ```
-
-**Remember**: Go code should be boring in the best way - predictable, consistent, and easy to understand. When in doubt, keep it simple.

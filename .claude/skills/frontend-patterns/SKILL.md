@@ -1,6 +1,6 @@
 ---
 name: frontend-patterns
-description: React and Next.js frontend patterns for components, state management, performance, and UI. Use this skill whenever writing or refactoring React components, choosing a state-management approach, fixing re-render/performance issues, structuring hooks or data fetching, or reviewing frontend code — even for a small component, since composition and rendering pitfalls compound quickly.
+description: React and Next.js frontend patterns for components, state management, performance, and UI. Use when writing or refactoring React components, choosing a state-management approach, fixing re-render/performance issues, or structuring hooks and data fetching. Read the Server/Client boundary section first in any App Router project.
 ---
 
 # Frontend Development Patterns
@@ -662,5 +662,3 @@ export function Modal({ isOpen, onClose, children }: ModalProps) {
   ) : null
 }
 ```
-
-**Remember**: Modern frontend patterns enable maintainable, performant user interfaces. Choose patterns that fit your project complexity.

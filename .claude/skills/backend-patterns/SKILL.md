@@ -1,6 +1,6 @@
 ---
 name: backend-patterns
-description: Backend architecture, API design, and server-side patterns for Node.js, Express, and Next.js API routes. Use this skill whenever designing or building REST/RPC endpoints, structuring services/controllers/middleware, handling auth/validation/error responses, optimizing database access from the server, or reviewing backend code — even for a single route, since API-contract and data-access mistakes are costly to change later.
+description: Backend architecture, API design, and server-side patterns for Node.js, Express, and Next.js API routes. Use when designing or building REST/RPC endpoints, structuring services/controllers/middleware, handling auth/validation/error responses, or optimizing database access from the server.
 ---
 
 # Backend Development Patterns
@@ -62,30 +62,38 @@ class SupabaseProductRepository implements ProductRepository {
 
 ```typescript
 // Business logic separated from data access
-class ProductService {
-  constructor(private productRepo: ProductRepository) {}
+class OrderService {
+  constructor(
+    private orderRepo: OrderRepository,
+    private inventory: InventoryClient,
+  ) {}
 
-  async searchProducts(query: string, limit: number = 10): Promise<Product[]> {
-    // Business logic
-    const embedding = await generateEmbedding(query);
-    const results = await this.vectorSearch(embedding, limit);
+  async placeOrder(userId: string, items: OrderItem[]): Promise<Order> {
+    // Business rules live here — not in the repository, not in the route handler
+    if (items.length === 0) {
+      throw new ApiError(400, "Order must contain at least one item");
+    }
 
-    // Fetch full data
-    const products = await this.productRepo.findByIds(results.map((r) => r.id));
+    const reserved = await this.inventory.reserve(items);
+    if (!reserved.ok) {
+      throw new ApiError(
+        409,
+        `Out of stock: ${reserved.unavailable.join(", ")}`,
+      );
+    }
 
-    // Sort by similarity
-    return products.sort((a, b) => {
-      const scoreA = results.find((r) => r.id === a.id)?.score || 0;
-      const scoreB = results.find((r) => r.id === b.id)?.score || 0;
-      return scoreA - scoreB;
+    return this.orderRepo.create({
+      userId,
+      items,
+      total: items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0),
     });
-  }
-
-  private async vectorSearch(embedding: number[], limit: number) {
-    // Vector search implementation
   }
 }
 ```
+
+The route handler stays thin (parse → call service → serialize). The repository stays
+dumb (no business rules). Anything that would need to change when a _policy_ changes
+belongs in the service.
 
 ### Middleware Pattern
 
@@ -149,19 +157,18 @@ const { data } = await supabase.from("products").select("*");
 
 ```typescript
 // ❌ BAD: N+1 query problem
-const products = await getProducts();
-for (const product of products) {
-  product.creator = await getUser(product.creator_id); // N queries
+const posts = await getPosts();
+for (const post of posts) {
+  post.author = await getUser(post.authorId); // N queries
 }
 
 // ✅ GOOD: Batch fetch
-const products = await getProducts();
-const creatorIds = products.map((m) => m.creator_id);
-const creators = await getUsers(creatorIds); // 1 query
-const creatorMap = new Map(creators.map((c) => [c.id, c]));
+const posts = await getPosts();
+const authors = await getUsers(posts.map((p) => p.authorId)); // 1 query
+const authorsById = new Map(authors.map((a) => [a.id, a]));
 
-products.forEach((product) => {
-  product.creator = creatorMap.get(product.creator_id);
+posts.forEach((post) => {
+  post.author = authorsById.get(post.authorId);
 });
 ```
 
@@ -607,5 +614,3 @@ export async function GET(request: Request) {
   }
 }
 ```
-
-**Remember**: Backend patterns enable scalable, maintainable server-side applications. Choose patterns that fit your complexity level.
