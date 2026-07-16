@@ -39,11 +39,13 @@
 #   3. 低リスク層: Gemini ALLOW → 即許可。疑義時のみ Codex 二次確認。ただし
 #      Gemini の明示的 DENY を Codex の ALLOW 単独で自動上書きはしない (ask へ)。
 import concurrent.futures
+import contextlib
 import json
 import os
 import platform
 import re
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -906,14 +908,47 @@ def prune_dir(log_dir: str, keep: int = 1000) -> None:
 
 
 def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None:
-    """サマリーログに1行追記し、max_lines を超えたら末尾 max_lines 行に切り詰める。"""
+    """サマリーログに1行追記し、max_lines を超えたら末尾 max_lines 行に切り詰める。
+
+    切り詰めは読んで書き戻す操作なので、フックが並行して走ると衝突する (Claude と
+    Codex のセッションが同時に動く、1 ターンで複数ファイルが処理される、など)。
+    シェル側の双子 _hook_common.sh: hook_log は同じ問題を f1230cc で解決済みだが、
+    その修正はこちらへ伝播していなかった。
+
+    ここでの失敗の出方はシェル側とは違う。共有の一時ファイルが無いのでログが
+    「潰し合って縮む」ことは起きず、代わりに open(summary_log, "w") がその場で
+    truncate するため、ログが 0 バイトになる窓ができる。その瞬間に読む者
+    (tail -f、利用者、別フックのローテーション自身) は空のログを見るし、窓の中で
+    落ちればログは空のまま残る。
+
+    プロセスごとに一意な一時ファイルへ書いてから os.replace で差し替える。同一
+    ディレクトリ内なので rename(2) 相当で不可分に入れ替わり、ログは常にどちらかの
+    完全なスナップショットになる (競り負けた側の数行が落ちることはあるが、
+    ローテーションとはそういうものなので許容する。シェル側と同じ割り切り)。
+    flock は macOS に無いのでロックは使わない。
+    """
     with open(summary_log, "a") as f:
         f.write(line)
     with open(summary_log) as f:
         lines = f.readlines()
-    if len(lines) > max_lines:
-        with open(summary_log, "w") as f:
+    if len(lines) <= max_lines:
+        return
+
+    # dir= で同一ディレクトリに作る (別 fs だと os.replace が不可分でなくなる)。
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(summary_log) or ".",
+        prefix=os.path.basename(summary_log) + ".",
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
             f.writelines(lines[-max_lines:])
+        os.replace(tmp, summary_log)
+    except BaseException:
+        # 差し替えに失敗したら一時ファイルを残さない (ログディレクトリに
+        # プロセスごとのゴミが溜まる)。例外自体は握り潰さず呼び出し元へ返す。
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def log_summary(

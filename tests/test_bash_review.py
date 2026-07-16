@@ -284,6 +284,124 @@ class TestLogs:
         assert ts.isdigit() and len(ts) >= 16
 
 
+class TestSummaryLogRotation:
+    """Rotation of ~/.claude/logs/bash-review.log must swap the file atomically.
+
+    The shell twin (_hook_common.sh: hook_log) already learned this: a fixed
+    ${log}.tmp shared by every process let concurrent hooks clobber each
+    other's snapshot, and f1230cc rewrote it around a per-process mktemp plus
+    an atomic mv so "the log is always a complete snapshot of one side or the
+    other". That reasoning never reached this Python twin, which kept doing an
+    unlocked read-modify-write straight onto the log.
+
+    The Python failure mode is not the shell's collapse (there is no shared
+    temp file to clobber) -- it is `open(log, "w")` truncating in place. That
+    leaves a window where the log is 0 bytes on disk: anything reading it then
+    (tail -f, the user, a concurrent hook's own rotation) sees an empty log,
+    and a crash inside the window truncates it for good.
+    """
+
+    CAP = 200
+
+    def test_appends_a_line_and_leaves_a_short_log_alone(self, tmp_path):
+        log = tmp_path / "x.log"
+        log.write_text("first\n", encoding="utf-8")
+        _common.append_and_rotate(str(log), "second\n", max_lines=self.CAP)
+        assert log.read_text(encoding="utf-8").splitlines() == ["first", "second"]
+
+    def test_trims_to_the_cap_keeping_the_newest(self, tmp_path):
+        log = tmp_path / "x.log"
+        log.write_text("".join(f"old {i}\n" for i in range(self.CAP + 20)), "utf-8")
+        _common.append_and_rotate(str(log), "newest\n", max_lines=self.CAP)
+        lines = log.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == self.CAP
+        assert lines[-1] == "newest", "the line just logged must survive rotation"
+
+    def test_rotation_leaves_no_temp_files_behind(self, tmp_path):
+        # Guards the fix itself: swapping via a temp file must not litter the
+        # log dir (~/.claude/logs) with per-process leftovers.
+        log = tmp_path / "x.log"
+        log.write_text("".join(f"old {i}\n" for i in range(self.CAP + 20)), "utf-8")
+        _common.append_and_rotate(str(log), "msg\n", max_lines=self.CAP)
+        leftovers = sorted(p.name for p in tmp_path.iterdir() if p.name != "x.log")
+        assert leftovers == [], f"rotation left temp files behind: {leftovers}"
+
+    def test_a_failed_swap_keeps_the_log_and_cleans_up(self, tmp_path, monkeypatch):
+        """The other half of atomicity: a crash mid-rotation must not eat the log.
+
+        In-place truncation left the log empty for good if anything failed
+        between the truncate and the write. Writing to a temp file first means
+        the log is only ever replaced wholesale, so a failure leaves the
+        previous contents intact -- and must not strand the temp file either.
+        """
+        log = tmp_path / "x.log"
+        before = "".join(f"old {i}\n" for i in range(self.CAP + 20))
+        log.write_text(before, encoding="utf-8")
+
+        def boom(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(_common.os, "replace", boom)
+        with pytest.raises(OSError, match="disk full"):
+            _common.append_and_rotate(str(log), "msg\n", max_lines=self.CAP)
+
+        assert log.read_text(encoding="utf-8") == before + "msg\n", (
+            "a failed rotation must leave the log as it was"
+        )
+        leftovers = sorted(p.name for p in tmp_path.iterdir() if p.name != "x.log")
+        assert leftovers == [], f"a failed rotation stranded temp files: {leftovers}"
+
+    def test_concurrent_readers_never_observe_a_truncated_log(self, tmp_path):
+        """The regression: in-place truncation exposes an empty log to readers.
+
+        Real hooks rotate this file from separate processes (a Claude and a
+        Codex session, several files in one turn), so this races real
+        subprocesses rather than threads.
+        """
+        log = tmp_path / "race.log"
+        log.write_text("".join(f"seed {i}\n" for i in range(self.CAP + 10)), "utf-8")
+
+        rotator = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('_c', sys.argv[1])\n"
+            "m = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(m)\n"
+            "log, cap, n = sys.argv[2], int(sys.argv[3]), int(sys.argv[4])\n"
+            "for i in range(n):\n"
+            "    m.append_and_rotate(log, 'rot %d\\n' % i, max_lines=cap)\n"
+        )
+        module = str(REPO_ROOT / ".claude/hooks/_bash_review_common.py")
+        procs = [
+            subprocess.Popen(  # noqa: S603
+                [sys.executable, "-c", rotator, module, str(log), str(self.CAP), "150"]
+            )
+            for _ in range(3)
+        ]
+
+        worst = self.CAP + 10
+        empty_reads = 0
+        try:
+            while any(p.poll() is None for p in procs):
+                seen = len(log.read_text(encoding="utf-8").splitlines())
+                worst = min(worst, seen)
+                empty_reads += seen == 0
+        finally:
+            for p in procs:
+                p.wait(timeout=60)
+
+        assert all(p.returncode == 0 for p in procs)
+        assert empty_reads == 0, (
+            f"a reader saw a completely empty log {empty_reads}x: rotation "
+            f"truncates in place instead of swapping atomically"
+        )
+        assert worst >= self.CAP * 0.8, (
+            f"a reader saw the log at {worst} lines under a {self.CAP}-line cap"
+        )
+        assert not any(p.name.startswith("race.log.") for p in tmp_path.iterdir()), (
+            "concurrent rotation left temp files behind"
+        )
+
+
 class TestParseVerdict:
     @pytest.mark.parametrize(
         ("output", "expected"),
