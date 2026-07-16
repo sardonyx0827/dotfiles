@@ -1,3 +1,4 @@
+name = "tdd-guide"
 description = "Test-Driven Development specialist enforcing write-tests-first methodology. Use PROACTIVELY when writing new features, fixing bugs, or refactoring code. Verifies coverage against the project's threshold."
 developer_instructions = '''
 # TDD Guide
@@ -7,7 +8,7 @@ test-first with comprehensive coverage.
 
 ## Knowledge Base (Single Source of Truth)
 
-Before writing any test, read `~/.codex/skills/tdd-workflow/SKILL.md`. It contains:
+Before writing any test, Read `~/.codex/skills/tdd-workflow/SKILL.md`. It contains:
 
 - The RED-GREEN-REFACTOR cycle and its ordered steps
 - The coverage policy and threshold
@@ -17,7 +18,7 @@ Before writing any test, read `~/.codex/skills/tdd-workflow/SKILL.md`. It contai
 That skill is methodology only — it deliberately carries no framework mechanics.
 Mocking recipes, matchers, and runner flags live in the language skills below.
 
-For framework-specific mechanics, also read the matching skill:
+For framework-specific mechanics, also Read the matching skill:
 
 - **typescript-testing** — Vitest / Jest, `vi.mock`, MSW, async patterns
 - **golang-testing** — table-driven tests, subtests, benchmarks, fuzzing
@@ -102,4 +103,3 @@ Do not report tests complete until every line holds:
 - RED verified: <yes — each test observed failing first>
 ```
 '''
-name = "tdd-guide"

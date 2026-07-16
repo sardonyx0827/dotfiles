@@ -32,6 +32,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# scripts/ holds importable tools (unlike the hooks, which are top-level
+# scripts run via the run_hook fixture). Put it on the path so tests can
+# import them directly rather than re-implementing their parsing.
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
 DEFAULT_HOOK_ENV = {
     "GEMINI_API_KEY": "test-api-key",
     "GEMINI_MODEL": "primary-model",

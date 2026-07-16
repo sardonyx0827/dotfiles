@@ -56,9 +56,17 @@ jobs:
           --cov=.claude/hooks
           --cov=.claude/mcp-servers
           --cov=.codex/hooks
+          --cov=scripts
           --cov-report=term-missing
           --cov-report=json:coverage.json
           --cov-fail-under=90
+      # .codex/agents/*.toml は .claude/agents/*.md から生成される成果物であり、
+      # Codex CLI がビルド無しで読むためリポジトリにコミットしてある。手動編集や
+      # SSOT 側だけの更新を弾く。生成器自身の --check を使うのは、`git diff` が
+      # 未追跡ファイルや孤児 TOML を見逃すため（tests 側でも同じ検査をするが、
+      # ここで独立に落とすことで失敗理由が CI ログ上で明示される）。
+      - name: Check generated Codex agents are current
+        run: python3 scripts/gen_codex_agents.py --check
       # 集計 90% ゲートはファイル単位の低カバレッジを平均で覆い隠すため、
       # 各ファイルに最低 80% を別途強制する（測定された全ファイルが対象。
       # 以前あった .coveragerc の omit は、対象だった .codex 側の複製が
@@ -104,11 +112,11 @@ jobs:
         run: python -m pip install --upgrade pip "ruff==0.15.6" "bandit==1.9.4"
       # スコープは自作 Python のみ（.codex/skills/.system 配下の vendored スクリプトは除外）
       - name: ruff check
-        run: ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks
+        run: ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
       - name: ruff format --check
-        run: ruff format --check .claude/hooks .claude/mcp-servers tests .codex/hooks
+        run: ruff format --check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
       - name: bandit (security, medium+ severity)
-        run: bandit -ll -q -r .claude/hooks .claude/mcp-servers tests .codex/hooks
+        run: bandit -ll -q -r .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
 
   shellcheck:
     name: shellcheck

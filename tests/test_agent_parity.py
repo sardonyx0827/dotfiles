@@ -1,67 +1,24 @@
-"""Drift guards for the multi-runtime agent / instruction configs.
+"""Drift guards for the parts of the multi-runtime config that are still copied.
 
-The same agents are maintained twice — `.claude/agents/*.md` (YAML frontmatter
-+ body) and `.codex/agents/*.toml` (`description` + `developer_instructions`) —
-and the git-workflow / security rules are copied verbatim into three
-instruction files. Nothing enforced that the copies stayed in step, so they had
-already drifted. These tests fail loudly when the structured, easy-to-anchor
-fields diverge (existence, description) — the same rationale as
-test_hook_sync.py, extended beyond the shared Python module.
+Agent bodies used to live here. They no longer do: `.codex/agents/*.toml` is
+generated from `.claude/agents/*.md` by scripts/gen_codex_agents.py, and
+tests/test_gen_codex_agents.py enforces that the committed output matches the
+SSOT byte-for-byte. What is left in this file is the drift that generation
+does not cover:
 
-Note: agent BODIES intentionally differ (tool-name adaptation: Claude's Task
-tool vs Codex agents), so body text is deliberately NOT asserted here — only
-the fields that must stay identical.
+- codex-delegator, the one agent whose Codex body genuinely diverges in
+  meaning (the Claude copy documents the advisor-first escalation tier, which
+  has no Codex counterpart) and so is still hand-written.
+- The git-workflow / security rules, which are copied verbatim into three
+  instruction files that different runtimes read.
 """
 
 import tomllib
 from conftest import REPO_ROOT
+from gen_codex_agents import HAND_MAINTAINED, frontmatter_value, split_frontmatter
 
 CLAUDE_AGENTS_DIR = REPO_ROOT / ".claude/agents"
 CODEX_AGENTS_DIR = REPO_ROOT / ".codex/agents"
-
-
-def _claude_agent_stems() -> set[str]:
-    # README.md documents the directory; it is not an agent definition.
-    return {p.stem for p in CLAUDE_AGENTS_DIR.glob("*.md") if p.stem != "README"}
-
-
-def _codex_agent_stems() -> set[str]:
-    return {p.stem for p in CODEX_AGENTS_DIR.glob("*.toml")}
-
-
-def _md_frontmatter_description(path) -> str | None:
-    """Extract the `description:` value from a Markdown agent's frontmatter.
-
-    Handles the three shapes actually used: a plain scalar, a quoted scalar, and
-    a YAML folded block scalar (`>-`) whose continuation lines are joined with
-    single spaces (matching how the .toml copy stores the same text on one line).
-    No PyYAML dependency — the fields here are simple enough to fold by hand.
-    """
-    lines = path.read_text(encoding="utf-8").splitlines()
-    assert lines and lines[0].strip() == "---", f"{path.name}: missing frontmatter"
-    # Isolate the frontmatter block (between the first two `---` fences).
-    end = next(i for i, ln in enumerate(lines[1:], 1) if ln.strip() == "---")
-    fm = lines[1:end]
-    for idx, line in enumerate(fm):
-        if not line.startswith("description:"):
-            continue
-        val = line[len("description:") :].strip()
-        if val[:1] in ("|", ">"):
-            # Block scalar: fold the following more-indented lines into one line,
-            # stopping at the next (column-0) key so a later key's value is never
-            # swallowed.
-            folded = []
-            for cont in fm[idx + 1 :]:
-                if cont.strip() == "":
-                    continue
-                if not cont.startswith((" ", "\t")):
-                    break
-                folded.append(cont.strip())
-            return " ".join(folded)
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
-            val = val[1:-1]
-        return val
-    return None
 
 
 def _codex_agent_data(stem: str) -> dict:
@@ -70,32 +27,27 @@ def _codex_agent_data(stem: str) -> dict:
     )
 
 
-def test_agent_sets_match_across_runtimes():
-    claude, codex = _claude_agent_stems(), _codex_agent_stems()
-    assert claude == codex, (
-        f"agent drift — only in .claude: {sorted(claude - codex)}; "
-        f"only in .codex: {sorted(codex - claude)}"
-    )
+def _claude_description(stem: str) -> str:
+    path = CLAUDE_AGENTS_DIR / f"{stem}.md"
+    fm, _ = split_frontmatter(path.read_text(encoding="utf-8"), stem)
+    return frontmatter_value(fm, "description", stem)
 
 
 def test_every_codex_agent_is_valid_and_non_empty():
-    for stem in sorted(_codex_agent_stems()):
-        data = _codex_agent_data(stem)
-        assert data.get("description", "").strip(), f"{stem}.toml: empty description"
+    for path in sorted(CODEX_AGENTS_DIR.glob("*.toml")):
+        data = _codex_agent_data(path.stem)
+        assert data.get("description", "").strip(), f"{path.name}: empty description"
         assert data.get("developer_instructions", "").strip(), (
-            f"{stem}.toml: empty developer_instructions"
+            f"{path.name}: empty developer_instructions"
         )
 
 
-def test_agent_descriptions_match_across_runtimes():
-    """The one structured field shared by both formats must not drift."""
-    for stem in sorted(_claude_agent_stems() & _codex_agent_stems()):
-        md_desc = _md_frontmatter_description(CLAUDE_AGENTS_DIR / f"{stem}.md")
-        toml_desc = _codex_agent_data(stem).get("description")
-        assert md_desc == toml_desc, (
-            f"{stem}: description drifted between .md and .toml\n"
-            f"  .claude: {md_desc!r}\n  .codex:  {toml_desc!r}"
-        )
+def test_hand_maintained_agent_descriptions_match():
+    """Generation guarantees this for the other agents; not for these."""
+    for stem in sorted(HAND_MAINTAINED):
+        assert _codex_agent_data(stem).get("description") == _claude_description(
+            stem
+        ), f"{stem}: description drifted between .md and the hand-written .toml"
 
 
 # --- Instruction files: git-workflow / security are copied into three files ---

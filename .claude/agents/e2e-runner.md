@@ -100,9 +100,9 @@ await browser.injectKeyboardEvent({
 await browser.startScreencast(); // Stream viewport frames
 ```
 
-### Agent Browser with Claude Code
+### Agent Browser from the shell
 
-If the `agent-browser` CLI is installed, run it directly via Bash for interactive browser automation tasks.
+If the `agent-browser` CLI is installed, run it directly from the shell for interactive browser automation tasks.
 
 ---
 

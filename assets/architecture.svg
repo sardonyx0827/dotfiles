@@ -69,7 +69,7 @@
   <line x1="850" y1="292" x2="1176" y2="292" stroke="#403d52"/>
   <g class="mono">
     <text x="852" y="326" font-size="14" fill="#e0def4">pytest · ruff · bandit · shellcheck</text>
-    <text x="852" y="354" font-size="12.5" fill="#908caa">14 test suites · 90% coverage gate</text>
+    <text x="852" y="354" font-size="12.5" fill="#908caa">15 test suites · 90% coverage gate</text>
     <text x="852" y="382" font-size="12.5" fill="#908caa">GitHub Actions CI</text>
   </g>
 

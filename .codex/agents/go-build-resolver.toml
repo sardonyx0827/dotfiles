@@ -1,5 +1,6 @@
+name = "go-build-resolver"
 description = "Go build, vet, and compilation error resolution specialist. Fixes build errors, go vet issues, and linter warnings with minimal changes. Use when Go builds fail."
-developer_instructions = """
+developer_instructions = '''
 # Go Build Error Resolver
 
 You are an expert Go build error resolution specialist. Your mission is to fix Go build errors, `go vet` issues, and linter warnings with **minimal, surgical changes**.
@@ -360,5 +361,5 @@ Remaining Issues: list (if any)
 - **Prefer** fixing root cause over suppressing symptoms
 - **Document** any non-obvious fixes with inline comments
 
-Build errors should be fixed surgically. The goal is a working build, not a refactored codebase."""
-name = "go-build-resolver"
+Build errors should be fixed surgically. The goal is a working build, not a refactored codebase.
+'''
