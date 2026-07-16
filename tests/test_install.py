@@ -167,6 +167,120 @@ class TestCreateSymlinks:
         assert (backups[0] / ".zshrc").read_text(encoding="utf-8") == "old content\n"
         assert not (backups[0] / ".vimrc").exists()
 
+    # --- Codex config.toml: seeded, never linked, never clobbered -----------
+    # Codex owns this file at runtime: `codex mcp add` writes mcp_servers into
+    # it, Authorization headers included, plus projects/ and plugin state. The
+    # old symlink pointed it straight at the checkout, so everything Codex
+    # wrote landed in the working tree, one `git add` from committing a token.
+
+    def test_codex_config_is_seeded_as_a_real_file_not_a_symlink(self, shell_env):
+        home = shell_env.home
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0
+
+        config = home / ".codex/config.toml"
+        assert config.is_file()
+        assert not config.is_symlink(), (
+            "config.toml must never be a symlink: Codex would write secrets "
+            "straight into the checkout"
+        )
+        assert config.read_text(encoding="utf-8") == (
+            REPO_ROOT / ".codex/config.toml.template"
+        ).read_text(encoding="utf-8")
+
+    def test_codex_config_written_by_codex_survives_a_rerun(self, shell_env):
+        """The whole point: re-rendering would delete the user's MCP servers."""
+        home = shell_env.home
+        (home / ".codex").mkdir(parents=True)
+        live = home / ".codex/config.toml"
+        live.write_text(
+            '[mcp_servers.github.http_headers]\nAuthorization = "secret"\n',
+            encoding="utf-8",
+        )
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0
+        assert 'Authorization = "secret"' in live.read_text(encoding="utf-8")
+
+    def test_codex_config_symlink_is_replaced_with_a_real_file(self, shell_env):
+        """Self-heal the older install that linked it into the checkout."""
+        home = shell_env.home
+        (home / ".codex").mkdir(parents=True)
+        (home / ".codex/config.toml").symlink_to(
+            REPO_ROOT / ".codex/config.toml.template"
+        )
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0
+
+        config = home / ".codex/config.toml"
+        assert config.is_file()
+        assert not config.is_symlink()
+
+    # --- Git identity: rendered per machine, never tracked ------------------
+
+    def test_git_identity_is_inherited_from_the_previous_config(
+        self, shell_env, tmp_path
+    ):
+        """Upgrading from a ~/.gitconfig that carried [user] keeps it."""
+        prior = tmp_path / "prior-gitconfig"
+        prior.write_text(
+            "[user]\n\tname = Prior Person\n\temail = prior@example.com\n",
+            encoding="utf-8",
+        )
+        env = {**shell_env.env, "GIT_CONFIG_GLOBAL": str(prior)}
+
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0
+
+        rendered = (shell_env.home / ".config/git/user.gitconfig").read_text(
+            encoding="utf-8"
+        )
+        assert "name = Prior Person" in rendered
+        assert "email = prior@example.com" in rendered
+
+    def test_git_identity_is_never_overwritten(self, shell_env):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        existing = home / ".config/git/user.gitconfig"
+        existing.write_text("[user]\n\tname = Do Not Touch\n", encoding="utf-8")
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0
+        assert existing.read_text(encoding="utf-8") == "[user]\n\tname = Do Not Touch\n"
+
+    def test_git_identity_placeholder_is_inert_when_unknown(self, shell_env):
+        """Non-interactive with nothing to inherit: warn, never guess.
+
+        The keys stay commented out -- an empty `name =` would make git report a
+        configured-but-blank identity rather than telling the user to set one.
+        """
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0
+
+        rendered = (shell_env.home / ".config/git/user.gitconfig").read_text(
+            encoding="utf-8"
+        )
+        assert "#[user]" in rendered
+        for line in rendered.splitlines():
+            assert line.startswith("#"), f"placeholder must be inert: {line!r}"
+
+    def test_tracked_gitconfig_carries_no_identity(self):
+        """Guard the leak itself, not just the machinery that avoids it."""
+        text = (REPO_ROOT / ".gitconfig").read_text(encoding="utf-8")
+        # Match the section header, not the substring: the file explains in a
+        # comment why [user] is absent, and that comment is not a section.
+        sections = [
+            ln.strip()
+            for ln in text.splitlines()
+            if not ln.lstrip().startswith("#") and ln.strip().startswith("[")
+        ]
+        assert "[user]" not in sections, (
+            ".gitconfig must not carry a [user] section: anyone who clones this "
+            "repo and links it would commit under the owner's name and address"
+        )
+        assert "path = ~/.config/git/user.gitconfig" in text
+
     def test_rerun_is_idempotent(self, shell_env):
         home = shell_env.home
         (home / ".oh-my-zsh").mkdir()

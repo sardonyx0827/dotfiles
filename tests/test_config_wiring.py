@@ -15,7 +15,10 @@ from conftest import REPO_ROOT
 
 CLAUDE_SETTINGS = REPO_ROOT / ".claude/settings.json"
 CODEX_HOOKS_TEMPLATE = REPO_ROOT / ".codex/hooks.json.template"
-CODEX_CONFIG = REPO_ROOT / ".codex/config.toml"
+# Not `.codex/config.toml`: Codex writes mcp_servers (auth headers included),
+# projects and plugin state into the live file, so the repo ships a baseline to
+# seed from rather than a symlink target. See create_symlinks in install.sh.
+CODEX_CONFIG = REPO_ROOT / ".codex/config.toml.template"
 GEMINI_SETTINGS = REPO_ROOT / ".gemini/settings.json"
 
 

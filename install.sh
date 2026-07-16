@@ -600,6 +600,13 @@ install_vim_plug() {
 create_symlinks() {
   print_info "Creating symbolic links..."
 
+  # Read whatever identity git resolves right now, BEFORE the .gitconfig link
+  # below replaces it. An upgrade from a real ~/.gitconfig that carried [user]
+  # keeps its name/email this way instead of silently losing it.
+  local prior_git_name prior_git_email
+  prior_git_name="$(git config --global user.name 2>/dev/null || true)"
+  prior_git_email="$(git config --global user.email 2>/dev/null || true)"
+
   # Backup existing files
   backup_dir="$HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
   mkdir -p "$backup_dir"
@@ -670,6 +677,36 @@ create_symlinks() {
     >"$HOME/.config/git/os.gitconfig"
   print_success "Rendered os.gitconfig (credential helper: $git_cred_helper)"
 
+  # Identity lives here rather than in the tracked .gitconfig, which would make
+  # everyone who clones this repo commit under the owner's name and address.
+  # Never overwrite: this file is the user's, and a re-run must not clobber it.
+  local git_user_config="$HOME/.config/git/user.gitconfig"
+  if [ -e "$git_user_config" ]; then
+    print_info "Keeping existing git identity ($git_user_config)"
+  else
+    local git_name="$prior_git_name" git_email="$prior_git_email"
+    # Nothing to inherit (fresh machine, or an upgrade from the version that
+    # kept [user] in the tracked file): ask, but only with a TTY -- a bare
+    # `read` at EOF returns non-zero and would abort the installer under set -e.
+    if [ -z "$git_name" ] || [ -z "$git_email" ]; then
+      if [ -t 0 ]; then
+        [ -z "$git_name" ] && { read -p "Git user.name: " -r git_name || git_name=""; }
+        [ -z "$git_email" ] && { read -p "Git user.email: " -r git_email || git_email=""; }
+      fi
+    fi
+    if [ -n "$git_name" ] && [ -n "$git_email" ]; then
+      printf '[user]\n\tname = %s\n\temail = %s\n' "$git_name" "$git_email" \
+        >"$git_user_config"
+      print_success "Rendered user.gitconfig ($git_name <$git_email>)"
+    else
+      # Commented-out keys, not empty ones: an empty `name =` makes git report
+      # a configured-but-blank identity instead of prompting the user to set it.
+      printf '# Fill in before committing:\n#[user]\n#\tname = Your Name\n#\temail = you@example.com\n' \
+        >"$git_user_config"
+      print_warning "No git identity configured. Edit $git_user_config before committing."
+    fi
+  fi
+
   # Directories to symlink
   mkdir -p "$HOME/.config"
 
@@ -739,7 +776,6 @@ create_symlinks() {
 
   local codex_link_entries=(
     "AGENTS.md"
-    "config.toml"
     "hooks"
     "agents"
     "skills"
@@ -748,6 +784,30 @@ create_symlinks() {
     [ -e "$DOTFILES_DIR/.codex/$entry" ] &&
       link_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
   done
+
+  # config.toml is deliberately NOT symlinked. Codex owns this file at runtime:
+  # `codex mcp add` writes mcp_servers into it -- Authorization headers and all
+  # -- and Codex accumulates projects/, plugins/ and desktop state there too. A
+  # symlink would land every bit of that in the checkout, one `git add` away
+  # from committing a token. This is the same trap that once cloned zsh plugins
+  # through ~/.oh-my-zsh/custom into the repo (see install_oh_my_zsh).
+  #
+  # Older installs did link it, so replace such a link with a real file.
+  if [ -L "$HOME/.codex/config.toml" ]; then
+    print_warning "Replacing the ~/.codex/config.toml symlink with a real file"
+    rm -f "$HOME/.codex/config.toml"
+  fi
+  # Seed the baseline only when nothing is there. Re-rendering would delete
+  # whatever Codex has written since, so a live config is left strictly alone;
+  # the template is the starting point, not a managed copy.
+  if [ -f "$DOTFILES_DIR/.codex/config.toml.template" ]; then
+    if [ ! -e "$HOME/.codex/config.toml" ]; then
+      cp "$DOTFILES_DIR/.codex/config.toml.template" "$HOME/.codex/config.toml"
+      print_success "Seeded config.toml from template"
+    else
+      print_info "Keeping existing config.toml (Codex owns it; baseline lives in .codex/config.toml.template)"
+    fi
+  fi
 
   # hooks.json: render from the template, substituting the placeholder for
   # this machine's real $HOME (Codex does not expand ~ or $HOME itself).
