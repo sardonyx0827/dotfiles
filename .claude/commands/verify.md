@@ -1,64 +1,33 @@
 ---
-description: Run the full local quality gate in order - build, type check, lint, tests, security scan, and diff review. Reports pass/fail per step and stops on build failure.
+description: Run the full local quality gate in order - build, type check, lint, tests, secret grep, and diff review. Reports pass/fail per step and stops on build failure.
 ---
 
 # Verification Command
 
-Run comprehensive verification on current codebase state.
+Run the local quality gate over the current codebase state.
 
 ## Instructions
 
-Execute verification in this exact order:
+Follow the **verification-loop** skill — it is the single source of truth for the phase
+order, the toolchain detection table, the grep patterns, and the report format. Do not
+restate or re-derive those here.
 
-1. **Build Check**
-   - Run the build command for this project
-   - If it fails, report errors and STOP
+Two rules decide whether the resulting report is trustworthy:
 
-2. **Type Check**
-   - Run TypeScript/type checker
-   - Report all errors with file:line
-
-3. **Lint Check**
-   - Run linter
-   - Report warnings and errors
-
-4. **Test Suite**
-   - Run all tests
-   - Report pass/fail count
-   - Report coverage percentage
-
-5. **Console.log Audit**
-   - Search for console.log in source files
-   - Report locations
-
-6. **Git Status**
-   - Show uncommitted changes
-   - Show files modified since last commit
-
-## Output
-
-Produce a concise verification report:
-
-```
-VERIFICATION: [PASS/FAIL]
-
-Build:    [OK/FAIL]
-Types:    [OK/X errors]
-Lint:     [OK/X issues]
-Tests:    [X/Y passed, Z% coverage]
-Secrets:  [OK/X found]
-Logs:     [OK/X console.logs]
-
-Ready for PR: [YES/NO]
-```
-
-If any critical issues, list them with fix suggestions.
+- **Stop on build failure.** Every later phase reports noise against a broken tree.
+- **A phase that could not run is SKIPPED, with the reason — never PASS.**
 
 ## Arguments
 
-$ARGUMENTS can be:
+`$ARGUMENTS` selects how far to go:
 
-- `quick` - Only build + types
-- `full` - All checks (default)
-- `pre-commit` - Checks relevant for commits
-- `pre-pr` - Full checks plus security scan
+| Value        | Phases                                                       |
+| ------------ | ------------------------------------------------------------ |
+| `quick`      | Build + type check                                           |
+| `pre-commit` | Build, types, lint, tests                                    |
+| `full`       | All phases (default)                                         |
+| `pre-pr`     | All phases, plus the **security-review** skill over the diff |
+
+`pre-pr` escalates to the security-review skill because the verification-loop Phase 5 is
+a secret grep — a smoke test, not an audit. For changes touching auth, user input,
+secrets, or payments, run the **security-reviewer** agent regardless of the argument.
