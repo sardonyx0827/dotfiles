@@ -470,6 +470,20 @@ class TestInstallOhMyZsh:
         body = 'if [ "$1" = "clone" ]; then\n  mkdir -p "${@: -1}"\nfi'
         shell_env.stub("git", body=body)
 
+    def _mark_omz_installed(self, home):
+        """Make install_oh_my_zsh consider Oh My Zsh already present.
+
+        It tests for the oh-my-zsh.sh entry point rather than the directory,
+        because create_symlinks now runs first and creates
+        ~/.oh-my-zsh/custom/themes/ to land the theme -- a directory test would
+        skip the install forever. These tests cover the custom/ handling, not
+        the download, so short-circuit the install the same way a real machine
+        with Oh My Zsh already on it would.
+        """
+        omz = home / ".oh-my-zsh"
+        omz.mkdir(exist_ok=True)
+        (omz / "oh-my-zsh.sh").write_text("# stub entry point\n", encoding="utf-8")
+
     def test_heals_symlinked_custom_dir_before_cloning_plugins(
         self, shell_env, tmp_path
     ):
@@ -479,7 +493,7 @@ class TestInstallOhMyZsh:
         # cloning plugins, or the clone lands inside the checkout.
         self._stub_git_clone(shell_env)
         home = shell_env.home
-        (home / ".oh-my-zsh").mkdir()
+        self._mark_omz_installed(home)
         fake_dotfiles_custom = tmp_path / "fake-dotfiles" / ".oh-my-zsh" / "custom"
         (fake_dotfiles_custom / "themes").mkdir(parents=True)
         (home / ".oh-my-zsh/custom").symlink_to(fake_dotfiles_custom)
@@ -498,7 +512,7 @@ class TestInstallOhMyZsh:
     def test_rerun_does_not_reclone_existing_plugins(self, shell_env):
         self._stub_git_clone(shell_env)
         home = shell_env.home
-        (home / ".oh-my-zsh").mkdir()
+        self._mark_omz_installed(home)
 
         first = run_sourced("install_oh_my_zsh", shell_env.env)
         assert first.returncode == 0, first.stderr

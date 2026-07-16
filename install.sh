@@ -153,7 +153,9 @@ install_homebrew() {
 # Install APT packages (Ubuntu/Debian)
 install_apt_packages() {
   print_info "Updating APT repositories..."
-  sudo apt-get update
+  # Guarded: a single unreachable repository must not abort the installer. The
+  # apt-get install below reports what actually could not be fetched.
+  sudo apt-get update || print_warning "apt-get update failed (continuing)"
 
   print_info "Installing required packages..."
   sudo apt-get install -y \
@@ -183,7 +185,8 @@ install_apt_packages() {
     libreadline-dev \
     libsqlite3-dev \
     libffi-dev \
-    liblzma-dev
+    liblzma-dev ||
+    print_warning "Some APT packages failed to install (continuing)"
 
   # On Debian/Ubuntu the binaries are named `batcat` and `fdfind`, but the
   # configs (.zshrc vf(), nvim telescope) invoke `bat` and `fd`. Provide
@@ -223,7 +226,9 @@ install_brew_packages() {
     if brew list "$package" &>/dev/null; then
       print_info "$package already installed"
     else
-      brew install "$package"
+      # Guarded like every other installer here: one formula that is renamed,
+      # deprecated or momentarily unreachable must not abort the whole run.
+      brew install "$package" || print_warning "Failed to install $package (continuing)"
     fi
   done
 
@@ -517,15 +522,19 @@ install_nodejs() {
   if ! command_exists node; then
     print_info "Installing Node.js..."
     if [[ "$OS" == "macos" ]]; then
-      brew install node
+      brew install node || print_warning "Failed to install Node.js (continuing)"
     elif [[ "$OS" == "ubuntu" ]]; then
-      # Bare (unguarded) call: a NodeSource setup failure aborts the install
-      # under set -e, matching the original `curl | sudo -E bash -`. The `-`
-      # (read from stdin) is dropped because fetch_and_run passes a file path.
-      fetch_and_run https://deb.nodesource.com/setup_lts.x sudo -E bash
-      sudo apt-get install -y nodejs
+      # Guarded: NodeSource being down must not abort the run. The `-` (read
+      # from stdin) of the canonical `curl | sudo -E bash -` is dropped because
+      # fetch_and_run passes a file path instead.
+      if fetch_and_run https://deb.nodesource.com/setup_lts.x sudo -E bash; then
+        sudo apt-get install -y nodejs ||
+          print_warning "Failed to install Node.js (continuing)"
+      else
+        print_warning "NodeSource setup failed; skipping Node.js (continuing)"
+      fi
     fi
-    print_success "Node.js installed"
+    command_exists node && print_success "Node.js installed"
   else
     print_success "Node.js already installed ($(node --version))"
   fi
@@ -543,7 +552,10 @@ install_nodejs() {
 
 # Install Oh My Zsh
 install_oh_my_zsh() {
-  if [ ! -d "$HOME/.oh-my-zsh" ]; then
+  # Test for the entry point, not the directory: create_symlinks runs first and
+  # makes ~/.oh-my-zsh/custom/themes/ to land the theme, so a `-d` test on the
+  # directory would report Oh My Zsh as already installed and skip it forever.
+  if [ ! -f "$HOME/.oh-my-zsh/oh-my-zsh.sh" ]; then
     print_info "Installing Oh My Zsh..."
     # Download-then-run for the same truncation safety as Homebrew. `--unattended`
     # is a positional arg to the installer (keeps it from starting a shell or
@@ -569,14 +581,17 @@ install_oh_my_zsh() {
   # Install zsh plugins
   print_info "Installing zsh plugins..."
 
+  # Guarded like the tpm clone: a failed plugin clone must not abort the run.
   # zsh-autosuggestions
   if [ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ]; then
-    git clone https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+    git clone https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ||
+      print_warning "Failed to clone zsh-autosuggestions (continuing)"
   fi
 
   # zsh-syntax-highlighting
   if [ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ]; then
-    git clone https://github.com/zsh-users/zsh-syntax-highlighting "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+    git clone https://github.com/zsh-users/zsh-syntax-highlighting "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ||
+      print_warning "Failed to clone zsh-syntax-highlighting (continuing)"
   fi
 
   print_success "zsh plugins installed"
@@ -589,11 +604,16 @@ install_vim_plug() {
   print_info "Installing vim-plug..."
 
   if [ ! -f "$HOME/.vim/autoload/plug.vim" ]; then
+    # Guarded: a failed download must not abort the run. Report the real state
+    # rather than printing success unconditionally.
     curl -fLo "$HOME/.vim/autoload/plug.vim" --create-dirs \
-      https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+      https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim ||
+      print_warning "Failed to download vim-plug (continuing)"
   fi
 
-  print_success "vim-plug installed"
+  if [ -f "$HOME/.vim/autoload/plug.vim" ]; then
+    print_success "vim-plug installed"
+  fi
 }
 
 # Create symbolic links
@@ -1139,6 +1159,12 @@ main() {
 
   detect_os
 
+  # Symlinks first: this is the part that is actually ours, it needs no package
+  # manager, and it is what a dotfiles install is FOR. Everything below can fail
+  # on a flaky network or a renamed formula; when it ran last, one such failure
+  # left the machine with no dotfiles linked at all.
+  create_symlinks
+
   # Platform-specific package installation
   case "$OS" in
   macos)
@@ -1170,9 +1196,6 @@ main() {
   install_oh_my_zsh
   install_vim_plug
   install_tmux_plugins
-
-  # Create symlinks
-  create_symlinks
 
   # Setup editors
   install_vim_plugins
