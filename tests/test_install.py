@@ -134,7 +134,7 @@ class TestCreateSymlinks:
         assert (home / ".codex/hooks").is_symlink()
         assert not (home / ".codex/agents").is_symlink()
         assert (home / ".codex/agents").is_dir()
-        skills = home / ".codex/skills/coding-standards"
+        skills = home / ".codex/skills/backend-patterns"
         assert skills.is_dir() and not skills.is_symlink()
 
         # Oh My Zsh custom dir stays a REAL directory (install_oh_my_zsh
@@ -167,7 +167,7 @@ class TestCreateSymlinks:
 
         assert (home / ".zshrc").is_symlink()
         assert (home / ".zshrc").resolve() == (REPO_ROOT / ".zshrc").resolve()
-        assert (home / ".codex/skills/coding-standards").is_dir()
+        assert (home / ".codex/skills/backend-patterns").is_dir()
 
     def test_backup_preserves_files_sharing_a_basename(self, shell_env):
         # settings.json exists as a real file under BOTH ~/.claude and
@@ -208,7 +208,7 @@ class TestCreateSymlinks:
 
         assert list(home.glob(".dotfiles_backup_*")) == []
         # The copies and rendered file are still in place after the no-op rerun.
-        assert (home / ".codex/skills/coding-standards").is_dir()
+        assert (home / ".codex/skills/backend-patterns").is_dir()
         assert (home / ".codex/hooks.json").is_file()
 
     def test_no_backup_dir_left_when_nothing_backed_up(self, shell_env):

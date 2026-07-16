@@ -157,7 +157,6 @@ Spell out the non-negotiables for the project. Common examples:
 
 ## Related Skills
 
-- `coding-standards/` - general coding best practices
 - `backend-patterns/` - API and database patterns
 - `frontend-patterns/` - React and Next.js patterns
 - `tdd-workflow/` - test-driven development methodology

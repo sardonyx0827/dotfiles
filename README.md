@@ -45,7 +45,7 @@
 │   ├── hooks/                      # フック (auto-format, lint, bash-review 等)
 │   ├── mcp-servers/                # 自作MCPサーバー (gemini-consultant)
 │   ├── rules/                      # ワークフロー / セキュリティルール
-│   ├── skills/                     # スキル定義 (coding-standards 等)
+│   ├── skills/                     # スキル定義 (backend-patterns 等)
 │   ├── CLAUDE.md                   # グローバル指示
 │   ├── settings.json               # Claude Code設定
 │   └── statusline-command.sh       # ステータスライン

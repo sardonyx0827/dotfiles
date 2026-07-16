@@ -83,10 +83,10 @@ Gemini CLI has no SubAgent / parallel-agent primitive like Claude Code's Task to
 Do not inline coding standards, patterns, or checklists here — read the relevant skill file under `~/.claude/skills/` first, then follow it:
 
 - New features, bug fixes, refactoring → `~/.claude/skills/tdd-workflow/SKILL.md` (test-first; it defines the coverage policy)
-- General style and patterns → `~/.claude/skills/coding-standards/SKILL.md`, plus `backend-patterns` / `frontend-patterns` / `golang-patterns` / `docker-patterns` / `postgres-patterns` under the same directory as relevant
+- General style and patterns → `backend-patterns` / `frontend-patterns` / `golang-patterns` / `docker-patterns` / `postgres-patterns` under `~/.claude/skills/`, as relevant to the change
 - Requests dropped into `docs/requests/` → `~/.claude/skills/request-harness/SKILL.md`
 - Investigating bugs, test failures, or unexplained behavior → `~/.claude/skills/debugging-protocol/SKILL.md`
-- After writing or modifying code, review it yourself against `~/.claude/skills/coding-standards/SKILL.md` before handing it back (Gemini CLI has no dedicated code-reviewer subagent to delegate to)
+- After writing or modifying code, review it yourself against the pattern skill matching the change plus `~/.claude/skills/security-review/SKILL.md` before handing it back (Gemini CLI has no dedicated code-reviewer subagent to delegate to)
 
 ## 7. Safety Guards
 

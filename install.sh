@@ -786,7 +786,6 @@ create_symlinks() {
   # .system skills are left untouched.
   mkdir -p "$HOME/.codex/skills"
   local codex_skills=(
-    "coding-standards"
     "backend-patterns"
     "frontend-patterns"
     "golang-patterns"

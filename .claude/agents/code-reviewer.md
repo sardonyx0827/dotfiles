@@ -93,7 +93,7 @@ const apiKey = process.env.API_KEY;  // Good: read from environment
 Beyond the generic checklist above, load and enforce the active project's own rules:
 
 - Read the project's `CLAUDE.md` (root and nested) for repo-specific conventions
-- Apply the relevant skills (coding-standards, security-review, backend/frontend-patterns, language-specific patterns)
+- Apply the relevant skills (security-review, backend/frontend-patterns, language-specific patterns)
 - Honor stated constraints such as file-size limits, immutability requirements, and "no emojis in the codebase" (i.e. shipped source, comments, and commit messages — not internal tooling / prompt docs)
 
 When a project rule conflicts with the generic checklist above, the project rule wins.

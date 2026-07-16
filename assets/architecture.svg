@@ -86,7 +86,7 @@
   <text x="98" y="557" font-size="15" font-weight="700" fill="#e0def4">Claude Code</text>
   <g class="mono" fill="#908caa" font-size="12.5">
     <text x="84" y="584">14 agents · 21 commands</text>
-    <text x="84" y="604">24 skills · 5 hooks</text>
+    <text x="84" y="604">23 skills · 5 hooks</text>
     <text x="84" y="624">settings.json · statusline</text>
   </g>
 
