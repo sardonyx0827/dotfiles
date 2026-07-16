@@ -809,6 +809,44 @@ create_symlinks() {
     copy_entry "$DOTFILES_DIR/.claude/skills/$skill" "$HOME/.codex/skills/$skill"
   done
 
+  # Codex skills are copied, not symlinked, so dropping one from codex_skills
+  # leaves the deployed copy live in Codex. Report that; do NOT delete it.
+  #
+  # Deliberate: this installer runs on other people's machines, where a wrong
+  # delete under $HOME is unrecoverable, while a stale skill costs one manual
+  # `rm`. The manifest records what we copied so the notice can never point at
+  # Codex's managed .system skills or a skill the user wrote by hand -- "not in
+  # codex_skills" is not grounds to even mention an entry. A first run has no
+  # manifest, so it reports nothing and just records what it deployed.
+  local skills_manifest="$HOME/.codex/skills/.dotfiles-managed"
+  if [ -f "$skills_manifest" ]; then
+    local managed shared_skill keep
+    # `|| [ -n "$managed" ]` so a hand-edited manifest lacking a trailing
+    # newline does not silently drop its last entry.
+    while IFS= read -r managed || [ -n "$managed" ]; do
+      # A manifest entry is a bare directory name. Anything else (a path, a
+      # dotfile such as .system, . or ..) is refused rather than interpreted.
+      case "$managed" in
+      "" | .* | */*) continue ;;
+      esac
+      keep=0
+      for shared_skill in "${codex_skills[@]}"; do
+        [ "$shared_skill" = "$managed" ] && {
+          keep=1
+          break
+        }
+      done
+      [ "$keep" -eq 1 ] && continue
+      [ -e "$HOME/.codex/skills/$managed" ] || continue
+      print_warning "Codex skill no longer shared: $managed"
+      print_warning "  Left in place. Remove it yourself if you want it gone:"
+      print_warning "    rm -rf ~/.codex/skills/$managed"
+    done <"$skills_manifest"
+  fi
+  # Rewrite to the current set: the notice above fires once, rather than
+  # nagging on every install.
+  printf '%s\n' "${codex_skills[@]}" >"$skills_manifest"
+
   # Gemini config: symlink individual entries
   mkdir -p "$HOME/.gemini"
   local gemini_entries=(
