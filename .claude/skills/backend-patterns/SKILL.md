@@ -89,29 +89,42 @@ class ProductService {
 
 ### Middleware Pattern
 
+> **Router assumption**: this skill targets the **App Router** (`app/api/*/route.ts`,
+> `NextRequest` / `NextResponse`). The Pages Router (`pages/api/*`, `NextApiHandler`,
+> `req`/`res`) is legacy — do not mix the two styles in one codebase. If you are working
+> in a Pages Router project, translate these patterns rather than copying them verbatim.
+
 ```typescript
-// Request/response processing pipeline
-export function withAuth(handler: NextApiHandler): NextApiHandler {
-  return async (req, res) => {
-    const token = req.headers.authorization?.replace("Bearer ", "");
+// app/api/_middleware/withAuth.ts
+import { NextRequest, NextResponse } from "next/server";
+
+type AuthedHandler = (
+  req: NextRequest,
+  ctx: { user: User },
+) => Promise<NextResponse>;
+
+export function withAuth(handler: AuthedHandler) {
+  return async (req: NextRequest) => {
+    const token = req.headers.get("authorization")?.replace("Bearer ", "");
 
     if (!token) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     try {
       const user = await verifyToken(token);
-      req.user = user;
-      return handler(req, res);
-    } catch (error) {
-      return res.status(401).json({ error: "Invalid token" });
+      // App Router requests are immutable — pass context through, don't attach to req
+      return handler(req, { user });
+    } catch {
+      return NextResponse.json({ error: "Invalid token" }, { status: 401 });
     }
   };
 }
 
-// Usage
-export default withAuth(async (req, res) => {
-  // Handler has access to req.user
+// Usage — app/api/products/route.ts
+export const GET = withAuth(async (req, { user }) => {
+  const data = await listProducts(user.id);
+  return NextResponse.json({ success: true, data });
 });
 ```
 

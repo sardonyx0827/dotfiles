@@ -207,7 +207,8 @@ func TestParallel(t *testing.T) {
     }
 
     for _, tt := range tests {
-        tt := tt // Capture range variable
+        // Go 1.22+ scopes the loop variable per iteration — no `tt := tt` copy needed.
+        // Only add one when the module's go directive is below 1.22.
         t.Run(tt.name, func(t *testing.T) {
             t.Parallel() // Run subtests in parallel
             result := Process(tt.input)
@@ -547,12 +548,24 @@ here.
 
 ### Excluding Generated Code from Coverage
 
-```go
-//go:generate mockgen -source=interface.go -destination=mock_interface.go
+`go test` has no flag that excludes files from a coverage profile, and build tags cannot
+do it (`-tags` only _adds_ tags; there is no `-tags=!x` negation form — negation belongs
+in a file's `//go:build !x` constraint, which excludes the file from the build entirely,
+not just from coverage).
 
-// In coverage profile, exclude with build tags:
-// go test -cover -tags=!generate ./...
+Filter the profile after the run instead:
+
+```bash
+go test -coverprofile=coverage.out ./...
+
+# Drop generated files before reporting
+grep -vE '(mock_|\.pb\.go|_generated\.go|zz_generated)' coverage.out > coverage.filtered.out
+
+go tool cover -func=coverage.filtered.out
 ```
+
+Alternatively, scope measurement to the packages you care about with
+`-coverpkg=./internal/...`.
 
 ## HTTP Handler Testing
 

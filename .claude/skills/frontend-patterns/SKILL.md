@@ -7,6 +7,40 @@ description: React and Next.js frontend patterns for components, state managemen
 
 Modern frontend patterns for React, Next.js, and performant user interfaces.
 
+## Server / Client Boundary (read first)
+
+In the Next.js App Router, every component is a **Server Component by default**. Server
+Components cannot use state, effects, refs, context, or browser APIs. Any file using
+them must opt in with the `"use client"` directive on its first line:
+
+```typescript
+"use client";
+
+import { useState } from "react";
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount((c) => c + 1)}>{count}</button>;
+}
+```
+
+**Nearly every pattern below is a Client Component pattern** — anything with `useState`,
+`useEffect`, `useReducer`, `useContext`, event handlers, or Framer Motion needs
+`"use client"`. The examples omit the directive for brevity; add it when you apply them.
+
+Boundary rules worth knowing before you place the directive:
+
+- `"use client"` marks an **entry point**, not a whole subtree file-by-file — modules it
+  imports become part of the client bundle too. Push it as far down the tree as possible.
+- Server Components can render Client Components; a Client Component cannot import a
+  Server Component, but it can receive one via `children` / props.
+- Props crossing the boundary must be serializable — no functions, classes, or Dates in,
+  though `children` as an already-rendered Server Component is fine.
+- Data fetching belongs in Server Components where possible; reach for the client
+  fetching hook below only for genuinely client-driven state (search-as-you-type, polling).
+
+Plain React (Vite, CRA, React Router) has no such boundary — ignore this section there.
+
 ## Component Patterns
 
 ### Composition Over Inheritance

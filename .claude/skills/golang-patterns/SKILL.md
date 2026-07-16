@@ -596,30 +596,46 @@ goimports -w .
 
 ### Recommended Linter Configuration (.golangci.yml)
 
+Written for golangci-lint **v2** (config `version: "2"`). Running an existing v1 config
+through `golangci-lint migrate` converts it automatically.
+
 ```yaml
+version: "2"
+
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
-    - staticcheck
+    - staticcheck # v2: absorbs gosimple and stylecheck — do not list those separately
     - unused
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - unparam
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable:
+        - shadow # v2: replaces the removed `check-shadowing: true`
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-  govet:
-    check-shadowing: true
-
-issues:
-  exclude-use-default: false
+# v2: formatters live in their own section, not under `linters.enable`
+formatters:
+  enable:
+    - gofmt
+    - goimports
 ```
+
+v1 → v2 changes that bite most often:
+
+| v1                                        | v2                                         |
+| ----------------------------------------- | ------------------------------------------ |
+| `linters-settings:`                       | `linters.settings:`                        |
+| `govet.check-shadowing: true`             | `govet.enable: [shadow]` (old key removed) |
+| `gosimple`, `stylecheck`                  | merged into `staticcheck`                  |
+| `gofmt` / `goimports` in `linters.enable` | `formatters.enable`                        |
+| `issues.exclude-use-default: true`        | `linters.exclusions.presets: [...]`        |
+| `linters-settings.staticcheck.go`         | `run.go`                                   |
 
 ## Quick Reference: Go Idioms
 
