@@ -7,7 +7,7 @@ description: >
   vitest.config.ts or jest.config.ts, asking about mocking strategies (vi.fn, vi.mock,
   MSW), debugging flaky async tests, or wiring up coverage thresholds. Also activates
   when test output shows "floating promise", "timeout", or "cannot find module" in a
-  test context. Use this skill proactively — do not wait for the user to ask.
+  test context. For TDD methodology and the coverage policy, see tdd-workflow.
 ---
 
 # TypeScript Testing Patterns

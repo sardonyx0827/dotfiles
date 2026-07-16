@@ -17,7 +17,10 @@ Before writing any test, Read `~/.claude/skills/tdd-workflow/SKILL.md`. It conta
 - The RED-GREEN-REFACTOR cycle and its ordered steps
 - The coverage policy and threshold
 - Test taxonomy (unit / integration / E2E) and when each applies
-- Testing patterns, mocking recipes, and the anti-patterns to avoid
+- The methodology-level mistakes to avoid
+
+That skill is methodology only — it deliberately carries no framework mechanics.
+Mocking recipes, matchers, and runner flags live in the language skills below.
 
 For framework-specific mechanics, also Read the matching skill:
 
@@ -85,7 +88,7 @@ Do not report tests complete until every line holds:
 - [ ] Critical user flows have E2E tests
 - [ ] Edge cases from the sweep above are covered (or explicitly ruled out)
 - [ ] Error paths tested, not just the happy path
-- [ ] External dependencies mocked (recipes in the skill)
+- [ ] External dependencies mocked (recipes in the language-specific testing skill)
 - [ ] Tests are independent — no shared state, no ordering dependency
 - [ ] Test names describe the behavior under test
 - [ ] Assertions are specific — no bare `toBeTruthy()` on a rich value
