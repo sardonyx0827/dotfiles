@@ -24,6 +24,22 @@
 # まま stdout に指摘を書く」ため出力を grep している。ここを取り違えると
 # 「問題を見つけたのに通す」という最悪の壊れ方をするので、
 # tests/test_lint_and_format.py::TestLintLanguageMatrix が両者を固定している。
+#
+# その grep 側に落とし穴が 2 つあり、3 ツールとも踏んでいた。
+#
+#   1. severity の綴り。clippy の lint は warn 既定、checkstyle の
+#      google_checks.xml も severity=warning で、どちらも既定設定では "error"
+#      を一度も出さない。error だけを探すと恒久的に緑になる。cppcheck は
+#      --enable で 4 カテゴリ要求しながら 2 つしか見ていなかった。マッチさせる
+#      のは「ツールが既定で出す綴り」であって、名前から連想する綴りではない。
+#   2. 出力形式そのもの。cppcheck 1.x の `(severity)` を前提にした grep は、
+#      既定が `severity:` に変わった 2.x に対して何一つマッチせず、(error) の
+#      指摘ごと素通ししていた。既定形式に委ねると、ツール側の変更でゲートが
+#      黙って死ぬ。grep する形式は --template で自分で固定する。
+#
+# どちらもテストは通っていた。error 形状の出力しかスタブしておらず、コードが
+# 既に正しく扱えるケースだけを固定していたためで、カバレッジは何の防波堤にも
+# ならなかった。スタブはツールの実出力から起こすこと。
 
 # hook_lint_file <file> <errors_var_name> <log_file>
 #
@@ -171,7 +187,11 @@ hook_lint_file() {
       if command -v cargo >/dev/null 2>&1; then
         echo "  Running cargo clippy..."
         OUTPUT=$(cd "$PROJECT_ROOT" && cargo clippy --quiet 2>&1)
-        if echo "$OUTPUT" | grep -q "^error"; then
+        # clippy の lint は既定で warn レベルで、指摘があっても終了コードは 0。
+        # "^error" だけでは拾えるのが rustc のコンパイルエラー(cargo check でも
+        # 落ちる)だけになり、clippy を走らせる当の目的である lint が 1 件も
+        # 引っかからない。cppcheck 側と同じく警告レベルも失敗として扱う。
+        if echo "$OUTPUT" | grep -qE "^(error|warning)"; then
           LINT_ERRORS="${LINT_ERRORS}[clippy]\n${OUTPUT}\n"
         else
           echo "  cargo clippy passed"
@@ -216,7 +236,10 @@ hook_lint_file() {
       CONFIG="google"
       [ -f "$PROJECT_ROOT/checkstyle.xml" ] && CONFIG="$PROJECT_ROOT/checkstyle.xml"
       OUTPUT=$(checkstyle -c "$CONFIG" "$FILE_PATH" 2>&1)
-      if echo "$OUTPUT" | grep -q "\[ERROR\]"; then
+      # 既定の google_checks.xml は severity=warning なので、指摘は [WARN] で
+      # 出力され [ERROR] は現れない。[ERROR] だけを見ると、既定設定で拾えた
+      # 指摘を 1 件残らず素通しすることになる。[INFO] は指摘ではないので除く。
+      if echo "$OUTPUT" | grep -qE "\[ERROR\]|\[WARN\]"; then
         LINT_ERRORS="${LINT_ERRORS}[checkstyle]\n${OUTPUT}\n"
       else
         echo "  checkstyle passed"
@@ -230,10 +253,27 @@ hook_lint_file() {
   c | cpp | cc | cxx | h | hpp)
     if command -v cppcheck >/dev/null 2>&1; then
       echo "  Running cppcheck..."
+      # --template で出力形式を固定する。cppcheck 1.x の既定は
+      # `[file:line]: (severity) message` だったが 2.x で
+      # `file:line:col: severity: message` に変わっており、括弧付きの綴りを
+      # 探す下の grep は modern cppcheck に対して何一つマッチしていなかった
+      # (= (error) の指摘ごと素通しし、常に緑)。既定に委ねるのが事故の原因な
+      # ので、grep する形式はこちらで決める。tests の
+      # test_cppcheck_template_and_matcher_agree がこの固定を守る。
+      # --template-location も必須。--template だけ渡すと、指摘に付く補足
+      # (nullPointer なら「Assignment 'p=0', assigned value is 0」等、修正に
+      # 一番効く情報) が丸ごと落ちる。matcher には掛からない綴りなので誤検知
+      # にはならず、LINT_ERRORS の文脈だけが増える。
       OUTPUT=$(cppcheck --enable=warning,style,performance,portability \
         --suppress=missingInclude \
+        --template='{file}:{line}:{column}: ({severity}) {message} [{id}]' \
+        --template-location='{file}:{line}:{column}: note: {info}' \
         "$FILE_PATH" 2>&1)
-      if echo "$OUTPUT" | grep -qE "\(error\)|\(warning\)"; then
+      # --enable で有効化した 4 カテゴリを漏れなく拾う。error/warning しか見て
+      # いなかったため style/performance/portability の指摘は捨てられていた。
+      # note 行は上の --template-location 側の綴りで出るため、ここには掛からない
+      # (指摘本体だけが判定に効く)。
+      if echo "$OUTPUT" | grep -qE "\((error|warning|style|performance|portability)\)"; then
         LINT_ERRORS="${LINT_ERRORS}[cppcheck]\n${OUTPUT}\n"
       else
         echo "  cppcheck passed"

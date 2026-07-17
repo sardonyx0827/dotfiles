@@ -220,9 +220,78 @@ EXIT_CODE_LINTERS = [
 # Linters whose failure is detected by grepping the tool's OUTPUT instead of
 # its exit status. The stub exits 0 and must still be treated as a failure --
 # this is the matrix's least obvious contract and the easiest thing to break.
+#
+# Every tool is pinned at *every* severity it can emit, because the one it uses
+# by default is not the one its name suggests: checkstyle's bundled
+# google_checks.xml sets severity=warning, so real findings arrive as [WARN] and
+# an [ERROR] never appears; cppcheck is asked for four categories but only two
+# of them were ever matched. A matcher that only knows the error spelling
+# reports a clean bill of health for every finding the tool actually produces --
+# the "found a problem but returned green" break this file's header calls the
+# worst one available. Same class as the clippy cases below.
+#
+# The cppcheck rows are written in the `(severity)` shape the hook pins via
+# --template, NOT cppcheck 2.x's default `severity:` shape. That pin is itself
+# load-bearing and has its own test (test_cppcheck_template_and_matcher_agree).
 GREP_LINTERS = [
-    ("java", "checkstyle", "Foo.java:1: [ERROR] missing javadoc", "[checkstyle]"),
-    ("cpp", "cppcheck", "x.cpp:1:1: (error) null pointer dereference", "[cppcheck]"),
+    pytest.param(
+        "java",
+        "checkstyle",
+        "Foo.java:1: [ERROR] missing javadoc",
+        "[checkstyle]",
+        id="checkstyle-error",
+    ),
+    pytest.param(
+        "java",
+        "checkstyle",
+        "[WARN] Foo.java:1:1: missing javadoc",
+        "[checkstyle]",
+        id="checkstyle-warn",
+    ),
+    pytest.param(
+        "cpp",
+        "cppcheck",
+        "x.cpp:10:13: (error) Null pointer dereference: p [nullPointer]",
+        "[cppcheck]",
+        id="cppcheck-error",
+    ),
+    pytest.param(
+        "cpp",
+        "cppcheck",
+        "x.cpp:1:1: (warning) Possible null pointer dereference [nullPointerRedundantCheck]",
+        "[cppcheck]",
+        id="cppcheck-warning",
+    ),
+    pytest.param(
+        "cpp",
+        "cppcheck",
+        "x.cpp:4:9: (style) The scope of the variable i can be reduced. [variableScope]",
+        "[cppcheck]",
+        id="cppcheck-style",
+    ),
+    pytest.param(
+        "cpp",
+        "cppcheck",
+        "x.cpp:2:23: (performance) Function parameter s should be passed by const"
+        " reference. [passedByValue]",
+        "[cppcheck]",
+        id="cppcheck-performance",
+    ),
+    pytest.param(
+        "cpp",
+        "cppcheck",
+        "x.cpp:14:5: (portability) Returning an address value in a function with"
+        " integer return type is not portable. [CastAddressToIntegerAtReturn]",
+        "[cppcheck]",
+        id="cppcheck-portability",
+    ),
+]
+
+# The clean-output half of the same contract. One row per tool: the trigger is
+# unused there, so splitting it by severity would only duplicate runs.
+GREP_LINTERS_CLEAN = [
+    pytest.param("java", "checkstyle", id="checkstyle"),
+    pytest.param("cpp", "cppcheck", id="cppcheck"),
 ]
 
 
@@ -278,9 +347,7 @@ class TestLintLanguageMatrix:
         log = _log_file(shell_env, LINT, "lint.log")
         assert f"PASSED: x.{ext}" in log.read_text(encoding="utf-8")
 
-    @pytest.mark.parametrize(
-        "ext,tool,trigger,tag", GREP_LINTERS, ids=[t[1] for t in GREP_LINTERS]
-    )
+    @pytest.mark.parametrize("ext,tool,trigger,tag", GREP_LINTERS)
     def test_grep_linter_fails_on_output_despite_exit_zero(
         self, LINT, shell_env, tmp_path, ext, tool, trigger, tag
     ):
@@ -295,17 +362,73 @@ class TestLintLanguageMatrix:
         )
         assert tag in res.stderr
 
-    @pytest.mark.parametrize(
-        "ext,tool,trigger,tag", GREP_LINTERS, ids=[t[1] for t in GREP_LINTERS]
-    )
+    @pytest.mark.parametrize("ext,tool", GREP_LINTERS_CLEAN)
     def test_grep_linter_passes_on_clean_output(
-        self, LINT, shell_env, tmp_path, ext, tool, trigger, tag
+        self, LINT, shell_env, tmp_path, ext, tool
     ):
         shell_env.stub(tool, body='echo "no issues"', exit_code=0)
         target = tmp_path / f"x.{ext}"
         target.write_text("content\n", encoding="utf-8")
         res = shell_env.run(LINT, stdin=payload(target))
         assert res.returncode == 0
+
+    # Renders whatever --template it is handed, the way cppcheck would, so the
+    # hook's own matcher is what decides the outcome. Exits 3 (not 0) when no
+    # template arrives, because a silent pass is the failure under test.
+    _CPPCHECK_RENDERING_STUB = r"""
+tmpl=""
+for a in "$@"; do
+  case "$a" in --template=*) tmpl="${a#--template=}" ;; esac
+done
+if [ -z "$tmpl" ]; then
+  echo "stub: hook passed no --template; cppcheck's default would decide" >&2
+  exit 3
+fi
+out="$tmpl"
+out="${out//\{file\}/x.cpp}"
+out="${out//\{line\}/4}"
+out="${out//\{column\}/9}"
+out="${out//\{severity\}/style}"
+out="${out//\{message\}/The scope of the variable i can be reduced.}"
+out="${out//\{id\}/variableScope}"
+echo "$out"
+"""
+
+    def test_cppcheck_template_and_matcher_agree(self, LINT, shell_env, tmp_path):
+        """The pinned template must render the shape the matcher greps.
+
+        cppcheck 1.x printed `(severity)`; 2.x changed its default to
+        `severity:`. The matcher kept looking for the parenthesised spelling, so
+        against any modern cppcheck it matched nothing at all and the gate
+        reported success on every file it saw -- `(error)` findings included.
+        The fix is to stop inheriting the tool's default and pin the format.
+
+        Asserting the flag merely *exists* would not protect that: a pin of
+        `{severity}:` -- the 2.x shape, i.e. the very desync this guards -- also
+        contains "--template=" and passes such a check. So this stub renders the
+        template it actually receives and lets the hook's matcher judge the
+        result, which makes the two sides impossible to drift apart silently.
+        """
+        shell_env.stub("cppcheck", body=self._CPPCHECK_RENDERING_STUB, exit_code=0)
+        target = tmp_path / "x.cpp"
+        target.write_text("int main() {}\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2, (
+            "cppcheck emitted a finding through the template the hook pinned, "
+            "and the hook passed the file: the pinned template and the matcher "
+            "regex no longer agree"
+        )
+        assert "[cppcheck]" in res.stderr
+        # --template silently drops each finding's secondary locations unless
+        # --template-location is set too (verified against cppcheck 2.21). Those
+        # carry the "why" -- e.g. `Assignment 'p=0', assigned value is 0` for a
+        # nullPointer -- into the text the agent self-corrects from, so losing
+        # them costs no gate correctness and all of the explanation.
+        call = next(c for c in shell_env.calls if c.startswith("cppcheck "))
+        assert "--template-location=" in call, (
+            "pinning --template without --template-location silently discards "
+            "the notes that explain each finding"
+        )
 
     # Every tool the branch could reach must be hidden, not merely left
     # un-stubbed: this machine really has go, staticcheck, php, cargo, eslint
@@ -377,6 +500,10 @@ class TestLintLanguageMatrix:
         self, LINT, shell_env, git_repo
     ):
         # Like checkstyle/cppcheck, clippy's result is read off its output.
+        # Note this stub is a *rustc* diagnostic, not a clippy lint: E0505 is
+        # the borrow checker, which plain `cargo check` already rejects. It
+        # pins the compile-failure path only -- the lints clippy exists to find
+        # are the sibling test below.
         shell_env.stub("cargo", body='echo "error: borrow of moved value"', exit_code=0)
         (git_repo / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
         target = git_repo / "x.rs"
@@ -384,6 +511,36 @@ class TestLintLanguageMatrix:
         res = shell_env.run(LINT, stdin=payload(target))
         assert res.returncode == 2
         assert "[clippy]" in res.stderr
+
+    def test_clippy_fails_on_warning_despite_exit_zero(self, LINT, shell_env, git_repo):
+        # The case that actually matters: clippy's own lints are warn-by-default
+        # and it exits 0 on them, so `warning:` -- not `error` -- is the shape a
+        # real finding arrives in. Matching only "error" means every genuine
+        # clippy lint is waved through while the hook reports success.
+        shell_env.stub(
+            "cargo",
+            body='echo "warning: this expression creates a reference which is'
+            ' immediately dereferenced by the compiler"',
+            exit_code=0,
+        )
+        (git_repo / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+        target = git_repo / "x.rs"
+        target.write_text("fn main() {}\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2, (
+            "a warn-level clippy lint must block; it is clippy's default severity"
+        )
+        assert "[clippy]" in res.stderr
+
+    def test_clippy_passes_on_clean_output(self, LINT, shell_env, git_repo):
+        # Guards the other direction: the warning matcher must not fire on
+        # cargo's ordinary chatter, or every .rs edit would block.
+        shell_env.stub("cargo", body='echo "Finished dev profile"', exit_code=0)
+        (git_repo / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+        target = git_repo / "x.rs"
+        target.write_text("fn main() {}\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0
 
     def test_eslint_skipped_without_config(self, LINT, shell_env, git_repo):
         shell_env.stub("eslint", exit_code=1)
