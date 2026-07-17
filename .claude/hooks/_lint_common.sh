@@ -239,11 +239,16 @@ hook_lint_file() {
       PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
       CONFIG="/google_checks.xml"
       [ -f "$PROJECT_ROOT/checkstyle.xml" ] && CONFIG="$PROJECT_ROOT/checkstyle.xml"
-      OUTPUT=$(checkstyle -c "$CONFIG" "$FILE_PATH" 2>&1)
+      # 終了コード非 0 は「起動できなかった」(設定が読めない・不正な引数)。
+      # その旨のメッセージに [ERROR]/[WARN] は乗らないので、下の grep だけでは
+      # 指摘ゼロと区別が付かず緑を返してしまう。ゲートが黙って無効化される
+      # 経路なので、出力を見る前に潰す。
+      if ! OUTPUT=$(checkstyle -c "$CONFIG" "$FILE_PATH" 2>&1); then
+        LINT_ERRORS="${LINT_ERRORS}[checkstyle]\n${OUTPUT}\n"
       # 既定の google_checks.xml は severity=warning なので、指摘は [WARN] で
       # 出力され [ERROR] は現れない。[ERROR] だけを見ると、既定設定で拾えた
       # 指摘を 1 件残らず素通しすることになる。[INFO] は指摘ではないので除く。
-      if echo "$OUTPUT" | grep -qE "\[ERROR\]|\[WARN\]"; then
+      elif echo "$OUTPUT" | grep -qE "\[ERROR\]|\[WARN\]"; then
         LINT_ERRORS="${LINT_ERRORS}[checkstyle]\n${OUTPUT}\n"
       else
         echo "  checkstyle passed"
@@ -268,16 +273,23 @@ hook_lint_file() {
       # (nullPointer なら「Assignment 'p=0', assigned value is 0」等、修正に
       # 一番効く情報) が丸ごと落ちる。matcher には掛からない綴りなので誤検知
       # にはならず、LINT_ERRORS の文脈だけが増える。
-      OUTPUT=$(cppcheck --enable=warning,style,performance,portability \
+      #
+      # 終了コード非 0 は「起動できなかった」(不正な引数・ファイルが開けない)。
+      # cppcheck は指摘があっても 0 で終わるので、非 0 は指摘ではなく事故。
+      # そのメッセージ (`cppcheck: error: unrecognized command line option ...`)
+      # は下の grep にかからないため、潰さないと「起動失敗 = 緑」になる。
+      # 上の --template を打ち間違えた瞬間にゲートが黙って死ぬ経路でもある。
+      if ! OUTPUT=$(cppcheck --enable=warning,style,performance,portability \
         --suppress=missingInclude \
         --template='{file}:{line}:{column}: ({severity}) {message} [{id}]' \
         --template-location='{file}:{line}:{column}: note: {info}' \
-        "$FILE_PATH" 2>&1)
+        "$FILE_PATH" 2>&1); then
+        LINT_ERRORS="${LINT_ERRORS}[cppcheck]\n${OUTPUT}\n"
       # --enable で有効化した 4 カテゴリを漏れなく拾う。error/warning しか見て
       # いなかったため style/performance/portability の指摘は捨てられていた。
       # note 行は上の --template-location 側の綴りで出るため、ここには掛からない
       # (指摘本体だけが判定に効く)。
-      if echo "$OUTPUT" | grep -qE "\((error|warning|style|performance|portability)\)"; then
+      elif echo "$OUTPUT" | grep -qE "\((error|warning|style|performance|portability)\)"; then
         LINT_ERRORS="${LINT_ERRORS}[cppcheck]\n${OUTPUT}\n"
       else
         echo "  cppcheck passed"

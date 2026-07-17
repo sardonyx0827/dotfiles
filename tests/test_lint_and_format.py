@@ -372,6 +372,34 @@ class TestLintLanguageMatrix:
         res = shell_env.run(LINT, stdin=payload(target))
         assert res.returncode == 0
 
+    @pytest.mark.parametrize("ext,tool", GREP_LINTERS_CLEAN)
+    def test_grep_linter_invocation_failure_blocks(
+        self, LINT, shell_env, tmp_path, ext, tool
+    ):
+        """A non-zero exit means the tool never ran -- that is not "clean".
+
+        These tools exit 0 whether or not they found anything, so the matcher
+        reads their output instead. The blind spot is the third case: the tool
+        failing to start (unknown flag, unreadable config, internal error). Its
+        message carries none of the severity markers, so a matcher looking only
+        at output cannot tell it apart from a clean file and reports success --
+        the same silent pass this file's header warns about, one level up. A
+        wrong flag would then disable the gate permanently and invisibly.
+        """
+        shell_env.stub(
+            tool,
+            body=f'echo "{tool}: error: unrecognized command line option" >&2',
+            exit_code=1,
+        )
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2, (
+            f"{tool} exiting non-zero means it never ran; treating that as a "
+            "clean bill of health silently disables the gate"
+        )
+        assert f"[{tool}]" in res.stderr
+
     # Renders whatever --template it is handed, the way cppcheck would, so the
     # hook's own matcher is what decides the outcome. Exits 3 (not 0) when no
     # template arrives, because a silent pass is the failure under test.
