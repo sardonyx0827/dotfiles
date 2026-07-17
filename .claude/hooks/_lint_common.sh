@@ -231,9 +231,13 @@ hook_lint_file() {
     # checkstyle: コーディング規約チェック
     if command -v checkstyle >/dev/null 2>&1; then
       echo "  Running checkstyle..."
-      # プロジェクトにcheckstyle.xmlがあればそれを使用、なければGoogle規約
+      # プロジェクトにcheckstyle.xmlがあればそれを使用、なければGoogle規約。
+      # 既定値は "google" ではなく "/google_checks.xml"。前者は解決できず
+      # (`Could not find config XML file 'google'.` / exit 255)、この分岐は
+      # 一度も検査していなかった。jar 同梱の設定は classpath リソースなので
+      # 先頭スラッシュ付きで指定する。test_checkstyle_default_config_resolves。
       PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
-      CONFIG="google"
+      CONFIG="/google_checks.xml"
       [ -f "$PROJECT_ROOT/checkstyle.xml" ] && CONFIG="$PROJECT_ROOT/checkstyle.xml"
       OUTPUT=$(checkstyle -c "$CONFIG" "$FILE_PATH" 2>&1)
       # 既定の google_checks.xml は severity=warning なので、指摘は [WARN] で

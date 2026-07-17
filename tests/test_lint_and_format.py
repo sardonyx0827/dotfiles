@@ -394,6 +394,27 @@ out="${out//\{id\}/variableScope}"
 echo "$out"
 """
 
+    def test_checkstyle_default_config_resolves(self, LINT, shell_env, tmp_path):
+        """The fallback config must be one checkstyle can actually load.
+
+        The branch passed `-c google`, which does not resolve: real checkstyle
+        (13.8) answers `Could not find config XML file 'google'.` and exits 255,
+        so this linter never checked a single file. It looked healthy only
+        because the exception carries no [ERROR]/[WARN] and the matcher read
+        that as clean -- the same silent pass, one layer earlier. The bundled
+        config is a classpath resource and has to be named like one.
+        """
+        shell_env.stub("checkstyle", body='echo "Starting audit..."', exit_code=0)
+        target = tmp_path / "Foo.java"
+        target.write_text("class Foo {}\n", encoding="utf-8")
+        shell_env.run(LINT, stdin=payload(target))
+        call = next((c for c in shell_env.calls if c.startswith("checkstyle ")), None)
+        assert call is not None, "checkstyle was never invoked"
+        assert "-c /google_checks.xml" in call, (
+            "checkstyle's bundled Google config is the classpath resource "
+            f"/google_checks.xml; a bare name does not resolve. got: {call}"
+        )
+
     def test_cppcheck_template_and_matcher_agree(self, LINT, shell_env, tmp_path):
         """The pinned template must render the shape the matcher greps.
 
