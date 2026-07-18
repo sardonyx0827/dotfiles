@@ -9,6 +9,53 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " Map a short tool alias to the actual Ollama model tag.
   let s:ai_ollama_models = { 'gemma': 'gemma4:e4b' }
 
+  " ---- pre-send credential scan -------------------------------------------
+  " Before a selection leaves the editor for an AI CLI, run it through the shared
+  " scanner (scripts/secret_scan.py -> the same scan_secrets the bash-review
+  " hooks use; the regexes live in one place, never reimplemented in VimScript).
+  " A hit prompts for confirmation defaulting to abort; a missing scanner/python
+  " fails OPEN with a warning (blocking all AI when python is absent -- e.g. a
+  " GUI vim without the shell PATH -- is worse than the risk it guards).
+  " This file is sourced by its real repo path (see .vimrc's resolve()), so step
+  " up from .vim/rc/70-ai.vim to the repo root to find scripts/.
+  let s:ai_secret_scanner =
+        \ fnamemodify(resolve(expand('<sfile>:p')), ':h:h:h') . '/scripts/secret_scan.py'
+
+  " Returns [status, label]: 'clean' | 'secret',<label> | 'unavailable'.
+  function! s:AI_ScanPayload(text) abort
+    if !filereadable(s:ai_secret_scanner) || !executable('python3')
+      return ['unavailable', '']
+    endif
+    " Payload on stdin, never argv (argv would leak the secret via `ps`).
+    let l:out = system('python3 ' . shellescape(s:ai_secret_scanner), a:text)
+    if v:shell_error == 0
+      return ['clean', '']
+    elseif v:shell_error == 1
+      return ['secret', trim(l:out)]
+    endif
+    return ['unavailable', '']
+  endfunction
+
+  " Gate before sending. Returns 1 to proceed, 0 to abort. confirm()'s default is
+  " No, so Enter/Esc aborts the send.
+  function! s:AI_ConfirmSend(text) abort
+    let [l:status, l:label] = s:AI_ScanPayload(a:text)
+    if l:status ==# 'secret'
+      let l:choice = confirm(
+            \ printf("Possible credential (%s) detected in the AI payload.\n"
+            \        . "Send it to the AI tool anyway?", l:label),
+            \ "&No\n&Yes", 1, 'Warning')
+      return l:choice == 2
+    elseif l:status ==# 'unavailable'
+      echohl WarningMsg
+      echom 'secret-scan unavailable (python3 / secret_scan.py); '
+            \ . 'sending AI payload without a credential check.'
+      echohl None
+      return 1
+    endif
+    return 1
+  endfunction
+
   function! s:AI_TrimOutput(list) abort
     let l:out = copy(a:list)
     while len(l:out) > 0 && l:out[-1] ==# ''
@@ -492,6 +539,16 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ . "Do NOT include explanations, preambles, or trailing commentary. "
           \ . "Preserve the original indentation style of the input.\n\n"
           \ . "## User Request\n%s", l:ctx.lang, l:prompt)
+    " Pre-send credential gate: scan the selection + the user's instruction.
+    " Skipped for Ollama, which hits the local HTTP API (localhost) and never
+    " leaves the machine -- the external-send gate does not apply there.
+    if !has_key(s:ai_ollama_models, l:ctx.tool)
+          \ && !s:AI_ConfirmSend(join(l:ctx.selected, "\n") . "\n" . l:prompt)
+      echohl WarningMsg
+      echom 'AI request cancelled (credential detected in payload).'
+      echohl None
+      return
+    endif
     " Ollama tools hit the local HTTP API; the body is JSON, not the raw text.
     if has_key(s:ai_ollama_models, l:ctx.tool)
       let l:body = json_encode({

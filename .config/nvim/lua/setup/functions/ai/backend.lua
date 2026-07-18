@@ -21,6 +21,92 @@ local TOOLS = {
 
 M.TOOLS = TOOLS
 
+---------------------------------------------------------
+-- Pre-send credential scan.
+-- Before any payload leaves the editor for an AI tool, it is run through the
+-- shared scanner CLI (scripts/secret_scan.py -> the same scan_secrets the
+-- bash-review hooks use; the regexes live in one place so Lua never reimplements
+-- them). A hit prompts for confirmation defaulting to abort; a missing scanner
+-- or python fails OPEN with a visible warning, because blocking every AI action
+-- when python is absent (e.g. a GUI-launched nvim without the shell's PATH)
+-- would be worse than the risk this guards. Every request funnels through M.run,
+-- so this is the single choke point.
+---------------------------------------------------------
+
+-- Locate scripts/secret_scan.py relative to this (symlinked) config dir.
+-- ~/.config/nvim is a symlink into the dotfiles repo; resolve it and step up to
+-- the repo root. Returns nil when not found (treated as unavailable -> fail-open).
+local function secret_scanner_path()
+  local cfg = vim.fn.resolve(vim.fn.stdpath("config"))
+  local scanner = vim.fn.fnamemodify(cfg, ":h:h") .. "/scripts/secret_scan.py"
+  if vim.fn.filereadable(scanner) == 1 then
+    return scanner
+  end
+  return nil
+end
+
+-- Scan `text`. Returns "clean" | "secret",<label> | "unavailable".
+local function scan_payload(text)
+  local scanner = secret_scanner_path()
+  -- Fail OPEN when python3 is absent (e.g. a GUI-launched nvim that did not
+  -- inherit the shell's PATH). executable() must be checked FIRST: vim.fn.system
+  -- with a LIST arg raises E475 (not a v:shell_error) when the binary is
+  -- missing, so a bare call would throw past this guard instead of degrading to
+  -- "unavailable". pcall wraps the call as a further backstop.
+  if not scanner or vim.fn.executable("python3") ~= 1 then
+    return "unavailable"
+  end
+  -- Payload on stdin, never argv (argv would leak the secret via `ps`).
+  local ok, out = pcall(vim.fn.system, { "python3", scanner }, text or "")
+  if not ok then
+    return "unavailable"
+  end
+  local code = vim.v.shell_error
+  if code == 0 then
+    return "clean"
+  elseif code == 1 then
+    return "secret", vim.trim(out)
+  end
+  return "unavailable" -- scanner import error (2) or any other non-{0,1} exit
+end
+
+-- Dedupe scans within one synchronous burst: run_multi's "all" mode calls
+-- M.run once per tool with an identical payload, all in the same tick. Cache the
+-- decision keyed by payload text and clear it on the next tick, so "all" prompts
+-- once, not once per tool, without persisting an approval across user actions.
+local scan_cache = { text = nil, ok = nil }
+
+-- Gate a payload before sending. Returns true to proceed, false to abort.
+-- confirm() defaults to "No", so Enter/Esc aborts the send.
+local function confirm_send(text)
+  if scan_cache.text == text then
+    return scan_cache.ok
+  end
+  local ok
+  local status, label = scan_payload(text)
+  if status == "secret" then
+    local choice = vim.fn.confirm(
+      string.format(
+        "Possible credential (%s) detected in the AI payload.\n"
+        .. "Send it to the AI tool anyway?", label),
+      "&No\n&Yes", 1, "Warning")
+    ok = choice == 2
+  elseif status == "unavailable" then
+    vim.notify(
+      "secret-scan unavailable (python3 / secret_scan.py); "
+      .. "sending AI payload without a credential check.",
+      vim.log.levels.WARN)
+    ok = true
+  else
+    ok = true
+  end
+  scan_cache.text, scan_cache.ok = text, ok
+  vim.schedule(function()
+    scan_cache.text, scan_cache.ok = nil, nil
+  end)
+  return ok
+end
+
 --- Build the shell command for a CLI tool. Most tools read the payload from
 --- `tmpfile` over stdin; copilot inlines `input` into the prompt instead.
 --- `skip_git_check` adds codex's --skip-git-repo-check (used by the replace
@@ -133,10 +219,28 @@ end
 --- @param spec table { tool, prompt (instruction), input (stdin string), model?, skip_git_check? }
 --- @param done fun(ok: boolean, lines: string[], err: string|nil)
 --- @return integer|nil job_id usable with vim.fn.jobstop (nil/<=0 on failure)
-function M.run(spec, done)
+--- `_skip_scan` is set by run_with_fallback, which scans the shared payload once
+--- up front so a fallback attempt does not re-prompt.
+function M.run(spec, done, _skip_scan)
   local def = TOOLS[spec.tool]
   if not def then
     done(false, {}, "unknown tool: " .. tostring(spec.tool))
+    return nil
+  end
+  -- Pre-send credential gate (single choke point for every AI request).
+  -- Value-only, like the bash-review hooks: it scans the payload text for raw
+  -- credential VALUES, not the source file's path. A secret that value-scanning
+  -- cannot see (e.g. base64 `client-key-data` in a kubeconfig, or an opaque
+  -- token) can still slip through here; a path-based backstop keyed on the
+  -- buffer name would be the next layer if that gap matters.
+  --
+  -- Local Ollama (hardcoded to http://localhost:11434) never leaves the machine,
+  -- so the *external*-send gate does not apply -- prompting there is friction
+  -- with no matching benefit. Only the cloud CLIs are scanned. (Re-enable this
+  -- if run_ollama is ever pointed at a remote host.)
+  if not _skip_scan and def.kind ~= "ollama"
+    and not confirm_send((spec.input or "") .. "\n" .. (spec.prompt or "")) then
+    done(false, {}, "credential detected in payload; not sent to AI")
     return nil
   end
   local model = spec.model or def.default_model
@@ -161,6 +265,17 @@ function M.run_with_fallback(specs, done)
     done(false, {}, "no tools specified", nil)
     return nil
   end
+  -- Scan once over every spec's payload (fallbacks reuse the same input/prompt,
+  -- differing only by tool), then skip the per-attempt scan so a fallback that
+  -- fires on a later tick does not re-prompt.
+  local parts = {}
+  for _, s in ipairs(specs) do
+    parts[#parts + 1] = (s.input or "") .. "\n" .. (s.prompt or "")
+  end
+  if not confirm_send(table.concat(parts, "\n")) then
+    done(false, {}, "credential detected in payload; not sent to AI", nil)
+    return nil
+  end
   local function attempt(i)
     local spec = specs[i]
     return M.run(spec, function(ok, lines, err)
@@ -171,7 +286,7 @@ function M.run_with_fallback(specs, done)
       else
         done(false, {}, err, spec.tool)
       end
-    end)
+    end, true)
   end
   return attempt(1)
 end
