@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 796" width="1240" height="796" font-family="'Helvetica Neue', Arial, 'Hiragino Sans', 'Noto Sans JP', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 904" width="1240" height="904" font-family="'Helvetica Neue', Arial, 'Hiragino Sans', 'Noto Sans JP', sans-serif">
   <defs>
     <style>.mono { font-family: 'SF Mono', 'Menlo', 'Consolas', 'DejaVu Sans Mono', monospace; }</style>
   </defs>
 
-  <rect x="0" y="0" width="1240" height="796" fill="#191724"/>
-  <rect x="8" y="8" width="1224" height="780" rx="18" fill="none" stroke="#26233a" stroke-width="1.5"/>
+  <rect x="0" y="0" width="1240" height="904" fill="#191724"/>
+  <rect x="8" y="8" width="1224" height="888" rx="18" fill="none" stroke="#26233a" stroke-width="1.5"/>
 
   <!-- header -->
   <text x="42" y="70" font-size="32" font-weight="700" fill="#c4a7e7">Neovim AI</text>
@@ -100,6 +100,14 @@
   <g class="mono" font-size="12.5" fill="#908caa">
     <text x="66" y="714">統一 backend.run — CLI(stdin) / Ollama(HTTP:11434) · run_with_fallback で claude→gemini フォールバック</text>
     <text x="66" y="738">構造化編集は original を buffer と照合して安全適用（不一致はスキップ） · all は複数ツール同時 → Tab 切替</text>
+  </g>
+
+  <!-- pre-send secret scan band -->
+  <rect x="40" y="772" width="1160" height="92" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <text x="66" y="798" font-size="13" font-weight="700" fill="#6e6a86">送信前 秘密スキャン (外部送信ガード)</text>
+  <g class="mono" font-size="12.5" fill="#908caa">
+    <text x="66" y="822">backend.run / s:AI_Submit で選択・diff・指示を secret_scan.py に通し、生の資格情報を検出 → confirm(既定 No)で送信中止</text>
+    <text x="66" y="846">Copilot 補完は should_attach で機密パス(.env/鍵/kubeconfig/クラウド鍵)を除外 · ローカル Ollama は対象外 · scanner 不在時は fail-open</text>
   </g>
 
 </svg>

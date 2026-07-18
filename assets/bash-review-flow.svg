@@ -1,13 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 940" width="1240" height="940" font-family="'Helvetica Neue', Arial, 'Hiragino Sans', 'Noto Sans JP', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 1046" width="1240" height="1046" font-family="'Helvetica Neue', Arial, 'Hiragino Sans', 'Noto Sans JP', sans-serif">
   <defs>
     <style>.mono { font-family: 'SF Mono', 'Menlo', 'Consolas', 'DejaVu Sans Mono', monospace; }</style>
   </defs>
 
-  <rect x="0" y="0" width="1240" height="940" fill="#191724"/>
-  <rect x="8" y="8" width="1224" height="924" rx="18" fill="none" stroke="#26233a" stroke-width="1.5"/>
+  <rect x="0" y="0" width="1240" height="1046" fill="#191724"/>
+  <rect x="8" y="8" width="1224" height="1030" rx="18" fill="none" stroke="#26233a" stroke-width="1.5"/>
 
   <!-- header -->
-  <text x="42" y="70" font-size="32" font-weight="700" fill="#c4a7e7">bash‑review — 3層セーフティゲート</text>
+  <text x="42" y="70" font-size="32" font-weight="700" fill="#c4a7e7">bash‑review — 送信前スキャン + 多層セーフティゲート</text>
   <text x="44" y="100" font-size="15" fill="#908caa">PreToolUse Bash フック · モデル合意でも高リスクは自動実行せず、誤ればフェイルセーフで ask</text>
 
   <!-- outcome legend (top-right) -->
@@ -49,40 +49,52 @@
 
   <text x="620" y="374" font-size="11" fill="#6e6a86" text-anchor="middle">▼ 該当なければ次の層へ</text>
 
-  <!-- Tier 3: high risk (parallel AND gate) -->
-  <rect x="40" y="380" width="1160" height="180" rx="12" fill="#1f1d2e" stroke="#403d52"/>
-  <rect x="40" y="380" width="6" height="180" rx="3" fill="#f6c177"/>
-  <text x="66" y="406" font-size="15" font-weight="700" fill="#e0def4">③ 高リスク — Gemini ∥ Codex 並列 AND ゲート</text>
-  <text x="66" y="430" font-size="12.5" fill="#908caa" class="mono">rm -r · git force push / reset --hard / clean -f · pkg install · npx/uvx · sh -c · eval · chmod -R · find -exec</text>
-  <rect x="66" y="446" width="1068" height="42" rx="10" fill="#26233a" stroke="#403d52"/>
-  <text x="86" y="472" font-size="12.5" fill="#e0def4" class="mono">Gemini (総合判定)　∥　Codex (敵対的レビュー)　— 並列実行、判定は自動許可には使わず人間判断用</text>
-  <text x="66" y="522" font-size="13" class="mono"><tspan fill="#908caa">両者 ALLOW ⇒ </tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan><tspan fill="#6e6a86">　/　</tspan><tspan fill="#908caa">両者 DENY ⇒ </tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan><tspan fill="#6e6a86">　/　</tspan><tspan fill="#908caa">それ以外 (判定割れ/ASK/ERROR) ⇒ </tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan></text>
-  <text x="66" y="546" font-size="12" fill="#6e6a86" class="mono">片方だけ説得では通らない (OR ゲート化しない)。両判定を理由文に添えて ask へ</text>
+  <!-- Tier 3: secret pre-send scan -->
+  <rect x="40" y="380" width="1160" height="84" rx="12" fill="#1f1d2e" stroke="#403d52"/>
+  <rect x="40" y="380" width="6" height="84" rx="3" fill="#9ccfd8"/>
+  <text x="66" y="406" font-size="15" font-weight="700" fill="#e0def4">③ 秘密の送信前スキャン （LLM へ渡す前の静的ガード）</text>
+  <text x="66" y="430" font-size="12.5" fill="#908caa" class="mono">生の資格情報を検出 · 既知トークン · PEM 秘密鍵 · JWT · Authorization Bearer/Basic · user:pass@ · SECRET=値 · --password 値</text>
+  <text x="66" y="452" font-size="12" fill="#6e6a86" class="mono">検出時は Gemini/Codex を呼ばず ask · 値はログにも残さず種別ラベルのみ · 機密パスは対象外 (通常レビューへ)</text>
+  <text x="1034" y="417" font-size="14" fill="#f6c177">→</text>
+  <rect x="1058" y="399" width="96" height="26" rx="13" fill="none" stroke="#f6c177"/>
+  <text x="1106" y="416" font-size="12" text-anchor="middle" fill="#f6c177" font-weight="700" class="mono">ASK</text>
 
-  <text x="620" y="576" font-size="11" fill="#6e6a86" text-anchor="middle">▼ 高リスクでなければ (低リスク)</text>
+  <text x="620" y="480" font-size="11" fill="#6e6a86" text-anchor="middle">▼ 該当なければ次の層へ</text>
 
-  <!-- Tier 4: low risk (Gemini -> Codex) -->
-  <rect x="40" y="582" width="1160" height="250" rx="12" fill="#1f1d2e" stroke="#403d52"/>
-  <rect x="40" y="582" width="6" height="250" rx="3" fill="#c4a7e7"/>
-  <text x="66" y="608" font-size="15" font-weight="700" fill="#e0def4">④ 低リスク — Gemini 一次審査</text>
+  <!-- Tier 4: high risk (parallel AND gate) -->
+  <rect x="40" y="486" width="1160" height="180" rx="12" fill="#1f1d2e" stroke="#403d52"/>
+  <rect x="40" y="486" width="6" height="180" rx="3" fill="#f6c177"/>
+  <text x="66" y="512" font-size="15" font-weight="700" fill="#e0def4">④ 高リスク — Gemini ∥ Codex 並列 AND ゲート</text>
+  <text x="66" y="536" font-size="12.5" fill="#908caa" class="mono">rm -r · git force push / reset --hard / clean -f · pkg install · npx/uvx · sh -c · eval · chmod -R · find -exec</text>
+  <rect x="66" y="552" width="1068" height="42" rx="10" fill="#26233a" stroke="#403d52"/>
+  <text x="86" y="578" font-size="12.5" fill="#e0def4" class="mono">Gemini (総合判定)　∥　Codex (敵対的レビュー)　— 並列実行、判定は自動許可には使わず人間判断用</text>
+  <text x="66" y="628" font-size="13" class="mono"><tspan fill="#908caa">両者 ALLOW ⇒ </tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan><tspan fill="#6e6a86">　/　</tspan><tspan fill="#908caa">両者 DENY ⇒ </tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan><tspan fill="#6e6a86">　/　</tspan><tspan fill="#908caa">それ以外 (判定割れ/ASK/ERROR) ⇒ </tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan></text>
+  <text x="66" y="652" font-size="12" fill="#6e6a86" class="mono">片方だけ説得では通らない (OR ゲート化しない)。両判定を理由文に添えて ask へ</text>
 
-  <text x="66" y="640" font-size="13" class="mono"><tspan fill="#908caa">Gemini = ALLOW　⇒　</tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan><tspan fill="#6e6a86">　(即許可)</tspan></text>
-  <text x="66" y="666" font-size="13" class="mono"><tspan fill="#908caa">Gemini = ASK / DENY / ERROR　⇒　Codex 二次確認:</tspan></text>
+  <text x="620" y="682" font-size="11" fill="#6e6a86" text-anchor="middle">▼ 高リスクでなければ (低リスク)</text>
+
+  <!-- Tier 5: low risk (Gemini -> Codex) -->
+  <rect x="40" y="688" width="1160" height="250" rx="12" fill="#1f1d2e" stroke="#403d52"/>
+  <rect x="40" y="688" width="6" height="250" rx="3" fill="#c4a7e7"/>
+  <text x="66" y="714" font-size="15" font-weight="700" fill="#e0def4">⑤ 低リスク — Gemini 一次審査</text>
+
+  <text x="66" y="746" font-size="13" class="mono"><tspan fill="#908caa">Gemini = ALLOW　⇒　</tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan><tspan fill="#6e6a86">　(即許可)</tspan></text>
+  <text x="66" y="772" font-size="13" class="mono"><tspan fill="#908caa">Gemini = ASK / DENY / ERROR　⇒　Codex 二次確認:</tspan></text>
 
   <!-- codex sub-branch rail -->
-  <line x1="86" y1="678" x2="86" y2="800" stroke="#403d52"/>
+  <line x1="86" y1="784" x2="86" y2="906" stroke="#403d52"/>
   <g class="mono" font-size="13">
-    <text x="100" y="692"><tspan fill="#908caa">Gemini DENY × Codex ALLOW　⇒　</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan><tspan fill="#6e6a86">　(自動上書き禁止)</tspan></text>
-    <text x="100" y="718"><tspan fill="#908caa">Codex ALLOW (Gemini ASK/ERROR)　⇒　</tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan></text>
-    <text x="100" y="744"><tspan fill="#908caa">Codex ASK　⇒　</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan></text>
-    <text x="100" y="770"><tspan fill="#908caa">Codex DENY　⇒　</tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan></text>
-    <text x="100" y="796"><tspan fill="#908caa">Codex ERROR　⇒　Gemini へフォールバック (DENY⇒</tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan><tspan fill="#908caa"> / ASK·ERROR⇒</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan><tspan fill="#908caa">)</tspan></text>
+    <text x="100" y="798"><tspan fill="#908caa">Gemini DENY × Codex ALLOW　⇒　</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan><tspan fill="#6e6a86">　(自動上書き禁止)</tspan></text>
+    <text x="100" y="824"><tspan fill="#908caa">Codex ALLOW (Gemini ASK/ERROR)　⇒　</tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan></text>
+    <text x="100" y="850"><tspan fill="#908caa">Codex ASK　⇒　</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan></text>
+    <text x="100" y="876"><tspan fill="#908caa">Codex DENY　⇒　</tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan></text>
+    <text x="100" y="902"><tspan fill="#908caa">Codex ERROR　⇒　Gemini へフォールバック (DENY⇒</tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan><tspan fill="#908caa"> / ASK·ERROR⇒</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan><tspan fill="#908caa">)</tspan></text>
   </g>
 
   <!-- fail-safe band -->
-  <rect x="40" y="846" width="1160" height="54" rx="12" fill="#1f1d2e" stroke="#403d52"/>
-  <rect x="40" y="846" width="6" height="54" rx="3" fill="#908caa"/>
-  <text x="66" y="869" font-size="12.5" fill="#908caa" class="mono">FAIL‑SAFE · 判定を出す前の例外 (stdin 破損等) は必ず ask に倒す · API/CLI 不在も ask へフェイルクローズ</text>
-  <text x="66" y="889" font-size="12.5" fill="#6e6a86" class="mono">claude / codex 2 変種は _bash_review_common.py の実体 1 つを symlink で共有 (ドリフトは構造的に不可能)</text>
+  <rect x="40" y="952" width="1160" height="54" rx="12" fill="#1f1d2e" stroke="#403d52"/>
+  <rect x="40" y="952" width="6" height="54" rx="3" fill="#908caa"/>
+  <text x="66" y="975" font-size="12.5" fill="#908caa" class="mono">FAIL‑SAFE · 判定を出す前の例外 (stdin 破損等) は必ず ask に倒す · API/CLI 不在も ask へフェイルクローズ</text>
+  <text x="66" y="995" font-size="12.5" fill="#6e6a86" class="mono">claude / codex 2 変種は _bash_review_common.py の実体 1 つを symlink で共有 (ドリフトは構造的に不可能)</text>
 
 </svg>

@@ -22,10 +22,10 @@ Claude Code が主エンジンとして駆動し、他の LLM は **第二意見
 
 ## 2. Bash 安全ゲート (bash-review)
 
-Bash コマンドは PreToolUse フックで審査され、**3 層構造**で `ALLOW` / `ASK` / `DENY` を決定します。高リスク層は Gemini と Codex を **並列 AND ゲート**にかけ、両者が一致して ALLOW/DENY した場合のみ自動判定、それ以外はすべて両判定を添えてユーザー確認 (ask) に回します。判定を出す前の例外は必ず ask に倒すフェイルセーフ設計です。
+Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DENY` を決定します。まず **LLM へ渡す前の静的な秘密スキャン**を挟み、コマンドや `tool_input` に生の資格情報(既知トークン・PEM 秘密鍵・JWT・`Authorization: Bearer`/`Basic`・`user:pass@`・`SECRET=値`・`--password 値` 等)が載っていれば Gemini/Codex を一切呼ばず ask に倒します(値は理由文・通知・ローカルログのいずれにも残さず種別ラベルのみ。機密「パス」は値ではないため対象外=通常レビューへ)。危険度に応じた層構成では、高リスク層は Gemini と Codex を **並列 AND ゲート**にかけ、両者が一致して ALLOW/DENY した場合のみ自動判定、それ以外はすべて両判定を添えてユーザー確認 (ask) に回します。判定を出す前の例外は必ず ask に倒すフェイルセーフ設計です。
 
 <p align="center">
-  <img src="../assets/bash-review-flow.svg" alt="bash-review 3層セーフティゲート フロー図 — 静的DENY→セーフスキップ→高リスク(Gemini∥Codex 並列ANDゲート)→低リスク(Gemini一次→Codex二次)、判定前例外はask" width="100%">
+  <img src="../assets/bash-review-flow.svg" alt="bash-review 多層セーフティゲート フロー図 — 静的DENY→セーフスキップ→秘密の送信前スキャン→高リスク(Gemini∥Codex 並列ANDゲート)→低リスク(Gemini一次→Codex二次)、判定前例外はask" width="100%">
 </p>
 
 - **実装**: [`.claude/hooks/bash-review.py`](../.claude/hooks/bash-review.py)（入口）/ 判定ロジック共有モジュール [`_bash_review_common.py`](../.claude/hooks/_bash_review_common.py)
@@ -36,11 +36,11 @@ Bash コマンドは PreToolUse フックで審査され、**3 層構造**で `A
 
 ## 3. Neovim のエディタ内 AI
 
-Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）を **統一バックエンド**で扱い、インライン補完・コミットメッセージ生成・選択範囲のリライト・バッファ校正・LSP 診断コピーなどを行います。`claude → gemini` のフォールバックと、**構造化編集による安全な差分適用**（AI が返した編集を元バッファと照合し、一致しないものはスキップ）が特徴です。
+Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）を **統一バックエンド**で扱い、インライン補完・コミットメッセージ生成・選択範囲のリライト・バッファ校正・LSP 診断コピーなどを行います。`claude → gemini` のフォールバックと、**構造化編集による安全な差分適用**（AI が返した編集を元バッファと照合し、一致しないものはスキップ）が特徴です。さらに、外部 AI へ送る前に **統一の秘密スキャンゲート**（`backend.run` / `s:AI_Submit`）を通し、選択範囲・diff・指示に生の資格情報が含まれれば確認ダイアログ（既定 No）で送信を止めます。判定は bash-review と同一の共有 CLI [`scripts/secret_scan.py`](../scripts/secret_scan.py) が担い、ローカルの Ollama は外部送信ではないため対象外、`python3`/スキャナ不在時は警告して送信を許可（fail-open）します。内容スキャンできない Copilot 補完は、`should_attach` で機密パス（`.env`・秘密鍵・`kubeconfig`・クラウド鍵など）のバッファへのアタッチを拒否する粗いパスガードで補います。
 
 <p align="center">
-  <img src="../assets/nvim-ai.svg" alt="Neovim AI 機能図 — 5ツール統一バックエンド、インライン補完・バッファ校正・コミット生成・選択リライト・診断コピー・ファイル行参照、claude→geminiフォールバック" width="100%">
+  <img src="../assets/nvim-ai.svg" alt="Neovim AI 機能図 — 5ツール統一バックエンド、インライン補完・バッファ校正・コミット生成・選択リライト・診断コピー・ファイル行参照、claude→geminiフォールバック、送信前の秘密スキャンガード" width="100%">
 </p>
 
 - **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`backend` = ツール起動、`ui` = フローティングウィンドウ）
-- インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES）
+- インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES · 機密パスは `should_attach` で除外）
