@@ -1,7 +1,8 @@
 #!/bin/bash
 # Codex PreToolUse hook (matcher: Bash): git push を検知したら
 # push 対象コミットのサマリを添えてブロックし、ユーザー確認を促す。
-# Codex は permissionDecision:"ask" を扱わないため exit 2 + stderr で確認を要求する。
+# Codex は permissionDecision の ask を未サポート (返すと fail-open) のため、
+# ブロックは exit 2 + stderr で表明する (allow/deny は解釈するが ask は扱えない)。
 # git push 以外のコマンドは即 exit 0(判定は bash-review.py 等に委ねる)。
 #
 # 意図的に `set -e` は使わない: このフックは fail-open 設計であり、判定に

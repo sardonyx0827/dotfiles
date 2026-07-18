@@ -8,8 +8,13 @@
 #   3. 低リスク層: Gemini (高スループット) が ALLOW なら即許可。
 #      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。Gemini の明示的 DENY を
 #      Codex の ALLOW 単独で自動上書きはしない (両判定を添えてブロック)。
-# Codex は permissionDecision JSON を扱わないため、許可は exit 0 (無出力)、
-# ブロック (ask/deny) は exit 2 + stderr で理由を伝える。
+# Codex は permissionDecision の allow/deny は解釈するが ask は未サポートで、
+# ask を返すとフックがエラー扱いになり fail-open する (実測 Codex 0.144.5:
+# "PreToolUse hook returned unsupported permissionDecision:ask")。Claude の ask
+# 相当 (人間への確認停止) を安全に表現する手段が Codex には無いため、許可は
+# exit 0 (無出力)、ブロック (内部判定が ask/deny いずれでも) は exit 2 + stderr で
+# 伝える (一律 fail-closed)。deny JSON は権威的に効く (Codex は迂回しない) が、
+# 内部 ask 判定まで deny に潰すと意味が変わるうえ利点も乏しいため採用しない。
 #
 # Gemini/Codex のレビュー呼び出しロジックは _bash_review_common.py に集約し、
 # claude 変種 (.claude/hooks/bash-review.py) とドリフトしないようにしてある。
@@ -54,11 +59,24 @@ gemini_fallback_model = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-lates
 decided_exit: int | None = None
 
 
+# ブロック理由に必ず添えるエージェント向けの指示。Codex は exit 2 のブロックを
+# 「忠告フィードバック」として扱い、ブロックされた元コマンドは実行しない代わりに、
+# より単純な別コマンドへ自律的に置き換えて目的達成を図りがち (各コマンドは個別に
+# 再審査されるので実行される変種自体は正当だが、Gemini が DENY で示した『意図』は
+# 人間の目に触れないまま進む)。Codex には Claude の ask 相当 (人間への確認停止) が
+# 無いため、せめて理由文で「回避を試みず人間に報告せよ」と明示して自律リトライを
+# 抑制する。
+_AGENT_BLOCK_DIRECTIVE = (
+    " — BLOCKED by bash-review policy. Report this to the user; do NOT retry with "
+    "alternative or simplified commands to work around it."
+)
+
+
 def emit_block(reason: str) -> None:
-    """ブロック理由を stderr に出力する (exit 2 と組で使う)"""
+    """ブロック理由 (+ エージェント向け指示) を stderr に出力する (exit 2 と組で使う)"""
     global decided_exit
     decided_exit = 2
-    print(reason, file=sys.stderr)
+    print(reason + _AGENT_BLOCK_DIRECTIVE, file=sys.stderr)
 
 
 # 共有モジュールの関数を、この入口のモジュールグローバル

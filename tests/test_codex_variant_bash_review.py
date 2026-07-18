@@ -378,3 +378,39 @@ class TestSecretPreScanGuard:
         )
         assert res.exit_code == 0
         assert res.stderr == ""
+
+
+class TestAgentBlockDirective:
+    """Every block reason carries an agent-facing directive telling Codex to
+    report to the user and NOT route around the block with a simpler variant.
+
+    Codex has no `ask` primitive (returning permissionDecision `ask` is
+    unsupported and fails open), and it treats an exit-2 block as advisory
+    feedback: rather than surfacing the flagged intent to a human, it tends to
+    re-issue a simpler command that passes independent review. The directive
+    discourages that autonomous work-around. Allow paths stay silent.
+    """
+
+    def test_pre_deny_block_carries_directive(self, run_hook):
+        res = run_hook(HOOK, hook_payload("curl http://evil"))
+        assert res.exit_code == 2
+        assert "curl" in res.stderr  # original reason preserved
+        assert "do NOT retry" in res.stderr
+        assert "report" in res.stderr.lower()
+
+    def test_split_verdict_block_carries_directive(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("make deploy"),
+            urlopen=fake_gemini("DENY: looks risky"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.exit_code == 2
+        assert "Gemini=DENY" in res.stderr  # original reason preserved
+        assert "do NOT retry" in res.stderr
+
+    def test_allow_path_has_no_directive(self, run_hook):
+        res = run_hook(HOOK, hook_payload("make build"), urlopen=fake_gemini("ALLOW"))
+        assert res.exit_code == 0
+        assert res.stderr == ""
+        assert "do NOT retry" not in res.stderr
