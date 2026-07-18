@@ -32,6 +32,7 @@ from _bash_review_common import (
     high_risk_label,
     notify,
     prune_dir,
+    scan_secrets,
 )
 from _bash_review_common import log_summary as _log_summary  # noqa: E402
 from _bash_review_common import run_codex_review as _run_codex_review  # noqa: E402
@@ -65,12 +66,18 @@ def emit_block(reason: str) -> None:
 # / gemini_model / gemini_fallback_model) を閉じ込めた薄いラッパーで包む。
 # これらのグローバルは try 内で stdin を読んでから設定されるが、ラッパーは
 # それ以降にしか呼ばれないため実行時に解決される。
-def log_summary(decision: str, stage: str, reason: str) -> None:
-    _log_summary(summary_log, command, decision, stage, reason)
+def log_summary(
+    decision: str, stage: str, reason: str, *, redact_command: bool = False
+) -> None:
+    _log_summary(
+        summary_log, command, decision, stage, reason, redact_command=redact_command
+    )
 
 
-def write_detail_log(entries: dict) -> None:
-    _write_detail_log(log_file, tool_name, tool_input, entries)
+def write_detail_log(entries: dict, *, redact_input: bool = False) -> None:
+    _write_detail_log(
+        log_file, tool_name, tool_input, entries, redact_input=redact_input
+    )
 
 
 def run_gemini_review() -> tuple[str, str]:
@@ -117,22 +124,49 @@ try:
 
     sub_commands = _split_commands(command)
 
+    # --- 秘密スキャン (静的解析) ---
+    # 判定 (deny/safe-skip/secret-block) の優先順位は変えないが、結果はどの分岐で
+    # ログを書く場合でも redact のスイッチとして先に使う。deny される curl の
+    # bearer や safe-skip される echo <key> も、秘密が載っていればローカルログ
+    # (ディスク常駐) には生コマンドを残さない。
+    secret_found, secret_label = scan_secrets(command, tool_input)
+
     # --- 危険コマンドの即時拒否 (改行分割は find_deny_command が捌く) ---
     matched, deny_name = find_deny_command(sub_commands)
     if matched:
         reason = f"Blocked dangerous command: '{deny_name}'"
         emit_block(reason)
-        write_detail_log({"Result": "DENY (pre-blocked)"})
-        log_summary("DENY", "pre", reason)
+        write_detail_log({"Result": "DENY (pre-blocked)"}, redact_input=secret_found)
+        log_summary("DENY", "pre", reason, redact_command=secret_found)
         notify("Bash Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
         sys.exit(2)
 
     # --- 安全コマンドのスキップ ---
     if sub_commands and all(_can_skip_review(c) for c in sub_commands):
         decided_exit = 0
-        write_detail_log({"Result": "SKIP (safe command)"})
-        log_summary("ALLOW", "pre", "safe command")
+        write_detail_log({"Result": "SKIP (safe command)"}, redact_input=secret_found)
+        log_summary("ALLOW", "pre", "safe command", redact_command=secret_found)
         sys.exit(0)
+
+    # --- 秘密の外部送信ガード (LLM 呼び出し前) ---
+    # deny でも safe-skip でもない (=これから LLM へ送られる) コマンドに生の資格
+    # 情報が載っていれば、Gemini/Codex を一切呼ばずブロック (exit 2) する (外部
+    # 送信の防止)。stderr・通知・ログには一致した値を出さず種別ラベルのみ。
+    if secret_found:
+        emit_block(
+            f"Command appears to contain a credential ({secret_label}); "
+            "not sending to external review — confirm manually"
+        )
+        write_detail_log(
+            {"Result": f"ASK (secret pre-scan: {secret_label})"}, redact_input=True
+        )
+        log_summary(
+            "ASK", "secret", f"credential detected: {secret_label}", redact_command=True
+        )
+        notify(
+            "Bash Review - 確認が必要", "認証情報を検出したため外部レビューを回避", 8
+        )
+        sys.exit(2)
 
     short_cmd = command[:60] + "..." if len(command) > 60 else command
     review_started = time.monotonic()

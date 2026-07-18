@@ -11,8 +11,9 @@
 ### PreToolUse
 
 - **bash-review** (`hooks/bash-review.py`, matcher: `Bash`):
-  Reviews every Bash command before execution in three tiers — static
-  allow/deny fast-paths (no AI call), a parallel Gemini+Codex AND-gate for
+  Reviews every Bash command before execution — static allow/deny fast-paths
+  (no AI call), a static secret pre-send scan that refuses to forward commands
+  carrying raw credentials to any LLM, a parallel Gemini+Codex AND-gate for
   high-risk commands, and a Gemini→Codex cascade for the low-risk majority.
   Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
   See **bash-review — design rationale & threat model** below for why the
@@ -84,7 +85,24 @@ latency low for the common case:
    an absolute path like `/usr/bin/curl` intentionally falls through to review,
    and anything touching a sensitive path (`.env`, `id_rsa`, `.ssh`, …) is forced
    to review even when its prefix looks safe.
-2. **High-risk commands → parallel two-model AND-gate.** Commands that are
+2. **Secret pre-send scan (no external call).** Before any command is handed to
+   an LLM, a static scan (`scan_secrets`) checks the command _and_ the full
+   `tool_input` for raw credential **values** — known-format tokens (GitHub /
+   AWS / Google / OpenAI / Slack / Stripe), PEM private keys, JWTs,
+   `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs, and
+   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`).
+   A hit fails closed to `ask` (Claude) / block (Codex) **without calling Gemini
+   or Codex**, so a secret never leaves the machine for review; the
+   reason / notification / logs carry only a generic category label, and the raw
+   command is redacted out of the local audit logs (that redaction also applies
+   when the same secret-bearing command is caught by the deny / safe-skip
+   fast-paths above). This is **value-only** by design: sensitive _paths_
+   (`cat ~/.aws/credentials`) reveal intent, not the secret itself, so they still
+   go to normal review (step 1's sensitive-path rule). The threat model is
+   _accidental_ secret inclusion by the agent, not deliberate obfuscated
+   exfiltration — so detection is high-precision prefix / structural matching,
+   not entropy or de-obfuscation.
+3. **High-risk commands → parallel two-model AND-gate.** Commands that are
    dangerous _depending on context_ (`rm -r`, package installs like
    `pip install` / `npm i`, …; see `high_risk_label`) are reviewed by Gemini
    **and** Codex run _in parallel_, and their verdicts are combined as an
@@ -95,7 +113,7 @@ latency low for the common case:
    convincing just one is not enough. Reserving both models for this
    dangerous-but-ambiguous minority is what keeps the AND-gate's latency cost off
    the common path.
-3. **Low-risk commands → Gemini tier-1 cascade.** Everything else — the vast
+4. **Low-risk commands → Gemini tier-1 cascade.** Everything else — the vast
    majority — is gated by a single call to a fast, cheap model. A Gemini `ALLOW`
    short-circuits and Codex is never called; that short-circuit is the main
    latency win. When Gemini returns `ASK` / `DENY` / `ERROR`, the command is
@@ -112,7 +130,7 @@ latency low for the common case:
      opinion is for.
    - Codex `DENY` → `deny`; Codex `ASK` → `ask`; Codex `ERROR` → fall back to
      Gemini's verdict (`deny` unless Gemini's flag was soft).
-4. **Fail toward the human.** Malformed stdin, an unavailable Codex, or any
+5. **Fail toward the human.** Malformed stdin, an unavailable Codex, or any
    exception raised before a decision is emitted resolves to `ask` / `deny`,
    never a silent allow.
 
@@ -120,19 +138,27 @@ latency low for the common case:
 
 - On the **low-risk path**, a command that convinces the _single_ tier-1 model is
   allowed without a second opinion — accepted in exchange for latency. High-risk
-  commands never get this treatment (step 2).
+  commands never get this treatment (step 3).
 - LLM reviewers can be swayed by prompt-injection text inside the command; this
   layer is heuristic by nature, which is exactly why the enforced boundary lives
   in `permissions.deny`.
+- The **secret pre-send scan** (step 2) is deliberately narrow: it matches
+  credential _values_ by known format and a few structural shapes, tuned for
+  _accidental_ inclusion. It does not defeat deliberate obfuscation (base64,
+  quote-splitting, `$(…)`), does not catch very short opaque values (`< 8`
+  chars) or short-flag secrets (`-p<pw>`, which collide with `mkdir -p` etc.),
+  and leaves sensitive _paths_ to normal review. A miss falls through to the
+  usual AI review, not to a silent send of an unreviewed secret; a false
+  positive only costs an `ask`.
 - Safe-skipped `git` / `jq` / … assume a **trusted** repository. Config-driven
   execution (`.git/config` `core.pager`, `[alias]`, `diff.external`) is out of
   scope — verifying it on every call would defeat the point of the skip. See the
   inline comments in `_bash_review_common.py`.
 
-> The **low-risk cascade** (step 3) is single-model-with-short-circuit on purpose:
+> The **low-risk cascade** (step 4) is single-model-with-short-circuit on purpose:
 > don't "harden" _it_ into an AND-gate without re-checking the latency budget — a
 > two-model review in front of _every_ Bash call would be too slow. The
-> **high-risk tier** (step 2) already _is_ a parallel AND-gate; that is the whole
+> **high-risk tier** (step 3) already _is_ a parallel AND-gate; that is the whole
 > point of spending both models only on the dangerous-but-context-dependent
 > minority.
 

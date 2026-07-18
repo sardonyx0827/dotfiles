@@ -598,6 +598,116 @@ def _parse_verdict(output: str) -> str:
 
 
 # -------------------------------------------------------------------
+# 送信前の秘密スキャン (静的解析による外部送信ガード)
+# LLM (Gemini API はネットワーク越し / Codex CLI) へコマンドを渡す前に、生の
+# 資格情報がコマンド文字列や tool_input に載っていないかを静的に照合する。
+# 載っていれば LLM を一切呼ばずフェイルクローズ (ask / block) させ、秘密が
+# 外部へ出るのを防ぐ。呼び出しは各エントリの safe-skip 判定の直後・LLM 呼び出し
+# より前に 1 回置く (3 経路 run_gemini_review / run_parallel_reviews /
+# run_codex_review をまとめて塞ぎ、gemini_output 経由で Codex プロンプトへ秘密が
+# エコーされる二次経路も断つ)。
+#
+# 検出対象は「値」限定。機密パス (cat ~/.aws/credentials 等) はパス名であって
+# 中身ではなく、送信されても漏れるのは「意図」だけなので通常の AI レビューへ
+# 回す (そちらは SENSITIVE_PATTERNS が担当)。ここでブロックするのは curl の
+# bearer トークンや API キーの export のように、コマンド自体に生の資格情報が
+# 載る形。
+#
+# 脅威モデルは「攻撃者による難読化持ち出し」ではなく「Claude/Codex が生成した
+# コマンドへの偶発的な秘密混入」。base64/分割等の難読化を完全に封じることは
+# 目的とせず (静的解析の限界。_normalize_cmd 等の正規化コメントと同じ割り切り)、
+# 既知形式の前方一致 + 資格情報らしき代入という高精度・低誤検知の検出に絞る。
+# エントロピー検出は git SHA / base64 / UUID で誤検知しやすいため v1 では入れ
+# ない (必要になれば別レイヤーで後付けする)。
+#
+# 変数参照 ($TOKEN / $API_KEY) は「値」ではないので照合しない。負の先読み
+# (?!\$) で、bearer / URL / 代入の値先頭が $ の場合を除外する。
+#
+# ラベルは種別 (汎用) のみを返し、一致した値そのものは決して返さない。理由文・
+# 通知・ログへ二次的に漏らさないための不変条件。
+_SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
+    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("GitHub PAT", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
+    ("AWS access key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("Google OAuth token", re.compile(r"\bya29\.[0-9A-Za-z_\-]{20,}")),
+    ("OpenAI key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
+    ("Slack token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}")),
+    ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
+    ("private key", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),
+    (
+        "JWT",
+        re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+    ),
+    # Bearer / Basic は Authorization ヘッダ文脈に限定する。単に "Bearer" /
+    # "Basic" という英単語 (コミットメッセージ等) での誤検知を避けるため。
+    # bearer 値は base64 (+/=) や JWT (._-~) を含むので許可文字を広めに取る。
+    (
+        "bearer credential",
+        re.compile(
+            r"(?i)authorization[\"']?\s*:\s*[\"']?bearer\s+"
+            r"(?!\$)[A-Za-z0-9._~+/=\-]{12,}"
+        ),
+    ),
+    (
+        "basic auth credential",
+        re.compile(
+            r"(?i)authorization[\"']?\s*:\s*[\"']?basic\s+"
+            r"(?!\$)[A-Za-z0-9+/]{12,}={0,2}"
+        ),
+    ),
+    ("URL credentials", re.compile(r"://[^/\s:@]+:(?!\$)[^/\s:@]+@")),
+    # 資格情報らしき「代入」(NAME=value / NAME: value)。キーワードは複合名の
+    # 一部でも拾えるよう部分一致にし (PGPASSWORD / SECRET_KEY / ACCESS_TOKEN 等)、
+    # キーワード直後に続く語 ([A-Za-z0-9_]*) を吸ってから区切り記号へ到達させる。
+    # 値は空白まで 1 トークンとして受ける (\S{8,})。記号を含む値 (P@ss!w0rd 等) や
+    # base64 (+/=) で途中打ち切りにならないよう、狭い許可リストではなく非空白を
+    # 使う。値先頭が $ の変数参照 ((?!\$)) は「値そのもの」ではないので除外する。
+    (
+        "secret assignment",
+        re.compile(
+            r"(?i)(?:password|passwd|passphrase|secret|token|credential"
+            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
+            r"[A-Za-z0-9_]*\s*[=:]\s*"
+            # 値: クォートで開いた場合は閉じクォートまで (空白入りパスワードも
+            # 1 値として拾う)、非クォートなら次の空白までを 1 トークンとして拾う。
+            r"(?:\"(?!\$)[^\"\n]{8,}|'(?!\$)[^'\n]{8,}|(?!\$)\S{8,})"
+        ),
+    ),
+    # 空白区切りの長フラグ形式 (--password value / --token value 等)。短縮フラグ
+    # (-p value) は mkdir -p / cp -p 等との誤検知が多すぎるため対象外 (割り切り)。
+    (
+        "secret flag",
+        re.compile(
+            r"(?i)--(?:password|passwd|token|secret|api[_-]?key|access[_-]?key"
+            r"|auth[_-]?token|client[_-]?secret)\s+(?![-$])\S{6,}"
+        ),
+    ),
+]
+
+
+def scan_secrets(command: str, tool_input) -> tuple[bool, str]:
+    """コマンド/tool_input に生の資格情報が含まれるか静的に判定する。
+
+    LLM へ実際に埋め込まれる文字列 (json.dumps(tool_input)) と生コマンドの両方を
+    照合する。前者を見るのはフィールドが command に限らず全 tool_input が送られる
+    ため、後者を併せて見るのは JSON エスケープ (引用符が \\" 化する等) でパターンが
+    途切れる取りこぼしを防ぐため (_is_sensitive_command と同じ raw+正規化の二重
+    照合の発想)。一致すれば (True, 種別ラベル)、無ければ (False, "") を返す。
+    ラベルは種別のみで、一致した秘密の値は絶対に含めない。
+    """
+    haystacks = [command]
+    try:
+        haystacks.append(json.dumps(tool_input, ensure_ascii=False))
+    except (TypeError, ValueError):
+        pass
+    for label, pattern in _SECRET_SCANNERS:
+        if any(pattern.search(h) for h in haystacks):
+            return True, label
+    return False, ""
+
+
+# -------------------------------------------------------------------
 # Gemini 一次レビュー / Codex 二次レビュー
 # 2 変種の bash-review.py で完全に同一なため共有モジュールに集約する。
 # 変種側は結果 (verdict, raw_output) を受け取って permissionDecision JSON /
@@ -957,9 +1067,19 @@ def log_summary(
     decision: str,
     stage: str,
     reason: str,
+    *,
+    redact_command: bool = False,
 ) -> None:
-    """結果をサマリーログに1行で追記し、500行超えたらローテーションする。"""
-    short_cmd = command[:80] + "..." if len(command) > 80 else command
+    """結果をサマリーログに1行で追記し、500行超えたらローテーションする。
+
+    redact_command=True のときは生コマンドを書かず固定のプレースホルダにする。
+    秘密検出時に、外部送信を止めた秘密をローカルログ (ディスク常駐) へ書き戻して
+    しまわないための不変条件。
+    """
+    if redact_command:
+        short_cmd = "[REDACTED - credential detected]"
+    else:
+        short_cmd = command[:80] + "..." if len(command) > 80 else command
     line = (
         f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
         f"{decision:5s} | {stage:8s} | {short_cmd} | {reason}\n"
@@ -967,10 +1087,24 @@ def log_summary(
     append_and_rotate(summary_log, line)
 
 
-def write_detail_log(log_file: str, tool_name: str, tool_input, entries: dict) -> None:
-    """詳細ログ (コマンドごと1ファイル) を書き出す。"""
+def write_detail_log(
+    log_file: str,
+    tool_name: str,
+    tool_input,
+    entries: dict,
+    *,
+    redact_input: bool = False,
+) -> None:
+    """詳細ログ (コマンドごと1ファイル) を書き出す。
+
+    redact_input=True のときは tool_input の生ダンプを書かずプレースホルダにする
+    (log_summary の redact_command と同じ理由: 検出した秘密をディスクへ残さない)。
+    """
     with open(log_file, "w") as f:
         f.write(f"Tool Name: {tool_name}\n")
-        f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
+        if redact_input:
+            f.write("Tool Input: [REDACTED - credential detected]\n")
+        else:
+            f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
         for key, value in entries.items():
             f.write(f"{key}: {value}\n")

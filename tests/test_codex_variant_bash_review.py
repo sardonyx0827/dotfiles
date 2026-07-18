@@ -341,3 +341,40 @@ class TestPostDecisionSideEffect:
         assert res.exit_code == 0
         assert res.stdout == ""
         assert res.stderr == ""
+
+
+class TestSecretPreScanGuard:
+    """A command carrying a credential must block (exit 2) BEFORE any LLM call.
+    The run_hook fixture raises on urllib/subprocess by default, so passing
+    without fakes proves nothing was forwarded to Gemini / Codex. Mirrors the
+    Claude variant's TestSecretPreScanGuard for the exit-code contract.
+    """
+
+    def test_secret_command_blocks_without_calling_any_llm(self, run_hook):
+        secret = "g" * 16
+        # No urlopen/run fakes: any outbound call would raise AssertionError.
+        res = run_hook(HOOK, hook_payload(f"export API_KEY={secret}"))
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "credential" in res.stderr.lower()
+        assert secret not in res.stderr  # value never echoed back
+
+    def test_detected_secret_is_redacted_in_local_logs(self, run_hook):
+        secret = "j" * 20
+        res = run_hook(HOOK, hook_payload(f"export TOKEN={secret}"))
+        assert res.exit_code == 2
+        summary = (res.home / ".codex/logs/bash-review.log").read_text(encoding="utf-8")
+        assert secret not in summary
+        detail_dir = res.fake_tmp / "codex_hooks/logs/PreToolUse/Bash/bash-review"
+        detail_text = next(detail_dir.iterdir()).read_text(encoding="utf-8")
+        assert secret not in detail_text
+        assert "REDACTED" in detail_text
+
+    def test_sensitive_path_without_value_still_reaches_review(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("grep AWS_SECRET .env.local"),
+            urlopen=fake_gemini("ALLOW"),
+        )
+        assert res.exit_code == 0
+        assert res.stderr == ""

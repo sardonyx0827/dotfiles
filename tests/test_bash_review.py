@@ -1119,3 +1119,197 @@ class TestPostDecisionSideEffect:
         res = run_hook(HOOK, hook_payload("make build"), urlopen=fake_gemini("ALLOW"))
         assert res.decision == "allow"
         assert len(res.stdout.strip().splitlines()) == 1
+
+
+# Fake credential material for the pre-send secret scanner. All values are
+# fixed-length repeated characters (zero entropy) so they are not real secrets
+# and cannot be flagged by an entropy-based scanner, while still matching the
+# fixed-format prefixes / structural patterns the scanner looks for.
+FAKE_GH_TOKEN = "ghp_" + "a" * 36
+FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE"  # canonical AWS docs example (16 after AKIA)
+FAKE_GOOGLE_KEY = "AIza" + "B" * 35
+FAKE_OPENAI_KEY = "sk-" + "c" * 24
+FAKE_SLACK_TOKEN = "xoxb-" + "1" * 12
+FAKE_STRIPE_KEY = "sk_live_" + "d" * 20
+FAKE_JWT = "eyJ" + "a" * 10 + ".eyJ" + "b" * 10 + "." + "c" * 10
+FAKE_BEARER = "e" * 24
+
+
+class TestSecretScanUnit:
+    """scan_secrets() is the static, pre-send guard: it flags credential
+    VALUES sitting in the command (or anywhere in tool_input) so the hook can
+    refuse to forward them to Gemini / Codex. It is deliberately value-only:
+    sensitive PATHS (which reveal intent, not the secret itself) are left to
+    the normal AI review, matching the agreed policy.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            f"git config user.token {FAKE_GH_TOKEN}",
+            f"echo {FAKE_AWS_KEY} >> profile",
+            f"deploy --key {FAKE_GOOGLE_KEY}",
+            f"export OPENAI_API_KEY={FAKE_OPENAI_KEY}",
+            f"post --token {FAKE_SLACK_TOKEN}",
+            f"stripe login --key {FAKE_STRIPE_KEY}",
+            f"http example.com Authorization:'Bearer {FAKE_JWT}'",
+            f'http --header "Authorization: Bearer {FAKE_BEARER}" example.com',
+            "git remote set-url origin https://user:s3cr3tpasss@github.com/a/b",
+            f"export API_KEY={'g' * 16}",
+            f"PGPASSWORD={'h' * 12} psql -h db",
+            f"deploy --client-secret={'i' * 12}",
+        ],
+    )
+    def test_credential_value_is_detected(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is True
+        assert label  # a non-empty, generic category label
+        assert command not in label  # the raw value is never echoed in the label
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cat .env",  # sensitive PATH, not a value -> still AI-reviewed
+            "cat ~/.ssh/id_rsa",
+            "grep AWS_SECRET .env.local",  # var name, no assigned value
+            'curl -H "Authorization: Bearer $TOKEN" https://api',  # variable ref
+            "echo $API_KEY",  # variable ref, no literal value
+            "git commit -m 'fix token refresh logic'",  # prose
+            "export PATH=/usr/local/bin:$PATH",  # non-secret assignment
+            "ls -la",
+            "npm install",
+        ],
+    )
+    def test_benign_command_is_not_flagged(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is False
+        assert label == ""
+
+    def test_secret_in_non_command_field_is_detected(self, hook_fns):
+        # The whole tool_input is serialized into the prompt, so a secret in a
+        # field other than `command` must still be caught.
+        tool_input = {"command": "run it", "description": f"use {FAKE_GH_TOKEN}"}
+        found, _ = hook_fns["scan_secrets"]("run it", tool_input)
+        assert found is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # A symbol in the value must not truncate the match to below the
+            # length threshold and cause a miss (value class is not a narrow
+            # allowlist).
+            "PGPASSWORD=Sup3r$ecret!2024 psql -h db",
+            'export DB_PASSWORD="p@ss w0rd!#%"',
+            # The secret keyword is not directly adjacent to the delimiter
+            # (compound env var names): SECRET_KEY / ACCESS_TOKEN etc.
+            "export SECRET_KEY=abcdefghijklmnopqrst",
+            "env ACCESS_TOKEN=abcdefghijklmnop make deploy",
+            "SECRET_ACCESS_KEY=abcdefghijklmnop aws s3 ls",
+            # Space-separated long-form credential flags.
+            "mongo --password mySecretPass1234 --username admin",
+            "tool --api-key abcdef1234567890 run",
+            "deploy --client-secret Sup3rSecretValue1",
+            # HTTP Basic auth header (base64 of user:pass).
+            "http --header 'Authorization: Basic dXNlcjpwYXNzd29yZA==' api.example.com",
+            # Opaque (non-JWT) bearer token with base64 padding chars.
+            'http example.com "Authorization: Bearer ab+cd/efgh1234567=="',
+            # Dict-style header (a quote sits between key and colon), e.g. a
+            # python -c one-liner — not high-risk, so it would otherwise reach
+            # Gemini with the opaque token in the clear.
+            "python3 -c \"h={'Authorization': 'Bearer opaqueTok3nValue1'}\"",
+        ],
+    )
+    def test_harder_credential_values_are_detected(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is True, f"missed credential in: {command}"
+        assert label
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "mkdir -p /tmp/build/output",  # -p is a path flag, not a password
+            "cp -p src dst",
+            "git commit -m 'Basic understanding of the token flow'",  # prose
+            "deploy --message this-is-a-long-message",  # non-secret long flag
+            "grep -r secret ./src",  # keyword present but no assigned value
+        ],
+    )
+    def test_harder_benign_commands_are_not_flagged(self, hook_fns, command):
+        found, _ = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is False, f"false positive on: {command}"
+
+
+class TestSecretPreScanGuard:
+    """End-to-end: a command carrying a credential must be blocked BEFORE any
+    LLM call. The run_hook fixture raises on urllib/subprocess by default, so a
+    test that passes WITHOUT providing fakes proves nothing was sent out.
+    """
+
+    def test_secret_command_asks_without_calling_any_llm(self, run_hook):
+        # No urlopen/run fakes: any outbound call would raise AssertionError.
+        res = run_hook(HOOK, hook_payload(f"export API_KEY={FAKE_OPENAI_KEY}"))
+        assert res.decision == "ask"
+        assert "credential" in res.reason.lower()
+        assert FAKE_OPENAI_KEY not in res.reason  # value never echoed back
+
+    def test_bearer_token_in_non_denied_command_is_blocked(self, run_hook):
+        cmd = f'http --header "Authorization: Bearer {FAKE_BEARER}" example.com'
+        res = run_hook(HOOK, hook_payload(cmd))
+        assert res.decision == "ask"
+        assert FAKE_BEARER not in res.reason
+
+    def test_detected_secret_is_redacted_in_local_logs(self, run_hook):
+        secret = "j" * 20
+        res = run_hook(HOOK, hook_payload(f"export TOKEN={secret}"))
+        assert res.decision == "ask"
+        summary = (res.home / ".claude/logs/bash-review.log").read_text(
+            encoding="utf-8"
+        )
+        assert secret not in summary
+        assert "credential" in summary.lower()
+        detail_dir = res.fake_tmp / "claude_hooks/logs/PreToolUse/Bash/bash-review"
+        detail_text = next(detail_dir.iterdir()).read_text(encoding="utf-8")
+        assert secret not in detail_text
+        assert "REDACTED" in detail_text
+
+    def test_sensitive_path_without_value_still_reaches_review(self, run_hook):
+        # A sensitive PATH (not a value) must NOT be pre-scan blocked: it still
+        # goes to the AI reviewer, per the value-only policy.
+        res = run_hook(
+            HOOK,
+            hook_payload("grep AWS_SECRET .env.local"),
+            urlopen=fake_gemini("ALLOW"),
+        )
+        assert res.decision == "allow"
+        assert "Gemini reviewed and approved" in res.reason
+
+    def test_denied_command_with_secret_is_redacted_in_logs(self, run_hook):
+        # curl is a static-DENY executable, so the decision stays `deny` (not
+        # downgraded). But a credential in that denied command must still be
+        # kept out of the local audit logs.
+        secret = "k" * 24
+        cmd = f'curl -H "Authorization: Bearer {secret}" https://api.example.com'
+        res = run_hook(HOOK, hook_payload(cmd))
+        assert res.decision == "deny"  # priority unchanged
+        summary = (res.home / ".claude/logs/bash-review.log").read_text(
+            encoding="utf-8"
+        )
+        assert secret not in summary
+        detail_text = next(
+            (res.fake_tmp / "claude_hooks/logs/PreToolUse/Bash/bash-review").iterdir()
+        ).read_text(encoding="utf-8")
+        assert secret not in detail_text
+
+    def test_safe_skipped_command_with_secret_is_redacted_in_logs(self, run_hook):
+        # `echo <key>` is safe-skipped (auto-allow, never sent to any LLM), so
+        # the decision stays `allow`; the credential must not land in logs.
+        res = run_hook(HOOK, hook_payload(f"echo {FAKE_AWS_KEY}"))
+        assert res.decision == "allow"
+        summary = (res.home / ".claude/logs/bash-review.log").read_text(
+            encoding="utf-8"
+        )
+        assert FAKE_AWS_KEY not in summary
+        detail_text = next(
+            (res.fake_tmp / "claude_hooks/logs/PreToolUse/Bash/bash-review").iterdir()
+        ).read_text(encoding="utf-8")
+        assert FAKE_AWS_KEY not in detail_text
