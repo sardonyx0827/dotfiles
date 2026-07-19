@@ -505,9 +505,10 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " ---- ollama mode (local HTTP API, single tool) --------------------------
   " `ollama run` writes ANSI control codes onto STDOUT, corrupting the captured
   " text. Instead POST to the local Ollama HTTP API with stream=false and parse
-  " the JSON, which yields clean output. think=true keeps reasoning on; the API
-  " returns reasoning in a separate field, so only the final answer lands in
-  " `.response`. Reuses the single-mode UI/accept/close machinery; only the
+  " the JSON, which yields clean output. think=false keeps any reasoning out of
+  " the `.response` field and avoids erroring on models that do not support the
+  " think parameter (kept in sync with the nvim backend, which also sends
+  " think=false). Reuses the single-mode UI/accept/close machinery; only the
   " command and the JSON output parsing differ.
   function! s:AI_BuildOllamaCmd(tmpfile) abort
     return 'curl -s http://localhost:11434/api/generate --data-binary @'
@@ -630,7 +631,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
             \ 'system': l:sys,
             \ 'prompt': join(l:ctx.selected, "\n"),
             \ 'stream': v:false,
-            \ 'think': v:true,
+            \ 'think': v:false,
             \ })
       let l:tmpfile = tempname()
       call writefile([l:body], l:tmpfile)
