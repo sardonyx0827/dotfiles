@@ -237,6 +237,39 @@ class ShellEnv:
         path.chmod(0o755)
         return path
 
+    def hide(self, name: str) -> None:
+        """Make a host-installed executable invisible to the script under test.
+
+        The stub dir is only PREPENDED to the real PATH, so a test premised on
+        a tool being *absent* silently depends on the host lacking it — the
+        moment a CI runner image or dev machine ships the tool for real,
+        `command -v` finds it and the premise breaks (this bit us when runner
+        images gained phpstan). Stubbing cannot express absence, so instead
+        every PATH entry containing `name` is replaced by a symlink-farm clone
+        of that directory minus the entry.
+        """
+        clones_root = self.stub_bin.parent / "hidden-path"
+        rebuilt: list[str] = []
+        for idx, entry in enumerate(self.env["PATH"].split(os.pathsep)):
+            src = Path(entry)
+            try:
+                offending = bool(entry) and (src / name).exists()
+            except OSError:
+                offending = False
+            if not offending:
+                rebuilt.append(entry)
+                continue
+            clone = clones_root / f"{name}-{idx}"
+            clone.mkdir(parents=True, exist_ok=True)
+            for item in src.iterdir():
+                if item.name == name:
+                    continue
+                link = clone / item.name
+                if not os.path.lexists(link):
+                    link.symlink_to(item)
+            rebuilt.append(str(clone))
+        self.env["PATH"] = os.pathsep.join(rebuilt)
+
     @property
     def calls(self) -> list[str]:
         if not self.calls_file.exists():

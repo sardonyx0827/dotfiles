@@ -513,6 +513,9 @@ echo "$out"
         self, LINT, shell_env, tmp_path
     ):
         # phpstan absent -> `php -l` syntax check is the documented fallback.
+        # "Absent" must be forced: the stub dir is only PREPENDED to the host
+        # PATH, so a real phpstan (CI runner images ship one) would win.
+        shell_env.hide("phpstan")
         shell_env.stub("php", body='echo "Parse error: syntax error"', exit_code=1)
         target = tmp_path / "x.php"
         target.write_text("<?php\n", encoding="utf-8")
@@ -520,6 +523,26 @@ echo "$out"
         assert res.returncode == 2
         assert "[php syntax]" in res.stderr
         assert any(c.startswith("php -l ") for c in shell_env.calls)
+
+    def test_php_fallback_survives_host_phpstan(self, LINT, shell_env, tmp_path):
+        # Regression: when the host PATH really does contain phpstan (the CI
+        # runner image grew one), it used to hijack the fallback test — the
+        # real phpstan even shells out to the stubbed `php`, relabelling the
+        # stub's canned output as [phpstan]. hide() must survive that setup.
+        host_bin = tmp_path / "host-bin"
+        host_bin.mkdir()
+        fake = host_bin / "phpstan"
+        fake.write_text("#!/bin/bash\necho analysed\nexit 0\n", encoding="utf-8")
+        fake.chmod(0o755)
+        shell_env.env["PATH"] = f"{shell_env.env['PATH']}:{host_bin}"
+        shell_env.hide("phpstan")
+        shell_env.stub("php", body='echo "Parse error: syntax error"', exit_code=1)
+        target = tmp_path / "x.php"
+        target.write_text("<?php\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "[php syntax]" in res.stderr
+        assert not any(c.startswith("phpstan") for c in shell_env.calls)
 
     def test_phpstan_wins_over_php_lint_when_both_exist(
         self, LINT, shell_env, tmp_path
