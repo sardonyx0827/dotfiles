@@ -717,6 +717,102 @@ done
 """
 
 
+class TestUsageAndArgs:
+    """`--help` / `--dry-run` / bad-flag handling in main()'s arg parser.
+
+    Parsing runs before the checkout guard so --help works anywhere, and
+    before the first side effect so nothing is touched on the error paths.
+    """
+
+    def test_help_prints_usage_and_does_nothing(self, shell_env):
+        res = run_sourced("main --help", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "Usage:" in res.stdout
+        assert "--dry-run" in res.stdout
+        # --help returns before any installation step.
+        assert "Creating symbolic links" not in res.stdout
+        assert list(shell_env.home.iterdir()) == []
+
+    def test_short_help_flag(self, shell_env):
+        res = run_sourced("main -h", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "Usage:" in res.stdout
+
+    def test_unknown_option_errors_with_exit_2(self, shell_env):
+        # `set -e` (from the sourced script) turns main's `return 2` into the
+        # shell's exit status directly.
+        res = run_sourced("main --bogus", shell_env.env)
+        assert res.returncode == 2, res.stdout + res.stderr
+        assert "Unknown option: --bogus" in res.stdout
+        assert list(shell_env.home.iterdir()) == []
+
+    def test_unexpected_positional_errors_with_exit_2(self, shell_env):
+        res = run_sourced("main extra-arg", shell_env.env)
+        assert res.returncode == 2, res.stdout + res.stderr
+        assert "Unexpected argument: extra-arg" in res.stdout
+
+
+class TestDryRun:
+    """--dry-run must preview the destructive/user-specific work (symlinks,
+    backups, rendered configs, chsh) while touching NOTHING on disk."""
+
+    def test_create_symlinks_leaves_fresh_home_empty(self, shell_env):
+        # The discriminating check: any unguarded mkdir/ln/cp/render/backup
+        # would leave a trace here. HOME must be byte-for-byte untouched.
+        home = shell_env.home
+        env = {**shell_env.env, "DRY_RUN": "1"}
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+        assert list(home.iterdir()) == [], list(home.iterdir())
+        # ...and it announced the plan.
+        assert "[DRY-RUN]" in res.stdout
+        assert "would link" in res.stdout
+
+    def test_create_symlinks_does_not_disturb_existing_entries(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".zshrc").write_text("keep me\n", encoding="utf-8")
+        before = sorted(p.name for p in home.iterdir())
+
+        env = {**shell_env.env, "DRY_RUN": "1"}
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+
+        assert sorted(p.name for p in home.iterdir()) == before
+        # The real .zshrc is neither backed up nor replaced with a symlink.
+        assert not (home / ".zshrc").is_symlink()
+        assert (home / ".zshrc").read_text(encoding="utf-8") == "keep me\n"
+        assert list(home.glob(".dotfiles_backup_*")) == []
+
+    def test_main_dry_run_leaves_home_untouched(self, shell_env):
+        # Full flow: detect OS, plan symlinks, skip package/tool installs,
+        # plan shell change -- all without writing to HOME.
+        home = shell_env.home
+        res = run_sourced("main --dry-run", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert list(home.iterdir()) == [], list(home.iterdir())
+        assert "Skipping package and tool installation" in res.stdout
+        assert "Dry-run complete" in res.stdout
+
+    def test_change_shell_does_not_invoke_chsh(self, shell_env):
+        shell_env.stub("zsh")
+        shell_env.stub("chsh")
+        env = {**shell_env.env, "DRY_RUN": "1", "SHELL": "/bin/bash"}
+        res = run_sourced("change_shell", env)
+        assert res.returncode == 0, res.stderr
+        assert "[DRY-RUN]" in res.stdout
+        assert not any(c.startswith("chsh") for c in shell_env.calls)
+
+    def test_dry_run_is_not_the_default(self, shell_env):
+        # A plain create_symlinks (no DRY_RUN) still performs the work: the
+        # guards must gate on DRY_RUN=1, never fire by default.
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert (home / ".zshrc").is_symlink()
+
+
 class TestFetchAndRun:
     """fetch_and_run downloads a remote installer in full before running it, so
     a truncated/empty download can't execute a partial script."""

@@ -24,6 +24,14 @@ NC='\033[0m' # No Color
 # be cloned anywhere (~/dotfiles, ~/work/github/dotfiles, ...)
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Dry-run: when 1, the destructive / user-specific steps (backups, symlinks,
+# rendered config files, chsh) are PRINTED instead of performed, and nothing on
+# disk is touched. --dry-run sets this; it is also env-overridable so tests can
+# exercise a single function in dry-run the same way they set OS=macos.
+# Package / tool installation (Homebrew, APT, Node, AI CLIs, ...) is not
+# simulated -- main() announces and skips that whole block. See usage().
+DRY_RUN="${DRY_RUN:-0}"
+
 # Function to print colored messages
 print_info() {
   echo -e "${BLUE}[INFO]${NC} $1"
@@ -39,6 +47,31 @@ print_warning() {
 
 print_error() {
   echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Usage / help text. Kept honest about dry-run's scope: it previews the parts
+# that modify the user's own files (the reason to preview at all), and says
+# outright that package installation is skipped rather than simulated.
+usage() {
+  cat <<'EOF'
+Dotfiles installation script.
+
+Usage: ./install.sh [options]
+
+Options:
+  -n, --dry-run   Preview changes without touching the filesystem. Every
+                  backup, symlink, and rendered-config action is printed with
+                  its exact source and destination instead of being performed.
+                  Package and tool installation (Homebrew / APT packages,
+                  Node.js, editor plugins, AI CLIs, MCP registration) is NOT
+                  simulated -- it is announced and skipped; the exact package
+                  lists live in the install_* functions.
+  -h, --help      Show this help and exit.
+
+With no options install.sh symlinks the dotfiles into $HOME (backing up any
+real files it replaces), installs packages for the detected OS
+(macOS / Ubuntu / WSL), and switches the default shell to zsh.
+EOF
 }
 
 # Detect OS
@@ -635,22 +668,26 @@ create_symlinks() {
   prior_git_name="$(git config --global user.name 2>/dev/null || true)"
   prior_git_email="$(git config --global user.email 2>/dev/null || true)"
 
-  # Backup existing files
+  # Backup existing files. In dry-run nothing is moved, so the dir is never
+  # created (and the empty-dir cleanup at the end is skipped to match).
   backup_dir="$HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
-  mkdir -p "$backup_dir"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$backup_dir"
 
   # Helper: backup a path if it exists as a real file/dir (not a symlink)
   backup_if_real() {
     local target="$1"
     # A symlink (even a broken one) is ours to replace, never worth backing up.
     if [ -L "$target" ]; then
+      if [ "$DRY_RUN" -eq 1 ]; then
+        print_info "[DRY-RUN] would replace existing symlink $target"
+        return 0
+      fi
       rm -f "$target"
       return 0
     fi
     # Nothing there: return success (a bare `return` would propagate the failed
     # test's exit status and abort the caller under `set -e`).
     [ -e "$target" ] || return 0
-    print_warning "Backing up existing $(basename "$target")"
     # Preserve the path structure under $backup_dir. A flat, basename-only
     # backup silently overwrites files that share a basename across different
     # destinations (settings.json / keybindings.json live under Code/ and
@@ -662,6 +699,11 @@ create_symlinks() {
     *) rel="$target" ;;
     esac
     dest_parent="$backup_dir/$(dirname "$rel")"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would back up $target -> $dest_parent/"
+      return 0
+    fi
+    print_warning "Backing up existing $(basename "$target")"
     mkdir -p "$dest_parent"
     mv "$target" "$dest_parent/"
   }
@@ -675,6 +717,10 @@ create_symlinks() {
       return
     fi
     backup_if_real "$dest"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would link $dest -> $src"
+      return
+    fi
     ln -sf "$src" "$dest"
     print_success "Linked $(basename "$dest")"
   }
@@ -698,45 +744,58 @@ create_symlinks() {
   # cache を使い、credential-osxkeychain が存在しない Linux/WSL で
   # 「is not a git command」警告が出るのを防ぐ。生成ファイルなのでバックアップ
   # 不要 (毎回上書きで冪等)。git は未生成でも include を黙って無視する。
-  mkdir -p "$HOME/.config/git"
   local git_cred_helper="cache --timeout=3600"
   [[ "$OS" == "macos" ]] && git_cred_helper="osxkeychain"
-  printf '[credential]\n\thelper = %s\n' "$git_cred_helper" \
-    >"$HOME/.config/git/os.gitconfig"
-  print_success "Rendered os.gitconfig (credential helper: $git_cred_helper)"
-
   # Identity lives here rather than in the tracked .gitconfig, which would make
   # everyone who clones this repo commit under the owner's name and address.
   # Never overwrite: this file is the user's, and a re-run must not clobber it.
   local git_user_config="$HOME/.config/git/user.gitconfig"
-  if [ -e "$git_user_config" ]; then
-    print_info "Keeping existing git identity ($git_user_config)"
-  else
-    local git_name="$prior_git_name" git_email="$prior_git_email"
-    # Nothing to inherit (fresh machine, or an upgrade from the version that
-    # kept [user] in the tracked file): ask, but only with a TTY -- a bare
-    # `read` at EOF returns non-zero and would abort the installer under set -e.
-    if [ -z "$git_name" ] || [ -z "$git_email" ]; then
-      if [ -t 0 ]; then
-        [ -z "$git_name" ] && { read -p "Git user.name: " -r git_name || git_name=""; }
-        [ -z "$git_email" ] && { read -p "Git user.email: " -r git_email || git_email=""; }
-      fi
-    fi
-    if [ -n "$git_name" ] && [ -n "$git_email" ]; then
-      printf '[user]\n\tname = %s\n\temail = %s\n' "$git_name" "$git_email" \
-        >"$git_user_config"
-      print_success "Rendered user.gitconfig ($git_name <$git_email>)"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    # Read-only preview of the same decisions the real branch makes below --
+    # never prompt (dry-run must not block on input) and never write.
+    print_info "[DRY-RUN] would render $HOME/.config/git/os.gitconfig (credential helper: $git_cred_helper)"
+    if [ -e "$git_user_config" ]; then
+      print_info "[DRY-RUN] would keep existing git identity ($git_user_config)"
+    elif [ -n "$prior_git_name" ] && [ -n "$prior_git_email" ]; then
+      print_info "[DRY-RUN] would render $git_user_config inheriting $prior_git_name <$prior_git_email>"
     else
-      # Commented-out keys, not empty ones: an empty `name =` makes git report
-      # a configured-but-blank identity instead of prompting the user to set it.
-      printf '# Fill in before committing:\n#[user]\n#\tname = Your Name\n#\temail = you@example.com\n' \
-        >"$git_user_config"
-      print_warning "No git identity configured. Edit $git_user_config before committing."
+      print_info "[DRY-RUN] would prompt for a git identity (interactive) or write a commented-out placeholder at $git_user_config"
+    fi
+  else
+    mkdir -p "$HOME/.config/git"
+    printf '[credential]\n\thelper = %s\n' "$git_cred_helper" \
+      >"$HOME/.config/git/os.gitconfig"
+    print_success "Rendered os.gitconfig (credential helper: $git_cred_helper)"
+
+    if [ -e "$git_user_config" ]; then
+      print_info "Keeping existing git identity ($git_user_config)"
+    else
+      local git_name="$prior_git_name" git_email="$prior_git_email"
+      # Nothing to inherit (fresh machine, or an upgrade from the version that
+      # kept [user] in the tracked file): ask, but only with a TTY -- a bare
+      # `read` at EOF returns non-zero and would abort the installer under set -e.
+      if [ -z "$git_name" ] || [ -z "$git_email" ]; then
+        if [ -t 0 ]; then
+          [ -z "$git_name" ] && { read -p "Git user.name: " -r git_name || git_name=""; }
+          [ -z "$git_email" ] && { read -p "Git user.email: " -r git_email || git_email=""; }
+        fi
+      fi
+      if [ -n "$git_name" ] && [ -n "$git_email" ]; then
+        printf '[user]\n\tname = %s\n\temail = %s\n' "$git_name" "$git_email" \
+          >"$git_user_config"
+        print_success "Rendered user.gitconfig ($git_name <$git_email>)"
+      else
+        # Commented-out keys, not empty ones: an empty `name =` makes git report
+        # a configured-but-blank identity instead of prompting the user to set it.
+        printf '# Fill in before committing:\n#[user]\n#\tname = Your Name\n#\temail = you@example.com\n' \
+          >"$git_user_config"
+        print_warning "No git identity configured. Edit $git_user_config before committing."
+      fi
     fi
   fi
 
   # Directories to symlink
-  mkdir -p "$HOME/.config"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.config"
 
   # Neovim config (repo stores it at .config/nvim)
   link_entry "$DOTFILES_DIR/.config/nvim" "$HOME/.config/nvim"
@@ -751,7 +810,7 @@ create_symlinks() {
   else
     vscode_user_dir="$HOME/.config/Code/User"
   fi
-  mkdir -p "$vscode_user_dir"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$vscode_user_dir"
 
   local editor_config_files=(
     "settings.json"
@@ -763,7 +822,7 @@ create_symlinks() {
 
   # Claude Code config: symlink individual entries so CLI runtime data
   # (projects/, sessions/, history.jsonl, backups/, etc.) stays out of the repo.
-  mkdir -p "$HOME/.claude"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.claude"
   local claude_entries=(
     "CLAUDE.md"
     "settings.json"
@@ -800,7 +859,7 @@ create_symlinks() {
   # hand-written skill stops being live in Codex until it is moved back into
   # .codex/skills here. That is the cost of linking the directory rather than
   # its entries.
-  mkdir -p "$HOME/.codex"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.codex"
 
   local codex_link_entries=(
     "AGENTS.md"
@@ -822,16 +881,24 @@ create_symlinks() {
   #
   # Older installs did link it, so replace such a link with a real file.
   if [ -L "$HOME/.codex/config.toml" ]; then
-    print_warning "Replacing the ~/.codex/config.toml symlink with a real file"
-    rm -f "$HOME/.codex/config.toml"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would replace the ~/.codex/config.toml symlink with a real file"
+    else
+      print_warning "Replacing the ~/.codex/config.toml symlink with a real file"
+      rm -f "$HOME/.codex/config.toml"
+    fi
   fi
   # Seed the baseline only when nothing is there. Re-rendering would delete
   # whatever Codex has written since, so a live config is left strictly alone;
   # the template is the starting point, not a managed copy.
   if [ -f "$DOTFILES_DIR/.codex/config.toml.template" ]; then
     if [ ! -e "$HOME/.codex/config.toml" ]; then
-      cp "$DOTFILES_DIR/.codex/config.toml.template" "$HOME/.codex/config.toml"
-      print_success "Seeded config.toml from template"
+      if [ "$DRY_RUN" -eq 1 ]; then
+        print_info "[DRY-RUN] would seed $HOME/.codex/config.toml from template"
+      else
+        cp "$DOTFILES_DIR/.codex/config.toml.template" "$HOME/.codex/config.toml"
+        print_success "Seeded config.toml from template"
+      fi
     else
       print_info "Keeping existing config.toml (Codex owns it; baseline lives in .codex/config.toml.template)"
     fi
@@ -840,24 +907,28 @@ create_symlinks() {
   # hooks.json: render from the template, substituting the placeholder for
   # this machine's real $HOME (Codex does not expand ~ or $HOME itself).
   if [ -f "$DOTFILES_DIR/.codex/hooks.json.template" ]; then
-    local rendered_tmp
-    rendered_tmp="$(mktemp)"
-    sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
-      >"$rendered_tmp"
-    # Only replace (and back up) when the rendered result actually changed, so
-    # re-runs don't move an identical hooks.json into a fresh backup dir.
-    if [ ! -f "$HOME/.codex/hooks.json" ] ||
-      ! cmp -s "$rendered_tmp" "$HOME/.codex/hooks.json"; then
-      backup_if_real "$HOME/.codex/hooks.json"
-      mv "$rendered_tmp" "$HOME/.codex/hooks.json"
-      print_success "Rendered hooks.json"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would render $HOME/.codex/hooks.json from template (resolving \$HOME)"
     else
-      rm -f "$rendered_tmp"
+      local rendered_tmp
+      rendered_tmp="$(mktemp)"
+      sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
+        >"$rendered_tmp"
+      # Only replace (and back up) when the rendered result actually changed, so
+      # re-runs don't move an identical hooks.json into a fresh backup dir.
+      if [ ! -f "$HOME/.codex/hooks.json" ] ||
+        ! cmp -s "$rendered_tmp" "$HOME/.codex/hooks.json"; then
+        backup_if_real "$HOME/.codex/hooks.json"
+        mv "$rendered_tmp" "$HOME/.codex/hooks.json"
+        print_success "Rendered hooks.json"
+      else
+        rm -f "$rendered_tmp"
+      fi
     fi
   fi
 
   # Gemini config: symlink individual entries
-  mkdir -p "$HOME/.gemini"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.gemini"
   local gemini_entries=(
     "GEMINI.md"
     "settings.json"
@@ -873,20 +944,29 @@ create_symlinks() {
   # the first run and, on a rerun, clone new plugins straight into the
   # dotfiles git checkout (see the self-heal in install_oh_my_zsh).
   if [ -L "$HOME/.oh-my-zsh/custom" ]; then
-    rm -f "$HOME/.oh-my-zsh/custom"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would replace the ~/.oh-my-zsh/custom symlink with a real directory"
+    else
+      rm -f "$HOME/.oh-my-zsh/custom"
+    fi
   fi
-  mkdir -p "$HOME/.oh-my-zsh/custom/themes"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.oh-my-zsh/custom/themes"
   for theme in "$DOTFILES_DIR"/.oh-my-zsh/custom/themes/*; do
     [ -e "$theme" ] || continue
     link_entry "$theme" "$HOME/.oh-my-zsh/custom/themes/$(basename "$theme")"
   done
 
   # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
-  mkdir -p "$HOME/.tmux"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.tmux"
   link_entry "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
-  chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
+  [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
 
-  if [ -n "$(ls -A "$backup_dir" 2>/dev/null)" ]; then
+  # Backup-dir bookkeeping. Guard the whole open+close as one unit: in dry-run
+  # the dir was never created, so running `ls -A`/`rmdir` on it would fail under
+  # `set -e -o pipefail`.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_info "[DRY-RUN] no changes were made (create_symlinks)"
+  elif [ -n "$(ls -A "$backup_dir" 2>/dev/null)" ]; then
     print_info "Backup created at: $backup_dir"
   else
     rmdir "$backup_dir"
@@ -1134,6 +1214,10 @@ install_linters_formatters() {
 # Change default shell to zsh
 change_shell() {
   if [ "$SHELL" != "$(which zsh)" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would change the default shell to zsh (chsh)"
+      return 0
+    fi
     print_info "Changing default shell to zsh..."
     if command_exists chsh; then
       # chsh fails if zsh isn't listed in /etc/shells; don't let that abort
@@ -1153,8 +1237,47 @@ change_shell() {
 
 # Main installation flow
 main() {
+  # Parse options first, before the banner and the checkout guard, so `--help`
+  # works from anywhere and `--dry-run` is set before the first side effect.
+  # This script accepts no positional arguments.
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    -n | --dry-run)
+      DRY_RUN=1
+      ;;
+    -h | --help)
+      usage
+      return 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      print_error "Unknown option: $1"
+      usage >&2
+      return 2
+      ;;
+    *)
+      print_error "Unexpected argument: $1"
+      usage >&2
+      return 2
+      ;;
+    esac
+    shift
+  done
+  if [ "$#" -gt 0 ]; then
+    print_error "Unexpected argument: $1"
+    usage >&2
+    return 2
+  fi
+
   echo "  Dotfiles Installation Script"
   echo
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_warning "DRY-RUN: previewing changes only; nothing will be written."
+    echo
+  fi
 
   # Guard against a bad DOTFILES_DIR (e.g. script piped into bash instead of
   # run from a checkout) — otherwise create_symlinks would silently skip
@@ -1173,52 +1296,70 @@ main() {
   # left the machine with no dotfiles linked at all.
   create_symlinks
 
-  # Platform-specific package installation
-  case "$OS" in
-  macos)
-    install_homebrew
-    install_brew_packages
-    ;;
-  ubuntu)
-    install_apt_packages
-    ;;
-  windows)
-    print_warning "Windows detected. Please ensure Git Bash or WSL is properly configured."
-    print_warning "Some features may require manual installation."
-    ;;
-  esac
+  # Package / tool installation is not simulated in dry-run: these steps are
+  # network-bound and already externally idempotent (each guards on
+  # command_exists / brew list / dir tests). Announce and skip them; the
+  # dry-run value is in the symlink/backup preview above, not here.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_info "[DRY-RUN] Skipping package and tool installation (not simulated)."
+    print_info "[DRY-RUN]   Would install: OS packages (Homebrew / APT), WezTerm, fonts,"
+    print_info "[DRY-RUN]   Node.js, gh, pyenv, uv, glow, Docker, lazydocker, tree-sitter,"
+    print_info "[DRY-RUN]   MCP deps, linters/formatters, Oh My Zsh, vim-plug, tmux plugins;"
+    print_info "[DRY-RUN]   set up Neovim; install AI tools; register Claude MCP servers."
+  else
+    # Platform-specific package installation
+    case "$OS" in
+    macos)
+      install_homebrew
+      install_brew_packages
+      ;;
+    ubuntu)
+      install_apt_packages
+      ;;
+    windows)
+      print_warning "Windows detected. Please ensure Git Bash or WSL is properly configured."
+      print_warning "Some features may require manual installation."
+      ;;
+    esac
 
-  # Common installations
-  install_wezterm
-  install_fonts
-  install_nodejs
-  install_gh
-  install_pyenv
-  install_uv
-  install_glow
-  install_docker
-  install_lazydocker
-  install_tree_sitter_cli
-  install_mcp_server_deps
-  install_linters_formatters
-  install_oh_my_zsh
-  install_vim_plug
-  install_tmux_plugins
+    # Common installations
+    install_wezterm
+    install_fonts
+    install_nodejs
+    install_gh
+    install_pyenv
+    install_uv
+    install_glow
+    install_docker
+    install_lazydocker
+    install_tree_sitter_cli
+    install_mcp_server_deps
+    install_linters_formatters
+    install_oh_my_zsh
+    install_vim_plug
+    install_tmux_plugins
 
-  # Setup editors
-  install_vim_plugins
-  setup_neovim
+    # Setup editors
+    install_vim_plugins
+    setup_neovim
 
-  # Optional AI tools
-  install_ai_tools
+    # Optional AI tools
+    install_ai_tools
 
-  # Register MCP servers with Claude Code (after symlinks + AI tools)
-  register_claude_mcp_servers
+    # Register MCP servers with Claude Code (after symlinks + AI tools)
+    register_claude_mcp_servers
+  fi
 
-  # Change shell
+  # Change shell (dry-run aware: previews the chsh, never runs it)
   change_shell
 
   echo
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_success "Dry-run complete. No changes were made."
+    print_info "Re-run without --dry-run to apply."
+    echo
+    return 0
+  fi
   print_success "Installation completed!"
   echo
   print_info "Next steps:"
