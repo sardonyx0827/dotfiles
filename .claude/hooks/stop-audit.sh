@@ -37,7 +37,11 @@ while IFS= read -r -d '' f; do
   [ -f "$path" ] || continue
   case "$f" in
   *.js | *.jsx | *.ts | *.tsx)
-    hits=$(grep -nE '(^|[^.[:alnum:]])console\.log\(|(^|[^[:alnum:]])debugger(;|$)' "$path" 2>/dev/null | head -5)
+    # 直前除外は識別子文字 (英数字) のみとし `.` は含めない: `window.console.log(`
+    # は window.console === console (ブラウザのグローバル) を指す実行可能な
+    # デバッグ文なので検出対象にする。`myconsole.log(` のように console が
+    # 別の識別子に融合しているケースは、直前が英数字のままなので引き続き除外される。
+    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]])debugger(;|$)' "$path" 2>/dev/null | head -5)
     ;;
   *.py)
     hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5)

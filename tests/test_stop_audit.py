@@ -55,14 +55,28 @@ class TestClaudeVariant:
         assert result["decision"] == "block"
         assert "app.py" in result["reason"]
 
-    def test_member_access_console_log_is_not_flagged(self, shell_env, git_repo):
-        # obj.console.log / debuggerTool are not bare debug statements.
+    def test_identifier_fusion_is_not_flagged(self, shell_env, git_repo):
+        # myconsole.log / debuggerTool are different identifiers fused with
+        # "console"/"debugger", not bare debug statements, and must stay
+        # excluded even after widening the console.log match to catch
+        # `window.console.log(` (see test below).
         (git_repo / "app.ts").write_text(
-            "logger.console.log(1)\nconst debuggerTool = 1\n", encoding="utf-8"
+            "myconsole.log(1)\nconst debuggerTool = 1\n", encoding="utf-8"
         )
         res = shell_env.run(CLAUDE_HOOK, stdin="{}", cwd=git_repo)
         assert res.returncode == 0
         assert res.stdout == ""
+
+    def test_window_console_log_is_flagged(self, shell_env, git_repo):
+        # window.console IS the global console in browsers, so this is a
+        # real, executable debug statement that must not be missed just
+        # because a dot precedes "console".
+        (git_repo / "app.ts").write_text('window.console.log("x")\n', encoding="utf-8")
+        res = shell_env.run(CLAUDE_HOOK, stdin="{}", cwd=git_repo)
+        assert res.returncode == 0
+        result = json.loads(res.stdout)
+        assert result["decision"] == "block"
+        assert "app.ts" in result["reason"]
 
     def test_non_source_files_are_not_scanned(self, shell_env, git_repo):
         (git_repo / "notes.txt").write_text("console.log(1)\n", encoding="utf-8")
@@ -140,8 +154,11 @@ SCAN_CASES = [
     ("app.js", "debugger;\n", True),
     # Split so this test file itself is not flagged by stop-audit.sh.
     ("app.py", "break" + "point()\n", True),
-    # Member access / identifiers are not bare debug statements.
-    ("app.ts", "logger.console.log(1)\nconst debuggerTool = 1\n", False),
+    # Fused identifiers are not bare debug statements.
+    ("app.ts", "myconsole.log(1)\nconst debuggerTool = 1\n", False),
+    # window.console IS the global console; a dot before "console" must not
+    # hide it from the scan.
+    ("app.ts", 'window.console.log("x")\n', True),
     # Non-source files are not scanned.
     ("notes.txt", "console.log(1)\n", False),
 ]

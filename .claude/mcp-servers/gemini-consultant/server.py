@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # ~/.claude/mcp-servers/gemini-consultant/server.py
+import contextlib
 import json
 import os
 import platform
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -31,16 +33,35 @@ MAX_LOG_LINES = 500
 
 
 def _append_log(lines: list[str]) -> None:
-    """ログファイルに書き込み、上限を超えた分を古い順に削除する。"""
+    """ログファイルに書き込み、上限を超えた分を古い順に削除する。
+
+    切り詰めは読んで書き戻す操作なので、複数プロセスが並行して呼ぶと衝突する。
+    以前は open(log_file, "w") でその場 truncate していたため、切り詰めと
+    書き込みの間にログが 0 バイトになる窓があった。共通側
+    _bash_review_common.py の append_and_rotate と同じく、プロセスごとに
+    一意な一時ファイルへ書いてから os.replace で不可分に差し替える。
+    """
     with open(log_file, "a", encoding="utf-8") as f:
         f.writelines(lines)
 
     with open(log_file, encoding="utf-8") as f:
         all_lines = f.readlines()
 
-    if len(all_lines) > MAX_LOG_LINES:
-        with open(log_file, "w", encoding="utf-8") as f:
+    if len(all_lines) <= MAX_LOG_LINES:
+        return
+
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(log_file) or ".",
+        prefix=os.path.basename(log_file) + ".",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.writelines(all_lines[-MAX_LOG_LINES:])
+        os.replace(tmp, log_file)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def log_entry(tool: str, status: str, prompt: str, response: str = "") -> None:

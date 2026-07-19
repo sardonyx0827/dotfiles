@@ -164,6 +164,43 @@ class TestLogRotation:
         assert len(lines) == server.MAX_LOG_LINES
         assert lines[-1] == "new line"
 
+    def test_a_failed_rotation_leaves_the_log_intact(
+        self, server, tmp_path, monkeypatch
+    ):
+        # Regression guard: the old rotation path truncated the log in place
+        # via open(log_file, "w"), so a crash mid-write left it empty for
+        # good and concurrent writers (Claude + Codex sessions) could race on
+        # the same truncate. The fix must write the trimmed content to a
+        # temp file and swap it in with os.replace, matching the atomic
+        # pattern in _bash_review_common.py's append_and_rotate -- so a
+        # failure there must leave the previous log content untouched.
+        log = tmp_path / "rotated.log"
+        before = "old\n" * 520
+        log.write_text(before, encoding="utf-8")
+        server.log_file = str(log)
+
+        def boom(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(server.os, "replace", boom)
+        with pytest.raises(OSError, match="disk full"):
+            server._append_log(["new line\n"])
+
+        assert log.read_text(encoding="utf-8") == before + "new line\n"
+
+    def test_rotation_leaves_no_temp_files_behind(self, server, tmp_path):
+        # Own subdirectory so the module's own ~/.claude/logs bootstrap
+        # (created at import time by the `server` fixture) isn't mistaken
+        # for a leftover.
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        log = log_dir / "rotated.log"
+        log.write_text("old\n" * 520, encoding="utf-8")
+        server.log_file = str(log)
+        server._append_log(["new line\n"])
+        leftovers = sorted(p.name for p in log_dir.iterdir() if p.name != "rotated.log")
+        assert leftovers == [], f"rotation left temp files behind: {leftovers}"
+
 
 class TestNotifyInjection:
     """Caller-controlled title/message must not alter the osascript command."""

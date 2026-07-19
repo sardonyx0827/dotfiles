@@ -357,6 +357,10 @@ DETECTION_CASES = [
     ("git --git-dir /tmp/repo/.git push origin main", True),
     ("git -c user.name=x push", True),
     ("git push;true", True),
+    # Backslash line-continuation joins `git \` + newline + `push` into one
+    # logical line at execution time; the detection grep must join it too
+    # before matching, or it slips through as two independent lines.
+    ("git \\\npush", True),
     ('echo "log: $(git push origin main)"', True),
     ('echo "log: `git push origin main`"', True),
     ("echo `git push origin main`", True),
