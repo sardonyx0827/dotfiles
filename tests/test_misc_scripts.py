@@ -38,8 +38,10 @@ class TestTmuxSendToAllExceptNvim:
         res = shell_env.run(TMUX_SCRIPT, "echo", "hello")
         assert res.returncode == 0
         send_calls = [c for c in shell_env.calls if "send-keys" in c]
-        assert "tmux send-keys -t %1 echo hello" in send_calls
-        assert "tmux send-keys -t %3 echo hello" in send_calls
+        # Enter is required so the sent text is actually executed, not just
+        # typed into the pane's prompt.
+        assert "tmux send-keys -t %1 echo hello Enter" in send_calls
+        assert "tmux send-keys -t %3 echo hello Enter" in send_calls
         assert not any("-t %2" in c for c in send_calls)
 
     def test_sync_off_state_is_not_toggled(self, shell_env):
@@ -56,6 +58,26 @@ class TestTmuxSendToAllExceptNvim:
         send_idx = [i for i, c in enumerate(calls) if "send-keys" in c]
         assert off_idx < min(send_idx)
         assert on_idx > max(send_idx)
+
+    def test_sync_restored_even_if_a_send_keys_call_fails(self, shell_env):
+        # Under `set -euo pipefail`, one failing send-keys inside the while
+        # loop must not abort the script before the synchronize-panes
+        # restore runs (and must not stop the remaining panes either).
+        body = (
+            'case "$1" in\n'
+            '  show-window-option) echo "on" ;;\n'
+            "  list-panes) printf '%%1 zsh\\n%%2 nvim\\n%%3 vim\\n' ;;\n"
+            '  send-keys) [ "$3" = "%1" ] && exit 7 ;;\n'
+            "esac"
+        )
+        shell_env.stub("tmux", body=body)
+        res = shell_env.run(TMUX_SCRIPT, "echo", "hello")
+        assert res.returncode == 0
+        calls = shell_env.calls
+        assert "tmux set-window-option synchronize-panes on" in calls
+        assert any(c.startswith("tmux send-keys -t %3") for c in calls), (
+            "a failed send-keys to one pane must not stop the remaining panes"
+        )
 
 
 class TestUpdateAiTools:
