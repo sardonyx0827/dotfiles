@@ -33,6 +33,17 @@ local function close_window(win)
   end
 end
 
+-- `opts.start` may return either a plain job id (backend.run) or a mutable
+-- handle table `{ job = <id> }` (backend.run_with_fallback), whose `.job`
+-- field tracks whichever fallback attempt is currently in flight. Resolve
+-- either shape to the job id currently worth cancelling.
+local function resolve_job(job)
+  if type(job) == "table" then
+    return job.job
+  end
+  return job
+end
+
 -- Copy text to clipboard (and the tmux buffer when running inside tmux).
 local function copy_to_clipboard(msg)
   vim.fn.setreg("+", msg)
@@ -236,8 +247,9 @@ function M.run_multi(opts)
     state.closed = true
     pcall(vim.api.nvim_del_augroup_by_id, group)
     for t, job in pairs(state.jobs) do
-      if state.status[t] == "pending" and job and job > 0 then
-        pcall(vim.fn.jobstop, job)
+      local jid = resolve_job(job)
+      if state.status[t] == "pending" and jid and jid > 0 then
+        pcall(vim.fn.jobstop, jid)
         state.status[t] = "cancelled"
       end
     end
@@ -479,8 +491,9 @@ function M.open_report(opts)
     if state.closed then return end
     state.closed = true
     pcall(vim.api.nvim_del_augroup_by_id, group)
-    if state.status == "pending" and state.job and state.job > 0 then
-      pcall(vim.fn.jobstop, state.job)
+    local jid = resolve_job(state.job)
+    if state.status == "pending" and jid and jid > 0 then
+      pcall(vim.fn.jobstop, jid)
     end
     close_window(win) -- buffer is bufhidden=wipe, so it goes with the window
   end

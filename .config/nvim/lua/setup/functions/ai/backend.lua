@@ -254,12 +254,14 @@ end
 --- first success. On success `done` fires with that spec's tool; if every spec
 --- fails it fires with the last error and the last tool tried.
 ---
---- The returned job id is the FIRST attempt's job (what the UI uses to cancel).
---- A fallback started after the first failure is not exposed for cancellation,
---- which only matters in the brief window between a failure and the next result.
+--- Returns a mutable handle `{ job = <id> }` instead of a plain job id: `.job`
+--- is updated to whichever attempt is currently in flight, so a canceller that
+--- holds onto the handle (see ui.lua's resolve_job) can still stop a fallback
+--- attempt after the first one has already failed -- a plain job id would go
+--- stale the moment the fallback starts and jobstop on it would be a no-op.
 --- @param specs table[] list of run specs (see M.run), tried in order
 --- @param done fun(ok: boolean, lines: string[], err: string|nil, tool: string|nil)
---- @return integer|nil job_id of the first attempt
+--- @return table|nil handle { job: integer|nil } tracking the in-flight attempt
 function M.run_with_fallback(specs, done)
   if not specs or #specs == 0 then
     done(false, {}, "no tools specified", nil)
@@ -276,9 +278,10 @@ function M.run_with_fallback(specs, done)
     done(false, {}, "credential detected in payload; not sent to AI", nil)
     return nil
   end
+  local handle = { job = nil }
   local function attempt(i)
     local spec = specs[i]
-    return M.run(spec, function(ok, lines, err)
+    handle.job = M.run(spec, function(ok, lines, err)
       if ok then
         done(true, lines, nil, spec.tool)
       elseif specs[i + 1] then
@@ -288,7 +291,8 @@ function M.run_with_fallback(specs, done)
       end
     end, true)
   end
-  return attempt(1)
+  attempt(1)
+  return handle
 end
 
 return M
