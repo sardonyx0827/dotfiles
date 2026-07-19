@@ -306,6 +306,17 @@ def shell_env(tmp_path):
     # Backstop: no test may ever fire a real desktop notification.
     se.stub("terminal-notifier")
     se.stub("osascript")
+    # Backstop: no test may ever reach a real system-mutating tool. The stub
+    # dir only PREPENDS to the host PATH, so any code path that escapes its
+    # per-test stubs runs the real binary: a mid-development version of
+    # install.sh's dry-run gate once reached the host `brew`, which
+    # "upgraded" the font-ubuntu-mono cask by relocating the user's real
+    # font files into the doomed pytest tmp HOME. Individual tests override
+    # these freely with their own stub(); absence-testing via
+    # _without_commands-style PATH surgery is unaffected (none of these
+    # names are exercised as "absent" today).
+    for tool in ("brew", "apt-get", "sudo", "chsh", "npm"):
+        se.stub(tool)
     return se
 
 

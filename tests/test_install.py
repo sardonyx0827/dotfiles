@@ -51,7 +51,15 @@ def _without_commands(env: dict, *names: str) -> dict:
             found = shutil.which(name, path=env["PATH"])
             if not found:
                 break
-            drop = str(Path(found).parent)
+            parent = Path(found).parent
+            if parent.name == "stub-bin":
+                # The shared stub dir (which now carries backstop stubs for
+                # system-mutating tools) must not be dropped wholesale — that
+                # would silently discard every other stub the test set up.
+                # Delete just this stub to make the tool absent.
+                Path(found).unlink()
+                continue
+            drop = str(parent)
             if drop in _PROTECTED_PATH_DIRS:
                 break
             env["PATH"] = ":".join(p for p in env["PATH"].split(":") if p != drop)
@@ -1133,6 +1141,20 @@ class TestDryRun:
         assert list(home.iterdir()) == [], list(home.iterdir())
         assert "Skipping package and tool installation" in res.stdout
         assert "Dry-run complete" in res.stdout
+
+    def test_unstubbed_package_managers_hit_the_backstop(self, shell_env):
+        # Regression: a mid-development dry-run gate once let install.sh reach
+        # the REAL host `brew` with HOME inside the pytest tmp dir — Homebrew
+        # "upgraded" the font cask by relocating the user's real font files
+        # into the doomed tmp HOME. The shell_env backstop stubs must
+        # intercept system-mutating tools even when a test forgets to stub
+        # them. (No RED phase for this one: observing the failure means
+        # executing the real package manager and mutating the host.)
+        res = run_sourced("OS=macos install_fonts", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert any(c.startswith("brew install --cask") for c in shell_env.calls), (
+            "install_fonts must hit the brew backstop stub, never the host brew"
+        )
 
     def test_change_shell_does_not_invoke_chsh(self, shell_env):
         shell_env.stub("zsh")
