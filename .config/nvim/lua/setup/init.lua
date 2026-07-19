@@ -41,6 +41,7 @@ autocmd({ "BufWritePre" }, {
 
 -- Check if file changed when its buffer is entered or focus is gained
 autocmd({ "WinEnter", "FocusGained", "BufEnter" }, {
+  group = setupGroup,
   pattern = "*",
   command = "checktime",
 })
@@ -59,6 +60,7 @@ autocmd("FileType", {
 
 -- Stop insert mode when switching buffers (e.g. when used telescope buffer)
 vim.api.nvim_create_autocmd("BufWinEnter", {
+  group = setupGroup,
   callback = function()
     if vim.bo.buftype == "" then
       vim.cmd("stopinsert")
@@ -80,6 +82,7 @@ local function set_cursor_blinking_block()
 end
 
 vim.api.nvim_create_autocmd({ "VimLeave", "VimSuspend" }, {
+  group = setupGroup,
   callback = function()
     set_cursor_blinking_block()
   end,
