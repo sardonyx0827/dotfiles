@@ -23,6 +23,41 @@ def run_sourced(snippet: str, env: dict, cwd=None):
     )
 
 
+# Never stripped by _without_commands: these carry core utilities
+# (dirname, touch, sudo, curl, sed, cmp, mktemp, ...) and, for /bin on this
+# platform, bash itself. Some dev-machine tools (pip3, vim, zsh) have a
+# second copy living in one of these -- e.g. Apple ships /bin/zsh and
+# /usr/bin/vim/pip3 alongside the homebrew/pyenv ones -- so blindly
+# removing the owning directory for every match can silently take PATH
+# lookups (or the bash subprocess itself) down with it.
+_PROTECTED_PATH_DIRS = {"/bin", "/usr/bin", "/sbin", "/usr/sbin"}
+
+
+def _without_commands(env: dict, *names: str) -> dict:
+    """Strip real PATH directories that would resolve any of `names`.
+
+    Several tools under test (go, glow, staticcheck, ...) are genuinely
+    installed on a developer workstation, so a bare `command -v` check
+    would find the real one and mask the very "not installed" branch a
+    test wants to exercise. Removing the owning directory makes absence
+    real rather than a stubbed override. Stops at a protected system
+    directory instead of removing it (see _PROTECTED_PATH_DIRS) -- a
+    command with a surviving copy there needs a function-shadow instead
+    (see TestChangeShell / TestInstallVimPlugins for zsh/vim).
+    """
+    env = dict(env)
+    for name in names:
+        while True:
+            found = shutil.which(name, path=env["PATH"])
+            if not found:
+                break
+            drop = str(Path(found).parent)
+            if drop in _PROTECTED_PATH_DIRS:
+                break
+            env["PATH"] = ":".join(p for p in env["PATH"].split(":") if p != drop)
+    return env
+
+
 class TestSourceGuard:
     def test_sourcing_does_not_run_main(self, shell_env):
         res = run_sourced("true", shell_env.env)
@@ -113,7 +148,11 @@ class TestCreateSymlinks:
         # A stale symlink must be replaced without being backed up.
         (home / ".vimrc").symlink_to("/nonexistent-target")
 
-        res = run_sourced("create_symlinks", shell_env.env)
+        # link_oh_my_zsh_theme is split out of create_symlinks (see
+        # TestOhMyZshFreshInstallOrdering) and is only called after
+        # install_oh_my_zsh in main(); call it explicitly here since this
+        # test asserts on the theme symlink it produces.
+        res = run_sourced("create_symlinks && link_oh_my_zsh_theme", shell_env.env)
         assert res.returncode == 0
 
         # Top-level dotfiles are symlinked into the repo.
@@ -451,6 +490,49 @@ class TestInstallAiTools:
         assert "Do you want to install" not in res.stdout
 
 
+class TestInstallVimPlugins:
+    """`vim +PlugInstall +qall || true` used to swallow vim being absent
+    (exit 127) the same as a real PlugInstall failure, then printed
+    print_success unconditionally either way."""
+
+    def test_missing_vim_warns_and_skips(self, shell_env):
+        # macOS ships its own /usr/bin/vim alongside a homebrew one, so a
+        # PATH strip can't make `vim` genuinely unresolvable without also
+        # taking dirname/touch/sudo (also under /usr/bin) down with it.
+        # Shadow `vim` as a function instead (blocks the old code's direct
+        # invocation too, so a real vim is never spawned either way) and
+        # make command_exists agree it is absent (drives the new guard).
+        res = run_sourced(
+            "vim() { return 127; }; "
+            'command_exists() { [ "$1" = "vim" ] && return 1 '
+            '|| command -v "$1" >/dev/null 2>&1; }; '
+            'install_vim_plugins; echo "AFTER_VIM_PLUGINS"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_VIM_PLUGINS" in res.stdout
+        assert "[WARNING]" in res.stdout
+        assert "Vim plugins installed" not in res.stdout
+
+    def test_plug_install_failure_warns_instead_of_claiming_success(self, shell_env):
+        shell_env.stub("vim", exit_code=1)
+        res = run_sourced(
+            'install_vim_plugins; echo "AFTER_VIM_PLUGINS"', shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_VIM_PLUGINS" in res.stdout
+        assert "[WARNING]" in res.stdout
+        assert "Vim plugins installed" not in res.stdout
+
+    def test_successful_plug_install_prints_success(self, shell_env):
+        shell_env.stub("vim")
+        res = run_sourced(
+            'install_vim_plugins; echo "AFTER_VIM_PLUGINS"', shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert "Vim plugins installed" in res.stdout
+
+
 class TestStrictMode:
     def test_pipefail_enabled(self, shell_env):
         # Pipelines like `curl ... | sudo tee` must not swallow curl's exit
@@ -525,6 +607,75 @@ class TestInstallOhMyZsh:
 
         assert clone_calls_2 == clone_calls_1
         assert not (home / ".oh-my-zsh/custom").is_symlink()
+
+
+# Simulates Oh My Zsh's own official installer: it refuses to run when $ZSH
+# (~/.oh-my-zsh) already exists. Written to curl's `-o` target so
+# fetch_and_run executes it in place of a real download.
+_OMZ_OFFICIAL_INSTALLER_STUB = r"""
+out=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  prev="$a"
+done
+if [ -n "$out" ]; then
+  cat > "$out" <<'INSTALLER'
+if [ -d "$HOME/.oh-my-zsh" ]; then
+  echo "Oh My Zsh already installed (stub)" >&2
+  exit 1
+fi
+mkdir -p "$HOME/.oh-my-zsh"
+echo "# stub entry point" > "$HOME/.oh-my-zsh/oh-my-zsh.sh"
+INSTALLER
+fi
+"""
+
+
+class TestOhMyZshFreshInstallOrdering:
+    """A true first-ever install must not abort under set -eo pipefail.
+
+    Bug: create_symlinks used to `mkdir -p "$HOME/.oh-my-zsh/custom/themes"`
+    to land the theme symlink, which -- on a machine with no prior Oh My Zsh
+    -- created $HOME/.oh-my-zsh as a real directory before Oh My Zsh's own
+    installer ever ran. The official installer refuses to run when $ZSH
+    already exists, so install_oh_my_zsh's unguarded fetch_and_run call
+    returned non-zero and set -eo pipefail took the whole script down. The
+    theme-linking block is now its own function (link_oh_my_zsh_theme),
+    called from main() only after install_oh_my_zsh.
+    """
+
+    def _stub_git_clone(self, shell_env):
+        body = 'if [ "$1" = "clone" ]; then\n  mkdir -p "${@: -1}"\nfi'
+        shell_env.stub("git", body=body)
+
+    def test_fresh_install_succeeds_and_still_links_the_theme(self, shell_env):
+        shell_env.stub("curl", body=_OMZ_OFFICIAL_INSTALLER_STUB)
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        assert not (home / ".oh-my-zsh").exists()  # genuinely fresh machine
+
+        res = run_sourced(
+            "create_symlinks && install_oh_my_zsh && link_oh_my_zsh_theme",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+
+        assert (home / ".oh-my-zsh/oh-my-zsh.sh").is_file()
+        theme_link = home / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme"
+        assert theme_link.is_symlink()
+        assert (
+            theme_link.resolve()
+            == (REPO_ROOT / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme").resolve()
+        )
+
+    def test_create_symlinks_alone_does_not_create_oh_my_zsh_dir(self, shell_env):
+        # The root cause, isolated: create_symlinks must not touch
+        # ~/.oh-my-zsh at all on a fresh machine -- that is now entirely
+        # link_oh_my_zsh_theme's job, run after install_oh_my_zsh.
+        home = shell_env.home
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert not (home / ".oh-my-zsh").exists()
 
 
 class TestRegisterClaudeMcpServers:
@@ -602,6 +753,47 @@ class TestOptionalInstallerFailures:
         assert "[WARNING]" in res.stdout
 
 
+class TestInstallOsPackages:
+    """OS-specific package installation, extracted from main()'s inline
+    case so the dispatch is unit-testable on its own. A bash `case` with no
+    matching arm is a silent no-op: a non-Debian Linux (OS="linux", set by
+    detect_os when /etc/debian_version is absent) used to fall through with
+    no warning and no packages installed."""
+
+    def test_non_debian_linux_warns_instead_of_silently_skipping(self, shell_env):
+        res = run_sourced(
+            'OS=linux install_os_packages; echo "AFTER_OS_PACKAGES"', shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_OS_PACKAGES" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+    def test_ubuntu_still_dispatches_to_apt(self, shell_env):
+        res = run_sourced(
+            "install_apt_packages() { echo CALLED_APT; }; "
+            "OS=ubuntu install_os_packages",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "CALLED_APT" in res.stdout
+
+    def test_macos_still_dispatches_to_homebrew(self, shell_env):
+        res = run_sourced(
+            "install_homebrew() { echo CALLED_HOMEBREW; }; "
+            "install_brew_packages() { echo CALLED_BREW_PACKAGES; }; "
+            "OS=macos install_os_packages",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "CALLED_HOMEBREW" in res.stdout
+        assert "CALLED_BREW_PACKAGES" in res.stdout
+
+    def test_windows_still_warns(self, shell_env):
+        res = run_sourced("OS=windows install_os_packages", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "[WARNING]" in res.stdout
+
+
 class TestInstallNodejs:
     """npm can legitimately be absent by the time the prefix is configured:
     the installs above are best-effort (brew/NodeSource failures only warn)
@@ -653,6 +845,67 @@ class TestInstallNodejs:
         assert (shell_env.home / ".npm-global").is_dir()
 
 
+# go install places binaries under $HOME/go/bin (fixture $HOME, not this
+# dev machine's real one). Given "install <pkg>@version", write a fake
+# executable named after the package's last path segment, mirroring what a
+# real `go install .../cmd/<tool>@latest` produces.
+_GO_INSTALL_STUB = r"""
+if [ "$1" = "install" ]; then
+  pkg="${2%@*}"
+  tool="${pkg##*/}"
+  mkdir -p "$HOME/go/bin"
+  touch "$HOME/go/bin/$tool"
+  chmod +x "$HOME/go/bin/$tool"
+fi
+"""
+
+
+class TestGoInstallPathExport:
+    """install_nodejs/install_uv export PATH right after their own install
+    so the immediately-following command_exists check sees what was just
+    installed. install_glow and install_linters_formatters's Ubuntu
+    branches did not: `go install` places binaries under ~/go/bin, which
+    is not on PATH until exported, so the following command_exists check
+    (and anything later in the same run) falsely reports the tool missing."""
+
+    def test_glow_ubuntu_go_install_path_is_exported(self, shell_env):
+        # This dev machine has a real glow on PATH; it must not mask the
+        # fixture's fresh "not installed yet" state.
+        env = _without_commands(shell_env.env, "glow")
+        shell_env.stub("go", body=_GO_INSTALL_STUB)
+        res = run_sourced('OS=ubuntu install_glow; echo "AFTER_GLOW"', env)
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_GLOW" in res.stdout
+        assert "glow installed" in res.stdout
+
+    def test_linters_formatters_ubuntu_go_installed_tools_visible_afterward(
+        self, shell_env
+    ):
+        # Neutralize real ambient tools this dev machine happens to have so
+        # the Ubuntu branch actually exercises its go-install paths instead
+        # of finding them "already installed". gem and pip3 are left to a
+        # command_exists override rather than a PATH strip: both also have
+        # a copy under /usr/bin (Apple's system Python/Ruby), which
+        # _without_commands refuses to remove since it also carries
+        # touch/sudo/curl/dirname that the rest of this test still needs.
+        env = _without_commands(
+            shell_env.env, "staticcheck", "goimports", "npm", "pip", "php"
+        )
+        shell_env.stub("go", body=_GO_INSTALL_STUB)
+        shell_env.stub("sudo")
+        res = run_sourced(
+            'command_exists() { case "$1" in gem|pip3) return 1 ;; '
+            '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+            "OS=ubuntu install_linters_formatters; "
+            "command_exists staticcheck && echo STATICCHECK_ON_PATH; "
+            "command_exists goimports && echo GOIMPORTS_ON_PATH",
+            env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "STATICCHECK_ON_PATH" in res.stdout, res.stdout
+        assert "GOIMPORTS_ON_PATH" in res.stdout, res.stdout
+
+
 class TestChangeShell:
     def test_chsh_failure_does_not_abort_script(self, shell_env):
         shell_env.stub("zsh")
@@ -665,6 +918,44 @@ class TestChangeShell:
         assert res.returncode == 0, res.stderr
         assert "AFTER_CHANGE_SHELL" in res.stdout
         assert "chsh failed" in res.stdout
+
+    # macOS ships /bin/zsh (Apple's default-shell zsh) alongside a homebrew
+    # one, so a PATH strip can't make `zsh` genuinely unresolvable without
+    # also taking /bin -- and therefore bash itself -- off PATH. Shadow the
+    # two lookup mechanisms `change_shell` actually uses instead: `which`
+    # (the old code's `$(which zsh)`) and `command_exists` (the new guard).
+    _ZSH_ABSENT = (
+        'which() { [ "$1" = "zsh" ] && return 1 || command which "$@"; }; '
+        'command_exists() { [ "$1" = "zsh" ] && return 1 '
+        '|| command -v "$1" >/dev/null 2>&1; }; '
+    )
+
+    def test_missing_zsh_warns_and_never_invokes_chsh(self, shell_env):
+        # Without a `command_exists zsh` guard, `$(which zsh)` resolves to
+        # "" when zsh isn't installed, and `[ "$SHELL" != "" ]` is true, so
+        # the old code proceeded straight to `chsh -s ""`.
+        shell_env.stub("chsh")
+        env = dict(shell_env.env)
+        env["SHELL"] = "/bin/bash"
+
+        res = run_sourced(
+            self._ZSH_ABSENT + 'change_shell; echo "AFTER_CHANGE_SHELL"', env
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_CHANGE_SHELL" in res.stdout
+        assert "[WARNING]" in res.stdout
+        assert not any(c.startswith("chsh") for c in shell_env.calls)
+
+    def test_missing_zsh_warns_in_dry_run_too(self, shell_env):
+        env = {**shell_env.env, "DRY_RUN": "1", "SHELL": "/bin/bash"}
+
+        res = run_sourced(
+            self._ZSH_ABSENT + 'change_shell; echo "AFTER_CHANGE_SHELL"', env
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert "[WARNING]" in res.stdout
 
 
 class TestHooksJsonTemplate:
@@ -702,6 +993,55 @@ class TestHooksJsonTemplate:
         assert rendered.is_file()
         assert not rendered.is_symlink()
         assert str(home) in rendered.read_text(encoding="utf-8")
+
+
+class TestHooksJsonDryRunDiff:
+    """The DRY_RUN branch used to unconditionally print "would render",
+    regardless of whether the rendered output actually differs from what is
+    already on disk -- unlike the real branch, which already does the
+    cmp -s check to skip a no-op re-render."""
+
+    @staticmethod
+    def _hooks_json_lines(stdout: str) -> list:
+        return [ln for ln in stdout.splitlines() if "hooks.json" in ln]
+
+    def test_dry_run_reports_unchanged_when_content_matches(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+
+        first = run_sourced("create_symlinks", shell_env.env)
+        assert first.returncode == 0, first.stderr
+
+        env = {**shell_env.env, "DRY_RUN": "1"}
+        second = run_sourced("create_symlinks", env)
+        assert second.returncode == 0, second.stderr
+
+        lines = self._hooks_json_lines(second.stdout)
+        assert any("unchanged" in ln for ln in lines), second.stdout
+        assert not any("would render" in ln for ln in lines), second.stdout
+
+    def test_dry_run_reports_would_render_when_content_differs(self, shell_env):
+        home = shell_env.home
+        (home / ".codex").mkdir(parents=True)
+        (home / ".codex/hooks.json").write_text("{}\n", encoding="utf-8")
+
+        env = {**shell_env.env, "DRY_RUN": "1"}
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+
+        lines = self._hooks_json_lines(res.stdout)
+        assert any("would render" in ln for ln in lines), res.stdout
+        assert not any("unchanged" in ln for ln in lines), res.stdout
+
+    def test_dry_run_touches_nothing_either_way(self, shell_env):
+        # The diff check itself must stay read-only: no write to HOME.
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        env = {**shell_env.env, "DRY_RUN": "1"}
+
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+        assert not (home / ".codex/hooks.json").exists()
 
 
 # A curl stub that "downloads" a script by writing it to curl's `-o` target.

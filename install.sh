@@ -415,6 +415,12 @@ install_glow() {
     if command_exists go; then
       go install github.com/charmbracelet/glow@latest 2>/dev/null ||
         print_warning "Failed to install glow via go"
+      # go install places the binary under ~/go/bin, which isn't on PATH
+      # until exported -- without this the command_exists check just below
+      # falsely reports glow as missing right after installing it (same
+      # fix as install_nodejs/install_uv already apply after their own
+      # installs).
+      export PATH="$HOME/go/bin:$PATH"
     else
       print_warning "go not found; skipping glow"
     fi
@@ -636,6 +642,36 @@ install_oh_my_zsh() {
   fi
 
   print_success "zsh plugins installed"
+}
+
+# Link the Oh My Zsh custom theme(s) tracked in the repo. Split out of
+# create_symlinks and called from main() only AFTER install_oh_my_zsh: this
+# used to run inside create_symlinks and `mkdir -p` the themes directory,
+# which on a genuinely fresh machine created $HOME/.oh-my-zsh before Oh My
+# Zsh's own installer ran -- and that installer refuses to run when $ZSH
+# already exists. Running this afterward means $HOME/.oh-my-zsh does not
+# exist yet when the official installer runs on a true first install.
+#
+# Depends on link_entry, defined inside create_symlinks -- always called
+# after create_symlinks in main(), which by then has defined it globally.
+link_oh_my_zsh_theme() {
+  # Oh My Zsh custom: keep a REAL directory (install_oh_my_zsh clones plugins
+  # into custom/plugins/) and symlink only the theme file(s) tracked in the
+  # repo. Symlinking the whole custom/ dir would destroy cloned plugins on
+  # the first run and, on a rerun, clone new plugins straight into the
+  # dotfiles git checkout (see the self-heal in install_oh_my_zsh).
+  if [ -L "$HOME/.oh-my-zsh/custom" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would replace the ~/.oh-my-zsh/custom symlink with a real directory"
+    else
+      rm -f "$HOME/.oh-my-zsh/custom"
+    fi
+  fi
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.oh-my-zsh/custom/themes"
+  for theme in "$DOTFILES_DIR"/.oh-my-zsh/custom/themes/*; do
+    [ -e "$theme" ] || continue
+    link_entry "$theme" "$HOME/.oh-my-zsh/custom/themes/$(basename "$theme")"
+  done
 }
 
 # Install vim-plug
@@ -908,7 +944,20 @@ create_symlinks() {
   # this machine's real $HOME (Codex does not expand ~ or $HOME itself).
   if [ -f "$DOTFILES_DIR/.codex/hooks.json.template" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
-      print_info "[DRY-RUN] would render $HOME/.codex/hooks.json from template (resolving \$HOME)"
+      # Read-only preview of the same diff check the real branch below
+      # performs -- this used to unconditionally claim "would render" even
+      # when the rendered output is byte-identical to what's already there.
+      local dry_rendered_tmp
+      dry_rendered_tmp="$(mktemp)"
+      sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
+        >"$dry_rendered_tmp"
+      if [ ! -f "$HOME/.codex/hooks.json" ] ||
+        ! cmp -s "$dry_rendered_tmp" "$HOME/.codex/hooks.json"; then
+        print_info "[DRY-RUN] would render $HOME/.codex/hooks.json from template (resolving \$HOME)"
+      else
+        print_info "[DRY-RUN] $HOME/.codex/hooks.json already up to date; skipping render"
+      fi
+      rm -f "$dry_rendered_tmp"
     else
       local rendered_tmp
       rendered_tmp="$(mktemp)"
@@ -938,23 +987,14 @@ create_symlinks() {
       link_entry "$DOTFILES_DIR/.gemini/$entry" "$HOME/.gemini/$entry"
   done
 
-  # Oh My Zsh custom: keep a REAL directory (install_oh_my_zsh clones plugins
-  # into custom/plugins/) and symlink only the theme file(s) tracked in the
-  # repo. Symlinking the whole custom/ dir would destroy cloned plugins on
-  # the first run and, on a rerun, clone new plugins straight into the
-  # dotfiles git checkout (see the self-heal in install_oh_my_zsh).
-  if [ -L "$HOME/.oh-my-zsh/custom" ]; then
-    if [ "$DRY_RUN" -eq 1 ]; then
-      print_info "[DRY-RUN] would replace the ~/.oh-my-zsh/custom symlink with a real directory"
-    else
-      rm -f "$HOME/.oh-my-zsh/custom"
-    fi
-  fi
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.oh-my-zsh/custom/themes"
-  for theme in "$DOTFILES_DIR"/.oh-my-zsh/custom/themes/*; do
-    [ -e "$theme" ] || continue
-    link_entry "$theme" "$HOME/.oh-my-zsh/custom/themes/$(basename "$theme")"
-  done
+  # Oh My Zsh custom theme: NOT handled here. This used to
+  # `mkdir -p "$HOME/.oh-my-zsh/custom/themes"` at this point, which on a
+  # genuinely fresh machine created $HOME/.oh-my-zsh as a real directory
+  # before Oh My Zsh's own installer ever ran -- and Oh My Zsh's official
+  # installer refuses to run when $ZSH already exists, so a true first
+  # install aborted at install_oh_my_zsh's unguarded fetch_and_run under
+  # set -eo pipefail. See link_oh_my_zsh_theme, called from main() only
+  # after install_oh_my_zsh.
 
   # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
   [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.tmux"
@@ -976,8 +1016,18 @@ create_symlinks() {
 # Install Vim plugins
 install_vim_plugins() {
   print_info "Installing Vim plugins..."
-  vim +PlugInstall +qall || true
-  print_success "Vim plugins installed"
+  # Guarded like every other installer here: `|| true` used to swallow vim
+  # being absent (exit 127) the same as a real PlugInstall failure, then
+  # print_success ran unconditionally either way.
+  if ! command_exists vim; then
+    print_warning "vim not found; skipping Vim plugin installation"
+    return
+  fi
+  if vim +PlugInstall +qall; then
+    print_success "Vim plugins installed"
+  else
+    print_warning "vim +PlugInstall failed (continuing)"
+  fi
 }
 
 # Setup Neovim
@@ -1138,11 +1188,19 @@ install_linters_formatters() {
       elif command_exists go; then
         print_info "Installing shfmt via go install..."
         go install mvdan.cc/sh/v3/cmd/shfmt@latest 2>/dev/null || print_warning "Failed to install shfmt"
+        # See the PATH export note below: go install's binaries aren't on
+        # PATH until exported.
+        export PATH="$HOME/go/bin:$PATH"
       fi
     fi
 
     # staticcheck (go install)
     if command_exists go; then
+      # go install places binaries under ~/go/bin, which isn't on PATH
+      # until exported -- without this, the command_exists checks for
+      # staticcheck/goimports immediately below (and anything later in this
+      # run) falsely report the tool missing right after installing it.
+      export PATH="$HOME/go/bin:$PATH"
       if ! command_exists staticcheck; then
         print_info "Installing staticcheck..."
         go install honnef.co/go/tools/cmd/staticcheck@latest 2>/dev/null || print_warning "Failed to install staticcheck"
@@ -1213,6 +1271,13 @@ install_linters_formatters() {
 
 # Change default shell to zsh
 change_shell() {
+  # Guard first: when zsh isn't installed, `$(which zsh)` resolves to "",
+  # `[ "$SHELL" != "" ]` is true, and the branch below used to run
+  # `chsh -s ""` unconditionally.
+  if ! command_exists zsh; then
+    print_warning "zsh not found; skipping shell change. Install zsh, then run: chsh -s \$(which zsh)"
+    return 0
+  fi
   if [ "$SHELL" != "$(which zsh)" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       print_info "[DRY-RUN] would change the default shell to zsh (chsh)"
@@ -1233,6 +1298,30 @@ change_shell() {
   else
     print_success "Default shell is already zsh"
   fi
+}
+
+# Install OS-specific packages. Extracted from main()'s inline case so the
+# dispatch is unit-testable on its own. A bash `case` with no matching arm
+# is a silent no-op: a non-Debian Linux (OS="linux", set by detect_os when
+# /etc/debian_version is absent) used to fall through main()'s case with no
+# warning and no packages installed at all.
+install_os_packages() {
+  case "$OS" in
+  macos)
+    install_homebrew
+    install_brew_packages
+    ;;
+  ubuntu)
+    install_apt_packages
+    ;;
+  linux)
+    print_warning "Non-Debian Linux detected (OS=$OS, no /etc/debian_version). Automatic package installation is only implemented for Ubuntu/Debian; install packages manually (see install_apt_packages for the list)."
+    ;;
+  windows)
+    print_warning "Windows detected. Please ensure Git Bash or WSL is properly configured."
+    print_warning "Some features may require manual installation."
+    ;;
+  esac
 }
 
 # Main installation flow
@@ -1308,19 +1397,7 @@ main() {
     print_info "[DRY-RUN]   set up Neovim; install AI tools; register Claude MCP servers."
   else
     # Platform-specific package installation
-    case "$OS" in
-    macos)
-      install_homebrew
-      install_brew_packages
-      ;;
-    ubuntu)
-      install_apt_packages
-      ;;
-    windows)
-      print_warning "Windows detected. Please ensure Git Bash or WSL is properly configured."
-      print_warning "Some features may require manual installation."
-      ;;
-    esac
+    install_os_packages
 
     # Common installations
     install_wezterm
@@ -1349,6 +1426,13 @@ main() {
     # Register MCP servers with Claude Code (after symlinks + AI tools)
     register_claude_mcp_servers
   fi
+
+  # Oh My Zsh theme symlink (dry-run aware; see link_oh_my_zsh_theme). Must
+  # run after install_oh_my_zsh above (real run) so a true first install
+  # doesn't pre-create $HOME/.oh-my-zsh and trip Oh My Zsh's own installer;
+  # in dry-run install_oh_my_zsh never ran, so this is still the only place
+  # that previews the theme symlink.
+  link_oh_my_zsh_theme
 
   # Change shell (dry-run aware: previews the chsh, never runs it)
   change_shell
