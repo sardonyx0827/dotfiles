@@ -23,6 +23,21 @@ local COMMIT_MODELS = { claude = "haiku" }
 -- inline the diff into argv (copilot). Without this, staging many files errors.
 local MAX_DIFF_BYTES = 50 * 1024
 
+-- Build the tab-switch hint for the result window footer, covering exactly `n`
+-- tabs (e.g. n=3 -> " <Tab>/<S-Tab>:switch  1/2/3:jump"). Derived from the tool
+-- count so the hint never drifts out of sync with the actual tabs (ui.run_multi
+-- maps keys 1..#tools). Returns "" for a single tab (no switching to hint).
+local function jump_hint(n)
+  if n <= 1 then
+    return ""
+  end
+  local nums = {}
+  for i = 1, n do
+    nums[i] = tostring(i)
+  end
+  return "  <Tab>/<S-Tab>:switch  " .. table.concat(nums, "/") .. ":jump"
+end
+
 -- Copy to the system clipboard, the unnamed register, and the tmux buffer.
 local function copy_to_clipboard(content)
   vim.fn.setreg("+", content)
@@ -318,7 +333,7 @@ local function generate_commit_message(tool)
   local footer = string.format(
     " Commit Message (%s) | y:yank  p:paste  q:close%s ",
     diff_type,
-    #tools > 1 and "  <Tab>/<S-Tab>:switch  1/2:jump" or "")
+    jump_hint(#tools))
 
   ui.run_multi({
     mode = "popup",
@@ -437,7 +452,7 @@ local function ask_ai_and_replace(start_line, end_line, tool)
     local input = table.concat(selected_lines, "\n")
     local footer = string.format(
       " y:AI  Y:merged  q:cancel%s ",
-      #tools > 1 and "  <Tab>/<S-Tab>:switch  1/2/3:jump" or "")
+      jump_hint(#tools))
 
     ui.run_multi({
       mode = "diff",
