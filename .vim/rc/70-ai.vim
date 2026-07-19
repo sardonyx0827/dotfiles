@@ -109,6 +109,35 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     return l:out
   endfunction
 
+  " Strip a markdown code fence that wraps the WHOLE reply (mirrors the nvim
+  " prompt.strip_code_fences). The submit prompt tells the model not to fence its
+  " output, but models (Claude especially) often wrap the reply in ```lang ...
+  " ```; those fence lines must never land in the replaced selection. Only strips
+  " when an opening ```lang line and a matching closing ``` line clearly bracket
+  " the whole output (ignoring surrounding blank lines). Any other shape -- no
+  " fence, or a lone ``` inside otherwise-plain code -- is returned unchanged so
+  " ordinary source is never corrupted.
+  function! s:AI_StripCodeFences(list) abort
+    let l:first = 0
+    let l:last = len(a:list) - 1
+    while l:first <= l:last && a:list[l:first] =~# '^\s*$'
+      let l:first += 1
+    endwhile
+    while l:last >= l:first && a:list[l:last] =~# '^\s*$'
+      let l:last -= 1
+    endwhile
+    " Need at least a distinct opening and closing fence line to strip.
+    if l:first >= l:last
+      return copy(a:list)
+    endif
+    let l:opens = a:list[l:first] =~# '^\s*```\+\s*[0-9A-Za-z_#+.-]*\s*$'
+    let l:closes = a:list[l:last] =~# '^\s*```\+\s*$'
+    if !(l:opens && l:closes)
+      return copy(a:list)
+    endif
+    return a:list[l:first + 1 : l:last - 1]
+  endfunction
+
   " Replace lines [start, end] (1-indexed inclusive) of buf with a:lines.
   function! s:AI_SetLines(buf, start, end, lines) abort
     let l:old = a:end - a:start + 1
@@ -240,7 +269,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       return
     endif
     if l:s.status !=# 'cancelled'
-      let l:out = s:AI_TrimOutput(l:s.output)
+      let l:out = s:AI_StripCodeFences(s:AI_TrimOutput(l:s.output))
       call setbufvar(l:s.resp_buf, '&modifiable', 1)
       if a:status == 0 && len(l:out) > 0
         let l:s.status = 'done'
@@ -392,7 +421,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       return
     endif
     let l:buf = l:s.bufs[a:idx]
-    let l:out = s:AI_TrimOutput(l:s.output[a:idx])
+    let l:out = s:AI_StripCodeFences(s:AI_TrimOutput(l:s.output[a:idx]))
     call setbufvar(l:buf, '&modifiable', 1)
     if a:status == 0 && len(l:out) > 0
       let l:s.status[a:idx] = 'done'
@@ -503,7 +532,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
         let l:decoded = json_decode(l:raw)
         if type(l:decoded) == v:t_dict
           if has_key(l:decoded, 'response') && type(l:decoded.response) == v:t_string
-            let l:result = split(trim(l:decoded.response), "\n", 1)
+            let l:result = s:AI_StripCodeFences(split(trim(l:decoded.response), "\n", 1))
           endif
           if has_key(l:decoded, 'error')
             let l:err = string(l:decoded.error)
