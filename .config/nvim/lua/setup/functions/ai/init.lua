@@ -117,9 +117,18 @@ local function check_current_buffer()
   vim.notify("Checking buffer with Claude...", vim.log.levels.INFO)
 
   -- Overwrite the whole checked buffer with the AI's corrected version.
-  local function apply_fix(fixed)
+  -- expected_tick guards against edits made while the fix was being generated:
+  -- if the buffer moved on since then, abort instead of silently discarding
+  -- those edits.
+  local function apply_fix(fixed, expected_tick)
     if not vim.api.nvim_buf_is_valid(buf) then
       vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+      return false
+    end
+    if expected_tick and vim.api.nvim_buf_get_changedtick(buf) ~= expected_tick then
+      vim.notify(
+        "Buffer changed while the fix was generated; aborting to avoid overwriting your edits.",
+        vim.log.levels.WARN)
       return false
     end
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, fixed)
@@ -129,6 +138,17 @@ local function check_current_buffer()
   -- `f` in the report: feed the issue list + current buffer to the AI, show the
   -- fix as a diff against the original, and replace the buffer on accept.
   local function start_fix(report_lines)
+    if not vim.api.nvim_buf_is_valid(buf) then
+      vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+      return
+    end
+    -- Re-snapshot the buffer (and its changedtick) at fix-start time, not
+    -- check-start time: the check can take a while and the report stays open
+    -- for the user to read, so the outer `lines`/`buf` snapshot from the top of
+    -- check_current_buffer may already be stale by the time `f` is pressed.
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local fix_changedtick = vim.api.nvim_buf_get_changedtick(buf)
+
     local report = vim.trim(table.concat(report_lines, "\n"))
     if report == "" or report:find(prompt.NO_ISSUES, 1, true) then
       vim.notify("No issues to fix.", vim.log.levels.INFO)
@@ -192,12 +212,12 @@ local function check_current_buffer()
         end)
       end,
       on_accept = function(_, fixed)
-        if apply_fix(fixed) then
+        if apply_fix(fixed, fix_changedtick) then
           vim.notify("Buffer fixed with AI's response.")
         end
       end,
       on_accept_merged = function(fixed)
-        if apply_fix(fixed) then
+        if apply_fix(fixed, fix_changedtick) then
           vim.notify("Buffer fixed with merged result.")
         end
       end,
@@ -377,6 +397,11 @@ local function ask_ai_and_replace(start_line, end_line, tool)
   local tools = tool == "all" and { "claude", "codex", "gemini", "copilot" } or { tool }
   local target_buf = vim.api.nvim_get_current_buf()
   local selected_lines = vim.api.nvim_buf_get_lines(target_buf, start_line - 1, end_line, false)
+  -- Recorded at selection time; replace_range compares against this before
+  -- overwriting so edits made while the AI response was in flight (prompt
+  -- window open, then the async call itself) don't silently smash the wrong
+  -- range.
+  local selected_changedtick = vim.api.nvim_buf_get_changedtick(target_buf)
   local filetype = vim.bo[target_buf].filetype
   local lang = filetype ~= "" and filetype or "plain text"
 
@@ -430,12 +455,18 @@ local function ask_ai_and_replace(start_line, end_line, tool)
   map("n", "q", close_prompt, { buffer = prompt_buf, desc = "Cancel prompt" })
 
   local function replace_range(lines)
-    if vim.api.nvim_buf_is_valid(target_buf) then
-      vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
-      return true
+    if not vim.api.nvim_buf_is_valid(target_buf) then
+      vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
+      return false
     end
-    vim.notify("Target buffer no longer valid.", vim.log.levels.ERROR)
-    return false
+    if vim.api.nvim_buf_get_changedtick(target_buf) ~= selected_changedtick then
+      vim.notify(
+        "Buffer changed since the selection was made; aborting to avoid replacing the wrong range.",
+        vim.log.levels.WARN)
+      return false
+    end
+    vim.api.nvim_buf_set_lines(target_buf, start_line - 1, end_line, false, lines)
+    return true
   end
 
   local function submit()

@@ -221,12 +221,21 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:start = a:state.start
     let l:end = a:state.end
     call s:AI_Close(a:state)
-    if bufexists(l:target)
-      call s:AI_SetLines(l:target, l:start, l:end, a:lines)
-      echo 'Selection replaced.'
-    else
+    if !bufexists(l:target)
       echohl ErrorMsg | echom 'Target buffer no longer valid.' | echohl None
+      return
     endif
+    " Guard against edits made to the target buffer while the AI response was
+    " in flight (prompt window open, then the async job itself): the recorded
+    " start/end line numbers would otherwise replace the wrong range.
+    if getbufvar(l:target, 'changedtick') != a:state.changedtick
+      echohl WarningMsg
+      echom 'Target buffer changed since the selection was made; aborting to avoid replacing the wrong range.'
+      echohl None
+      return
+    endif
+    call s:AI_SetLines(l:target, l:start, l:end, a:lines)
+    echo 'Selection replaced.'
   endfunction
 
   " ---- single-tool mode ---------------------------------------------------
@@ -318,6 +327,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:state = {
           \ 'mode': 'single', 'tool': a:ctx.tool,
           \ 'target_buf': a:ctx.target_buf, 'start': a:ctx.start, 'end': a:ctx.end,
+          \ 'changedtick': a:ctx.changedtick,
           \ 'orig_buf': l:orig_buf, 'orig_win': l:orig_win,
           \ 'resp_buf': l:resp_buf, 'resp_win': l:resp_win,
           \ 'status': 'pending', 'output': [], 'closed': 0, 'tmpfile': a:tmpfile,
@@ -480,6 +490,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:state = {
           \ 'mode': 'all', 'tools': l:tools,
           \ 'target_buf': a:ctx.target_buf, 'start': a:ctx.start, 'end': a:ctx.end,
+          \ 'changedtick': a:ctx.changedtick,
           \ 'orig_buf': l:orig_buf, 'orig_win': l:orig_win, 'resp_win': l:resp_win,
           \ 'bufs': l:bufs, 'status': l:status, 'output': l:output, 'jobs': {},
           \ 'active': 1, 'pending': len(l:tools), 'closed': 0, 'tmpfile': a:tmpfile,
@@ -670,6 +681,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ 'start': l:start, 'end': l:end,
           \ 'selected': getline(l:start, l:end),
           \ 'ft': l:ft, 'lang': l:ft !=# '' ? l:ft : 'plain text',
+          \ 'changedtick': getbufvar(bufnr('%'), 'changedtick'),
           \ }
 
     botright 10new
