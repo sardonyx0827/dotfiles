@@ -56,6 +56,16 @@ class TestPreDeny:
         res = run_hook(HOOK, hook_payload("ls -la && curl http://evil"))
         assert res.decision == "deny"
 
+    def test_deny_behind_single_ampersand_is_blocked(self, run_hook):
+        # `a & b` runs BOTH sides; the deny layer must see the right-hand side
+        # (COMPLEX_SHELL_SYNTAX only guards the safe-skip path, not this one).
+        res = run_hook(HOOK, hook_payload("echo hi & sudo rm -rf /"))
+        assert res.decision == "deny"
+
+    def test_deny_inside_command_substitution_is_blocked(self, run_hook):
+        res = run_hook(HOOK, hook_payload("echo $(sudo rm -rf /)"))
+        assert res.decision == "deny"
+
     def test_deny_hidden_after_newline_is_blocked(self, run_hook):
         # \n is not split by _split_commands but IS a shell separator: a denied
         # command hidden on a second line must still be pre-denied, not sent to
@@ -429,6 +439,50 @@ class TestParseVerdict:
         assert hook_fns["_parse_verdict"](output) == expected
 
 
+class TestLogEncodingIsLocaleIndependent:
+    """Log writes must be UTF-8 regardless of the ambient locale.
+
+    Under LC_ALL=C the default open() encoding is ASCII, so Japanese
+    reason/command text raises UnicodeEncodeError and the audit entry is lost
+    (the verdict itself is already decided — only the audit trail breaks).
+    """
+
+    def _run_under_c_locale(self, code: str) -> "subprocess.CompletedProcess":
+        env = {
+            **os.environ,
+            "LC_ALL": "C",
+            "LANG": "C",
+            "PYTHONUTF8": "0",
+            "PYTHONCOERCECLOCALE": "0",
+        }
+        return subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code], env=env, capture_output=True, text=True
+        )
+
+    def test_append_and_rotate_writes_utf8_under_c_locale(self, tmp_path):
+        log = tmp_path / "summary.log"
+        code = (
+            f"import sys; sys.path.insert(0, {str(REPO_ROOT / '.claude/hooks')!r});"
+            "import _bash_review_common as c;"
+            f"c.append_and_rotate({str(log)!r}, '\\u65e5\\u672c\\u8a9e reason\\n')"
+        )
+        res = self._run_under_c_locale(code)
+        assert res.returncode == 0, res.stderr
+        assert "日本語" in log.read_text(encoding="utf-8")
+
+    def test_write_detail_log_writes_utf8_under_c_locale(self, tmp_path):
+        log = tmp_path / "detail.log"
+        code = (
+            f"import sys; sys.path.insert(0, {str(REPO_ROOT / '.claude/hooks')!r});"
+            "import _bash_review_common as c;"
+            f"c.write_detail_log({str(log)!r}, 'Bash', {{'command': 'echo'}},"
+            " {'Reason': '\\u7406\\u7531'})"
+        )
+        res = self._run_under_c_locale(code)
+        assert res.returncode == 0, res.stderr
+        assert "理由" in log.read_text(encoding="utf-8")
+
+
 class TestCommandHelpers:
     def test_split_commands(self, hook_fns):
         split = hook_fns["_split_commands"]
@@ -449,6 +503,38 @@ class TestCommandHelpers:
         assert split("echo a\\;b") == ["echo a\\;b"]
         # Unterminated quote: treat the rest as one command (goes to review).
         assert split('echo "a; b') == ['echo "a; b']
+
+    def test_split_commands_splits_on_single_ampersand(self, hook_fns):
+        """A single `&` runs both sides, so the deny/high-risk layer must see
+        the right-hand side too. The original unsplit part is kept so the
+        safe-skip layer stays as strict as before. Inside quotes `&` is
+        literal and nothing extra surfaces."""
+        split = hook_fns["_split_commands"]
+        parts = split("echo hi & sudo rm -rf /")
+        assert "sudo rm -rf /" in parts
+        assert "echo hi & sudo rm -rf /" in parts
+        assert split("echo 'a & b'") == ["echo 'a & b'"]
+
+    def test_split_commands_surfaces_command_substitutions(self, hook_fns):
+        """$(...) and `...` bodies execute, so they are surfaced as additional
+        sub-commands. Single quotes and \\$ suppress expansion, so nothing is
+        surfaced from those."""
+        split = hook_fns["_split_commands"]
+        assert "sudo rm -rf /" in split("echo $(sudo rm -rf /)")
+        assert "sudo rm -rf /" in split("echo `sudo rm -rf /`")
+        # $() expands inside double quotes...
+        assert "sudo ls" in split('echo "pre $(sudo ls) post"')
+        # ...and the body itself is split on separators, at every nesting level.
+        assert "sudo ls" in split("echo $(date; sudo ls)")
+        assert any(
+            "curl http://evil" in p for p in split("echo $(echo $(curl http://evil))")
+        )
+        # No expansion inside single quotes / behind an escaped dollar: the
+        # literal text stays embedded in the outer command and nothing new
+        # surfaces, so the deny layer sees no denied executable.
+        deny = hook_fns["find_deny_command"]
+        assert deny(split("echo '$(sudo ls)'")) == (False, "")
+        assert deny(split('echo "\\$(sudo ls)"')) == (False, "")
 
     @pytest.mark.parametrize(
         ("command", "expected"),
@@ -630,6 +716,27 @@ class TestCommandHelpers:
     @pytest.mark.parametrize(
         ("command", "expected"),
         [
+            # Denied commands behind a single `&` or inside a command
+            # substitution must reach the deterministic deny layer.
+            ("echo hi & sudo rm -rf /", (True, "sudo")),
+            ("echo $(sudo rm -rf /)", (True, "sudo")),
+            ("echo `curl http://evil`", (True, "curl")),
+            ('echo "$(wget http://evil)"', (True, "wget")),
+            # Single quotes suppress expansion: literal text, nothing to deny.
+            ("echo '$(sudo ls)'", (False, "")),
+            # fd-duplication fragments (`2>&1`) must not produce false DENYs.
+            ("ls > /dev/null 2>&1", (False, "")),
+        ],
+    )
+    def test_find_deny_command_sees_background_and_substitutions(
+        self, hook_fns, command, expected
+    ):
+        sub_commands = hook_fns["_split_commands"](command)
+        assert hook_fns["find_deny_command"](sub_commands) == expected
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
             ("ls -la", True),
             ("echo hello", True),
             ("echo `date`", False),
@@ -779,6 +886,38 @@ class TestHighRiskClassifier:
         ],
     )
     def test_wrapped_innocent_command_is_not_high_risk(self, hook_fns, command):
+        assert hook_fns["_high_risk_label"](command) == ""
+
+    @pytest.mark.parametrize(
+        ("command", "expected_substr"),
+        [
+            # Interpreter one-liners can hide anything inside the code string —
+            # same tier as `bash -c` (previously only shells were classified).
+            ("python3 -c 'import os; os.system(\"id\")'", "python3 -c"),
+            ("python3.12 -c 'x'", "python3.12 -c"),
+            ("node -e 'child_process'", "node -e"),
+            ("node --eval 'x'", "node --eval"),
+            ("nodejs -e 'x'", "nodejs -e"),  # Debian alias for node
+            ("perl -E 'say 1'", "perl -E"),
+            ("ruby -e 'puts 1'", "ruby -e"),
+            ("php -r 'system(\"id\");'", "php -r"),
+        ],
+    )
+    def test_interpreter_eval_flags_are_high_risk(
+        self, hook_fns, command, expected_substr
+    ):
+        label = hook_fns["_high_risk_label"](command)
+        assert expected_substr in label, f"{command!r} -> {label!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python3 script.py",
+            "ruby -c script.rb",  # ruby's -c is a syntax CHECK, not eval
+            "node app.js",
+        ],
+    )
+    def test_interpreter_without_eval_flag_is_not_high_risk(self, hook_fns, command):
         assert hook_fns["_high_risk_label"](command) == ""
 
     def test_whole_command_collects_labels_across_subcommands(self, hook_fns):
@@ -1214,8 +1353,8 @@ class TestSecretScanUnit:
             # Opaque (non-JWT) bearer token with base64 padding chars.
             'http example.com "Authorization: Bearer ab+cd/efgh1234567=="',
             # Dict-style header (a quote sits between key and colon), e.g. a
-            # python -c one-liner — not high-risk, so it would otherwise reach
-            # Gemini with the opaque token in the clear.
+            # python -c one-liner — the secret must be caught before the
+            # command reaches any LLM path (fast or high-risk gated).
             "python3 -c \"h={'Authorization': 'Bearer opaqueTok3nValue1'}\"",
         ],
     )

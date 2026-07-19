@@ -299,14 +299,16 @@ SENSITIVE_PATTERNS = re.compile(
 )
 
 
-def _split_commands(cmd: str) -> list[str]:
+def _split_top_level(cmd: str, *, split_ampersand: bool = False) -> list[str]:
     """cmd を && / || / | / ; で分割する (クォート・エスケープ内の区切りは無視)。
 
     シェルはクォート内の ; や | を区切りとして解釈しないため、ここで分割すると
     `python3 -c "a; b"` のようなクォート内文字列の断片が独立コマンドとして
     DENY/SAFE 判定にかかってしまう (安全なコマンドの誤 DENY)。クォート外の
-    区切りのみで分割する。単独の & は従来どおり区切りとして扱わない
-    (バックグラウンド実行はスキップ経路では COMPLEX_SHELL_SYNTAX が拒否する)。
+    区切りのみで分割する。split_ampersand=True のときは単独の & (バック
+    グラウンド実行: 両側とも実行される) も区切りに加える。デフォルトで区切ら
+    ないのは、& を含む未分割パートをセーフスキップ判定に残し、従来どおり
+    COMPLEX_SHELL_SYNTAX にスキップを拒否させるため (_split_commands 参照)。
     """
     parts: list[str] = []
     current: list[str] = []
@@ -329,7 +331,7 @@ def _split_commands(cmd: str) -> list[str]:
                 current = []
                 i += 2
                 continue
-            if ch in ";|":
+            if ch in (";|&" if split_ampersand else ";|"):
                 parts.append("".join(current))
                 current = []
                 i += 1
@@ -338,6 +340,111 @@ def _split_commands(cmd: str) -> list[str]:
         i += 1
     parts.append("".join(current))
     return [p.strip() for p in parts if p.strip()]
+
+
+def _substitutions_at_level(text: str) -> list[str]:
+    """text 直下 (ネスト最外周) の置換の中身を返す。中身の再走査は呼び出し側。
+
+    対象は $(...) / `...` / <(...) / >(...)。シングルクォート内とバックスラッシュ
+    でエスケープされたものは展開されないため対象外。$( ) とバッククォートは
+    ダブルクォート内でも展開されるが、プロセス置換 <( ) はされない。対応する
+    閉じ括弧はネストとクォートを数えて探し、未閉鎖なら末尾までを中身とみなす
+    (安全側: 走査対象を減らさない)。
+    """
+    bodies: list[str] = []
+    in_single = in_double = False
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and not in_single:
+            i += 2
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            i += 1
+            continue
+        if in_single:
+            i += 1
+            continue
+        if ch == "`":
+            j = i + 1
+            while j < n and text[j] != "`":
+                j += 2 if text[j] == "\\" else 1
+            bodies.append(text[i + 1 : j])
+            i = j + 1
+            continue
+        is_cmd_sub = text.startswith("$(", i)
+        is_proc_sub = ch in "<>" and not in_double and text.startswith("(", i + 1)
+        if is_cmd_sub or is_proc_sub:
+            j = i + 2
+            depth = 1
+            body_single = body_double = False
+            while j < n:
+                cj = text[j]
+                if cj == "\\" and not body_single:
+                    j += 2
+                    continue
+                if cj == "'" and not body_double:
+                    body_single = not body_single
+                elif cj == '"' and not body_single:
+                    body_double = not body_double
+                elif not body_single and not body_double:
+                    if cj == "(":
+                        depth += 1
+                    elif cj == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                j += 1
+            bodies.append(text[i + 2 : j])
+            i = j + 1
+            continue
+        i += 1
+    return bodies
+
+
+def _substitution_bodies(cmd: str) -> list[str]:
+    """$(...) / `...` / <(...) / >(...) の中身を全ネスト分返す。
+
+    置換の中身は実際に実行されるのに、トップレベル分割では外側コマンドの一部に
+    しか見えず、DENY/高リスク判定を素通りする (`echo $(sudo rm -rf /)` が
+    低リスクの単独モデル fast path に流れる)。再帰ではなくワークリストで走査し、
+    深いネストでも RecursionError でフックごと落ちないようにする。
+    """
+    bodies: list[str] = []
+    queue = [cmd]
+    while queue:
+        found = _substitutions_at_level(queue.pop())
+        bodies.extend(found)
+        queue.extend(found)
+    return bodies
+
+
+def _split_commands(cmd: str) -> list[str]:
+    """セーフスキップと DENY/高リスク判定が共有するサブコマンド列を返す。
+
+    トップレベルの分割結果を基本とし、(1) 単独 & を含むパートはその両側、
+    (2) $() / `...` / <() の中身とその分割結果、を追加パートとして足す。
+    元の未分割パートを残したまま増やす一方向の拡張なので、「全パートが安全な
+    ときだけ成立する」セーフスキップは緩まない (& や置換を含む元パートは従来
+    どおり COMPLEX_SHELL_SYNTAX がスキップを拒否する)。一方 DENY/高リスクは
+    パートが増えるほど検出が広がり、`echo hi & sudo rm -rf /` や
+    `echo $(sudo rm -rf /)` が低リスクの fast path へ素通りしなくなる。
+    """
+    texts = [cmd] + _substitution_bodies(cmd)
+    parts: list[str] = []
+    for text in texts:
+        for part in _split_top_level(text):
+            parts.append(part)
+            amp = _split_top_level(part, split_ampersand=True)
+            if len(amp) > 1:
+                parts.extend(amp)
+    # 順序を保って重複除去 (同一パートの多重判定と高リスクラベルの重複を避ける)
+    return list(dict.fromkeys(parts))
 
 
 # _QUOTE_OR_ESCAPE (クォート/バックスラッシュ除去) は上部で定義済み。
@@ -495,6 +602,22 @@ _REMOTE_EXEC_EXECUTABLES = frozenset({"npx", "uvx"})
 
 _SHELL_EXECUTABLES = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
 
+# インタープリタのインライン実行フラグ (python3 -c / node -e 等)。コード文字列に
+# 何でも隠せる点はシェルの -c と同じなので、同じ高リスク層に載せる。実行系フラグ
+# のみを実行体ごとに持つ (ruby の -c は構文チェックであって実行しないため対象外)。
+_INTERPRETER_EVAL_FLAGS = {
+    "python": frozenset({"-c"}),
+    "node": frozenset({"-e", "-p", "--eval", "--print"}),
+    # Debian 系は node を nodejs という別名で提供する
+    "nodejs": frozenset({"-e", "-p", "--eval", "--print"}),
+    "perl": frozenset({"-e", "-E"}),
+    "ruby": frozenset({"-e"}),
+    "php": frozenset({"-r"}),
+}
+
+# python3 / python3.12 のようなバージョン接尾辞を剥がして上の表を引く。
+_VERSION_SUFFIX = re.compile(r"[0-9.]+$")
+
 # 束ねられた短フラグ内の文字を検出する (rm -rf の r、git clean -fd の f 等)。
 _RECURSIVE_FLAG = re.compile(r"^-[A-Za-z]*[rR]")
 _FORCE_FLAG = re.compile(r"^-[A-Za-z]*f")
@@ -549,6 +672,11 @@ def _high_risk_label(cmd: str) -> str:
         return f"{exe} (remote code execution)"
     if exe in _SHELL_EXECUTABLES and "-c" in rest:
         return f"{exe} -c"
+    eval_flags = _INTERPRETER_EVAL_FLAGS.get(_VERSION_SUFFIX.sub("", exe))
+    if eval_flags:
+        for tok in rest:
+            if tok in eval_flags:
+                return f"{exe} {tok}"
     if exe == "eval":
         return "eval"
     if exe in ("chmod", "chown") and any(
@@ -1037,9 +1165,11 @@ def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None
     ローテーションとはそういうものなので許容する。シェル側と同じ割り切り)。
     flock は macOS に無いのでロックは使わない。
     """
-    with open(summary_log, "a") as f:
+    # ログは常に UTF-8 で書く (実行環境のロケールに依存させない。C ロケール下で
+    # 日本語の reason が UnicodeEncodeError になり監査ログが欠落する)。
+    with open(summary_log, "a", encoding="utf-8") as f:
         f.write(line)
-    with open(summary_log) as f:
+    with open(summary_log, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
     if len(lines) <= max_lines:
         return
@@ -1050,7 +1180,7 @@ def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None
         prefix=os.path.basename(summary_log) + ".",
     )
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.writelines(lines[-max_lines:])
         os.replace(tmp, summary_log)
     except BaseException:
@@ -1100,7 +1230,7 @@ def write_detail_log(
     redact_input=True のときは tool_input の生ダンプを書かずプレースホルダにする
     (log_summary の redact_command と同じ理由: 検出した秘密をディスクへ残さない)。
     """
-    with open(log_file, "w") as f:
+    with open(log_file, "w", encoding="utf-8") as f:
         f.write(f"Tool Name: {tool_name}\n")
         if redact_input:
             f.write("Tool Input: [REDACTED - credential detected]\n")
