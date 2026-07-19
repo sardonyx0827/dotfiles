@@ -1,4 +1,49 @@
 "*****************************************************************************
+"" [AI safety] Path-based guard for GitHub Copilot completion
+"*****************************************************************************
+" copilot.vim (loaded in 00-plugins.vim) streams buffer context to GitHub for
+" inline suggestions, and -- unlike the custom AI feature below -- there is NO
+" content-level pre-send scan for secrets. Mirror the nvim copilot.lua guard:
+" refuse to enable Copilot in buffers whose *path* is obviously sensitive
+" (dotenv, private keys, cloud-credential dirs, ...). This does not catch a
+" secret pasted into an ordinary file -- an accepted limitation, same as nvim.
+if !has('nvim')
+  let s:copilot_sensitive_paths = [
+        \ '\.env$', '\.env\.', '\.envrc$',
+        \ 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa',
+        \ '\.pem$', '\.key$', '\.p12$', '\.pfx$', '\.jks$', '\.keystore$', '\.ppk$',
+        \ '/\.ssh/', '/\.aws/', '/\.gnupg/', '/\.azure/', '/\.kube/', '/gcloud/',
+        \ '\.netrc$', '\.npmrc$', '\.pypirc$', '\.pgpass$', '\.my\.cnf$',
+        \ 'kubeconfig', '\.tfstate', '\.tfvars', '\.dockercfg',
+        \ 'docker/config\.json$',
+        \ 'service.\?account', 'adminsdk', '-key\.json$',
+        \ 'credentials', 'secrets\?', 'password',
+        \ ]
+
+  " Disable Copilot for the current buffer when its path looks sensitive.
+  " b:copilot_enabled = v:false is copilot.vim's per-buffer off switch, checked
+  " lazily before each suggestion, so setting it any time before insert is enough.
+  function! s:AI_CopilotGuard() abort
+    let l:name = tolower(expand('%:p'))
+    if l:name ==# ''
+      return
+    endif
+    for l:pat in s:copilot_sensitive_paths
+      if l:name =~# l:pat
+        let b:copilot_enabled = v:false
+        return
+      endif
+    endfor
+  endfunction
+
+  augroup AICopilotSensitiveGuard
+    autocmd!
+    autocmd BufReadPost,BufNewFile,BufWinEnter * call s:AI_CopilotGuard()
+  augroup END
+endif
+
+
+"*****************************************************************************
 "" [AI solution] Ask AI and replace selection
 "*****************************************************************************
 " Select a range, type an instruction in a prompt split, send the selection to
