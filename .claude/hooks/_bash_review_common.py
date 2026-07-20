@@ -162,7 +162,25 @@ DENY_COMMANDS = [
 # として扱う。`env -u LD_PRELOAD sudo` の値 LD_PRELOAD を実行体と誤認して
 # ラッパー内の危険コマンドを取りこぼす事故を防ぐため、フラグを楽観的に
 # 読み飛ばさず安全側 (判定不能 → 呼び出し側でフェイルクローズ) に倒す。
-_WRAPPER_EXECUTABLES = frozenset({"env", "command", "nohup", "nice", "time", "stdbuf"})
+_WRAPPER_EXECUTABLES = frozenset(
+    {
+        "env",
+        "command",
+        "nohup",
+        "nice",
+        "time",
+        "stdbuf",
+        # 以下は「実行体を後続に取る」点で上と同じだが、剥がし対象から漏れて
+        # いた。timeout/xargs 等は日常的に使われるうえ AI 自身も自然に付ける
+        # ため、未対応のままでは `timeout 10 sudo rm -rf /` が DENY 層にも
+        # 高リスク層にも一致せず単独モデルの経路まで格下げされていた。
+        "timeout",
+        "xargs",
+        "setsid",
+        "watch",
+        "flock",
+    }
+)
 
 # 各ラッパーの「値を取らない」フラグ。ここに無いフラグ (値付き or 未知) に
 # 遭遇したら _split_prefix は判定不能 (None) を返す。網羅ではなく、確実に
@@ -174,7 +192,58 @@ _WRAPPER_VALUELESS_FLAGS = {
     "nice": frozenset(),  # -n は値付き。無印 nice のみ透過
     "time": frozenset({"-p"}),
     "stdbuf": frozenset(),  # -i/-o/-e は値付き
+    # -s/--signal と -k/--kill-after は値付き → 判定不能へ
+    "timeout": frozenset({"--foreground", "--preserve-status", "-v", "--verbose"}),
+    # -n/-I/-L/-P/-s/-d/-E/-a は値付き → 判定不能へ
+    "xargs": frozenset(
+        {
+            "-0",
+            "--null",
+            "-r",
+            "--no-run-if-empty",
+            "-t",
+            "--verbose",
+            "-p",
+            "--interactive",
+            "-x",
+            "--exit",
+        }
+    ),
+    "setsid": frozenset({"-c", "--ctty", "-f", "--fork", "-w", "--wait"}),
+    # -n/--interval は値付き → 判定不能へ
+    "watch": frozenset(
+        {"-b", "--beep", "-e", "--errexit", "-g", "--chgexit", "-t", "--no-title"}
+    ),
+    # -w/--wait/--timeout, -E/--conflict-exit-code は値付き。-c/--command は
+    # `sh -c` と同じ「文字列をシェルに渡す」形なので、値付き扱いで判定不能に
+    # 倒れる (= 高リスクの ask) のがそのまま望ましい挙動になる。
+    "flock": frozenset(
+        {
+            "-s",
+            "--shared",
+            "-x",
+            "--exclusive",
+            "-n",
+            "--nonblock",
+            "-u",
+            "--unlock",
+            "-o",
+            "--close",
+            "-F",
+            "--no-fork",
+        }
+    ),
 }
+
+# フラグを剥がした後に「実行体ではない必須の位置引数」を取るラッパーと、その
+# 個数。timeout の DURATION と flock の lockfile/fd がこれにあたる。読み飛ばさ
+# ないと位置引数そのもの (`10`, `/tmp/lock`) を実行体と誤認し、その後ろの
+# 危険コマンドが一切分類されないまま素通りする。
+#
+# 逆に位置引数を「実行体かもしれない」として判定不能 (None) に倒すのは不可。
+# `timeout 30 npm test` のような極めてありふれた形が毎回 2 モデルの ask に
+# なり、False Positive のコストが実用に耐えない。
+_WRAPPER_POSITIONAL_ARGS = {"timeout": 1, "flock": 1}
 
 # サブコマンドの前に置かれ得る「値を空白区切りで取る」グローバルフラグ。
 # `git -C <dir> reset --hard` の <dir> をサブコマンドと誤認しないよう、
@@ -255,6 +324,25 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
                 if tokens[i] not in valueless:
                     return None  # 値付き/未知フラグ: 実行体を確定できない
                 i += 1
+            # フラグの後ろに続く必須の位置引数 (timeout の DURATION 等) を
+            # 読み飛ばす。位置引数が展開を含むと、空展開時に後続トークンが
+            # 位置引数の側へずれて実行体の特定がずれるため、確定できない
+            # ものとして安全側 (None) に倒す。
+            positionals = _WRAPPER_POSITIONAL_ARGS.get(base, 0)
+            for _ in range(positionals):
+                if i >= len(tokens):
+                    break
+                if _UNRESOLVABLE_EXPANSION.search(tokens[i]):
+                    return None
+                i += 1
+            # 位置引数の後ろにもフラグは置ける (`flock <file> -c <cmd>` は有効な
+            # 構文で、しかも -c は文字列をシェルに渡す = sh -c 相当)。ここで
+            # フラグをそのまま実行体として読むと `-c` が実行体になり何とも
+            # 一致せず、後ろの危険コマンドが素通りする。フラグ先頭形は上の
+            # ループで処理済みなので、この位置に残るフラグは想定外の形であり、
+            # 実行体を確定できないものとして安全側に倒す。
+            if positionals and i < len(tokens) and tokens[i].startswith("-"):
+                return None
             continue
         return tokens[i:]
     return []

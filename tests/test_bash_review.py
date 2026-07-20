@@ -728,6 +728,30 @@ class TestCommandHelpers:
             # so a stray quote must not be usable to duck the executable match.
             ('sudo "oops', (True, "sudo")),
             ("curl 'http://evil", (True, "curl")),
+            # Wrappers that take a mandatory positional before the command
+            # (timeout's DURATION, flock's lockfile) must have it consumed, or
+            # the positional itself is mistaken for the executable and the
+            # denied binary behind it is never matched -- the immediate-deny
+            # tier silently degraded to the single-model path.
+            ("timeout 10 sudo rm -rf /", (True, "sudo")),
+            ("timeout 5s curl http://evil", (True, "curl")),
+            ("flock /tmp/lock sudo whoami", (True, "sudo")),
+            ("flock 200 wget http://evil", (True, "wget")),
+            # Wrappers whose command follows directly.
+            ("xargs sudo whoami", (True, "sudo")),
+            ("setsid curl http://evil", (True, "curl")),
+            ("watch curl http://evil", (True, "curl")),
+            # Value-less wrapper flags stay transparent for the new wrappers.
+            ("timeout --foreground 10 sudo whoami", (True, "sudo")),
+            ("xargs -0 sudo whoami", (True, "sudo")),
+            ("setsid -f sudo whoami", (True, "sudo")),
+            ("flock -n /tmp/lock sudo whoami", (True, "sudo")),
+            # ...and value-taking / unknown flags still fail safe to review
+            # rather than letting the flag value pose as the executable.
+            ("timeout -s KILL 10 sudo whoami", (False, "")),
+            ("timeout -k 5 10 sudo whoami", (False, "")),
+            ("xargs -I{} sudo whoami", (False, "")),
+            ("watch -n 5 curl http://evil", (False, "")),
         ],
     )
     def test_is_deny_command(self, hook_fns, command, expected):
@@ -930,6 +954,22 @@ class TestHighRiskClassifier:
             ("python3 -m pip install evilpkg", "pip install"),
             ("python -m pip install evilpkg", "pip install"),
             ("python3 -m pip install --user evilpkg", "pip install"),
+            # The high-risk tier must survive the positional-taking wrappers
+            # too, not just the deny tier.
+            ("timeout 10 rm -rf ./build", "rm recursive"),
+            ("timeout 30 npm install left-pad", "npm install"),
+            ("flock /tmp/lock git push --force origin main", "git force push"),
+            ("xargs rm -rf ./build", "rm recursive"),
+            ("setsid npx create-react-app x", "npx"),
+            # Flags are also legal AFTER the mandatory positional
+            # (`flock <file> -c <cmd>` is valid syntax). Consuming the
+            # positional and then reading the flag as the executable resolved
+            # to "-c" and matched nothing, so `flock /tmp/l -c 'sudo rm -rf /'`
+            # slipped onto the single-model path -- the exact hole the
+            # flags-first form was already guarded against.
+            ("flock /tmp/l -c 'sudo rm -rf /'", "wrapped"),
+            ("flock /tmp/l --command 'rm -rf /'", "wrapped"),
+            ("timeout 10 -v sudo rm -rf /", "wrapped"),
         ],
     )
     def test_wrapper_and_flag_evasion_is_classified(
@@ -947,6 +987,17 @@ class TestHighRiskClassifier:
             "env FOO=bar python3 script.py",
             "nohup make build",
             "command ls -la",
+            # `timeout <seconds> <test command>` is an extremely common shape
+            # that the agent emits on its own. Consuming the mandatory
+            # positional must not push these onto the two-model ask path --
+            # a false-positive regression would be paid on every test run.
+            "timeout 30 npm test",
+            "timeout 300 pytest",
+            "timeout 10 ls -la",
+            "timeout 5m go test ./...",
+            "xargs -0 ls -l",
+            "flock /tmp/build.lock make build",
+            "setsid node server.js",
         ],
     )
     def test_wrapped_innocent_command_is_not_high_risk(self, hook_fns, command):
