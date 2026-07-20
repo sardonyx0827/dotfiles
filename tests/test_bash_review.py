@@ -823,10 +823,57 @@ class TestCommandHelpers:
             # tmux format-string execution regression (`#()` runs a shell command).
             ("tmux display-message -p '#(id)'", False),
             ("rg foo src", True),
+            # Output-file flag regression: SAFE_COMMANDS classified `git log` /
+            # `git diff` / `tree` as read-only, but all three write to an
+            # arbitrary path via a flag. A read-only fast path that can write is
+            # unsound regardless of threat model, so these must reach review.
+            # Verified against real binaries: both the `=`-attached and the
+            # space-separated spellings write the file.
+            ("git log --output=payload.txt", False),
+            ("git log --output payload.txt", False),
+            ("git log --output=payload.txt --format=format:pwned", False),
+            ("git diff --output=evil.txt", False),
+            ("git diff --output evil.txt", False),
+            # Quoted spelling: the shell reassembles it into the same flag, so
+            # matching only the raw token would reopen the hole (same rationale
+            # as the `rg '--pre'` case above).
+            ("git log '--output=payload.txt'", False),
+            # `tree` spells it as a short flag, including the bundled form
+            # (`tree -no FILE` writes -- verified against the real binary).
+            ("tree -o out.txt", False),
+            ("tree -no out.txt", False),
+            ("tree --outfile out.txt", False),
+            # No false positives: `-o` means something harmless for these two,
+            # and demoting them would cost latency on very common commands.
+            ("grep -o pattern file", True),
+            ("ls -o", True),
+            # Ordinary read-only spellings stay on the fast path.
+            ("git log --oneline", True),
+            ("git diff HEAD~1", True),
+            ("tree -L 2", True),
         ],
     )
     def test_can_skip_review(self, hook_fns, command, expected):
         assert hook_fns["_can_skip_review"](command) is expected
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            # An empty / whitespace-only command tokenizes to nothing. The guard
+            # must answer False rather than index into an empty list.
+            ("", False),
+            ("   ", False),
+            # The short-flag table is keyed by resolved executable, so a `-o`
+            # belonging to a command that is not in the table stays untouched.
+            ("grep -o pat f", False),
+            ("tree -o out.txt", True),
+            # Wrapper prefixes resolve to the real executable, so the guard must
+            # still see `tree` underneath.
+            ("env tree -o out.txt", True),
+        ],
+    )
+    def test_has_output_file_flag(self, hook_fns, command, expected):
+        assert hook_fns["_has_output_file_flag"](command) is expected
 
 
 class TestHighRiskClassifier:

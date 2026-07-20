@@ -682,6 +682,56 @@ def _has_tmux_format_exec(cmd: str) -> bool:
     )
 
 
+# SAFE_COMMANDS に「読み取り専用」として載せたコマンドでも、出力先ファイルを
+# 指定するフラグを持つものがある。実際 `git log --output=FILE --format=format:X`
+# は任意パスへ任意内容を書き込めるが、DENY 層にも高リスク層にも一致せず、
+# セーフスキップ (= AI を一度も呼ばずに即 allow を発行する経路) を素通りしていた。
+# `git diff --output` と `tree -o` も同型。読み取り専用の高速パスが書き込める
+# 時点で分類として不健全であり、これは脅威モデルとは独立した欠陥である
+# (over-eager なエージェントが --output 付きコマンドを生成する事故は、本フックが
+# 守ると宣言している射程内)。rg / tmux には専用のフラグ検査があるのに git / tree
+# には無いという非対称が原因なので、同じ設計原則をここにも適用する。
+#
+# 長フラグは「コマンド個別の表」にせず全セーフコマンド共通で弾く。個別表は
+# 今回のバグと同じ構造 (列挙漏れがそのままバイパスになる) を再生産するため、
+# SAFE_COMMANDS に将来コマンドが増えても既定で守られる側へ倒す。--output /
+# --outfile を出力先以外の意味で使う SAFE_COMMANDS は現存しない (git status /
+# git branch はそもそも --output を受け付けないことを実バイナリで確認済み)。
+# なお git は diff 系オプションの短縮形 (--outp=) を受け付けないため、完全一致と
+# `=` 付きの 2 形だけ見れば足りる (これも実バイナリで確認済み)。
+_OUTPUT_FILE_LONG_FLAGS = frozenset({"--output", "--outfile"})
+
+# 短フラグ側はコマンド個別にする。`-o` は grep では only-matching、ls では
+# 長形式一覧であり、一律に弾くと日常的なコマンドをレビュー送りにしてレイテンシ
+# だけ悪化する。出力先を意味すると確認できたものだけ列挙する。
+_OUTPUT_FILE_SHORT_FLAGS = {"tree": "o"}
+
+
+def _has_output_file_flag(cmd: str) -> bool:
+    """セーフ扱いのコマンドが出力先ファイル指定フラグを含むか判定する。
+
+    _tokenize (shlex) を使うのでクォート分割 (`git log '--output=x'`) は
+    シェルと同じく再結合されて照合できる。生文字列のままトークン比較すると
+    この関数だけが False を返してセーフスキップを許すため、_has_dangerous_rg_flag
+    と同じ正規化の設計原則に従う。
+    """
+    tokens = _tokenize(cmd)
+    if not tokens:
+        return False
+    short_letters = _OUTPUT_FILE_SHORT_FLAGS.get(_resolve_executable(cmd), "")
+    for tok in tokens[1:]:
+        flag = tok.split("=", 1)[0]  # `--output=foo` -> `--output`
+        if flag in _OUTPUT_FILE_LONG_FLAGS:
+            return True
+        # 束ねた短フラグ (`tree -no FILE` は実バイナリで書き込みを確認) も
+        # 出力先指定として成立する。長フラグは上で処理済みなので単一ダッシュ
+        # のみを見る (`--outfile` を短フラグ束と誤読しないため)。
+        if short_letters and len(flag) >= 2 and flag[0] == "-" and flag[1] != "-":
+            if any(c in short_letters for c in flag[1:]):
+                return True
+    return False
+
+
 def _is_safe_command(cmd: str) -> bool:
     # 機密パスを含む場合はセーフ扱いにせず AI レビューへ回す (Read deny の迂回防止)
     if _is_sensitive_command(cmd):
@@ -694,6 +744,10 @@ def _is_safe_command(cmd: str) -> bool:
         return False
     # tmux のフォーマット経由コマンド実行 `#(...)` も同様 (上の定義参照)
     if _has_tmux_format_exec(cmd):
+        return False
+    # 出力先ファイル指定フラグ (git --output / tree -o) を持つ「読み取り系」も
+    # 書き込みになるためセーフスキップさせない (上の定義参照)
+    if _has_output_file_flag(cmd):
         return False
     if cmd in SAFE_EXACT_COMMANDS:
         return True
