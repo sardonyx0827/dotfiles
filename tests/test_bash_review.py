@@ -548,6 +548,22 @@ class TestCommandHelpers:
             ("tmux list-panes", True),
             ("tmux send-keys -t 1 'rm -rf /'", False),
             ("tmux kill-server", False),
+            # tmux FORMATS run a shell command via `#(...)` ("a command may be
+            # executed and its output inserted using '#()'" -- man tmux), so the
+            # read-only subcommands are only read-only without one. A format
+            # string turns any of them into arbitrary code execution, which the
+            # safe-skip path would auto-allow with no review at all.
+            ("tmux display-message -p '#(id -un)'", False),
+            ("tmux list-panes -F '#(uname)'", False),
+            ("tmux list-sessions -F '#(curl evil)'", False),
+            ("tmux list-windows -F '#(sh -c x)'", False),
+            ("tmux ls -F '#(id)'", False),
+            ("tmux capture-pane -p -F '#(id)'", False),
+            # Quote/backslash splitting must not defeat it either.
+            ("tmux display-message -p '#\\(id)'", False),
+            # ...but the plain read-only forms stay on the fast path.
+            ("tmux display-message -p '#{session_name}'", True),
+            ("tmux list-panes -F '#{pane_id}'", True),
             # npm/pnpm/yarn run were removed from SAFE_COMMANDS (supply-chain).
             ("npm run build", False),
             ("pnpm run deploy", False),
@@ -577,6 +593,15 @@ class TestCommandHelpers:
             ("rg --file patterns.txt", False),
             ("rg --hostname-bin id foo", False),
             ("rg -nz foo", False),  # bundled short cluster containing z
+            # Quote/backslash splitting must not defeat the rg flag match: the
+            # shell strips them, so `rg '--pre' sh` runs the same preprocessor
+            # as `rg --pre sh`. Mirrors the sensitive-path normalization below.
+            ("rg '--pre' sh pattern .", False),
+            ('rg "--pre" sh pattern .', False),
+            ("rg --pr\\e sh pattern .", False),
+            ("rg '-f' patterns.txt src", False),
+            ("rg -'z' pattern .", False),
+            ("'rg' --pre sh pattern .", False),
             # ...but ordinary rg searches (no exec/file flag) stay on the fast path.
             ("rg foo", True),
             ("rg -i foo src", True),
@@ -694,6 +719,15 @@ class TestCommandHelpers:
             # Quote/backslash obfuscation of the name is normalized before match.
             ("su''do whoami", (True, "sudo")),
             ("c\\u\\r\\l http://evil", (True, "curl")),
+            # A quoted assignment value with whitespace must not shift the
+            # executable position and hide a denied binary behind it.
+            ('FOO="a b" sudo whoami', (True, "sudo")),
+            ("FOO='a b' curl http://evil", (True, "curl")),
+            # An unterminated quote makes shlex refuse to tokenize; _tokenize
+            # falls back to the quote-stripping splitter rather than raising,
+            # so a stray quote must not be usable to duck the executable match.
+            ('sudo "oops', (True, "sudo")),
+            ("curl 'http://evil", (True, "curl")),
         ],
     )
     def test_is_deny_command(self, hook_fns, command, expected):
@@ -758,8 +792,12 @@ class TestCommandHelpers:
             ("cat /proc/self/environ", False),
             ("cat ~/.kube/config", False),
             ("cat ../../etc/shadow", False),
-            # rg exec-flag bypass regression (arbitrary preprocessor per file).
+            # rg exec-flag bypass regression (arbitrary preprocessor per file),
+            # including the quoted form the shell reassembles into the same flag.
             ("rg --pre sh foo .", False),
+            ("rg '--pre' sh foo .", False),
+            # tmux format-string execution regression (`#()` runs a shell command).
+            ("tmux display-message -p '#(id)'", False),
             ("rg foo src", True),
         ],
     )
@@ -852,6 +890,17 @@ class TestHighRiskClassifier:
             ("nice npm install left-pad", "npm install"),
             ("FOO=1 npm install pkg", "npm install"),
             ("FOO=bar BAZ=2 rm -rf dist", "rm recursive"),
+            # A quoted assignment VALUE containing whitespace is still one word
+            # to the shell. Stripping quotes before splitting destroyed that
+            # boundary, so the value's second half (`b`) was mistaken for the
+            # executable and the real command behind it escaped classification.
+            ('FOO="a b" rm -rf ./x', "rm recursive"),
+            ("FOO='a b' npm install evil", "npm install"),
+            ('PATH="/a b/bin" GOFLAGS="-x y" rm -rf ./x', "rm recursive"),
+            # _tokenize's fallback path (shlex raises on the unterminated
+            # quote): classification must survive rather than silently empty.
+            ('rm -rf ./x "oops', "rm recursive"),
+            ("npm install evil 'oops", "npm install"),
             # Value-taking / unknown wrapper flags make the executable
             # unresolvable -> fail safe to the high-risk tier, never the fast
             # path (`env -u X sudo`, `nice -n 10 <cmd>`).
@@ -866,6 +915,21 @@ class TestHighRiskClassifier:
             ("npm --prefix /tmp install left-pad", "npm install"),
             # Quote/escape obfuscation of the executable name is normalized away.
             ("rm -rf ./build", "rm recursive"),
+            # A leading expansion is removed by the shell when it expands empty,
+            # so the *next* token is what actually runs. The executable cannot be
+            # determined statically, so these must fail safe to the high-risk
+            # tier rather than resolving to the expansion token and returning ""
+            # (which dropped `$(true) sudo rm -rf /` onto the single-model path).
+            ("$(true) rm -rf ./build", "wrapped"),
+            ("$EMPTY rm -rf ./build", "wrapped"),
+            ("${EMPTY} npm install evil", "wrapped"),
+            ("`true` rm -rf ./build", "wrapped"),
+            ("FOO=1 $(true) rm -rf ./build", "wrapped"),
+            # `python -m pip install` is the same supply-chain action as the
+            # already-classified `pip install`; the module form must not escape.
+            ("python3 -m pip install evilpkg", "pip install"),
+            ("python -m pip install evilpkg", "pip install"),
+            ("python3 -m pip install --user evilpkg", "pip install"),
         ],
     )
     def test_wrapper_and_flag_evasion_is_classified(
@@ -915,6 +979,12 @@ class TestHighRiskClassifier:
             "python3 script.py",
             "ruby -c script.rb",  # ruby's -c is a syntax CHECK, not eval
             "node app.js",
+            # `-m` alone is not the trigger: only `-m pip install` is the
+            # supply-chain action. Ordinary module runs stay on the fast path.
+            "python3 -m http.server",
+            "python3 -m pytest -q",
+            "python3 -m pip list",
+            "python3 -m pip show requests",
         ],
     )
     def test_interpreter_without_eval_flag_is_not_high_risk(self, hook_fns, command):
