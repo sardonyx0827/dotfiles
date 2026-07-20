@@ -226,12 +226,14 @@ install_apt_packages() {
   # PATH-visible aliases so those code paths resolve.
   #
   # Never clobber a real file here. These two were the only links in the script
-  # that skipped create_symlinks' backup step -- and they could not have used
-  # it: backup_if_real is defined *inside* create_symlinks, so it is not in
-  # scope at this point. A user who keeps their own `fd` or `bat` wrapper in
-  # ~/.local/bin had it destroyed with no backup and no warning. A symlink is
-  # ours to replace (same rule backup_if_real applies); anything else belongs
-  # to the user and wins.
+  # that skipped create_symlinks' backup step, back when backup_if_real was
+  # nested inside create_symlinks and so was not in scope at this point. A user
+  # who keeps their own `fd` or `bat` wrapper in ~/.local/bin had it destroyed
+  # with no backup and no warning. The rule below stays hand-rolled rather than
+  # delegating to the now-top-level backup_if_real: these aliases are generated
+  # artifacts that belong in ~/.local/bin, not dotfiles worth moving into
+  # $backup_dir. A symlink is ours to replace (the same rule backup_if_real
+  # applies); anything else belongs to the user and wins.
   link_debian_alias() {
     local source_cmd="$1" alias_path="$HOME/.local/bin/$2"
     command_exists "$source_cmd" || return 0
@@ -680,8 +682,8 @@ install_oh_my_zsh() {
 # already exists. Running this afterward means $HOME/.oh-my-zsh does not
 # exist yet when the official installer runs on a true first install.
 #
-# Depends on link_entry, defined inside create_symlinks -- always called
-# after create_symlinks in main(), which by then has defined it globally.
+# Depends on link_entry, which is now a top-level function (it used to be
+# nested inside create_symlinks, making this call order load-bearing).
 link_oh_my_zsh_theme() {
   # Oh My Zsh custom: keep a REAL directory (install_oh_my_zsh clones plugins
   # into custom/plugins/) and symlink only the theme file(s) tracked in the
@@ -722,73 +724,73 @@ install_vim_plug() {
 }
 
 # Create symbolic links
-create_symlinks() {
-  print_info "Creating symbolic links..."
+# --- create_symlinks and its steps -------------------------------------------
+# create_symlinks was a single ~320-line function mixing dotfile linking, git
+# credential/identity rendering, and per-tool (VS Code / Claude / Codex /
+# Gemini / tmux) wiring. It is now an orchestrator over the steps below; each
+# step keeps the comments that explain its own decisions.
+#
+# backup_if_real and link_entry used to be nested INSIDE create_symlinks. Bash
+# promotes a nested definition to global once the outer function first runs, so
+# the steps would still have resolved them -- but only as an invisible side
+# effect of call order. Hoisting makes the dependency explicit.
+#
+# Both read `backup_dir`, which create_symlinks assigns before invoking any
+# step. It is deliberately global (not `local`) for exactly that reason.
 
-  # Read whatever identity git resolves right now, BEFORE the .gitconfig link
-  # below replaces it. An upgrade from a real ~/.gitconfig that carried [user]
-  # keeps its name/email this way instead of silently losing it.
-  local prior_git_name prior_git_email
-  prior_git_name="$(git config --global user.name 2>/dev/null || true)"
-  prior_git_email="$(git config --global user.email 2>/dev/null || true)"
-
-  # Backup existing files. In dry-run nothing is moved, so the dir is never
-  # created (and the empty-dir cleanup at the end is skipped to match).
-  backup_dir="$HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$backup_dir"
-
-  # Helper: backup a path if it exists as a real file/dir (not a symlink)
-  backup_if_real() {
-    local target="$1"
-    # A symlink (even a broken one) is ours to replace, never worth backing up.
-    if [ -L "$target" ]; then
-      if [ "$DRY_RUN" -eq 1 ]; then
-        print_info "[DRY-RUN] would replace existing symlink $target"
-        return 0
-      fi
-      rm -f "$target"
+# Helper: backup a path if it exists as a real file/dir (not a symlink)
+backup_if_real() {
+  local target="$1"
+  # A symlink (even a broken one) is ours to replace, never worth backing up.
+  if [ -L "$target" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would replace existing symlink $target"
       return 0
     fi
-    # Nothing there: return success (a bare `return` would propagate the failed
-    # test's exit status and abort the caller under `set -e`).
-    [ -e "$target" ] || return 0
-    # Preserve the path structure under $backup_dir. A flat, basename-only
-    # backup silently overwrites files that share a basename across different
-    # destinations (settings.json / keybindings.json live under Code/ and
-    # .claude/), so all but the last one moved would be lost.
-    local rel dest_parent
-    case "$target" in
-    "$HOME"/*) rel="${target#"$HOME"/}" ;;
-    /*) rel="${target#/}" ;;
-    *) rel="$target" ;;
-    esac
-    dest_parent="$backup_dir/$(dirname "$rel")"
-    if [ "$DRY_RUN" -eq 1 ]; then
-      print_info "[DRY-RUN] would back up $target -> $dest_parent/"
-      return 0
-    fi
-    print_warning "Backing up existing $(basename "$target")"
-    mkdir -p "$dest_parent"
-    mv "$target" "$dest_parent/"
-  }
+    rm -f "$target"
+    return 0
+  fi
+  # Nothing there: return success (a bare `return` would propagate the failed
+  # test's exit status and abort the caller under `set -e`).
+  [ -e "$target" ] || return 0
+  # Preserve the path structure under $backup_dir. A flat, basename-only
+  # backup silently overwrites files that share a basename across different
+  # destinations (settings.json / keybindings.json live under Code/ and
+  # .claude/), so all but the last one moved would be lost.
+  local rel dest_parent
+  case "$target" in
+  "$HOME"/*) rel="${target#"$HOME"/}" ;;
+  /*) rel="${target#/}" ;;
+  *) rel="$target" ;;
+  esac
+  dest_parent="$backup_dir/$(dirname "$rel")"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_info "[DRY-RUN] would back up $target -> $dest_parent/"
+    return 0
+  fi
+  print_warning "Backing up existing $(basename "$target")"
+  mkdir -p "$dest_parent"
+  mv "$target" "$dest_parent/"
+}
 
-  # Helper: symlink a repo entry into a destination directory, backing up reals
-  link_entry() {
-    local src="$1"
-    local dest="$2"
-    if [ ! -e "$src" ]; then
-      print_warning "Skipping missing source: $src"
-      return
-    fi
-    backup_if_real "$dest"
-    if [ "$DRY_RUN" -eq 1 ]; then
-      print_info "[DRY-RUN] would link $dest -> $src"
-      return
-    fi
-    ln -sf "$src" "$dest"
-    print_success "Linked $(basename "$dest")"
-  }
+# Helper: symlink a repo entry into a destination directory, backing up reals
+link_entry() {
+  local src="$1"
+  local dest="$2"
+  if [ ! -e "$src" ]; then
+    print_warning "Skipping missing source: $src"
+    return
+  fi
+  backup_if_real "$dest"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_info "[DRY-RUN] would link $dest -> $src"
+    return
+  fi
+  ln -sf "$src" "$dest"
+  print_success "Linked $(basename "$dest")"
+}
 
+_link_top_level_dotfiles() {
   # Top-level dotfiles
   files=(
     ".zshrc"
@@ -802,6 +804,12 @@ create_symlinks() {
   for file in "${files[@]}"; do
     link_entry "$DOTFILES_DIR/$file" "$HOME/$file"
   done
+}
+
+_render_git_local_config() {
+  # Captured by create_symlinks BEFORE the .gitconfig link replaces whatever
+  # identity git currently resolves.
+  local prior_git_name="$1" prior_git_email="$2"
 
   # OS 別の資格情報ヘルパーを ~/.config/git/os.gitconfig に生成する。
   # .gitconfig は [include] でこれを読み込む。macOS は osxkeychain、それ以外は
@@ -857,7 +865,9 @@ create_symlinks() {
       fi
     fi
   fi
+}
 
+_link_editor_configs() {
   # Directories to symlink
   [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.config"
 
@@ -883,7 +893,9 @@ create_symlinks() {
   for entry in "${editor_config_files[@]}"; do
     link_entry "$DOTFILES_DIR/.config/Code/User/$entry" "$vscode_user_dir/$entry"
   done
+}
 
+_link_claude_config() {
   # Claude Code config: symlink individual entries so CLI runtime data
   # (projects/, sessions/, history.jsonl, backups/, etc.) stays out of the repo.
   [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.claude"
@@ -902,7 +914,9 @@ create_symlinks() {
     [ -e "$DOTFILES_DIR/.claude/$entry" ] &&
       link_entry "$DOTFILES_DIR/.claude/$entry" "$HOME/.claude/$entry"
   done
+}
 
+_link_codex_config() {
   # Codex config. Every entry is symlinked, including the directories Codex
   # scans for itself (skills/, agents/). hooks.json is the sole exception:
   # Codex does NOT expand ~ or $HOME inside it, so it is install-time RENDERED
@@ -1003,7 +1017,9 @@ create_symlinks() {
       fi
     fi
   fi
+}
 
+_link_gemini_config() {
   # Gemini config: symlink individual entries
   [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.gemini"
   local gemini_entries=(
@@ -1014,6 +1030,36 @@ create_symlinks() {
     [ -e "$DOTFILES_DIR/.gemini/$entry" ] &&
       link_entry "$DOTFILES_DIR/.gemini/$entry" "$HOME/.gemini/$entry"
   done
+}
+
+_link_tmux_helper() {
+  # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.tmux"
+  link_entry "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
+  [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
+}
+
+create_symlinks() {
+  print_info "Creating symbolic links..."
+
+  # Read whatever identity git resolves right now, BEFORE the .gitconfig link
+  # below replaces it. An upgrade from a real ~/.gitconfig that carried [user]
+  # keeps its name/email this way instead of silently losing it.
+  local prior_git_name prior_git_email
+  prior_git_name="$(git config --global user.name 2>/dev/null || true)"
+  prior_git_email="$(git config --global user.email 2>/dev/null || true)"
+
+  # Backup existing files. In dry-run nothing is moved, so the dir is never
+  # created (and the empty-dir cleanup at the end is skipped to match).
+  backup_dir="$HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$backup_dir"
+
+  _link_top_level_dotfiles
+  _render_git_local_config "$prior_git_name" "$prior_git_email"
+  _link_editor_configs
+  _link_claude_config
+  _link_codex_config
+  _link_gemini_config
 
   # Oh My Zsh custom theme: NOT handled here. This used to
   # `mkdir -p "$HOME/.oh-my-zsh/custom/themes"` at this point, which on a
@@ -1024,10 +1070,7 @@ create_symlinks() {
   # set -eo pipefail. See link_oh_my_zsh_theme, called from main() only
   # after install_oh_my_zsh.
 
-  # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.tmux"
-  link_entry "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
-  [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
+  _link_tmux_helper
 
   # Backup-dir bookkeeping. Guard the whole open+close as one unit: in dry-run
   # the dir was never created, so running `ls -A`/`rmdir` on it would fail under
