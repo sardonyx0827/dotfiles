@@ -54,7 +54,7 @@
 │   ├── hooks/                      # Codexフック (+ hooks.json)
 │   ├── skills/                     # Codexスキル (.claude/skillsへの厳選リンク + .system)
 │   ├── AGENTS.md                   # Codex向け指示
-│   └── config.toml                 # Codex設定
+│   └── config.toml.template        # Codex設定の雛形 (実体は ~/.codex/ 側。後述)
 ├── .config/                        # アプリケーション設定
 │   ├── Code/                       # VS Code (settings / keybindings)
 │   └── nvim/                       # Neovim (lazy.nvim) 設定
@@ -63,6 +63,8 @@
 ├── .oh-my-zsh/                     # Oh My Zsh設定
 │   └── custom/themes/              # Zshテーマ (px-rose-pine: pixeljae 製 agnoster ベースを vendored)
 ├── .vim/rc/                        # Vim設定本体 (分割ロード: 00-plugins, 10-basic ...)
+├── assets/                         # README / docs から参照する構成図 (SVG)
+├── docs/                           # 補助ドキュメント (ai-integration.md)
 ├── .gitconfig                      # Git設定
 ├── .gitignore_global               # グローバルgitignore
 ├── .tmux.conf                      # tmux設定
@@ -289,11 +291,16 @@ done
 # Codex設定 (agents/ と skills/ もディレクトリごとリンク。
 #             共有スキルの実体は .codex/skills/ 内の .claude/skills への相対リンク)
 mkdir -p ~/.codex
-for e in AGENTS.md config.toml hooks agents skills; do
+for e in AGENTS.md hooks agents skills; do
   ln -sf ~/dotfiles/.codex/$e ~/.codex/$e
 done
 # hooks.json はテンプレートから生成 (リポジトリに hooks.json 実体は無い)
 sed "s|__HOME__|$HOME|g" ~/dotfiles/.codex/hooks.json.template > ~/.codex/hooks.json
+# config.toml も同様にテンプレートから「初回のみ」複製する。symlink にしない
+# のは、Codex が実行時にこのファイルへ mcp_servers の Authorization ヘッダ等を
+# 書き込むため。リンクするとトークンがリポジトリ側に現れ git add 一回で漏れる。
+# 既存の config.toml があれば Codex の書き込み内容を消さないよう手を触れない。
+[ -e ~/.codex/config.toml ] || cp ~/dotfiles/.codex/config.toml.template ~/.codex/config.toml
 
 # Gemini設定
 mkdir -p ~/.gemini
