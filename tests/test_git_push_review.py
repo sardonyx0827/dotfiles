@@ -365,9 +365,32 @@ DETECTION_CASES = [
     ('echo "log: `git push origin main`"', True),
     ("echo `git push origin main`", True),
     ('echo "$(git -C "/tmp/some repo" push)"', True),
+    # `eval` / `sh -c` / `bash -c` execute their *string argument* as code, so
+    # the quoted range that strip_quoted_ranges discards as "just a message" is
+    # exactly what runs. Same class as the line-continuation bypass above: a
+    # shell mechanism turns supposedly inert text into an executed command.
+    ('eval "git push origin main"', True),
+    ("eval 'git push origin main'", True),
+    ('bash -c "git push origin main"', True),
+    ('sh -c "git push origin main"', True),
+    ("zsh -c 'git push origin main'", True),
+    ('bash -lc "git push origin main"', True),
+    ('bash -e -c "git push origin main"', True),
+    # A path-qualified interpreter is the same command. `/` has to count as a
+    # token boundary or `/bin/bash -c` slips past the interpreter check while
+    # the bare `bash -c` form is caught.
+    ('/bin/bash -c "git push origin main"', True),
+    ('/bin/sh -c "git push origin main"', True),
+    ("/usr/bin/env bash -c 'git push origin main'", True),
     ("git status", False),
     ("git stash push", False),
     ('echo "git push"', False),
+    # ...but an interpreter that is NOT running a push must stay quiet: the
+    # trigger is the push inside the executed string, not the interpreter.
+    ('eval "echo hi"', False),
+    ('bash -c "ls -la"', False),
+    ('sh -c "git status"', False),
+    ('/bin/bash -c "ls -la"', False),
     ('git commit -m "please dont git push this yet"', False),
     ("echo \"git push\" && echo 'git push'", False),
     ('echo "costs \\$(git push)"', False),

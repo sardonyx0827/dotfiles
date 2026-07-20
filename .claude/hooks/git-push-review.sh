@@ -160,6 +160,28 @@ strip_quoted_ranges() {
 
 cmd_for_match=$(strip_quoted_ranges "$cmd")
 
+# `eval` / `sh -c` / `bash -c` は文字列引数を「データ」ではなく「コード」として
+# 実行する。つまり strip_quoted_ranges が「単なるメッセージ」として捨てたクォート
+# 区間こそが実行される本体であり、`eval "git push origin main"` は本当に push する。
+# 行継続すり抜け (8f2d386) と同じく「不活性なはずのテキストがシェル機構で実行される」
+# クラスの穴。
+#
+# 引数を入れ子のコマンドラインとして再パースするのは大掛かりなので、そうした
+# インタプリタがコマンド中に現れる場合に限り、クォート「文字」だけを除去して
+# 中身を残した 2 本目のコピーを検査対象に足す。検査対象を増やすだけの一方向の
+# 拡張なので、インタプリタが無い既存の否定ケース (`echo "git push"` /
+# `git commit -m "... git push ..."`) は従来どおり静かなまま。push 確認は
+# 余分に ask へ倒れる方が安全側なので、この粒度で十分とする。
+# 境界に `/` を含めるのは、パス指定のインタプリタ (`/bin/bash -c` / `/bin/sh -c`)
+# も同じコマンドだから。`/` が境界でないと、裸の `bash -c` は捕まるのにパス付き
+# だけ素通りするという不整合な穴が残る。
+# shellcheck disable=SC2016  # 正規表現中の $ とバッククォートはリテラル
+executes_string_arg='(^|[;&|[:space:](`/])(eval|(bash|sh|zsh|dash|ksh)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[A-Za-z]*c)([[:space:]]|$)'
+if printf '%s' "$cmd" | grep -qE "$executes_string_arg"; then
+  cmd_for_match="${cmd_for_match}
+$(printf '%s' "$cmd" | tr -d "\"'")"
+fi
+
 # コマンド文字列のどこかに git ... push が含まれるか(チェーン・サブシェル・
 # コマンド置換含む。バッククォートも $(...) と同様コマンド開始境界になる)。
 # フラグは「値が = で連結される形式 (--git-dir=/x)」と「スペースで区切られる
