@@ -10,7 +10,11 @@ import time
 import urllib.error
 import urllib.request
 
-from mcp.server.fastmcp import FastMCP
+# MCP SDK は Claude Code が MCP サーバーを起動する環境で解決される実行時依存で、
+# CI の lint ジョブには入れていない (型検査のためだけに pydantic/httpx を含む
+# 依存ツリーを固定・追従するコストに見合わない)。FastMCP の API 誤用まで検査
+# したくなったら、ここの ignore を外して CI に mcp を固定導入すること。
+from mcp.server.fastmcp import FastMCP  # type: ignore[import-not-found]
 
 mcp = FastMCP("gemini-consultant")
 
