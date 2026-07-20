@@ -156,7 +156,9 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
             )
 
         elif os_name == "Windows":
-            from win10toast import ToastNotifier
+            # Windows 専用の任意依存。入っていないことが正常なので、mypy の
+            # import 解決失敗は指摘ではない (_bash_review_common.notify と同じ)。
+            from win10toast import ToastNotifier  # type: ignore[import-not-found]
 
             toaster = ToastNotifier()
             toaster.show_toast(safe_title, safe_message, duration=timeout)

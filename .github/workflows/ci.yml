@@ -109,7 +109,7 @@ jobs:
           cache: pip
           cache-dependency-path: .github/workflows/ci.yml
       - name: Install linters
-        run: python -m pip install --upgrade pip "ruff==0.15.6" "bandit==1.9.4"
+        run: python -m pip install --upgrade pip "ruff==0.15.6" "bandit==1.9.4" "mypy==1.19.1"
       # スコープは自作 Python のみ（.codex/skills/.system 配下の vendored スクリプトは除外）
       - name: ruff check
         run: ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
@@ -117,6 +117,21 @@ jobs:
         run: ruff format --check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
       - name: bandit (security, medium+ severity)
         run: bandit -ll -q -r .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
+      # フックには元から型注釈が付いていたが検証する仕組みが無く、実装と注釈が
+      # 無言で乖離し得た。設定ファイルは置かない: 既定値で緑になり、唯一の例外
+      # (Windows 専用の任意依存 win10toast) は import 箇所の inline ignore で
+      # 完結するため。設定を足すのは、それが実際に何かを検出するときだけにする。
+      # 2 回に分けるのは .claude/hooks と .codex/hooks が同名モジュール
+      # (bash-review.py / _bash_review_common.py) を持ち、両方を 1 回の呼び出しに
+      # 渡すと mypy が重複モジュールとして実行を拒否するため。codex 側の
+      # bash-review.py は別実体 (exit-2 変種) なので除外ではなく個別に検査する。
+      # tests/ は対象外: conftest / フック本体を sys.path 操作で読むため mypy の
+      # モジュール解決と噛み合わず、緑にするには実挙動と無関係なスタブ整備が
+      # 要る。守れない厳しさを掲げるより、本番コードを確実に縛る方を採る。
+      - name: mypy (type check)
+        run: |
+          mypy .claude/hooks .claude/mcp-servers scripts
+          mypy .codex/hooks
 
   shellcheck:
     name: shellcheck

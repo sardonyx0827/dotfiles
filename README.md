@@ -616,6 +616,22 @@ python3 -m pytest \
   --cov-report=term-missing --cov-fail-under=90
 ```
 
+### 静的解析
+
+CI は pytest に加えて `ruff`（lint / format）、`bandit`（medium 以上のセキュリティ
+指摘）、`shellcheck`（全シェルスクリプト、`-x` で source 先も追跡）、`mypy`（型検査）
+を実行します。mypy は設定ファイルを持たず既定値で通ります。
+
+```bash
+ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
+mypy .claude/hooks .claude/mcp-servers scripts
+mypy .codex/hooks   # 同名モジュールの重複を避けるため root を分けて実行する
+```
+
+> `tests/` は mypy の対象外です。conftest とフック本体を `sys.path` 操作で読み込む
+> 都合上、mypy のモジュール解決と噛み合わず、緑にするには実挙動と無関係なスタブ
+> 整備が必要になるためです。
+
 ## カスタマイズ
 
 ### Zshテーマの変更
