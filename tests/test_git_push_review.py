@@ -251,6 +251,30 @@ class TestClaudeVariant:
         assert "branch: feature-target" in reason
         assert "target repo commit" in reason
 
+    def test_push_still_asks_when_jq_is_unavailable(self, shell_env, git_repo):
+        # Without jq the command string cannot be extracted, so the push
+        # detection below it silently matched nothing and the hook exited 0 --
+        # the one gate in front of `git push` disappeared without a trace.
+        # Absence must degrade to a coarse ask, never to a silent pass.
+        shell_env.hide("jq")
+        res = shell_env.run(
+            CLAUDE_HOOK, stdin=payload("git push origin main"), cwd=git_repo
+        )
+        assert res.returncode == 0
+        output = json.loads(res.stdout)["hookSpecificOutput"]
+        assert output["permissionDecision"] == "ask"
+        assert "jq" in output["permissionDecisionReason"]
+
+    def test_non_push_still_passes_through_when_jq_is_unavailable(
+        self, shell_env, git_repo
+    ):
+        # The jq-less fallback must stay scoped to pushes; turning every Bash
+        # command into an ask would be worse than the gap it closes.
+        shell_env.hide("jq")
+        res = shell_env.run(CLAUDE_HOOK, stdin=payload("ls -la"), cwd=git_repo)
+        assert res.returncode == 0
+        assert res.stdout == ""
+
 
 class TestCodexVariant:
     def test_non_push_command_passes_through(self, shell_env, git_repo):
@@ -340,6 +364,24 @@ class TestCodexVariant:
         assert res.returncode == 2
         assert "branch: feature-target" in res.stderr
         assert "target repo commit" in res.stderr
+
+    def test_push_still_blocks_when_jq_is_unavailable(self, shell_env, git_repo):
+        # Same silent-skip gap as the claude variant; here the fallback signal
+        # is exit 2 + stderr rather than a JSON ask.
+        shell_env.hide("jq")
+        res = shell_env.run(
+            CODEX_HOOK, stdin=payload("git push origin main"), cwd=git_repo
+        )
+        assert res.returncode == 2
+        assert "jq" in res.stderr
+
+    def test_non_push_still_passes_through_when_jq_is_unavailable(
+        self, shell_env, git_repo
+    ):
+        shell_env.hide("jq")
+        res = shell_env.run(CODEX_HOOK, stdin=payload("ls -la"), cwd=git_repo)
+        assert res.returncode == 0
+        assert res.stderr == ""
 
 
 # --- Detection parity across BOTH variants -----------------------------------

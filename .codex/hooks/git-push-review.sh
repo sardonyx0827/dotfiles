@@ -5,11 +5,34 @@
 # ブロックは exit 2 + stderr で表明する (allow/deny は解釈するが ask は扱えない)。
 # git push 以外のコマンドは即 exit 0(判定は bash-review.py 等に委ねる)。
 #
-# 意図的に `set -e` は使わない: このフックは fail-open 設計であり、判定に
-# 失敗しても本体のコマンド実行を止めてはならない。各コマンドの失敗は
+# 意図的に `set -e` は使わない: このフックは概ね fail-open 設計であり、サマリ
+# 生成等に失敗しても本体のコマンド実行を止めてはならない。各コマンドの失敗は
 # `|| exit 0` / `2>/dev/null` で個別に握りつぶし、最悪でも exit 0 で抜ける。
+#
+# 唯一の例外が jq の不在 (下記)。これは「サマリを作れない」ではなく「push か
+# どうかを判定できない」であり、fail-open にするとゲート自体が無言で消える。
 
 input=$(cat)
+
+# jq が無いとコマンド文字列を取り出せず、下の push 判定は空文字を検査して
+# 必ず「該当なし」になる。そのまま exit 0 すると push 手前の唯一のゲートが
+# 無言で消えるため、ここだけは fail-open にしない。生の stdin を粗く検査し、
+# push らしき記述があれば (サマリは作れないので) ブロックだけを行う。
+# 判定材料が JSON エスケープ済みの生文字列なので、クォート除去による誤検知
+# 抑制は効かない = コミットメッセージ中の "git push" でもブロックされる。jq が
+# 無い環境限定の縮退動作としては、取りこぼすより過検知の方が望ましい。
+if ! command -v jq >/dev/null 2>&1; then
+  if printf '%s' "$input" | grep -qE 'git.*push'; then
+    cat >&2 <<'EOF'
+git push detected, but jq is unavailable so this hook could not parse the
+command or build the usual commit summary. Review manually before pushing
+(see ~/.codex/AGENTS.md "Git ワークフロー").
+EOF
+    exit 2
+  fi
+  exit 0
+fi
+
 cmd=$(echo "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 
 # シングル/ダブルクォートで囲まれた区間は実行されるコマンドではなく単なる
