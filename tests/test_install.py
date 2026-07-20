@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 from conftest import REPO_ROOT
 
 INSTALL = REPO_ROOT / "install.sh"
@@ -91,6 +92,67 @@ class TestSourceGuard:
         )
         assert res.returncode == 1
         assert "Dotfiles repository not found" in res.stdout
+
+
+class TestPinnedUpstreamRefs:
+    """Bootstrap scripts fetched from GitHub must name an immutable commit.
+
+    A raw.githubusercontent.com URL on HEAD/master executes whatever is there
+    at run time, so the bytes handed to a shell (twice, to root) can change
+    between two runs with no signal. A commit SHA already identifies its
+    content cryptographically, which is why pinning the ref is enough and no
+    separate checksum table is kept. These tests fail if a pin is ever reverted
+    to a branch -- the drift would otherwise be invisible.
+    """
+
+    GITHUB_RAW = re.compile(
+        r"https://raw\.githubusercontent\.com/[^/\s\"']+/[^/\s\"']+/([^/\s\"']+)/"
+    )
+
+    def test_every_github_raw_url_is_pinned_to_a_commit(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        # Only the URLs actually fetched at run time matter; the refresh
+        # recipe in the pin comment names repos, not raw URLs, so it is not
+        # matched here.
+        for ref in self.GITHUB_RAW.findall(text):
+            if ref.startswith("$"):  # interpolated pin variable
+                continue
+            assert re.fullmatch(r"[0-9a-f]{40}", ref), (
+                f"unpinned github raw ref {ref!r} in install.sh: "
+                "use a 40-char commit SHA, not a branch"
+            )
+
+    @pytest.mark.parametrize(
+        "var",
+        [
+            "HOMEBREW_INSTALL_REF",
+            "LAZYDOCKER_INSTALL_REF",
+            "OHMYZSH_INSTALL_REF",
+            "VIM_PLUG_REF",
+        ],
+    )
+    def test_pin_variable_holds_a_commit_sha(self, var):
+        text = INSTALL.read_text(encoding="utf-8")
+        match = re.search(rf'^{var}="([^"]*)"', text, re.MULTILINE)
+        assert match, f"{var} is not defined in install.sh"
+        assert re.fullmatch(r"[0-9a-f]{40}", match.group(1)), (
+            f"{var} must be a 40-char commit SHA, got {match.group(1)!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "var",
+        [
+            "HOMEBREW_INSTALL_REF",
+            "LAZYDOCKER_INSTALL_REF",
+            "OHMYZSH_INSTALL_REF",
+            "VIM_PLUG_REF",
+        ],
+    )
+    def test_pin_variable_is_actually_used(self, var):
+        # A pin nobody interpolates is worse than none: it reads as verified
+        # while the fetch still rides a branch.
+        text = INSTALL.read_text(encoding="utf-8")
+        assert f"${var}/" in text, f"{var} is defined but never used in a URL"
 
 
 class TestDetectOs:

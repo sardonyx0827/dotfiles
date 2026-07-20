@@ -32,6 +32,38 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # simulated -- main() announces and skips that whole block. See usage().
 DRY_RUN="${DRY_RUN:-0}"
 
+# --- Pinned upstream bootstrap scripts ---------------------------------------
+# These installers are fetched over the network and executed -- two of them by
+# root. Pointing at HEAD/master means the bytes that run can change between two
+# runs of this script with no signal to us, so each is pinned to an immutable
+# commit. raw.githubusercontent.com serves any commit SHA, and a commit SHA
+# already identifies its content cryptographically, so pinning the ref gives
+# the same guarantee a separate checksum table would -- without a manifest to
+# maintain, and without breaking every time upstream ships a release.
+#
+# What this does NOT cover: the pinned installer still downloads whatever is
+# current when it runs (Homebrew's own formulae, the ohmyzsh clone, ...). The
+# boundary is deliberate -- it is the bootstrap script itself that is verified,
+# not the tree it goes on to install.
+#
+# The remaining fetches go through vendor redirectors (astral.sh/uv, pyenv.run,
+# get.docker.com, deb.nodesource.com) that expose no immutable ref, so they
+# stay unpinned; pinning them would require a content hash re-pinned on every
+# upstream release.
+#
+# To refresh a pin (do this deliberately, and review the diff):
+#   git ls-remote https://github.com/Homebrew/install HEAD
+#   git ls-remote https://github.com/jesseduffield/lazydocker master
+#   git ls-remote https://github.com/ohmyzsh/ohmyzsh master
+#   git ls-remote https://github.com/junegunn/vim-plug master
+# A pin left alone indefinitely goes stale rather than insecure: an old
+# installer may stop working on a newer OS, which surfaces as a visible
+# failure, not a silent one.
+HOMEBREW_INSTALL_REF="99e13e96cbbdc1ac1ac09c0a40b450bf219ef3aa"
+LAZYDOCKER_INSTALL_REF="7e7aadc2071d58031bf2daafca1fbd4093efc23f"
+OHMYZSH_INSTALL_REF="98fe9b81a62ed75baf25cf23aa41e338a83bec6d"
+VIM_PLUG_REF="88e31471818e9a29a8a20a0ee61360cfd7bdc1cd"
+
 # Function to print colored messages
 print_info() {
   echo -e "${BLUE}[INFO]${NC} $1"
@@ -171,7 +203,7 @@ install_homebrew() {
     print_info "Installing Homebrew..."
     # Download-then-run (not `bash -c "$(curl ...)"`) so a truncated download
     # can't execute a partial installer -- see fetch_and_run's header.
-    fetch_and_run https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh /bin/bash
+    fetch_and_run "https://raw.githubusercontent.com/Homebrew/install/$HOMEBREW_INSTALL_REF/install.sh" /bin/bash
 
     # Add Homebrew to PATH for Apple Silicon
     if [[ -d "/opt/homebrew/bin" ]]; then
@@ -460,7 +492,7 @@ install_lazydocker() {
   if [[ "$OS" == "macos" ]]; then
     brew install lazydocker || print_warning "Failed to install lazydocker"
   elif [[ "$OS" == "ubuntu" ]]; then
-    fetch_and_run https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh bash ||
+    fetch_and_run "https://raw.githubusercontent.com/jesseduffield/lazydocker/$LAZYDOCKER_INSTALL_REF/scripts/install_update_linux.sh" bash ||
       print_warning "Failed to install lazydocker"
   fi
   if command_exists lazydocker; then
@@ -635,7 +667,7 @@ install_oh_my_zsh() {
     # and killed main() outright -- taking vim-plug, tmux plugins, the Neovim
     # setup, the AI tools, the MCP registration, the theme symlink and the
     # shell change down with it, for a component none of them depend on.
-    if fetch_and_run https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh sh -- --unattended; then
+    if fetch_and_run "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/$OHMYZSH_INSTALL_REF/tools/install.sh" sh -- --unattended; then
       print_success "Oh My Zsh installed"
     else
       print_warning "Failed to install Oh My Zsh (continuing; the zsh theme and plugins below may be incomplete)"
@@ -714,7 +746,7 @@ install_vim_plug() {
     # Guarded: a failed download must not abort the run. Report the real state
     # rather than printing success unconditionally.
     curl -fLo "$HOME/.vim/autoload/plug.vim" --create-dirs \
-      https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim ||
+      "https://raw.githubusercontent.com/junegunn/vim-plug/$VIM_PLUG_REF/plug.vim" ||
       print_warning "Failed to download vim-plug (continuing)"
   fi
 

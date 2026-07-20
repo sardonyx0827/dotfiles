@@ -256,6 +256,12 @@ curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
 > 起動時に lazy.nvim が自動でブートストラップし、プラグインを導入します（`install.sh`
 > も Neovim には vim-plug を入れません）。
 
+> **`install.sh` は同じ取得元を commit 固定で取ります。** 上の手動コマンドは
+> アップストリーム公式の形（`master`）のままなので、両者は異なるバイト列を取得し
+> 得ます。`install.sh` 側が固定している理由と pin の更新手順は、スクリプト冒頭の
+> `*_REF` 変数のコメントを参照してください。Homebrew / Oh My Zsh の手動手順
+> （上の 1. と 5.）も同様です。
+
 </details>
 
 <details>
