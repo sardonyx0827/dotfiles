@@ -760,6 +760,79 @@ class TestOptionalInstallerFailures:
         assert "AFTER_FONTS" in res.stdout
         assert "[WARNING]" in res.stdout
 
+    def test_oh_my_zsh_download_failure_does_not_abort_script(self, shell_env):
+        # The Oh My Zsh installer download was the one optional installer whose
+        # fetch_and_run was unguarded. Under `set -eo pipefail` a transient
+        # network failure there aborted main() outright, so everything after it
+        # (vim-plug, tmux plugins, Neovim setup, AI tools, MCP registration, the
+        # theme symlink and the shell change) silently never ran.
+        shell_env.stub("git")
+        res = run_sourced(
+            'fetch_and_run() { return 1; }; install_oh_my_zsh; echo "AFTER_OMZ"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_OMZ" in res.stdout
+        assert "[WARNING]" in res.stdout
+
+    def test_oh_my_zsh_download_failure_does_not_claim_success(self, shell_env):
+        shell_env.stub("git")
+        res = run_sourced(
+            "fetch_and_run() { return 1; }; install_oh_my_zsh",
+            shell_env.env,
+        )
+        assert "Oh My Zsh installed" not in res.stdout
+
+
+class TestAptAliasSymlinks:
+    """Debian ships bat/fd as batcat/fdfind, so install_apt_packages drops
+    PATH-visible aliases into ~/.local/bin. Those two `ln -sf` calls are the
+    only links in the script that never went through create_symlinks' backup
+    helper -- and `backup_if_real` is nested inside create_symlinks, so it is
+    not even in scope there. A real user binary at that path was destroyed
+    with no backup and no warning."""
+
+    def _prepare(self, shell_env):
+        shell_env.stub("batcat")
+        shell_env.stub("fdfind")
+        local_bin = shell_env.home / ".local" / "bin"
+        local_bin.mkdir(parents=True, exist_ok=True)
+        return local_bin
+
+    def test_real_user_binary_is_never_replaced(self, shell_env):
+        local_bin = self._prepare(shell_env)
+        mine = local_bin / "fd"
+        mine.write_text("#!/bin/sh\necho MINE\n", encoding="utf-8")
+
+        res = run_sourced("install_apt_packages", shell_env.env)
+
+        assert res.returncode == 0, res.stderr
+        assert not mine.is_symlink(), "a real user binary must not become a symlink"
+        assert "MINE" in mine.read_text(encoding="utf-8")
+        assert "[WARNING]" in res.stdout
+
+    def test_alias_is_created_when_nothing_is_in_the_way(self, shell_env):
+        local_bin = self._prepare(shell_env)
+
+        res = run_sourced("install_apt_packages", shell_env.env)
+
+        assert res.returncode == 0, res.stderr
+        for name in ("bat", "fd"):
+            assert (local_bin / name).is_symlink(), f"{name} alias was not created"
+
+    def test_existing_alias_symlink_is_refreshed(self, shell_env):
+        # A symlink is ours to replace (same rule backup_if_real applies):
+        # a stale target must be re-pointed, not left dangling.
+        local_bin = self._prepare(shell_env)
+        stale = local_bin / "fd"
+        stale.symlink_to("/nonexistent/old-fdfind")
+
+        res = run_sourced("install_apt_packages", shell_env.env)
+
+        assert res.returncode == 0, res.stderr
+        assert stale.is_symlink()
+        assert stale.resolve().name == "fdfind"
+
 
 class TestInstallOsPackages:
     """OS-specific package installation, extracted from main()'s inline

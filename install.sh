@@ -224,9 +224,27 @@ install_apt_packages() {
   # On Debian/Ubuntu the binaries are named `batcat` and `fdfind`, but the
   # configs (.zshrc vf(), nvim telescope) invoke `bat` and `fd`. Provide
   # PATH-visible aliases so those code paths resolve.
+  #
+  # Never clobber a real file here. These two were the only links in the script
+  # that skipped create_symlinks' backup step -- and they could not have used
+  # it: backup_if_real is defined *inside* create_symlinks, so it is not in
+  # scope at this point. A user who keeps their own `fd` or `bat` wrapper in
+  # ~/.local/bin had it destroyed with no backup and no warning. A symlink is
+  # ours to replace (same rule backup_if_real applies); anything else belongs
+  # to the user and wins.
+  link_debian_alias() {
+    local source_cmd="$1" alias_path="$HOME/.local/bin/$2"
+    command_exists "$source_cmd" || return 0
+    if [ -e "$alias_path" ] && [ ! -L "$alias_path" ]; then
+      print_warning "$alias_path already exists and is not a symlink; leaving it alone (no $2 alias created)"
+      return 0
+    fi
+    ln -sf "$(command -v "$source_cmd")" "$alias_path"
+  }
+
   mkdir -p "$HOME/.local/bin"
-  command_exists batcat && ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
-  command_exists fdfind && ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+  link_debian_alias batcat bat
+  link_debian_alias fdfind fd
 
   print_success "APT packages installed"
 }
@@ -608,8 +626,18 @@ install_oh_my_zsh() {
     # is a positional arg to the installer (keeps it from starting a shell or
     # running chsh -- install.sh handles the shell change separately), so it goes
     # after `--`, yielding `sh <tmp> --unattended`.
-    fetch_and_run https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh sh -- --unattended
-    print_success "Oh My Zsh installed"
+    #
+    # Guarded like every other optional installer (install_uv / install_pyenv /
+    # install_lazydocker / install_docker / install_nodejs). Unguarded, a
+    # transient network failure here returned non-zero under `set -eo pipefail`
+    # and killed main() outright -- taking vim-plug, tmux plugins, the Neovim
+    # setup, the AI tools, the MCP registration, the theme symlink and the
+    # shell change down with it, for a component none of them depend on.
+    if fetch_and_run https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh sh -- --unattended; then
+      print_success "Oh My Zsh installed"
+    else
+      print_warning "Failed to install Oh My Zsh (continuing; the zsh theme and plugins below may be incomplete)"
+    fi
   else
     print_success "Oh My Zsh already installed"
   fi
