@@ -220,15 +220,17 @@
   "sandbox": {
     "enabled": false,
     "excludedCommands": ["docker", "docker-compose", "git"],
-    "allowedNetworkHosts": [
-      "github.com",
-      "api.github.com",
-      "registry.npmjs.org",
-      "pypi.org",
-      "files.pythonhosted.org",
-      "crates.io",
-      "static.crates.io"
-    ]
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "registry.npmjs.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "crates.io",
+        "static.crates.io"
+      ]
+    }
   },
   "effortLevel": "xhigh",
   "advisorModel": "opus",
