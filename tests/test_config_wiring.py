@@ -49,6 +49,78 @@ def test_claude_settings_hook_and_statusline_paths_exist():
         )
 
 
+# Paths whose *contents* are secrets (or, for .git/config, are what turns a
+# "safe" git read into arbitrary code execution -- see the SAFE_COMMANDS comment
+# in _bash_review_common.py). The hook README calls permissions.deny "the hard
+# boundary" that bash-review only advises on top of; that claim only holds if
+# the boundary actually covers writes. It used to deny reads of all of these
+# while denying exactly one write pattern, so a write path was guarded by
+# bash-review alone -- and bash-review had a hole there (git --output).
+# Read-denied build artifacts (node_modules, dist, build) are deliberately NOT
+# listed: those denies exist to cut noise, and writing them is legitimate.
+#
+# The verb is `Edit`, never `Write`. Claude Code evaluates file permission rules
+# under `Edit(path)` only, and an `Edit` rule covers *every* file-editing tool
+# (Write included). A `Write(path)` deny is not consulted at all: it parses fine
+# and reads as protection while enforcing nothing, and the CLI prints a startup
+# warning for each one. Adding the `Write` twin was tried and reverted -- keep
+# these Edit-only so the list cannot drift back into inert entries.
+SECRET_PATH_PATTERNS = [
+    "**/id_rsa*",
+    "**/id_ed25519*",
+    "**/id_ecdsa*",
+    "**/*.key",
+    "**/*.pem",
+    "**/*.token",
+    "**/.ssh/**",
+    "**/.aws/**",
+    "**/secrets/**",
+    "**/.git/config",
+]
+
+
+def _deny_rules() -> set[str]:
+    return set(
+        json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))["permissions"]["deny"]
+    )
+
+
+def test_secret_paths_are_denied_for_editing():
+    """Every secret-content path must be denied for editing, not just reading.
+
+    Regression guard for the asymmetry described above.
+    """
+    deny = _deny_rules()
+    missing = [
+        f"Edit({pattern})"
+        for pattern in SECRET_PATH_PATTERNS
+        if f"Edit({pattern})" not in deny
+    ]
+    assert not missing, f"permissions.deny is missing edit-side guards: {missing}"
+
+
+def test_dotenv_is_denied_for_editing():
+    """`.env` uses its own spellings (no `**/` prefix) in the existing Read denies,
+    so it is checked separately rather than bent into SECRET_PATH_PATTERNS."""
+    deny = _deny_rules()
+    missing = [
+        f"Edit({pattern})"
+        for pattern in (".env", ".env.*")
+        if f"Edit({pattern})" not in deny
+    ]
+    assert not missing, f"permissions.deny is missing .env edit guards: {missing}"
+
+
+def test_no_write_verb_deny_rules():
+    """`Write(path)` deny rules are never consulted (see the note above), so they
+    are protection-shaped noise and make the CLI warn at startup. Fail if one
+    reappears."""
+    inert = sorted(rule for rule in _deny_rules() if rule.startswith("Write("))
+    assert not inert, (
+        f"permissions.deny has inert Write() rules; use Edit(...) instead: {inert}"
+    )
+
+
 def test_codex_hooks_template_renders_valid_json_and_paths_exist():
     text = CODEX_HOOKS_TEMPLATE.read_text(encoding="utf-8")
     # install.sh renders the template by substituting __HOME__; the result must
