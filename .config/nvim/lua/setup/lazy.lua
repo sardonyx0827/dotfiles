@@ -41,6 +41,21 @@ local function load_plugins()
         local ok, plugin = pcall(require, module)
         if ok and plugin then
           table.insert(plugins, plugin)
+        else
+          -- A spec that fails to load used to vanish from lazy.setup without a
+          -- trace: the plugin simply stopped existing. Nothing could catch it
+          -- either, since no luacheck / vint runs over this tree in CI, so a
+          -- typo here degraded the editor silently until noticed by hand.
+          -- Two distinct failures are folded together on purpose -- both mean
+          -- "this file produced no usable spec":
+          --   not ok   -> require raised (syntax error, runtime error)
+          --   ok, nil  -> the module loaded but returned nothing (missing `return`)
+          local detail = ok and "loaded but returned no spec (missing `return`?)"
+              or tostring(plugin)
+          vim.notify(
+            ("lazy.lua: skipped plugin spec '%s': %s"):format(module, detail),
+            vim.log.levels.ERROR
+          )
         end
       end
     end
