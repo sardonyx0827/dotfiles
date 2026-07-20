@@ -41,7 +41,14 @@ while IFS= read -r -d '' f; do
     # は window.console === console (ブラウザのグローバル) を指す実行可能な
     # デバッグ文なので検出対象にする。`myconsole.log(` のように console が
     # 別の識別子に融合しているケースは、直前が英数字のままなので引き続き除外される。
-    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]])debugger(;|$)' "$path" 2>/dev/null | head -5)
+    #
+    # debugger 側の直後条件は `(;|$)` ではなく「識別子文字以外 or 行末」で判定する。
+    # debugger は文ではなくキーワードなので `;` も行末も必須ではなく、
+    # `if (x) { debugger }` や `debugger // remove me` のように同一行に他の
+    # トークンが続く形が実際に最も多い。`(;|$)` はそれらを丸ごと取りこぼしていた。
+    # 融合判定の文字クラスに `_` と `$` を足すのは、JS の識別子文字だから
+    # (`debugger_x` / `$debugger` は別の識別子であってデバッグ文ではない)。
+    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5)
     ;;
   *.py)
     hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5)

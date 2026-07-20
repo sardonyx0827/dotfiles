@@ -154,8 +154,20 @@ SCAN_CASES = [
     ("app.js", "debugger;\n", True),
     # Split so this test file itself is not flagged by stop-audit.sh.
     ("app.py", "break" + "point()\n", True),
-    # Fused identifiers are not bare debug statements.
+    # A `debugger` statement does not have to be followed by `;` or the end of
+    # the line: it is a keyword, so anything that is not an identifier character
+    # terminates it. Requiring `;|$` silently missed the two most common shapes
+    # a leftover breakpoint actually takes.
+    ("app.js", "if (x) { debugger }\n", True),
+    ("app.js", "debugger // remove me\n", True),
+    ("app.ts", "  debugger\n", True),
+    ("app.ts", "while (1) { debugger; break }\n", True),
+    # Fused identifiers are not bare debug statements. `_` and `$` are identifier
+    # characters in JS, so they must fuse just like alphanumerics do.
     ("app.ts", "myconsole.log(1)\nconst debuggerTool = 1\n", False),
+    ("app.js", "const $debugger = 1\n", False),
+    ("app.js", "let debugger_x = 1\n", False),
+    ("app.js", "const x = mydebugger\n", False),
     # window.console IS the global console; a dot before "console" must not
     # hide it from the scan.
     ("app.ts", 'window.console.log("x")\n', True),
