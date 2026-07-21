@@ -10,7 +10,6 @@ config.use_ime = true
 -- Acceptable values are SteadyBlock, BlinkingBlock, SteadyUnderline, BlinkingUnderline, SteadyBar, and BlinkingBar.
 config.default_cursor_style = 'BlinkingBlock'
 -- font (macos: brew install --cask font-ubuntu-mono)
-config.font = wezterm.font("Ubuntu Mono", { weight = "Medium", stretch = "Normal", style = "Normal" })
 config.font = wezterm.font_with_fallback {
   'Ubuntu Mono',
   'Hiragino Sans'
