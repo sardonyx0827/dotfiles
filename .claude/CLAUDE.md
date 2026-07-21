@@ -74,11 +74,12 @@ Launch conditions (when any of the following are met):
 
 When working on specification review, design, bug fixes, or test code creation, follow the **codex-consultation** skill.
 
-Two second-opinion layers coexist — treat them as depth tiers, not interchangeable:
+Three second-opinion channels coexist — treat them as tiers along two axes (vendor and weight), not interchangeable:
 
-- **advisor (Opus)** — fast primary self-check over the whole trajectory. Call before substantive work, before declaring done, and when first stuck. Low friction (no prompt to author), so use it as the routine checkpoint.
-- **Codex** — selective escalation for an independent, cross-vendor opinion, limited to the heavier cases the **codex-consultation** / **debugging-protocol** skills define (spec/design proposals, large-scale changes, test strategy, 2+ consecutive failed fixes → root-cause).
-- **On conflicting advice** — do not silently pick a side; surface both opinions to the user.
+- **advisor (Opus — same-vendor, routine)** — fast primary self-check over the whole trajectory. Sees the full transcript automatically, zero friction (no prompt to author). Call before substantive work, before declaring done, and when first stuck — the routine checkpoint.
+- **gemini-consultant (Google — cross-vendor, lightweight)** — a cheap, fast cross-vendor gut-check via the MCP server. Use `review_gemini` (Flash) for high-frequency, local "did I miss anything?" checks, and `consult_gemini` (Pro) for a quick cross-vendor design gut-check _before_ an idea is heavy enough to warrant Codex. Reach for it when you want another vendor's eyes but the case is lighter than a Codex escalation.
+- **Codex (OpenAI — cross-vendor, heavyweight)** — selective escalation for an independent opinion on the heavier cases the **codex-consultation** / **debugging-protocol** skills define (spec/design proposals, large-scale changes, test strategy, 2+ consecutive failed fixes → root-cause). Unlike the other two it can also act (implement / rescue) when explicitly instructed.
+- **On conflicting advice** — do not silently pick a side; surface the opinions to the user.
 
 ## Visual Asset Generation
 
