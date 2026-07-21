@@ -1118,9 +1118,13 @@ class TestHooksJsonTemplate:
         assert "__HOME__" not in content
         assert str(home) in content
         assert json.loads(content)  # must still be valid JSON
-        # Hooks must invoke python3: bare `python` does not exist on stock
-        # Ubuntu or Homebrew installs (same rationale as the MCP registration).
-        assert "python3 '" in content
+        # bash-review is launched through the fail-closed launcher (wiring
+        # pinned in test_config_wiring.py). The python3-not-bare-python rule
+        # (bare `python` does not exist on stock Ubuntu or Homebrew installs,
+        # same rationale as the MCP registration) now lives inside the
+        # launcher, exercised by test_bash_review_launcher.py; the rendered
+        # config itself must still never invoke bare `python`.
+        assert "bash-review-launcher.sh'" in content
         assert "python '" not in content
 
     def test_rerun_regenerates_hooks_json(self, shell_env):

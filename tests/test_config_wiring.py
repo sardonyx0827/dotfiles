@@ -121,6 +121,50 @@ def test_no_write_verb_deny_rules():
     )
 
 
+def _pretooluse_bash_commands() -> list[str]:
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    commands = []
+    for entry in settings["hooks"]["PreToolUse"]:
+        if entry.get("matcher") == "Bash":
+            commands += [hook["command"] for hook in entry["hooks"]]
+    return commands
+
+
+def test_bash_review_is_wired_through_failclosed_launcher():
+    """A bare `python3 .../bash-review.py` hook command fails OPEN when the
+    review cannot happen at all: Claude Code treats a hook that cannot start
+    (python3 missing) or that crashes as a non-blocking error and runs the
+    Bash command anyway. settings.json must launch the review through
+    bash-review-launcher.sh, which turns those into an explicit `ask` -- guard
+    the wiring so it cannot silently revert to the fail-open form."""
+    commands = _pretooluse_bash_commands()
+    assert any("bash-review-launcher.sh" in c for c in commands), (
+        "PreToolUse Bash hooks must launch bash-review via the launcher"
+    )
+    direct = [c for c in commands if "bash-review.py" in c]
+    assert not direct, f"bash-review.py must not be invoked directly: {direct}"
+
+
+def test_codex_bash_review_is_wired_through_failclosed_launcher():
+    """Same startup fail-open gap as the Claude side, same guard: the template
+    must launch bash-review through the .codex launcher variant (which reports
+    failure as exit 2 + stderr, since Codex has no `ask` vocabulary and parses
+    hook stdout as structured output)."""
+    text = CODEX_HOOKS_TEMPLATE.read_text(encoding="utf-8")
+    data = json.loads(text.replace("__HOME__", "/home/tester"))
+    commands = [
+        hook["command"]
+        for entry in data["hooks"]["PreToolUse"]
+        if entry.get("matcher") == "Bash"
+        for hook in entry["hooks"]
+    ]
+    assert any("bash-review-launcher.sh" in c for c in commands), (
+        "codex PreToolUse Bash hooks must launch bash-review via the launcher"
+    )
+    direct = [c for c in commands if "bash-review.py" in c]
+    assert not direct, f"bash-review.py must not be invoked directly: {direct}"
+
+
 def test_codex_hooks_template_renders_valid_json_and_paths_exist():
     text = CODEX_HOOKS_TEMPLATE.read_text(encoding="utf-8")
     # install.sh renders the template by substituting __HOME__; the result must

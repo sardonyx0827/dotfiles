@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 '__HOME__/.codex/hooks/bash-review.py'"
+            "command": "bash '__HOME__/.codex/hooks/bash-review-launcher.sh'"
           },
           {
             "type": "command",

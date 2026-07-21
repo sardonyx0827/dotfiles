@@ -10,12 +10,19 @@
 
 ### PreToolUse
 
-- **bash-review** (`hooks/bash-review.py`, matcher: `Bash`):
+- **bash-review** (`hooks/bash-review.py` via `hooks/bash-review-launcher.sh`,
+  matcher: `Bash`):
   Reviews every Bash command before execution — static allow/deny fast-paths
   (no AI call), a static secret pre-send scan that refuses to forward commands
   carrying raw credentials to any LLM, a parallel Gemini+Codex AND-gate for
   high-risk commands, and a Gemini→Codex cascade for the low-risk majority.
   Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
+  `settings.json` launches it through the launcher, not bare `python3`: a hook
+  command that cannot start (no `python3`, missing file) or crashes with an
+  unexpected exit code is treated by Claude Code as a _non-blocking_ error —
+  the command would run unreviewed. The launcher converts every such
+  "review never happened" case into an explicit `ask`, and passes the normal
+  vocabulary (exit 0 + decision JSON, exit 2 + stderr) through untouched.
   See **bash-review — design rationale & threat model** below for why the
   tiers are structured this way and what they do (and do not) defend against.
 - **git-push-review** (`hooks/git-push-review.sh`, matcher: `Bash`,
@@ -132,7 +139,19 @@ latency low for the common case:
      Gemini's verdict (`deny` unless Gemini's flag was soft).
 5. **Fail toward the human.** Malformed stdin, an unavailable Codex, or any
    exception raised before a decision is emitted resolves to `ask` / `deny`,
-   never a silent allow.
+   never a silent allow. This includes the review **never starting**:
+   `bash-review-launcher.sh` turns a missing `python3`, a missing
+   `bash-review.py`, or a crash (any exit other than 0/2) into an explicit
+   `ask`, where the bare `python3 …/bash-review.py` wiring would have been
+   downgraded by Claude Code to a non-blocking error — i.e. fail-open. What
+   the launcher cannot cover is its own failure to start; that residual case
+   is bounded by `permissions.deny`, as below.
+
+**Sandbox is off on purpose.** Claude Code's `sandbox` feature is disabled in
+`settings.json` (`"sandbox": {"enabled": false}`): the enforcement boundary is
+`permissions.deny` plus these hooks. While disabled, sibling keys under
+`sandbox` (`network.allowedDomains`, `excludedCommands`) are never consulted —
+they are inert, not an active allowlist, so don't read them as protection.
 
 **Accepted tradeoffs (chosen, not overlooked):**
 

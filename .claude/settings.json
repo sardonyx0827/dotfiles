@@ -193,7 +193,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/bash-review.py"
+            "command": "bash ~/.claude/hooks/bash-review-launcher.sh"
           },
           {
             "type": "command",
@@ -233,7 +233,6 @@
   },
   "sandbox": {
     "enabled": false,
-    "excludedCommands": ["docker", "docker-compose", "git"],
     "network": {
       "allowedDomains": [
         "github.com",
@@ -244,7 +243,8 @@
         "crates.io",
         "static.crates.io"
       ]
-    }
+    },
+    "excludedCommands": ["docker", "docker-compose", "git"]
   },
   "effortLevel": "xhigh",
   "advisorModel": "opus",

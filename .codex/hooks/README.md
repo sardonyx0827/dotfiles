@@ -20,8 +20,12 @@ Codex CLI は Claude Code とほぼ同じ形のフック機構を持つ(`PreTool
 
 Matcher: `Bash`(実行順)
 
-1. **bash-review** (`hooks/bash-review.py`):
+1. **bash-review** (`hooks/bash-review.py`、起動は `hooks/bash-review-launcher.sh` 経由):
    Bash コマンドを実行前にレビューする。ログは `~/.codex/logs/bash-review.log`。
+   hooks.json は素の `python3` ではなくランチャーを呼ぶ: python3 の不在・
+   フックファイルの欠落・本体のクラッシュ (0/2 以外の終了) はフックのエラー
+   扱い = fail-open になるため、ランチャーがそれらを exit 2 + stderr の
+   ブロックへ変換する (正常系の exit 0 / exit 2 は素通し)。
 2. **git-push-review** (`hooks/git-push-review.sh`):
    `git push` を検知し、対象コミットのサマリを添えてブロックする。
 
@@ -72,10 +76,11 @@ Codex の PreToolUse フックは `permissionDecision` のうち **`allow` / `de
 > (`bash-review.py` の `_AGENT_BLOCK_DIRECTIVE`)。**人間による意図レビューが必須の
 > 作業は Claude 側で回すこと。**
 
-|                 | `.claude` 版                                                 | `.codex` 版     |
-| --------------- | ------------------------------------------------------------ | --------------- |
-| git-push-review | `{hookSpecificOutput: {permissionDecision: "ask"}}` + exit 0 | stderr + exit 2 |
-| stop-audit      | `{decision: "block"}` + exit 0                               | stderr + exit 2 |
+|                                              | `.claude` 版                                                 | `.codex` 版     |
+| -------------------------------------------- | ------------------------------------------------------------ | --------------- |
+| git-push-review                              | `{hookSpecificOutput: {permissionDecision: "ask"}}` + exit 0 | stderr + exit 2 |
+| stop-audit                                   | `{decision: "block"}` + exit 0                               | stderr + exit 2 |
+| bash-review-launcher (起動不能/クラッシュ時) | `ask` JSON + exit 0                                          | stderr + exit 2 |
 
 ### 2. stdout は JSON として解釈される
 

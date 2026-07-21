@@ -28,7 +28,7 @@ Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DE
   <img src="../assets/bash-review-flow.svg" alt="bash-review 多層セーフティゲート フロー図 — 静的DENY→セーフスキップ→秘密の送信前スキャン→高リスク(Gemini∥Codex 並列ANDゲート)→低リスク(Gemini一次→Codex二次)、判定前例外はask" width="100%">
 </p>
 
-- **実装**: [`.claude/hooks/bash-review.py`](../.claude/hooks/bash-review.py)（入口）/ 判定ロジック共有モジュール [`_bash_review_common.py`](../.claude/hooks/_bash_review_common.py)
+- **実装**: [`.claude/hooks/bash-review-launcher.sh`](../.claude/hooks/bash-review-launcher.sh)（起動ラッパー: python3 不在・本体クラッシュ時に fail-open ではなく ask へ倒す）→ [`.claude/hooks/bash-review.py`](../.claude/hooks/bash-review.py)（入口）/ 判定ロジック共有モジュール [`_bash_review_common.py`](../.claude/hooks/_bash_review_common.py)
 - Claude 変種と Codex 変種 (`.codex/hooks/`) は共有モジュールの**実体を 1 つだけ持つ**: `.codex/hooks/_bash_review_common.py` は `.claude/hooks/` 側への相対シンボリックリンクで、ドリフトは検知するまでもなく構造的に起こりません。[`tests/test_hook_sync.py`](../tests/test_hook_sync.py) はそのリンクの形（symlink であること / 相対であること / import 可能であること）を固定します。
 - 詳細な脅威モデルと設計判断は [`.claude/hooks/README.md`](../.claude/hooks/README.md) を参照。
 
