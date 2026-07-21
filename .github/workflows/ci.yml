@@ -31,6 +31,12 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
+    env:
+      # Python バージョン非依存のステップ (zsh 導入・生成物チェック・ファイル別
+      # カバレッジ床) を担当する代表レッグ。両レッグで走らせても追加のシグナルが
+      # 無いのに CI 時間と外部ネットワーク依存 (apt) だけ倍増するため 1 本に
+      # 集約する。matrix を更新するときはここも合わせて更新すること。
+      PRIMARY_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -42,8 +48,12 @@ jobs:
           cache-dependency-path: .github/workflows/ci.yml
       - name: Install test dependencies
         run: python -m pip install --upgrade pip "pytest==9.0.1" "pytest-cov==7.0.0"
-      # .zshrc の構文検査 (zsh -n) に必要。未導入なら該当テストは skip される
+      # .zshrc の構文検査 (zsh -n) に必要。未導入なら該当テストは skip される。
+      # zsh の検査対象は Python バージョンと無関係なので代表レッグにだけ導入し、
+      # もう一方のレッグでは該当テストの skip を許容する (apt-get はキャッシュの
+      # 無い外部ネットワーク依存 = 失敗点なので、無駄に 2 回走らせない)
       - name: Install zsh
+        if: matrix.python-version == env.PRIMARY_PYTHON
         run: sudo apt-get update && sudo apt-get install -y zsh
       # フックは stdin/subprocess/urlopen を全てスタブ化した hermetic テスト。
       # codex / gemini / tmux 等の実バイナリは不要（conftest.py 参照）。
@@ -65,13 +75,19 @@ jobs:
       # SSOT 側だけの更新を弾く。生成器自身の --check を使うのは、`git diff` が
       # 未追跡ファイルや孤児 TOML を見逃すため（tests 側でも同じ検査をするが、
       # ここで独立に落とすことで失敗理由が CI ログ上で明示される）。
+      # 生成物の一致検査は Python バージョン非依存なので代表レッグでのみ実行。
       - name: Check generated Codex agents are current
+        if: matrix.python-version == env.PRIMARY_PYTHON
         run: python3 scripts/gen_codex_agents.py --check
       # 集計 90% ゲートはファイル単位の低カバレッジを平均で覆い隠すため、
       # 各ファイルに最低 80% を別途強制する（測定された全ファイルが対象。
       # 以前あった .coveragerc の omit は、対象だった .codex 側の複製が
       # symlink になり測定上 1 ファイルへ統合されたため不要になった）。
+      # 床チェックは代表レッグでのみ実行する: レッグ間でファイル別プロファイルは
+      # ほぼ同一で、もう一方のレッグにも集計 90% ゲートは残っているため、
+      # 2 回目の床チェックが追加で検出できるものは実質無い。
       - name: Enforce per-file coverage floor (80%)
+        if: matrix.python-version == env.PRIMARY_PYTHON
         run: |
           python - <<'PY'
           import json
