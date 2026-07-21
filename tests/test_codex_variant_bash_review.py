@@ -46,11 +46,14 @@ class TestAllowPaths:
         assert res.stdout == ""
         assert res.stderr == ""
 
-    def test_codex_allow_exits_zero_silently(self, run_hook):
+    def test_gemini_error_codex_allow_exits_zero_silently(self, run_hook):
+        # ERROR (Gemini unavailable — no opinion) is the one flag a lone Codex
+        # ALLOW still resolves to allow (exit 0). ASK/DENY are not; see
+        # TestDenyOverrideRemoved.
         res = run_hook(
             HOOK,
             hook_payload("make build"),
-            urlopen=fake_gemini("ASK"),
+            env={"GEMINI_API_KEY": None},
             run=fake_run(stdout="ALLOW"),
         )
         assert res.exit_code == 0
@@ -174,9 +177,10 @@ class TestHighRisk:
 
 
 class TestDenyOverrideRemoved:
-    """Parity with the claude variant: an explicit Gemini DENY is never
-    silently overridden by a lone Codex ALLOW — the disagreement blocks
-    (exit 2) with both verdicts on stderr.
+    """Parity with the claude variant: a Gemini verdict that carries an opinion
+    (DENY, or ASK — "confirmation needed") is never silently overridden by a
+    lone Codex ALLOW — the disagreement blocks (exit 2) with both verdicts on
+    stderr. Only ERROR (no opinion) is resolved by a lone Codex ALLOW.
     """
 
     def test_gemini_deny_codex_allow_blocks(self, run_hook):
@@ -190,16 +194,16 @@ class TestDenyOverrideRemoved:
         assert res.stdout == ""
         assert "Gemini=DENY" in res.stderr
 
-    def test_gemini_ask_codex_allow_still_exits_zero(self, run_hook):
+    def test_gemini_ask_codex_allow_blocks(self, run_hook):
         res = run_hook(
             HOOK,
             hook_payload("make deploy"),
             urlopen=fake_gemini("ASK"),
             run=fake_run(stdout="ALLOW"),
         )
-        assert res.exit_code == 0
+        assert res.exit_code == 2
         assert res.stdout == ""
-        assert res.stderr == ""
+        assert "Gemini=ASK" in res.stderr
 
 
 class TestErrorFallbacks:

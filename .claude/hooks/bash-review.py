@@ -6,8 +6,9 @@
 #        許可、両モデル DENY 一致時のみ deny、それ以外 (判定割れ/ASK/ERROR) は
 #        両判定を添えて ask。片方説得での自動実行 (OR ゲート化) はしない。
 #   3. 低リスク層: Gemini (高スループット) が ALLOW なら即許可。
-#      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。Gemini の明示的 DENY を
-#      Codex の ALLOW 単独で自動上書きはしない (両判定を添えて ask)。
+#      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。意見を伴う Gemini 判定
+#      (明示的 DENY / 要確認 ASK) は Codex の ALLOW 単独で自動上書きしない
+#      (両判定を添えて ask)。ERROR (無意見) のみ Codex ALLOW で解消。
 #
 # Gemini/Codex のレビュー呼び出しロジックは _bash_review_common.py に集約し、
 # codex 変種 (.codex/hooks/bash-review.py) とドリフトしないようにしてある。
@@ -253,9 +254,35 @@ try:
         )
         notify("Bash Review - 確認が必要", f"判定不一致: {short_cmd}", 8)
 
+    elif codex_verdict == "ALLOW" and gemini_verdict == "ASK":
+        # Gemini の ASK は「確認が必要」= 人間確認の明示要求 (レビュープロンプトの
+        # 定義)。ERROR (不可用 = 無意見) と違い単なる不確実ではないため、DENY と
+        # 同じく単独 Codex ALLOW では解消せず、両判定を添えて人間へ回す。片方の
+        # ALLOW で ASK を潰せると、片モデルさえ説得すれば実行に至る OR ゲートに
+        # なり、「疑わしきは人間へ倒す」原則が ASK/DENY で非一貫になる。
+        emit_decision(
+            "ask",
+            f"Gemini=ASK (confirmation requested) but Codex approved: "
+            f"{_sanitize_notify(codex_output.strip(), limit=160)} — confirm manually",
+        )
+        write_detail_log(
+            {
+                "Gemini": gemini_output,
+                "Codex": codex_output,
+                "Result": "ASK (gemini ASK vs codex ALLOW, override disabled)",
+            }
+        )
+        log_summary(
+            "ASK",
+            "codex",
+            f"gemini=ASK, codex=ALLOW (override disabled), took={elapsed:.1f}s",
+        )
+        notify("Bash Review - 確認が必要", f"要確認: {short_cmd}", 8)
+
     elif codex_verdict == "ALLOW":
-        # ASK は不確実、ERROR は不可用であり、どちらも明示的な拒否ではない
-        # ため Codex の ALLOW で解消してよい。
+        # ここに来るのは gemini==ERROR (Gemini 不可用 = 唯一の意見が Codex) のみ。
+        # DENY/ASK は上の分岐で捌き済み。無意見なので graceful degradation として
+        # 単独 Codex ALLOW で解消してよい (ここは摩擦を増やさない)。
         emit_decision(
             "allow",
             f"Gemini flagged ({gemini_verdict}) but Codex approved: "

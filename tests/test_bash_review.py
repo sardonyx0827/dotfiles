@@ -177,7 +177,10 @@ class TestGeminiStage:
 
 
 class TestCodexStage:
-    def test_gemini_ask_codex_allow(self, run_hook):
+    def test_gemini_ask_codex_allow_asks(self, run_hook):
+        # Gemini ASK ("confirmation needed") is escalated to Codex, but a lone
+        # Codex ALLOW does NOT resolve it to allow — it goes to the human (ask),
+        # like an explicit DENY. Codex is still consulted (the escalation runs).
         calls = []
         res = run_hook(
             HOOK,
@@ -185,8 +188,8 @@ class TestCodexStage:
             urlopen=fake_gemini("ASK"),
             run=fake_run(stdout="ALLOW", calls=calls),
         )
-        assert res.decision == "allow"
-        assert "Codex approved" in res.reason
+        assert res.decision == "ask"
+        assert "Gemini=ASK" in res.reason
         assert calls[0][0][:2] == ["codex", "exec"]
 
     def test_gemini_ask_codex_ask(self, run_hook):
@@ -1239,10 +1242,12 @@ class TestHighRiskFlow:
 
 
 class TestDenyOverrideRemoved:
-    """A single Codex ALLOW must no longer silently override an explicit
-    Gemini DENY (that made the gate an OR-gate for an attacker: convincing
-    either model was enough to execute). The disagreement now goes to the
-    human with both verdicts.
+    """A single Codex ALLOW must not silently override a Gemini verdict that
+    carries an opinion (DENY, or ASK — "confirmation needed"). Letting one
+    model's ALLOW clear the other's caution makes the gate an OR-gate for an
+    attacker: convincing either model would be enough to execute. Both
+    disagreements go to the human with both verdicts. Only ERROR
+    (unavailability — no opinion at all) is resolved by a lone Codex ALLOW.
     """
 
     def test_gemini_deny_codex_allow_asks_with_both_verdicts(self, run_hook):
@@ -1256,18 +1261,23 @@ class TestDenyOverrideRemoved:
         assert "Gemini=DENY" in res.reason
         assert "Codex" in res.reason
 
-    def test_gemini_ask_codex_allow_still_allows(self, run_hook):
-        # ASK is uncertainty, not an explicit veto: Codex may still resolve it.
+    def test_gemini_ask_codex_allow_asks_with_both_verdicts(self, run_hook):
+        # ASK is the model's explicit "a human should confirm" (the review
+        # prompt defines it that way), not mere uncertainty a second model may
+        # clear. A lone Codex ALLOW no longer resolves it to allow.
         res = run_hook(
             HOOK,
             hook_payload("make deploy"),
             urlopen=fake_gemini("ASK"),
             run=fake_run(stdout="ALLOW"),
         )
-        assert res.decision == "allow"
+        assert res.decision == "ask"
+        assert "Gemini=ASK" in res.reason
+        assert "Codex" in res.reason
 
     def test_gemini_error_codex_allow_still_allows(self, run_hook):
-        # ERROR is unavailability, not a verdict: Codex remains the fallback.
+        # ERROR is unavailability, not a verdict: Codex remains the fallback,
+        # so a lone Codex ALLOW still resolves it to allow.
         res = run_hook(
             HOOK,
             hook_payload("make deploy"),

@@ -37,7 +37,8 @@
 #      両モデル DENY 一致時のみ deny、それ以外 (判定割れ/ASK/ERROR) は両判定を
 #      添えて ask。片方説得での自動実行 (OR ゲート化) はしない。
 #   3. 低リスク層: Gemini ALLOW → 即許可。疑義時のみ Codex 二次確認。ただし
-#      Gemini の明示的 DENY を Codex の ALLOW 単独で自動上書きはしない (ask へ)。
+#      意見を伴う Gemini 判定 (明示的 DENY / 要確認 ASK) は Codex の ALLOW 単独
+#      では自動上書きしない (ask へ)。ERROR (無意見) のみ Codex ALLOW で解消。
 import concurrent.futures
 import contextlib
 import json

@@ -6,8 +6,9 @@
 #        許可 (exit 0)、それ以外 (両 DENY/判定割れ/ASK/ERROR) は両判定を添えて
 #        ブロック (exit 2)。片方説得での自動実行 (OR ゲート化) はしない。
 #   3. 低リスク層: Gemini (高スループット) が ALLOW なら即許可。
-#      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。Gemini の明示的 DENY を
-#      Codex の ALLOW 単独で自動上書きはしない (両判定を添えてブロック)。
+#      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。意見を伴う Gemini 判定
+#      (明示的 DENY / 要確認 ASK) は Codex の ALLOW 単独で自動上書きしない
+#      (両判定を添えてブロック)。ERROR (無意見) のみ Codex ALLOW で解消。
 # Codex は permissionDecision の allow/deny は解釈するが ask は未サポートで、
 # ask を返すとフックがエラー扱いになり fail-open する (実測 Codex 0.144.5:
 # "PreToolUse hook returned unsupported permissionDecision:ask")。Claude の ask
@@ -269,9 +270,34 @@ try:
         notify("Bash Review - 確認が必要", f"判定不一致: {short_cmd}", 8)
         sys.exit(2)
 
+    elif codex_verdict == "ALLOW" and gemini_verdict == "ASK":
+        # Gemini の ASK は「確認が必要」= 人間確認の明示要求 (レビュープロンプトの
+        # 定義)。ERROR (不可用 = 無意見) と違い単なる不確実ではないため、DENY と
+        # 同じく単独 Codex ALLOW では解消しない。Codex には ask 相当が無いので
+        # ブロック (exit 2) で両判定を stderr に返し、人間の確認へ回す。
+        emit_block(
+            f"Gemini=ASK (confirmation requested) but Codex approved: "
+            f"{_sanitize_notify(codex_output.strip(), limit=160)} — confirm manually"
+        )
+        write_detail_log(
+            {
+                "Gemini": gemini_output,
+                "Codex": codex_output,
+                "Result": "ASK (gemini ASK vs codex ALLOW, override disabled)",
+            }
+        )
+        log_summary(
+            "ASK",
+            "codex",
+            f"gemini=ASK, codex=ALLOW (override disabled), took={elapsed:.1f}s",
+        )
+        notify("Bash Review - 確認が必要", f"要確認: {short_cmd}", 8)
+        sys.exit(2)
+
     elif codex_verdict == "ALLOW":
-        # ASK は不確実、ERROR は不可用であり、どちらも明示的な拒否ではない
-        # ため Codex の ALLOW で解消してよい。
+        # ここに来るのは gemini==ERROR (Gemini 不可用 = 唯一の意見が Codex) のみ。
+        # DENY/ASK は上の分岐で捌き済み。無意見なので graceful degradation として
+        # 単独 Codex ALLOW で解消してよい。
         decided_exit = 0
         write_detail_log(
             {

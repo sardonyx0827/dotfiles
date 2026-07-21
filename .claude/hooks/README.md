@@ -129,18 +129,21 @@ latency low for the common case:
    short-circuits and Codex is never called; that short-circuit is the main
    latency win. When Gemini returns `ASK` / `DENY` / `ERROR`, the command is
    escalated to the slower but more capable Codex, and how Codex's verdict is
-   applied depends on how hard Gemini's flag was — a lone `ALLOW` clears a soft
-   flag but **not** an explicit refusal:
-   - Gemini **`ASK` / `ERROR`** (soft — uncertainty or unavailability, not a
-     refusal): a Codex `ALLOW` resolves it to `allow`.
-   - Gemini **`DENY`** (an explicit refusal): a lone Codex `ALLOW` does **not**
-     override it back to `allow`. The disagreement resolves to `ask`, put to the
-     human with both verdicts attached. Letting one model's `ALLOW` override the
-     other's `DENY` would turn the cascade into an OR-gate — convincing _either_
-     model would be enough to run the command, the opposite of what a second
-     opinion is for.
+   applied depends on whether Gemini's flag carried an _opinion_ — a lone
+   `ALLOW` clears a no-opinion flag but **not** a flag that voiced caution:
+   - Gemini **`DENY`** (an explicit refusal) or **`ASK`** (the model's explicit
+     "a human should confirm this" — the review prompt defines `ASK` that way):
+     a lone Codex `ALLOW` does **not** override it. The disagreement resolves to
+     `ask`, put to the human with both verdicts attached. Letting one model's
+     `ALLOW` clear the other's caution would turn the cascade into an OR-gate —
+     convincing _either_ model would be enough to run the command, the opposite
+     of what a second opinion is for — and would apply "fail toward the human"
+     inconsistently across `ASK` vs `DENY`.
+   - Gemini **`ERROR`** (unavailability — no opinion at all, not a verdict): a
+     Codex `ALLOW` resolves it to `allow`. Codex is simply the sole reviewer
+     left, so its approval carries (graceful degradation, no added friction).
    - Codex `DENY` → `deny`; Codex `ASK` → `ask`; Codex `ERROR` → fall back to
-     Gemini's verdict (`deny` unless Gemini's flag was soft).
+     Gemini's verdict (`deny` if Gemini said `DENY`, otherwise `ask`).
 5. **Fail toward the human.** Malformed stdin, an unavailable Codex, or any
    exception raised before a decision is emitted resolves to `ask` / `deny`,
    never a silent allow. This includes the review **never starting**:
