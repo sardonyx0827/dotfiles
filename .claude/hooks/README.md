@@ -55,10 +55,14 @@ Matcher: `Write|Edit|MultiEdit` (runs in order):
 
 ## Shared libraries (`_`-prefixed, not hooks themselves)
 
-The Codex hooks in `.codex/hooks/` run the same per-file logic as these, and
-differ only in how they pick targets and report verdicts. That shared logic
-lives here as the real file; `.codex/hooks/` holds relative symlinks to it, so
-the two cannot drift apart. See `.codex/hooks/README.md` for the full table.
+These four files hold the per-file logic shared between the two sides — the
+lint/format matrices and bash-review's verdict logic. They live here as the
+real files; `.codex/hooks/` holds relative symlinks to them, so this shared
+logic cannot drift apart. The hooks that consume it (`lint.sh`,
+`auto-format.sh`, `bash-review.py`, …) are _not_ symlinked: each side keeps its
+own copy, because Claude and Codex differ in how they receive targets, report
+verdicts, and place hooks on events. See `.codex/hooks/README.md` for the full
+table and those differences.
 
 - **`_hook_common.sh`**: `hook_log` (timestamped, size-capped) and
   `hook_notify` (terminal-notifier / osascript / notify-send).
