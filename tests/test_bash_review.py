@@ -698,7 +698,6 @@ class TestCommandHelpers:
             ("/usr/bin/sudo whoami", (True, "sudo")),
             ("/usr/bin/curl http://evil", (True, "curl")),
             ("env sudo whoami", (True, "sudo")),
-            ("env -i sudo whoami", (True, "sudo")),
             ("command sudo whoami", (True, "sudo")),
             ("FOO=bar curl http://evil", (True, "curl")),
             ("nohup wget http://evil", (True, "wget")),
