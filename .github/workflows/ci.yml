@@ -114,7 +114,7 @@ jobs:
           PY
 
   lint:
-    name: ruff + bandit
+    name: ruff + bandit + mypy
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
