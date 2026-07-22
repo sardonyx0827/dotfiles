@@ -84,8 +84,8 @@
   <!-- codex sub-branch rail -->
   <line x1="86" y1="784" x2="86" y2="906" stroke="#403d52"/>
   <g class="mono" font-size="13">
-    <text x="100" y="798"><tspan fill="#908caa">Gemini DENY × Codex ALLOW　⇒　</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan><tspan fill="#6e6a86">　(自動上書き禁止)</tspan></text>
-    <text x="100" y="824"><tspan fill="#908caa">Codex ALLOW (Gemini ASK/ERROR)　⇒　</tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan></text>
+    <text x="100" y="798"><tspan fill="#908caa">Gemini ASK / DENY × Codex ALLOW　⇒　</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan><tspan fill="#6e6a86">　(自動上書き禁止)</tspan></text>
+    <text x="100" y="824"><tspan fill="#908caa">Codex ALLOW (Gemini ERROR のみ)　⇒　</tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan></text>
     <text x="100" y="850"><tspan fill="#908caa">Codex ASK　⇒　</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan></text>
     <text x="100" y="876"><tspan fill="#908caa">Codex DENY　⇒　</tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan></text>
     <text x="100" y="902"><tspan fill="#908caa">Codex ERROR　⇒　Gemini へフォールバック (DENY⇒</tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan><tspan fill="#908caa"> / ASK·ERROR⇒</tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan><tspan fill="#908caa">)</tspan></text>
