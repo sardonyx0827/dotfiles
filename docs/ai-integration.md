@@ -16,7 +16,8 @@ Claude Code が主エンジンとして駆動し、他の LLM は **第二意見
 - **advisor (Opus)** — 全軌跡を見る高速なセルフチェック（一次の第二意見）
 - **Codex** — クロスベンダーの独立レビュー / 委譲先（`codex-consultation` skill・`codex-delegator` agent）
 - **Gemini** — 高速な一次審査と相談（自作 `gemini-consultant` MCP サーバー）
-- **GitHub Copilot** — 補完 + CLI、**Gemma (Ollama)** — ローカル/オフライン実行
+- **GitHub Copilot** — 補完 + CLI
+- **Gemma (Ollama)** — ローカル/オフライン実行
 
 ---
 
