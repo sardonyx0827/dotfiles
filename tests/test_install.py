@@ -1378,3 +1378,97 @@ class TestFetchAndRun:
         )
         assert "Failed to download" in res.stdout
         assert "FAILED rc=1" in res.stdout
+
+
+# A pip3 stub that reproduces PEP 668: a plain `--user` install aborts with
+# the externally-managed guard, but the same install succeeds once
+# `--break-system-packages` is present.
+_PIP_PEP668_STUB = r"""
+for a in "$@"; do
+  if [ "$a" = "--break-system-packages" ]; then
+    exit 0
+  fi
+done
+if [ "$1" = "install" ]; then
+  echo "error: externally-managed-environment" >&2
+  echo "This environment is externally managed" >&2
+  exit 1
+fi
+exit 0
+"""
+
+# A pip3 stub whose install always fails for a non-PEP-668 reason (bad package
+# / no network), so the retry must NOT trigger and the reason must surface.
+_PIP_HARD_FAIL_STUB = r"""
+if [ "$1" = "install" ]; then
+  echo "ERROR: Could not find a version that satisfies boguspkg" >&2
+  echo "ERROR: No matching distribution found for boguspkg" >&2
+  exit 1
+fi
+exit 0
+"""
+
+
+class TestPipInstallUser:
+    """pip_install_user survives PEP 668 and surfaces real failures instead
+    of the old `pip install --user ... 2>/dev/null` (which both fails on
+    externally-managed Python and hides the reason)."""
+
+    def test_plain_user_install_is_not_broken_for_managed_flag(self, shell_env):
+        # Happy path: a healthy pip needs no --break-system-packages, and the
+        # override must not be applied speculatively (older pip rejects it).
+        shell_env.stub("pip3")  # default body: log call, exit 0
+        res = run_sourced("pip_install_user pip3 somepkg", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "pip3 install --user somepkg" in shell_env.calls
+        assert not any("--break-system-packages" in c for c in shell_env.calls)
+        assert "Failed to install" not in res.stdout
+
+    def test_pep668_triggers_break_system_packages_retry(self, shell_env):
+        # externally-managed guard -> retry into the user site with the
+        # override, and succeed without warning.
+        shell_env.stub("pip3", body=_PIP_PEP668_STUB)
+        res = run_sourced("pip_install_user pip3 mypkg", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert any(
+            "install --user --break-system-packages mypkg" in c for c in shell_env.calls
+        ), shell_env.calls
+        assert "externally managed" in res.stdout
+        assert "Failed to install" not in res.stdout
+
+    def test_non_pep668_failure_surfaces_reason_and_does_not_retry(self, shell_env):
+        # The whole point of dropping `2>/dev/null`: a genuine failure must
+        # report pip's reason, and must NOT be retried with the override
+        # (there is no externally-managed marker to justify it).
+        shell_env.stub("pip3", body=_PIP_HARD_FAIL_STUB)
+        res = run_sourced("pip_install_user pip3 boguspkg", shell_env.env)
+        assert res.returncode == 0, res.stderr  # non-fatal by contract
+        assert "Failed to install boguspkg" in res.stdout
+        assert "No matching distribution found for boguspkg" in res.stdout
+        assert not any("--break-system-packages" in c for c in shell_env.calls)
+        # exactly one install attempt (no retry)
+        assert sum(c.startswith("pip3 install") for c in shell_env.calls) == 1
+
+    def test_mcp_deps_install_routes_through_helper_under_pep668(self, shell_env):
+        # The real caller (install_mcp_server_deps) must reach the PEP 668
+        # recovery: `pip show` reports mcp absent, then the install succeeds
+        # only via the override.
+        body = 'if [ "$1" = "show" ]; then exit 1; fi\n' + _PIP_PEP668_STUB
+        shell_env.stub("pip3", body=body)
+        res = run_sourced("install_mcp_server_deps", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert any(
+            "install --user --break-system-packages mcp" in c for c in shell_env.calls
+        ), shell_env.calls
+        assert "Failed to install mcp" not in res.stdout
+
+    def test_source_has_no_stderr_swallowing_user_install(self):
+        # Regression guard encoding the actual bug: no raw `pip install --user
+        # ... 2>/dev/null` may remain, both --user sites must route through the
+        # helper, and the PEP 668 remedy must be present.
+        text = INSTALL.read_text(encoding="utf-8")
+        assert not re.search(r"install --user.*2>/dev/null", text)
+        assert "pip_install_user()" in text
+        assert text.count('pip_install_user "$pip_cmd"') == 2
+        assert "--break-system-packages" in text
+        assert "externally-managed-environment" in text

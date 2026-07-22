@@ -554,6 +554,41 @@ install_tmux_plugins() {
   print_info "Launch tmux and press prefix + I to install the declared plugins."
 }
 
+# Install a Python package with `pip install --user`, surviving PEP 668 and
+# surfacing real failures.
+#
+# On externally-managed interpreters (Debian 12 / Ubuntu 23.04+ system Python)
+# a plain `pip install --user` aborts with `externally-managed-environment`.
+# We try the plain install first and only retry with --break-system-packages
+# once pip reports that guard: applying the flag unconditionally would break
+# older pip (< 23.0.1), which rejects the option -- and that older pip is
+# exactly the one without the marker, so it never needs the retry. stderr is
+# captured (fd shuttle: 3>&1 1>/dev/null 2>&3) instead of `2>/dev/null`-
+# discarded, so a genuine failure (bad package, no network) prints its reason
+# rather than a bare "Failed to install"; pip's own progress (stdout) stays
+# quiet on success. Non-fatal by contract (warns, returns 0) to match the
+# optional-tool `|| print_warning` idiom the rest of the script uses under
+# `set -e`. --user keeps installs in ~/.local, never system site-packages;
+# pipx would be the heavier "correct" route for CLI tools but needs its own
+# bootstrap, out of scope here.
+pip_install_user() {
+  local pip_cmd="$1" pkg="$2" err
+  if err="$("$pip_cmd" install --user "$pkg" 3>&1 1>/dev/null 2>&3)"; then
+    return 0
+  fi
+  if printf '%s\n' "$err" | grep -q 'externally-managed-environment'; then
+    print_info "System Python is externally managed; retrying $pkg into the user site..."
+    if err="$("$pip_cmd" install --user --break-system-packages "$pkg" 3>&1 1>/dev/null 2>&3)"; then
+      return 0
+    fi
+  fi
+  print_warning "Failed to install $pkg"
+  if [ -n "$err" ]; then
+    printf '%s\n' "$err" | sed 's/^/    /'
+  fi
+  return 0
+}
+
 # Install Python deps for the bundled MCP server (.claude/mcp-servers/gemini-consultant).
 # server.py imports `mcp.server.fastmcp`, so the `mcp` package must be present.
 install_mcp_server_deps() {
@@ -562,7 +597,7 @@ install_mcp_server_deps() {
     command_exists pip3 || pip_cmd="pip"
     if ! $pip_cmd show mcp &>/dev/null; then
       print_info "Installing Python 'mcp' package for the gemini-consultant MCP server..."
-      $pip_cmd install --user mcp 2>/dev/null || print_warning "Failed to install mcp"
+      pip_install_user "$pip_cmd" mcp
     else
       print_info "Python 'mcp' package already installed"
     fi
@@ -1213,7 +1248,7 @@ install_linters_formatters() {
     for tool in "${pip_tools[@]}"; do
       if ! command_exists "$tool"; then
         print_info "Installing $tool via pip..."
-        $pip_cmd install --user "$tool" 2>/dev/null || print_warning "Failed to install $tool"
+        pip_install_user "$pip_cmd" "$tool"
       else
         print_info "$tool already installed"
       fi
