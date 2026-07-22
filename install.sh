@@ -379,7 +379,7 @@ install_fonts() {
     fi
   elif [[ "$OS" == "ubuntu" ]]; then
     print_info "Installing fonts..."
-    if sudo apt-get install -y fonts-ubuntu fonts-hack-ttf; then
+    if sudo apt-get install -y fonts-ubuntu fonts-hack; then
       print_success "Fonts installed"
     else
       print_warning "Failed to install fonts"
