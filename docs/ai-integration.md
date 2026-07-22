@@ -1,6 +1,6 @@
 # AI 連携 (AI Integration)
 
-このリポジトリは **Claude Code を主軸**に、Gemini・Codex・GitHub Copilot・Gemma (Ollama) を役割分担で組み合わせた開発環境です。このドキュメントでは、全体の連携像と、その中核となる 2 つの仕組み — **Bash 安全ゲート (bash-review)** と **Neovim のエディタ内 AI** — を図で示します。
+このリポジトリは **Claude Code を母艦**に、Gemini・Codex・GitHub Copilot・Gemma (Ollama) を役割分担で組み合わせた開発環境です。このドキュメントでは、全体の連携像と、その中核となる 2 つの仕組み — **Bash 安全ゲート (bash-review)** と **Neovim のエディタ内 AI** — を図で示します。
 
 ---
 
@@ -9,7 +9,7 @@
 Claude Code が主エンジンとして駆動し、他の LLM は **第二意見**・**Bash 安全ゲート**・**エディタ内補助**・**設定ミラー** の 4 つの面で連携します。ベンダーごとに役割を分担させ、片方のモデルを説得すれば通ってしまう構成を避けています。
 
 <p align="center">
-  <img src="../assets/llm-orchestration.svg" alt="Multi-LLM Orchestration 図 — Claude Code を主軸に、advisor(Opus)・Codex・Gemini・Copilot・Gemma を第二意見/Bash安全ゲート/エディタ内補助/設定ミラーの4面で連携" width="100%">
+  <img src="../assets/llm-orchestration.svg" alt="Multi-LLM Orchestration 図 — Claude Code を母艦に、advisor(Opus)・Codex・Gemini・Copilot・Gemma を第二意見/Bash安全ゲート/エディタ内補助/設定ミラーの4面で連携" width="100%">
 </p>
 
 - **Claude Code** — 主エンジン（Opus セッション / agents・commands・skills・hooks・MCP）

@@ -11,7 +11,7 @@
   <img src="assets/architecture.svg" alt="dotfiles アーキテクチャ図 — install.sh が macOS / Ubuntu / WSL を検出し、Shell・Editors・AI Dev Tools・CI を Rosé Pine で統一管理する構成" width="100%">
 </p>
 
-> **AI 連携ドキュメント**: Claude Code を主軸とした複数 LLM（Gemini・Codex・Copilot・Gemma）の連携、Bash 安全ゲート（bash-review）、Neovim のエディタ内 AI の構成図と解説は **[docs/ai-integration.md](docs/ai-integration.md)** にまとめています。
+> **AI 連携ドキュメント**: Claude Code を母艦とした複数 LLM（Gemini・Codex・Copilot・Gemma）の連携、Bash 安全ゲート（bash-review）、Neovim のエディタ内 AI の構成図と解説は **[docs/ai-integration.md](docs/ai-integration.md)** にまとめています。
 
 ## 目次
 
