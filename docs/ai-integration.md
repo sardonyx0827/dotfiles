@@ -37,7 +37,7 @@ Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DE
 
 ## 3. Neovim のエディタ内 AI
 
-Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）を **統一バックエンド**で扱い、インライン補完・コミットメッセージ生成・選択範囲のリライト・バッファ校正・LSP 診断コピーなどを行います。`claude → gemini` のフォールバックと、**構造化編集による安全な差分適用**（AI が返した編集を元バッファと照合し、一致しないものはスキップ）が特徴です。さらに、外部 AI へ送る前に **統一の秘密スキャンゲート**（`backend.run` / `s:AI_Submit`）を通し、選択範囲・diff・指示に生の資格情報が含まれれば確認ダイアログ（既定 No）で送信を止めます。判定は bash-review と同一の共有 CLI [`scripts/secret_scan.py`](../scripts/secret_scan.py) が担い、ローカルの Ollama は外部送信ではないため対象外、`python3`/スキャナ不在時は警告して送信を許可（fail-open）します。内容スキャンできない Copilot 補完は、`should_attach` で機密パス（`.env`・秘密鍵・`kubeconfig`・クラウド鍵など）のバッファへのアタッチを拒否する粗いパスガードで補います。
+Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）を **統一バックエンド**で扱い、インライン補完・コミットメッセージ生成・選択範囲のリライト・バッファ校正・LSP 診断コピーなどを行います。`claude → gemini` のフォールバックと、**構造化編集による安全な差分適用**（AI が返した編集を元バッファと照合し、一致しないものはスキップ）が特徴です。さらに、外部 AI へ送る前に **統一の秘密スキャンゲート**（Neovim は `backend.run`、classic Vim は `s:AI_Submit`）を通し、選択範囲・diff・指示に生の資格情報が含まれれば確認ダイアログ（既定 No）で送信を止めます。判定は bash-review と同一の検出ロジック（`_bash_review_common.scan_secrets`）を共有する CLI [`scripts/secret_scan.py`](../scripts/secret_scan.py) が担い、ローカルの Ollama は外部送信ではないため対象外、`python3`/スキャナ不在時は警告して送信を許可（fail-open）します。内容スキャンできない Copilot 補完は、`should_attach` で機密パス（`.env`・秘密鍵・`kubeconfig`・クラウド鍵など）のバッファへのアタッチを拒否する粗いパスガードで補います。
 
 <p align="center">
   <img src="../assets/nvim-ai.svg" alt="Neovim AI 機能図 — 5ツール統一バックエンド、インライン補完・バッファ校正・コミット生成・選択リライト・診断コピー・ファイル行参照、claude→geminiフォールバック、送信前の秘密スキャンガード" width="100%">

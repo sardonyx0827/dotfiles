@@ -33,7 +33,7 @@ def _commands() -> int:
 def _skills() -> int:
     # The figures count *deployable* skills; the `*-example` template skill
     # (project-guidelines-example) is intentionally excluded, matching the
-    # "24 skills" the diagrams render.
+    # "23 skills" the diagrams render.
     return len(
         [
             p

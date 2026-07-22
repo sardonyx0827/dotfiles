@@ -29,7 +29,7 @@ config.window_background_opacity = 0.9
 config.native_macos_fullscreen_mode = false
 -- key bindings
 config.keys = {
-  -- input backslash (macos: option + ¥ -> \)
+  -- input backslash on a JIS keyboard: bare ¥ -> \, option+¥ -> literal ¥
   { key = "¥", mods = "",    action = wezterm.action.SendString("\\") },
   { key = "¥", mods = "OPT", action = wezterm.action.SendString("¥") },
   { key = 'Enter', mods = 'OPT', action = wezterm.action.ToggleFullScreen,

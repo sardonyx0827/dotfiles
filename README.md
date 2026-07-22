@@ -5,7 +5,7 @@
 
 個人用の開発環境設定ファイル（dotfiles）のリポジトリです。Zsh、Vim、Neovim、tmux、WezTerm などの設定に加え、母艦となる Claude Code（＋ Codex・Gemini CLI・GitHub Copilot CLI）の AI 開発ツールのエージェント／スキル／フック設定とセットアップスクリプトを一括管理しています。全体を [Rosé Pine](https://rosepinetheme.com/) カラースキームで統一し、macOS / Ubuntu / WSL に対応した `install.sh` でシンボリックリンクを自動生成します。
 
-> **English summary**: Personal dotfiles unifying Zsh, Neovim, tmux, and WezTerm under the Rosé Pine theme, plus agent / skill / hook configurations for AI coding tools built around Claude Code as the hub (with Codex, Gemini CLI, and Copilot CLI alongside). A cross-platform `install.sh` (macOS / Ubuntu / WSL) symlinks everything, and the hook / installer logic is covered by a pytest suite with a 90% coverage gate in CI. Deep-dive docs (in English): [hook system](.claude/hooks/README.md), [custom agents](.claude/agents/README.md).
+> **English summary**: Personal dotfiles unifying Zsh, Vim, Neovim, tmux, and WezTerm under the Rosé Pine theme, plus agent / skill / hook configurations for AI coding tools built around Claude Code as the hub (with Codex, Gemini CLI, and Copilot CLI alongside). A cross-platform `install.sh` (macOS / Ubuntu / WSL) symlinks everything, and the hook / installer logic is covered by a pytest suite with a 90% coverage gate in CI. Deep-dive docs (in English): [hook system](.claude/hooks/README.md), [custom agents](.claude/agents/README.md).
 
 <p align="center">
   <img src="assets/architecture.svg" alt="dotfiles アーキテクチャ図 — install.sh が macOS / Ubuntu / WSL を検出し、Shell・Editors・AI Dev Tools・CI を Rosé Pine で統一管理する構成" width="100%">
@@ -29,7 +29,7 @@
 - **エディタ**: Neovim (lazy.nvim), Vim (vim-plug), VS Code
 - **バージョン管理**: Git, GitHub
 - **AI開発ツール**: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI
-- **言語**: Lua, Vimscript, Shell Script
+- **言語**: Python, Lua, Vimscript, Shell Script
 
 ## ファイル構成
 
@@ -47,7 +47,7 @@
 │   └── statusline-command.sh       # ステータスライン
 ├── .codex/                         # Codex設定
 │   ├── agents/                     # Codexエージェント定義 (.toml)
-│   ├── hooks/                      # Codexフック (+ hooks.json)
+│   ├── hooks/                      # Codexフック (+ hooks.json.template)
 │   ├── skills/                     # Codexスキル (.claude/skillsへの厳選リンク + .system)
 │   ├── AGENTS.md                   # Codex向け指示
 │   └── config.toml.template        # Codex設定の雛形 (実体は ~/.codex/ 側。後述)
@@ -55,7 +55,7 @@
 │   ├── Code/                       # VS Code (settings / keybindings)
 │   └── nvim/                       # Neovim (lazy.nvim) 設定
 ├── .gemini/                        # Gemini CLI設定 (GEMINI.md, settings.json)
-├── .github/workflows/              # GitHub Actions CI (pytest / ruff / bandit / shellcheck)
+├── .github/workflows/              # GitHub Actions CI (pytest / ruff / bandit / shellcheck / mypy)
 ├── .oh-my-zsh/                     # Oh My Zsh設定
 │   └── custom/themes/              # Zshテーマ (px-rose-pine: pixeljae 製 agnoster ベースを vendored)
 ├── .vim/rc/                        # Vim設定本体 (分割ロード: 00-plugins, 10-basic ...)

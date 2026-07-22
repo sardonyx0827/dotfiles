@@ -43,7 +43,7 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
   - vim-fugitive / vim-rhubarb / vim-gitgutter: Git 統合
   - vim-airline: ステータスライン
   - fzf / fzf.vim: ファジーファインダー（Neovim 側 telescope と同一キーマップ）
-  - vim-lsp + vim-lsp-settings + asyncomplete 系: LSP・補完（対象ファイルを開いて `:LspInstallServer` でサーバー導入。キーマップは Neovim 側 `lsp.lua` と同一: `gd` / `K` / `<leader>ra` / `<leader>ca` / `gr` / `[d` / `]d` など）
+  - vim-lsp + vim-lsp-settings + asyncomplete 系: LSP・補完（対象ファイルを開いて `:LspInstallServer` でサーバー導入。キーマップは Neovim 側 `nvim-lspconfig.lua` と同一: `gd` / `K` / `<leader>ra` / `<leader>ca` / `gr` / `[d` / `]d` など）
   - ALE: 非同期 Lint（LSP 機能は vim-lsp に委譲）
   - tagbar: タグ一覧表示（`F4`）
   - vim-gutentags: 保存時に `tags` を自動生成・更新（`universal-ctags` が必要）
@@ -76,7 +76,7 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 - **256色ターミナル**: RGBカラー対応
 - **viモード**: コピーモードでviキーバインド使用
 - **マウス操作**: ペイン端のダブルクリックで分割、それ以外はコピーモード
-- **テーマ / プラグイン**（tpm で管理）: `rose-pine/tmux`（moon）、`tmux-mode-indicator`、`tmux-sensible`、`tmux-logging`
+- **テーマ / プラグイン**（tpm で管理）: `rose-pine/tmux`（moon）、`tmux-mode-indicator`、`tmux-sensible`、`tmux-logging`、`tmux-easy-motion`（`C-j` プレフィックスで高速カーソル移動）
 - **クリップボード統合**:
   - macOS: pbcopy/pbpaste
   - Linux: xsel
@@ -110,12 +110,12 @@ Ctrl+a ]        # ペースト
 ### WezTerm (.wezterm.lua)
 
 - **カラースキーム**: Rosé Pine
-- **フォント**: Ubuntu Mono (Medium, 14pt) — フォールバックに Hiragino Sans
+- **フォント**: Ubuntu Mono (14pt) — フォールバックに Hiragino Sans
 - **カーソル**: BlinkingBlock
 - **背景透過**: 90%
 - **タブバー**: タブが1つのときは非表示
 - **日本語入力**: IME対応
-- **キーバインド**: macOS用のバックスラッシュ入力（`option + ¥` → `\`）、`option + Enter` でフルスクリーン切替
+- **キーバインド**: macOS用のバックスラッシュ入力（`¥` → `\`、`option + ¥` → `¥`）、`option + Enter` でフルスクリーン切替
 
 ### Git (.gitconfig)
 
@@ -132,7 +132,7 @@ Ctrl+a ]        # ペースト
 各 AI CLI の設定をリポジトリで一元管理しています。`install.sh` は CLI の実行時データ（履歴・セッション等）を巻き込まないよう、ディレクトリ全体ではなく必要なエントリのみを個別にシンボリックリンクします。
 
 - **`.claude/`**: Claude Code のグローバル指示（`CLAUDE.md`）、`settings.json`、カスタムサブエージェント（`agents/`）、スラッシュコマンド（`commands/`）、フック（`hooks/`）、スキル（`skills/`）、ワークフロー / セキュリティルール（`rules/`）、自作 MCP サーバー（`mcp-servers/`）、ステータスライン
-- **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック（`hooks/` + `hooks.json`）、スキル（`skills/`）、`config.toml`
+- **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック（`hooks/` + `hooks.json.template`）、スキル（`skills/`）、`config.toml.template`（`hooks.json` / `config.toml` の実体は `install.sh` が `~/.codex/` 側へ生成）
   - `agents/` と `skills/` はディレクトリごとリンクします。共有スキルはリポジトリ内の相対シンボリックリンク（`.codex/skills/<name>` → `../../.claude/skills/<name>`）として定義しており、`.codex/hooks/_*.sh` と同じ方式です。共有の追加・削除はこのリンクの増減で行い、`install.sh` 側にスキル一覧は持ちません
   - `~/.codex/skills` はチェックアウト内を指すため、Codex が書き込む組込みスキル `.system/` はリポジトリ配下に出現します（`.gitignore` 済み）
 - **`.gemini/`**: Gemini CLI の指示（`GEMINI.md`）と `settings.json`
@@ -229,4 +229,3 @@ set -g prefix C-b
 bind C-b send-prefix
 unbind C-a
 ```
-

@@ -133,7 +133,7 @@ curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
 > アップストリーム公式の形（`master`）のままなので、両者は異なるバイト列を取得し
 > 得ます。`install.sh` 側が固定している理由と pin の更新手順は、スクリプト冒頭の
 > `*_REF` 変数のコメントを参照してください。Homebrew / Oh My Zsh の手動手順
-> （上の 1. と 5.）も同様です。
+> （上の 2. と 5.）も同様です。
 
 </details>
 
@@ -153,6 +153,15 @@ ln -sf ~/dotfiles/.tmux.conf ~/.tmux.conf
 # Git設定
 ln -sf ~/dotfiles/.gitconfig ~/.gitconfig
 ln -sf ~/dotfiles/.gitignore_global ~/.gitignore_global
+# .gitconfig は ~/.config/git/os.gitconfig (credential helper) と
+# ~/.config/git/user.gitconfig (name/email) を [include] する。install.sh は
+# 両者を自動生成するが、手動時は自分で用意する (git は欠落 include を黙って無視
+# するため、未生成だと認証ヘルパー・コミット名義が未設定のままになる)。
+mkdir -p ~/.config/git
+# 例: 資格情報ヘルパー (macOS)。Linux は cache 等に置き換える
+printf '[credential]\n\thelper = osxkeychain\n' > ~/.config/git/os.gitconfig
+# コミット名義 (tracked な .gitconfig には直書きしない方針)
+printf '[user]\n\tname = Your Name\n\temail = you@example.com\n' > ~/.config/git/user.gitconfig
 
 # WezTerm設定
 ln -sf ~/dotfiles/.wezterm.lua ~/.wezterm.lua
@@ -187,8 +196,11 @@ for e in GEMINI.md settings.json; do
   ln -sf ~/dotfiles/.gemini/$e ~/.gemini/$e
 done
 
-# Oh My Zsh カスタムテーマ
-ln -sf ~/dotfiles/.oh-my-zsh/custom ~/.oh-my-zsh/custom
+# Oh My Zsh カスタムテーマ (custom/ は実ディレクトリのまま themes 配下だけリンクする。
+# custom/ 全体を symlink すると、上の手順5で clone した custom/plugins/ を隠したり、
+# 再実行時に symlink 越しにリポジトリへ clone してしまうため避ける。install.sh も同方式)
+mkdir -p ~/.oh-my-zsh/custom/themes
+ln -sf ~/dotfiles/.oh-my-zsh/custom/themes/px-rose-pine.zsh-theme ~/.oh-my-zsh/custom/themes/px-rose-pine.zsh-theme
 
 # tmuxヘルパースクリプト (.tmux.conf の `bind S` が参照)
 mkdir -p ~/.tmux
@@ -223,7 +235,6 @@ chsh -s $(which zsh)
 nvim  # lazy.nvimが自動的にプラグインをインストール
 ```
 
-</details>
 </details>
 
 ## 元に戻す（バックアップと復旧）
@@ -326,4 +337,3 @@ rm -rf ~/.local/share/nvim
 rm -rf ~/.config/nvim/lazy-lock.json
 nvim  # lazy.nvimが自動的に再インストールされる
 ```
-
