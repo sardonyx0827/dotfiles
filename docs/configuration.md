@@ -141,9 +141,9 @@ Ctrl+a ]        # ペースト
 >
 > `settings.json` の `permissions.allow` は `Bash(npx:*)` / `Bash(pip:*)` /
 > `Bash(cargo:*)` / `Bash(docker:*)` など**任意コード実行になり得るコマンドを自動承認**します。
-> これは単体で安全なのではなく、`PreToolUse` フック `hooks/bash-review.py`
-> が**実行前に Bash コマンドをレビューし、API/CLI 不在時は `ask`
-> にフェイルクローズする**ことと**セットで**成り立っています（機密ファイル読取や
+> これは単体で安全なのではなく、`PreToolUse` フック `hooks/bash-review-launcher.sh`
+> （`bash-review.py` を起動）が**実行前に Bash コマンドをレビューし、API/CLI 不在時は
+> `ask` にフェイルクローズする**ことと**セットで**成り立っています（機密ファイル読取や
 > `git push` も別フックでガード）。高リスクコマンド（再帰 `rm`・force push・
 > パッケージ導入・インラインシェル等）は Gemini / Codex を並列実行する **AND
 > ゲート**で、**両モデルが ALLOW で一致したときのみ許可**、DENY 一致で拒否、

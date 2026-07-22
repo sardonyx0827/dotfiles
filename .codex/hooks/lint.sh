@@ -219,7 +219,9 @@ if [ -n "$ALL_ERRORS" ]; then
   exit 2 # Codexが内容を読んで自動修正を試みる
 fi
 
-# 解析対象が 1 件も無かった場合は通知しない(対象外の拡張子など)
+# 処理対象が 1 件も無い (全対象が削除済み等で PASSED_COUNT=0) 場合のみ通知しない。
+# 対象外拡張子のファイルは hook_lint_file が pass(0) を返すため PASSED_COUNT に
+# 数えられ、linter は走っていなくても「Lint Passed」通知が出る点に注意。
 if [ "$PASSED_COUNT" -eq 1 ]; then
   hook_notify "Lint Passed" "$LAST_BASENAME のチェックが完了しました" 5
 elif [ "$PASSED_COUNT" -gt 1 ]; then
