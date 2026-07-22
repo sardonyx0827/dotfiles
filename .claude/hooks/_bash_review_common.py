@@ -831,9 +831,16 @@ _INTERPRETER_EVAL_FLAGS = {
 _VERSION_SUFFIX = re.compile(r"[0-9.]+$")
 
 # 束ねられた短フラグ内の文字を検出する (rm -rf の r、git clean -fd の f 等)。
+# 完全一致 (`t == "-f"`) では `-fu` / `-xc` のような束ね形を取りこぼし、高リスク
+# 層を素通りして単独モデルの fast path に格下げされる (`_WRAPPER_EXECUTABLES` の
+# コメントが記録する事故と同じ失敗モード) ため、短フラグは常に束ね対応で照合する。
 _RECURSIVE_FLAG = re.compile(r"^-[A-Za-z]*[rR]")
 _FORCE_FLAG = re.compile(r"^-[A-Za-z]*f")
 _RECURSIVE_UPPER_FLAG = re.compile(r"^-[A-Za-z]*R")
+_COMMAND_FLAG = re.compile(r"^-[A-Za-z]*c")
+# 束ねた短フラグ 1 語全体 (-e / -ic / -we)。長オプション (--eval) は 2 本ダッシュ
+# なので fullmatch で弾かれ、束ね扱いされない。
+_SHORT_FLAG_BUNDLE = re.compile(r"-[A-Za-z]+")
 
 
 def _high_risk_label(cmd: str) -> str:
@@ -863,15 +870,20 @@ def _high_risk_label(cmd: str) -> str:
     ):
         return "rm recursive"
     if exe == "git":
+        # `-f` は束ね対応の _FORCE_FLAG が拾う (`-fu` = force+set-upstream 等)。
+        # `--force` / `--force-with-lease` は 2 本ダッシュで束ねないので個別照合。
         if sub == "push" and any(
-            t in ("--force", "-f", "--force-with-lease")
+            _FORCE_FLAG.match(t)
+            or t in ("--force", "--force-with-lease")
             or t.startswith("--force-with-lease=")
             for t in rest
         ):
             return "git force push"
         if sub == "reset" and "--hard" in rest:
             return "git reset --hard"
-        if sub == "clean" and any(_FORCE_FLAG.match(t) for t in rest):
+        # clean は force 無しでは no-op なので、破壊的なのは force を伴う形。
+        # 短縮 `-f`/`-fd` は _FORCE_FLAG、長形式 `--force` は個別に拾う。
+        if sub == "clean" and any(_FORCE_FLAG.match(t) or t == "--force" for t in rest):
             return "git clean -f"
         return ""
     if exe in _PKG_INSTALL_SUBCOMMANDS and sub in _PKG_INSTALL_SUBCOMMANDS[exe]:
@@ -890,12 +902,24 @@ def _high_risk_label(cmd: str) -> str:
         return f"{exe} dlx"
     if exe in _REMOTE_EXEC_EXECUTABLES:
         return f"{exe} (remote code execution)"
-    if exe in _SHELL_EXECUTABLES and "-c" in rest:
+    # `-c` は POSIX シェルで一律「コマンド文字列を実行」を意味する唯一の c フラグ
+    # なので、束ね形 (`bash -xc`) も _COMMAND_FLAG で拾う。
+    if exe in _SHELL_EXECUTABLES and any(_COMMAND_FLAG.match(t) for t in rest):
         return f"{exe} -c"
     eval_flags = _INTERPRETER_EVAL_FLAGS.get(_VERSION_SUFFIX.sub("", exe))
     if eval_flags:
+        # eval_flags のうち短縮 1 文字フラグ (-c / -e / -p / -E / -r) の文字集合。
+        # 束ね形 (python -ic の c、perl -we の e) を検出するのに使う。長オプション
+        # (--eval / --print) は完全一致側でのみ拾う。
+        short_chars = {f[1] for f in eval_flags if len(f) == 2}
         for tok in rest:
-            if tok in eval_flags:
+            # `tok.split("=")[0]` で値を = 連結した長形式 (node --eval=CODE) も拾う。
+            # = を含まないトークンでは head == tok なので完全一致の上位互換。
+            if tok.split("=", 1)[0] in eval_flags:
+                return f"{exe} {tok}"
+            if _SHORT_FLAG_BUNDLE.fullmatch(tok) and any(
+                c in tok[1:] for c in short_chars
+            ):
                 return f"{exe} {tok}"
     if exe == "eval":
         return "eval"

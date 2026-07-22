@@ -900,10 +900,20 @@ class TestHighRiskClassifier:
             # Destructive git.
             ("git push --force origin main", True),
             ("git push -f", True),
+            # Bundled short flags: -fu (force+set-upstream), -fv (force+verbose)
+            # must classify like -f, not slip to the single-model fast path.
+            ("git push -fu origin main", True),
+            ("git push -fv origin main", True),
             ("git push --force-with-lease origin main", True),
             ("git reset --hard HEAD~1", True),
             ("git clean -fd", True),
+            # git clean's long-form --force is the spelling that actually arms
+            # the delete; it must be caught like -f/-fd.
+            ("git clean --force", True),
+            ("git clean --force -d", True),
             ("git push origin main", False),
+            # -u alone (set-upstream, no force) must NOT be flagged.
+            ("git push -u origin main", False),
             ("git reset --soft HEAD~1", False),
             ("git clean -n", False),
             # Package installation (supply chain).
@@ -931,8 +941,13 @@ class TestHighRiskClassifier:
             ("bash -c 'echo hi'", True),
             ("sh -c ls", True),
             ("zsh -c pwd", True),
+            # Bundled short flags: bash -xc / sh -ec still run the -c string.
+            ("bash -xc 'echo hi'", True),
+            ("sh -ec ls", True),
             ("eval $CMD", True),
             ("bash script.sh", False),
+            # A shell short flag WITHOUT -c runs a script file, not a string.
+            ("bash -x script.sh", False),
             # Recursive permission/ownership changes.
             ("chmod -R 777 .", True),
             ("chown -R user:staff /opt/app", True),
@@ -1065,6 +1080,14 @@ class TestHighRiskClassifier:
             ("perl -E 'say 1'", "perl -E"),
             ("ruby -e 'puts 1'", "ruby -e"),
             ("php -r 'system(\"id\");'", "php -r"),
+            # Bundled short flags: python -ic (interactive+command) runs the
+            # -c string; perl -we (warnings+eval) runs the -e string.
+            ("python3 -ic 'import os; os.system(\"id\")'", "python3 -ic"),
+            ("perl -we 'print 1'", "perl -we"),
+            # node accepts the --eval=CODE equals form (verified it executes);
+            # the value is glued to the flag token, so the exact-match miss it.
+            ("node --eval='console.log(1)'", "node --eval"),
+            ("nodejs --eval='1'", "nodejs --eval"),
         ],
     )
     def test_interpreter_eval_flags_are_high_risk(
