@@ -3,9 +3,9 @@
 [![CI](https://github.com/sardonyx0827/dotfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/sardonyx0827/dotfiles/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-個人用の開発環境設定ファイル（dotfiles）のリポジトリです。Zsh、Vim、Neovim、tmux、WezTerm などの設定に加え、Claude Code・Codex・Gemini CLI・GitHub Copilot CLI といった AI 開発ツールのエージェント／スキル／フック設定とセットアップスクリプトを一括管理しています。全体を [Rosé Pine](https://rosepinetheme.com/) カラースキームで統一し、macOS / Ubuntu / WSL に対応した `install.sh` でシンボリックリンクを自動生成します。
+個人用の開発環境設定ファイル（dotfiles）のリポジトリです。Zsh、Vim、Neovim、tmux、WezTerm などの設定に加え、母艦となる Claude Code（＋ Codex・Gemini CLI・GitHub Copilot CLI）の AI 開発ツールのエージェント／スキル／フック設定とセットアップスクリプトを一括管理しています。全体を [Rosé Pine](https://rosepinetheme.com/) カラースキームで統一し、macOS / Ubuntu / WSL に対応した `install.sh` でシンボリックリンクを自動生成します。
 
-> **English summary**: Personal dotfiles unifying Zsh, Neovim, tmux, and WezTerm under the Rosé Pine theme, plus agent / skill / hook configurations for AI coding tools (Claude Code, Codex, Gemini CLI, Copilot CLI). A cross-platform `install.sh` (macOS / Ubuntu / WSL) symlinks everything, and the hook / installer logic is covered by a pytest suite with a 90% coverage gate in CI. Deep-dive docs (in English): [hook system](.claude/hooks/README.md), [custom agents](.claude/agents/README.md).
+> **English summary**: Personal dotfiles unifying Zsh, Neovim, tmux, and WezTerm under the Rosé Pine theme, plus agent / skill / hook configurations for AI coding tools built around Claude Code as the hub (with Codex, Gemini CLI, and Copilot CLI alongside). A cross-platform `install.sh` (macOS / Ubuntu / WSL) symlinks everything, and the hook / installer logic is covered by a pytest suite with a 90% coverage gate in CI. Deep-dive docs (in English): [hook system](.claude/hooks/README.md), [custom agents](.claude/agents/README.md).
 
 <p align="center">
   <img src="assets/architecture.svg" alt="dotfiles アーキテクチャ図 — install.sh が macOS / Ubuntu / WSL を検出し、Shell・Editors・AI Dev Tools・CI を Rosé Pine で統一管理する構成" width="100%">
@@ -187,14 +187,14 @@ npm install -g @github/copilot
 
 用途別に分割した詳細ドキュメントです。
 
-| ドキュメント | 内容 |
-| --- | --- |
-| [docs/setup.md](docs/setup.md) | 手動インストール手順・バックアップと復旧・トラブルシューティング |
-| [docs/configuration.md](docs/configuration.md) | Zsh / Vim / Neovim / tmux / WezTerm / Git / AI 各ツールの設定、ユーティリティスクリプト、カスタマイズ |
-| [docs/testing.md](docs/testing.md) | pytest スイート・カバレッジゲート・静的解析（ruff / bandit / shellcheck / mypy） |
-| [docs/ai-integration.md](docs/ai-integration.md) | 複数 LLM 連携・Bash 安全ゲート（bash-review）・Neovim のエディタ内 AI の構成 |
-| [.claude/hooks/README.md](.claude/hooks/README.md) | フックシステムの設計根拠と脅威モデル |
-| [.claude/agents/README.md](.claude/agents/README.md) | カスタムサブエージェントの解説 |
+| ドキュメント                                         | 内容                                                                                                  |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [docs/setup.md](docs/setup.md)                       | 手動インストール手順・バックアップと復旧・トラブルシューティング                                      |
+| [docs/configuration.md](docs/configuration.md)       | Zsh / Vim / Neovim / tmux / WezTerm / Git / AI 各ツールの設定、ユーティリティスクリプト、カスタマイズ |
+| [docs/testing.md](docs/testing.md)                   | pytest スイート・カバレッジゲート・静的解析（ruff / bandit / shellcheck / mypy）                      |
+| [docs/ai-integration.md](docs/ai-integration.md)     | 複数 LLM 連携・Bash 安全ゲート（bash-review）・Neovim のエディタ内 AI の構成                          |
+| [.claude/hooks/README.md](.claude/hooks/README.md)   | フックシステムの設計根拠と脅威モデル                                                                  |
+| [.claude/agents/README.md](.claude/agents/README.md) | カスタムサブエージェントの解説                                                                        |
 
 ## 参考リンク
 
