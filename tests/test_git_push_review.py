@@ -251,6 +251,28 @@ class TestClaudeVariant:
         assert "branch: feature-target" in reason
         assert "target repo commit" in reason
 
+    def test_dash_c_in_earlier_chain_command_does_not_shadow_target(
+        self, shell_env, tmp_path
+    ):
+        # A `-C` belonging to an earlier command in the chain (e.g. grep's
+        # context-lines flag) must not shadow the push target's own -C. The
+        # leftmost-match extraction used to grab `grep -C 3`'s value and run
+        # `git -C 3 ...`, blanking (or misdirecting) the summary.
+        target = make_target_repo(tmp_path)
+        outside = tmp_path / "not-a-repo"
+        outside.mkdir()
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload(f"grep -C 3 needle /dev/null && git -C {target} push"),
+            cwd=outside,
+        )
+        assert res.returncode == 0
+        output = json.loads(res.stdout)["hookSpecificOutput"]
+        assert output["permissionDecision"] == "ask"
+        reason = output["permissionDecisionReason"]
+        assert "branch: feature-target" in reason
+        assert "target repo commit" in reason
+
     def test_push_still_asks_when_jq_is_unavailable(self, shell_env, git_repo):
         # Without jq the command string cannot be extracted, so the push
         # detection below it silently matched nothing and the hook exited 0 --

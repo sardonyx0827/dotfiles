@@ -219,9 +219,15 @@ echo "$cmd_for_match" | grep -qE '(^|[;&|[:space:](`])git([[:space:]]+-[^[:space
 
 # `git -C <dir> push` のように push 対象リポジトリが明示されている場合、
 # サマリもフック自身の cwd ではなく同じ <dir> を対象に生成する。
+# 生 $cmd を最左マッチすると、チェーン内の別コマンド (`grep -C 3 ... && git push`)
+# や、クォート内メッセージ (`git commit -m "... -C ..."`) の -C を拾ってしまう。
+# 検知と同じ cmd_for_match (クォート区間除去済み) 上で、git に直接続く -C
+# (途中はダッシュフラグのみ) だけを push 対象の -C として拾う。
 git_c_opt=()
-if [[ "$cmd" =~ (^|[[:space:]])-C[[:space:]]+([^[:space:]]+) ]]; then
-  git_c_opt=(-C "${BASH_REMATCH[2]}")
+# shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル(展開させない)
+git_c_re='(^|[;&|[:space:](`])git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-C[[:space:]]+([^[:space:]]+)'
+if [[ "$cmd_for_match" =~ $git_c_re ]]; then
+  git_c_opt=(-C "${BASH_REMATCH[3]}")
 fi
 
 summary=""
