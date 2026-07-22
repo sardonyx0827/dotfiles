@@ -313,7 +313,7 @@ install_brew_packages() {
     else
       # Guarded like every other installer here: one formula that is renamed,
       # deprecated or momentarily unreachable must not abort the whole run.
-      brew install "$package" || print_warning "Failed to install $package (continuing)"
+      try_install "$package" brew install "$package"
     fi
   done
 
@@ -328,7 +328,7 @@ install_wezterm() {
   if [[ "$OS" == "macos" ]]; then
     if ! brew list --cask wezterm &>/dev/null; then
       print_info "Installing WezTerm..."
-      brew install --cask wezterm || print_warning "Failed to install WezTerm"
+      try_install WezTerm brew install --cask wezterm
       if brew list --cask wezterm &>/dev/null; then
         print_success "WezTerm installed"
       fi
@@ -343,7 +343,7 @@ install_wezterm() {
           sudo tee /etc/apt/sources.list.d/wezterm.list >/dev/null ||
           print_warning "Failed to add WezTerm apt repository"
         sudo apt-get update || print_warning "apt-get update failed"
-        sudo apt-get install -y wezterm || print_warning "Failed to install WezTerm"
+        try_install WezTerm sudo apt-get install -y wezterm
       else
         print_warning "Failed to fetch WezTerm GPG key; skipping WezTerm"
       fi
@@ -396,7 +396,7 @@ install_gh() {
   fi
   print_info "Installing GitHub CLI (gh)..."
   if [[ "$OS" == "macos" ]]; then
-    brew install gh || print_warning "Failed to install gh"
+    try_install gh brew install gh
   elif [[ "$OS" == "ubuntu" ]]; then
     # Same guard rationale as install_wezterm: gh is optional, so a failed
     # keyring/apt step must warn and continue, not abort the installer.
@@ -408,7 +408,7 @@ install_gh() {
         sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null ||
         print_warning "Failed to add gh apt repository"
       sudo apt-get update || print_warning "apt-get update failed"
-      sudo apt-get install -y gh || print_warning "Failed to install gh"
+      try_install gh sudo apt-get install -y gh
     else
       print_warning "Failed to fetch gh keyring; skipping gh"
     fi
@@ -461,12 +461,11 @@ install_glow() {
   fi
   print_info "Installing glow..."
   if [[ "$OS" == "macos" ]]; then
-    brew install glow || print_warning "Failed to install glow"
+    try_install glow brew install glow
   elif [[ "$OS" == "ubuntu" ]]; then
     # Prefer go install (go is installed via apt) to avoid another apt repo.
     if command_exists go; then
-      go install github.com/charmbracelet/glow@latest 2>/dev/null ||
-        print_warning "Failed to install glow via go"
+      try_install "glow (go)" go install github.com/charmbracelet/glow@latest
       # go install places the binary under ~/go/bin, which isn't on PATH
       # until exported -- without this the command_exists check just below
       # falsely reports glow as missing right after installing it (same
@@ -490,7 +489,7 @@ install_lazydocker() {
   fi
   print_info "Installing lazydocker..."
   if [[ "$OS" == "macos" ]]; then
-    brew install lazydocker || print_warning "Failed to install lazydocker"
+    try_install lazydocker brew install lazydocker
   elif [[ "$OS" == "ubuntu" ]]; then
     fetch_and_run "https://raw.githubusercontent.com/jesseduffield/lazydocker/$LAZYDOCKER_INSTALL_REF/scripts/install_update_linux.sh" bash ||
       print_warning "Failed to install lazydocker"
@@ -508,7 +507,7 @@ install_docker() {
   fi
   print_info "Installing Docker..."
   if [[ "$OS" == "macos" ]]; then
-    brew install --cask docker || print_warning "Failed to install Docker Desktop"
+    try_install "Docker Desktop" brew install --cask docker
     print_info "Launch Docker Desktop once to put the docker CLI on PATH."
     # macOS `--cask docker` does not put the `docker` CLI on PATH until Docker
     # Desktop is launched once, so the trailing check below legitimately finds
@@ -534,8 +533,7 @@ install_tree_sitter_cli() {
   fi
   if command_exists npm; then
     print_info "Installing tree-sitter CLI via npm..."
-    npm install -g tree-sitter-cli 2>/dev/null ||
-      print_warning "Failed to install tree-sitter CLI"
+    try_install "tree-sitter CLI" npm install -g tree-sitter-cli
   else
     print_warning "npm not found; skipping tree-sitter CLI"
   fi
@@ -549,8 +547,7 @@ install_tmux_plugins() {
     return
   fi
   print_info "Installing tpm..."
-  git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" 2>/dev/null ||
-    print_warning "Failed to install tpm"
+  try_install tpm git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
   print_info "Launch tmux and press prefix + I to install the declared plugins."
 }
 
@@ -583,6 +580,31 @@ pip_install_user() {
     fi
   fi
   print_warning "Failed to install $pkg"
+  if [ -n "$err" ]; then
+    printf '%s\n' "$err" | sed 's/^/    /'
+  fi
+  return 0
+}
+
+# Run a tool-install command, keeping success quiet but surfacing the reason on
+# failure (non-fatal, warns and returns 0). Consolidates the repeated
+# `<installer> ... 2>/dev/null || print_warning "Failed to install X"` pattern
+# so a failed toolchain/network install reports the installer's own error (npm
+# ERR!, go's module error, apt's message, ...) instead of a bare "Failed to
+# install". stderr is captured via the same fd shuttle as pip_install_user;
+# the installer's stdout progress stays quiet on the happy path. Only mutating
+# installs route through here -- existence probes (`brew list`, `npm list -g`,
+# `pip show`, ...) intentionally keep their own output-discarding redirect,
+# since they only care about exit status. (pip installs use the dedicated
+# pip_install_user, which additionally handles the PEP 668 retry.)
+try_install() {
+  local label="$1"
+  shift
+  local err
+  if err="$("$@" 3>&1 1>/dev/null 2>&3)"; then
+    return 0
+  fi
+  print_warning "Failed to install $label"
   if [ -n "$err" ]; then
     printf '%s\n' "$err" | sed 's/^/    /'
   fi
@@ -648,14 +670,13 @@ install_nodejs() {
   if ! command_exists node; then
     print_info "Installing Node.js..."
     if [[ "$OS" == "macos" ]]; then
-      brew install node || print_warning "Failed to install Node.js (continuing)"
+      try_install "Node.js" brew install node
     elif [[ "$OS" == "ubuntu" ]]; then
       # Guarded: NodeSource being down must not abort the run. The `-` (read
       # from stdin) of the canonical `curl | sudo -E bash -` is dropped because
       # fetch_and_run passes a file path instead.
       if fetch_and_run https://deb.nodesource.com/setup_lts.x sudo -E bash; then
-        sudo apt-get install -y nodejs ||
-          print_warning "Failed to install Node.js (continuing)"
+        try_install "Node.js" sudo apt-get install -y nodejs
       else
         print_warning "NodeSource setup failed; skipping Node.js (continuing)"
       fi
@@ -1192,19 +1213,18 @@ install_ai_tools() {
 
     # Claude Code (official npm distribution)
     if ! command_exists claude; then
-      npm install -g @anthropic-ai/claude-code 2>/dev/null ||
-        print_warning "Failed to install Claude Code"
+      try_install "Claude Code" npm install -g @anthropic-ai/claude-code
     else
       print_info "Claude Code already installed"
     fi
 
     # Install npm-based tools
-    npm install -g @openai/codex 2>/dev/null || print_warning "Failed to install Codex"
-    npm install -g @google/gemini-cli 2>/dev/null || print_warning "Failed to install Gemini CLI"
+    try_install Codex npm install -g @openai/codex
+    try_install "Gemini CLI" npm install -g @google/gemini-cli
 
     # GitHub Copilot CLI (standalone `copilot` command; used by
     # update_ai_tools.sh and the `cop` alias in .zshrc).
-    npm install -g @github/copilot 2>/dev/null || print_warning "Failed to install Copilot CLI"
+    try_install "Copilot CLI" npm install -g @github/copilot
 
     print_success "AI tools installation attempted (check warnings above)"
   fi
@@ -1224,7 +1244,7 @@ install_linters_formatters() {
     for tool in "${npm_tools[@]}"; do
       if ! command_exists "$tool" && ! npm list -g "$tool" &>/dev/null; then
         print_info "Installing $tool via npm..."
-        npm install -g "$tool" 2>/dev/null || print_warning "Failed to install $tool"
+        try_install "$tool" npm install -g "$tool"
       else
         print_info "$tool already installed"
       fi
@@ -1274,7 +1294,7 @@ install_linters_formatters() {
     for tool in "${brew_tools[@]}"; do
       if ! brew list "$tool" &>/dev/null; then
         print_info "Installing $tool via brew..."
-        brew install "$tool" 2>/dev/null || print_warning "Failed to install $tool"
+        try_install "$tool" brew install "$tool"
       else
         print_info "$tool already installed"
       fi
@@ -1282,14 +1302,14 @@ install_linters_formatters() {
 
     # google-java-format (brew cask or manual)
     if ! command_exists google-java-format; then
-      brew install google-java-format 2>/dev/null || print_warning "Failed to install google-java-format"
+      try_install google-java-format brew install google-java-format
     fi
 
     # Go tools (requires go)
     if command_exists go; then
       if ! command_exists goimports; then
         print_info "Installing goimports..."
-        go install golang.org/x/tools/cmd/goimports@latest 2>/dev/null || print_warning "Failed to install goimports"
+        try_install goimports go install golang.org/x/tools/cmd/goimports@latest
       fi
     fi
 
@@ -1297,7 +1317,7 @@ install_linters_formatters() {
     if command_exists gem; then
       if ! command_exists rubocop; then
         print_info "Installing rubocop via gem..."
-        gem install rubocop 2>/dev/null || print_warning "Failed to install rubocop"
+        try_install rubocop gem install rubocop
       fi
     fi
 
@@ -1305,27 +1325,24 @@ install_linters_formatters() {
     if command_exists php && ! command_exists phpstan; then
       if command_exists composer; then
         print_info "Installing phpstan via composer..."
-        composer global require phpstan/phpstan 2>/dev/null || print_warning "Failed to install phpstan"
+        try_install phpstan composer global require phpstan/phpstan
       fi
     fi
     ;;
 
   ubuntu)
     print_info "Installing APT-based linter/formatter packages..."
-    sudo apt-get install -y \
-      shellcheck \
-      cppcheck \
-      clang-format \
-      2>/dev/null || print_warning "Some APT packages failed to install"
+    try_install "APT linter packages" \
+      sudo apt-get install -y shellcheck cppcheck clang-format
 
     # shfmt (snap or go install)
     if ! command_exists shfmt; then
       if command_exists snap; then
         print_info "Installing shfmt via snap..."
-        sudo snap install shfmt 2>/dev/null || print_warning "Failed to install shfmt via snap"
+        try_install "shfmt (snap)" sudo snap install shfmt
       elif command_exists go; then
         print_info "Installing shfmt via go install..."
-        go install mvdan.cc/sh/v3/cmd/shfmt@latest 2>/dev/null || print_warning "Failed to install shfmt"
+        try_install shfmt go install mvdan.cc/sh/v3/cmd/shfmt@latest
         # See the PATH export note below: go install's binaries aren't on
         # PATH until exported.
         export PATH="$HOME/go/bin:$PATH"
@@ -1341,11 +1358,11 @@ install_linters_formatters() {
       export PATH="$HOME/go/bin:$PATH"
       if ! command_exists staticcheck; then
         print_info "Installing staticcheck..."
-        go install honnef.co/go/tools/cmd/staticcheck@latest 2>/dev/null || print_warning "Failed to install staticcheck"
+        try_install staticcheck go install honnef.co/go/tools/cmd/staticcheck@latest
       fi
       if ! command_exists goimports; then
         print_info "Installing goimports..."
-        go install golang.org/x/tools/cmd/goimports@latest 2>/dev/null || print_warning "Failed to install goimports"
+        try_install goimports go install golang.org/x/tools/cmd/goimports@latest
       fi
     fi
 
@@ -1353,7 +1370,7 @@ install_linters_formatters() {
     if command_exists gem; then
       if ! command_exists rubocop; then
         print_info "Installing rubocop via gem..."
-        gem install rubocop 2>/dev/null || print_warning "Failed to install rubocop"
+        try_install rubocop gem install rubocop
       fi
     fi
 
@@ -1361,13 +1378,13 @@ install_linters_formatters() {
     if command_exists php && ! command_exists phpstan; then
       if command_exists composer; then
         print_info "Installing phpstan via composer..."
-        composer global require phpstan/phpstan 2>/dev/null || print_warning "Failed to install phpstan"
+        try_install phpstan composer global require phpstan/phpstan
       fi
     fi
     if ! command_exists php-cs-fixer; then
       if command_exists composer; then
         print_info "Installing php-cs-fixer via composer..."
-        composer global require friendsofphp/php-cs-fixer 2>/dev/null || print_warning "Failed to install php-cs-fixer"
+        try_install php-cs-fixer composer global require friendsofphp/php-cs-fixer
       fi
     fi
 
@@ -1397,7 +1414,7 @@ install_linters_formatters() {
       local scoop_tools=(shellcheck shfmt cppcheck)
       for tool in "${scoop_tools[@]}"; do
         if ! command_exists "$tool"; then
-          scoop install "$tool" 2>/dev/null || print_warning "Failed to install $tool via scoop"
+          try_install "$tool (scoop)" scoop install "$tool"
         fi
       done
     fi

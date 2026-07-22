@@ -1472,3 +1472,78 @@ class TestPipInstallUser:
         assert text.count('pip_install_user "$pip_cmd"') == 2
         assert "--break-system-packages" in text
         assert "externally-managed-environment" in text
+
+
+class TestTryInstall:
+    """try_install runs a tool-install command quietly on success but surfaces
+    the installer's own error on failure, replacing the repeated
+    `<installer> ... 2>/dev/null || print_warning "Failed to install X"`
+    pattern across every package manager."""
+
+    def test_success_is_quiet_and_logged(self, shell_env):
+        shell_env.stub("faketool")  # default body: log call, exit 0
+        res = run_sourced("try_install widget faketool install widget", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "faketool install widget" in shell_env.calls
+        assert "Failed to install" not in res.stdout
+
+    def test_failure_surfaces_the_installers_reason(self, shell_env):
+        shell_env.stub(
+            "faketool", body='echo "E: could not reach the registry" >&2\nexit 1'
+        )
+        res = run_sourced("try_install widget faketool install widget", shell_env.env)
+        assert res.returncode == 0, res.stderr  # non-fatal by contract
+        assert "Failed to install widget" in res.stdout
+        assert "could not reach the registry" in res.stdout
+
+    def test_installer_stdout_progress_is_suppressed_on_success(self, shell_env):
+        # npm/go/gem progress noise must not leak on the happy path.
+        shell_env.stub("faketool", body='echo "downloading 100%"')
+        res = run_sourced("try_install widget faketool install widget", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "downloading 100%" not in res.stdout
+
+    def test_tree_sitter_install_surfaces_npm_failure(self, shell_env):
+        # A real caller (install_tree_sitter_cli) must report why npm failed
+        # instead of the old bare "Failed to install tree-sitter CLI".
+        shell_env.stub("npm", body='echo "npm ERR! 403 Forbidden" >&2\nexit 1')
+        res = run_sourced(
+            'command_exists() { case "$1" in tree-sitter) return 1 ;; '
+            '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+            "install_tree_sitter_cli",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "Failed to install tree-sitter CLI" in res.stdout
+        assert "403 Forbidden" in res.stdout
+
+    def test_mutating_installs_no_longer_swallow_stderr(self):
+        # The sweep: every mutating install routes through try_install; none
+        # may keep `2>/dev/null`. Existence probes are deliberately left alone.
+        text = INSTALL.read_text(encoding="utf-8")
+        assert "try_install()" in text
+        swallowing_mutations = [
+            r"npm install -g[^\n]*2>/dev/null",
+            r"\bgo install\b[^\n]*2>/dev/null",
+            r"\bgem install\b[^\n]*2>/dev/null",
+            r"\bbrew install\b[^\n]*2>/dev/null",
+            r"composer global require[^\n]*2>/dev/null",
+            r"scoop install[^\n]*2>/dev/null",
+            r"snap install[^\n]*2>/dev/null",
+        ]
+        for pat in swallowing_mutations:
+            assert not re.search(pat, text), f"still swallowing stderr: {pat}"
+        # Unified: no package-manager install pairs directly with a
+        # print_warning fallback anymore -- they all route through try_install,
+        # including the previously line-wrapped nodejs apt install.
+        assert not re.search(r"brew install[^\n]*\|\| print_warning", text)
+        assert not re.search(r"apt-get install -y [^\n|]*\|\|", text)
+        # Probes must still discard output -- they only care about exit status.
+        assert re.search(r"brew list [^\n]*&>/dev/null", text)
+        assert re.search(r"npm list -g[^\n]*&>/dev/null", text)
+        assert re.search(r"show mcp &>/dev/null", text)
+        # fetch_and_run bootstraps (uv/pyenv/docker) intentionally keep their
+        # own error handling -- they stream stderr for supply-chain visibility
+        # and must NOT be captured by try_install.
+        assert re.search(r"fetch_and_run https://astral\.sh/uv", text)
+        assert text.count("try_install ") >= 30
