@@ -64,8 +64,10 @@ cf () {
 vf () {
   selected_file=$(fzf --extended --preview 'bat --style=numbers --color=always {}')
   if [ -n "$selected_file" ]; then
-    cd "$(dirname "$selected_file")"
-    nvim "$selected_file"
+    # cd changes cwd to the file's dir, so open by basename -- reusing the
+    # original (cwd-relative) path here looked for src/foo under src/, i.e.
+    # src/src/foo, and opened an empty buffer for anything below the cwd.
+    cd "$(dirname "$selected_file")" && nvim "$(basename "$selected_file")"
   fi
 }
 
