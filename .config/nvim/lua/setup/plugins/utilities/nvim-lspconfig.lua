@@ -18,26 +18,25 @@ local lspconfig = {
     'williamboman/mason-lspconfig.nvim',
   },
   config = function()
+    -- mason-lspconfig v2 は v1 の `handlers` を撤廃し、インストール済みサーバは
+    -- automatic_enable (既定 on) が vim.lsp.enable() で有効化する。旧 `handlers`
+    -- を setup() に渡しても黙って無視され、下の lua_ls 設定が dead code 化していた。
+    -- サーバ個別設定は Neovim 0.11+ の vim.lsp.config で宣言し、nvim-lspconfig の
+    -- lsp/<server>.lua 既定へマージする (enable より前に登録しておく)。
+    vim.lsp.config('lua_ls', {
+      settings = {
+        Lua = {
+          runtime = { version = 'LuaJIT' },
+          workspace = {
+            checkThirdParty = false,
+            library = { vim.env.VIMRUNTIME },
+          },
+        },
+      },
+    })
+
     require('mason-lspconfig').setup({
       ensure_installed = {},
-      handlers = {
-        function(server_name)
-          require('lspconfig')[server_name].setup({})
-        end,
-        lua_ls = function()
-          require('lspconfig').lua_ls.setup({
-            settings = {
-              Lua = {
-                runtime = { version = 'LuaJIT' },
-                workspace = {
-                  checkThirdParty = false,
-                  library = { vim.env.VIMRUNTIME },
-                },
-              },
-            },
-          })
-        end,
-      }
     })
 
     vim.api.nvim_create_autocmd('LspAttach', {
