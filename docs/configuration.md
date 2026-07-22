@@ -76,7 +76,7 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 - **256色ターミナル**: RGBカラー対応
 - **viモード**: コピーモードでviキーバインド使用
 - **マウス操作**: ペイン端のダブルクリックで分割、それ以外はコピーモード
-- **テーマ / プラグイン**（tpm で管理）: `rose-pine/tmux`（moon）、`tmux-mode-indicator`、`tmux-sensible`、`tmux-logging`、`tmux-easy-motion`（`C-j` プレフィックスで高速カーソル移動）
+- **テーマ / プラグイン**（tpm で管理）: `rose-pine/tmux`（moon）、`tmux-mode-indicator`、`tmux-sensible`、`tmux-logging`、`tmux-easy-motion`（`f` プレフィックスで高速カーソル移動）
 - **クリップボード統合**:
   - macOS: pbcopy/pbpaste
   - Linux: xsel
