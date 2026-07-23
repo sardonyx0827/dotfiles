@@ -9,9 +9,13 @@ that launches them). These tests close that gap.
 
 import json
 import re
+import sys
 
 import tomllib
 from conftest import REPO_ROOT
+
+sys.path.insert(0, str(REPO_ROOT / ".claude" / "hooks"))
+import _bash_review_common as _bash_review  # noqa: E402
 
 CLAUDE_SETTINGS = REPO_ROOT / ".claude/settings.json"
 CODEX_HOOKS_TEMPLATE = REPO_ROOT / ".codex/hooks.json.template"
@@ -109,6 +113,62 @@ def test_dotenv_is_denied_for_editing():
         if f"Edit({pattern})" not in deny
     ]
     assert not missing, f"permissions.deny is missing .env edit guards: {missing}"
+
+
+# bash-review's DENY_EXECUTABLES (sudo, ssh, dd, ...) are *context-free* hard
+# denies, but that layer is only advisory: it needs bash-review-launcher.sh to
+# actually run. The launcher's own uncovered residual case -- it failing to start
+# (missing bash / python3) -- is bounded by permissions.deny alone (see
+# hooks/README.md, "Fail toward the human"). So every context-free hard-deny
+# executable must have a Bash(<exe>:*) twin here, or that "bounded by
+# permissions.deny" claim is false for it and the executable would run unreviewed
+# whenever the launcher is down. These entries are already hard-denied by the
+# hook, so the deny twin adds no new friction -- only the missing backstop.
+def test_deny_executables_have_permission_deny_backstop():
+    """Regression guard for the hook/settings asymmetry: DENY_EXECUTABLES used to
+    list su/doas/pkexec/dd/shred/ssh with no permissions.deny backstop, so those
+    had no hard boundary when the launcher could not start. Keep the two in sync;
+    a new DENY_EXECUTABLES entry must gain a deny twin in the same change."""
+    deny = _deny_rules()
+    missing = [
+        f"Bash({exe}:*)"
+        for exe in sorted(_bash_review.DENY_EXECUTABLES)
+        if f"Bash({exe}:*)" not in deny
+    ]
+    assert not missing, (
+        "permissions.deny is missing hard-boundary backstops for hook "
+        f"DENY_EXECUTABLES entries: {missing}"
+    )
+
+
+# `mkfs` is special-cased in the hook (_is_deny_command): it denies bare `mkfs`
+# *and* the `mkfs.<fs>` family (mkfs.ext4, mkfs.xfs, ...) via a `startswith`
+# prefix match. A permissions.deny rule cannot express that family in one entry:
+# Bash(mkfs:*) enforces a word boundary after `mkfs`, so it matches `mkfs
+# /dev/sda` but NOT `mkfs.ext4 /dev/sda`. The family is therefore backstopped
+# best-effort by enumerating the common members; exotic filesystems stay covered
+# by the hook alone. This list is a floor of realistic cases, not a completeness
+# claim -- see the launcher-residual note under "Fail toward the human" in
+# hooks/README.md.
+MKFS_DENY_BACKSTOP = [
+    "mkfs",
+    "mkfs.ext2",
+    "mkfs.ext3",
+    "mkfs.ext4",
+    "mkfs.xfs",
+    "mkfs.btrfs",
+    "mkfs.vfat",
+]
+
+
+def test_mkfs_family_has_permission_deny_backstop():
+    deny = _deny_rules()
+    missing = [
+        f"Bash({name}:*)"
+        for name in MKFS_DENY_BACKSTOP
+        if f"Bash({name}:*)" not in deny
+    ]
+    assert not missing, f"permissions.deny is missing mkfs backstops: {missing}"
 
 
 def test_no_write_verb_deny_rules():

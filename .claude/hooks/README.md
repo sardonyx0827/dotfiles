@@ -151,8 +151,15 @@ latency low for the common case:
    `bash-review.py`, or a crash (any exit other than 0/2) into an explicit
    `ask`, where the bare `python3 …/bash-review.py` wiring would have been
    downgraded by Claude Code to a non-blocking error — i.e. fail-open. What
-   the launcher cannot cover is its own failure to start; that residual case
-   is bounded by `permissions.deny`, as below.
+   the launcher cannot cover is its own failure to start (a missing `bash`
+   itself); that residual case is bounded by `permissions.deny`, which mirrors
+   the hook's context-free hard-deny set — `sudo`/`su`/`doas`/`pkexec`,
+   `ssh`/`curl`/`wget`/`nc`, `dd`/`shred`/`mkfs` — so none of them run
+   unreviewed even with the hook down. The one residual: `permissions.deny`
+   matches on word boundaries and cannot express the `mkfs.<fs>` family
+   (`mkfs.ext4`, `mkfs.xfs`, …) in a single rule, so the common members are
+   enumerated and exotic filesystems stay covered by the hook alone
+   (`test_config_wiring.py` guards the mirror).
 
 **Sandbox is off on purpose.** Claude Code's `sandbox` feature is disabled in
 `settings.json` (`"sandbox": {"enabled": false}`): the enforcement boundary is
