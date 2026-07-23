@@ -1118,6 +1118,81 @@ class TestHighRiskClassifier:
     def test_interpreter_without_eval_flag_is_not_high_risk(self, hook_fns, command):
         assert hook_fns["_high_risk_label"](command) == ""
 
+    @pytest.mark.parametrize(
+        ("command", "expected_substr"),
+        [
+            # Container-escape class: docker talks to a root-equivalent daemon,
+            # so run/create forms that break isolation must land in the
+            # two-model ask tier, not the single-model fast path (the exact
+            # asymmetry vs rm -r / package installs this tier exists for).
+            ("docker run --privileged ubuntu bash", "docker run --privileged"),
+            ("docker create --privileged img", "docker create --privileged"),
+            # The management form `docker container run` is the same action.
+            ("docker container run --privileged img", "docker run --privileged"),
+            # Host PID namespace (both --pid=host and --pid host spellings).
+            ("docker run --pid=host img", "docker run --pid=host"),
+            ("docker run --pid host img", "docker run --pid=host"),
+            # SYS_ADMIN / ALL capabilities; docker accepts any case and an
+            # optional CAP_ prefix, so normalization must not be evadable.
+            ("docker run --cap-add=SYS_ADMIN img", "--cap-add SYS_ADMIN"),
+            ("docker run --cap-add sys_admin img", "--cap-add SYS_ADMIN"),
+            ("docker run --cap-add=CAP_SYS_ADMIN img", "--cap-add SYS_ADMIN"),
+            ("docker run --cap-add=ALL img", "--cap-add ALL"),
+            # Host root filesystem mounts (-v/--volume, spaced and = forms).
+            ("docker run -v /:/host img", "host root mount"),
+            ("docker run --volume /:/host img", "host root mount"),
+            ("docker run --volume=/:/host img", "host root mount"),
+            # Docker socket mount = full daemon control = host root.
+            (
+                "docker run -v /var/run/docker.sock:/var/run/docker.sock img",
+                "docker.sock mount",
+            ),
+            # --mount long form (source= and src= aliases).
+            (
+                "docker run --mount type=bind,source=/,target=/host img",
+                "host root mount",
+            ),
+            ("docker run --mount=type=bind,src=/,dst=/host img", "host root mount"),
+            # Wrapper stripping must reach the docker classifier too.
+            ("env docker run --privileged img", "docker run --privileged"),
+            # Remote-TLS global flags take values; if they are not registered
+            # as value flags, `ca.pem` is mistaken for the subcommand and the
+            # whole escape-class detection is bypassed.
+            (
+                "docker -H tcp://host:2376 --tlsverify --tlscacert ca.pem "
+                "--tlscert cert.pem --tlskey key.pem run --privileged ubuntu bash",
+                "docker run --privileged",
+            ),
+        ],
+    )
+    def test_docker_escape_flags_are_high_risk(
+        self, hook_fns, command, expected_substr
+    ):
+        label = hook_fns["_high_risk_label"](command)
+        assert expected_substr in label, f"{command!r} -> {label!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # Plain container use keeps isolation: stays on the fast path.
+            "docker ps",
+            "docker container ls",
+            "docker build -t app .",
+            "docker compose up -d",
+            "docker run ubuntu echo hi",
+            # Ordinary mounts (relative / non-root absolute) are the everyday
+            # dev shape; flagging them would be paid on every container run.
+            "docker run -v ./data:/data img",
+            "docker run -v /home/me/app:/app img",
+            "docker run --mount type=bind,source=/home/me,target=/data img",
+            # Value prefixes that merely resemble the dangerous spelling.
+            "docker run --pid=container:web img",
+            "docker run --cap-add NET_BIND_SERVICE img",
+        ],
+    )
+    def test_docker_without_escape_flags_is_not_high_risk(self, hook_fns, command):
+        assert hook_fns["_high_risk_label"](command) == ""
+
     def test_whole_command_collects_labels_across_subcommands(self, hook_fns):
         label = hook_fns["high_risk_label"](
             ["ls -la", "npm install left-pad", "git push --force origin main"]

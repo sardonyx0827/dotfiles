@@ -255,6 +255,23 @@ _GLOBAL_VALUE_FLAGS = {
     "npm": frozenset({"--prefix", "-C", "-w", "--workspace"}),
     "pnpm": frozenset({"--prefix", "-C", "-w", "--workspace", "--filter"}),
     "yarn": frozenset({"--cwd"}),
+    # TLS 系はリモート daemon 接続 (docker -H tcp://... --tlscacert ca.pem ...)
+    # で使う値付きフラグ。登録漏れがあると値 (ca.pem) をサブコマンドと誤認し、
+    # 後段の docker 脱出級判定が丸ごと素通りする。
+    "docker": frozenset(
+        {
+            "-H",
+            "--host",
+            "-c",
+            "--context",
+            "--config",
+            "-l",
+            "--log-level",
+            "--tlscacert",
+            "--tlscert",
+            "--tlskey",
+        }
+    ),
 }
 
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -846,6 +863,75 @@ _COMMAND_FLAG = re.compile(r"^-[A-Za-z]*c")
 # なので fullmatch で弾かれ、束ね扱いされない。
 _SHORT_FLAG_BUNDLE = re.compile(r"-[A-Za-z]+")
 
+# docker はデーモン (root 相当) 経由で動くため、コンテナの分離を明示的に破る
+# 起動形はホスト root 相当の操作に直結する (--privileged、ホスト root /
+# docker.sock のマウント、ホスト PID 名前空間、SYS_ADMIN 級 capability)。
+# この「脱出級」の形だけを rm -r 等と同じ高リスク層 (二モデル AND + 必ず ask)
+# に載せる。素の `docker run img` は分離が保たれるため対象外で、従来どおり
+# 単独モデルの通常レビューに残す (リストは意図的に狭く始める方針に従う)。
+_DOCKER_RUN_SUBCOMMANDS = frozenset({"run", "create"})
+_DOCKER_ESCAPE_CAPS = frozenset({"SYS_ADMIN", "ALL"})
+
+
+def _docker_escape_mount(source: str) -> str:
+    """マウントのホスト側ソースが脱出級ならラベル断片、そうでなければ ""。"""
+    if source and source.rstrip("/") == "":
+        return "host root mount"
+    if source.endswith("docker.sock"):
+        return "docker.sock mount"
+    return ""
+
+
+def _docker_high_risk_label(args: list[str]) -> str:
+    """docker コマンドが脱出級の起動形ならラベル、そうでなければ "" を返す。
+
+    フラグはサブコマンド以降に限定せず全引数から探す。イメージ名より後ろは
+    本来コンテナ側の引数だが、そこを正確に切るには docker run の全値付き
+    フラグ表が必要になる。誤検出のコストは ask 1 回で済むため全走査で足りる。
+    束ね短フラグ (-itv 等) に紛れた -v は拾えないが、その場合も単独モデルの
+    通常レビューに残るだけで、無審査にはならない。
+    """
+    sub = _find_subcommand("docker", args)
+    if sub == "container":
+        # 管理形 `docker container run` は `docker run` と同じ動作。container
+        # の次の非フラグトークンが実サブコマンド (container 管理サブコマンドに
+        # 値付きグローバルフラグは無いため _find_subcommand で足りる)。
+        args = args[args.index(sub) + 1 :]
+        sub = _find_subcommand("container", args)
+    if sub not in _DOCKER_RUN_SUBCOMMANDS:
+        return ""
+    label = f"docker {sub}"
+    for i, tok in enumerate(args):
+        head, sep, inline_value = tok.partition("=")
+        if head == "--privileged":
+            return f"{label} --privileged"
+        if head in ("--pid", "--cap-add", "-v", "--volume", "--mount"):
+            value = inline_value if sep else (args[i + 1] if i + 1 < len(args) else "")
+            if head == "--pid":
+                if value == "host":
+                    return f"{label} --pid=host"
+            elif head == "--cap-add":
+                # docker は capability 名の大文字小文字と CAP_ 接頭辞を無視して
+                # 受理するため、照合前に正規化しないと表記ゆれで素通りする。
+                cap = value.upper().removeprefix("CAP_")
+                if cap in _DOCKER_ESCAPE_CAPS:
+                    return f"{label} --cap-add {cap}"
+            elif head == "--mount":
+                # `type=bind,source=/,target=/host` 形式。source= / src= が
+                # ホスト側ソース。
+                fields = dict(
+                    part.split("=", 1) for part in value.split(",") if "=" in part
+                )
+                source = fields.get("source") or fields.get("src") or ""
+                mount = _docker_escape_mount(source)
+                if mount:
+                    return f"{label} {mount}"
+            else:  # -v / --volume: `ホスト側:コンテナ側[:オプション]`
+                mount = _docker_escape_mount(value.split(":", 1)[0])
+                if mount:
+                    return f"{label} {mount}"
+    return ""
+
 
 def _high_risk_label(cmd: str) -> str:
     """コマンド 1 行が高リスク分類に一致すればラベル、しなければ "" を返す。
@@ -890,6 +976,8 @@ def _high_risk_label(cmd: str) -> str:
         if sub == "clean" and any(_FORCE_FLAG.match(t) or t == "--force" for t in rest):
             return "git clean -f"
         return ""
+    if exe == "docker":
+        return _docker_high_risk_label(rest)
     # バージョン接尾辞を剥がしてから照合する (pip3.12 / pip2 も pip として扱う)。
     # python 判定 (下) やインタプリタ eval 判定と同じ正規化。ラベルには生 exe を
     # 残して実際に走る形を見せる。剥がした結果が別キーに化けるのは pip 系のみ
