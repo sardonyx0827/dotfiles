@@ -801,6 +801,10 @@ _PKG_INSTALL_SUBCOMMANDS = {
     "pnpm": {"install", "i", "add"},
     "yarn": {"install", "add"},
     "pip": {"install"},
+    # `pip3` は _high_risk_label が照合前に _VERSION_SUFFIX で末尾数字を剥がす
+    # (pip3 / pip3.12 / pip2 → pip) ため、このキーへ直接ヒットする経路は無い
+    # (実質デッドエントリ)。値が `pip` と同一なので現状は無害だが、将来 pip3 だけ
+    # 挙動を変えたくなったらここではなく正規化側を見直すこと。明示のため残す。
     "pip3": {"install"},
     "uv": {"add"},  # `uv pip install` は _high_risk_label 内で個別判定
     "brew": {"install"},
@@ -886,7 +890,12 @@ def _high_risk_label(cmd: str) -> str:
         if sub == "clean" and any(_FORCE_FLAG.match(t) or t == "--force" for t in rest):
             return "git clean -f"
         return ""
-    if exe in _PKG_INSTALL_SUBCOMMANDS and sub in _PKG_INSTALL_SUBCOMMANDS[exe]:
+    # バージョン接尾辞を剥がしてから照合する (pip3.12 / pip2 も pip として扱う)。
+    # python 判定 (下) やインタプリタ eval 判定と同じ正規化。ラベルには生 exe を
+    # 残して実際に走る形を見せる。剥がした結果が別キーに化けるのは pip 系のみ
+    # (他のキーは末尾に数字を持たない) なので誤分類は生じない。
+    pkg_exe = _VERSION_SUFFIX.sub("", exe)
+    if pkg_exe in _PKG_INSTALL_SUBCOMMANDS and sub in _PKG_INSTALL_SUBCOMMANDS[pkg_exe]:
         return f"{exe} {sub}"
     # `python -m pip install` は `pip install` と全く同じサプライチェーン操作
     # なので同じラベルに寄せる。`-m` 自体は引き金にせず (python -m http.server /

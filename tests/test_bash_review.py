@@ -929,6 +929,11 @@ class TestHighRiskClassifier:
             ("gem install rails", True),
             ("cargo install ripgrep", True),
             ("go install example.com/cmd@latest", True),
+            # Version-suffixed pip entry points (real in multi-python setups)
+            # must not escape the supply-chain tier, mirroring how the python
+            # and interpreter-eval checks already strip the version suffix.
+            ("pip3.12 install requests", True),
+            ("pip2 install requests", True),
             ("npm test", False),
             ("pip list", False),
             ("brew list", False),
