@@ -1548,6 +1548,8 @@ class TestSecretScanUnit:
             "mongo --password mySecretPass1234 --username admin",
             "tool --api-key abcdef1234567890 run",
             "deploy --client-secret Sup3rSecretValue1",
+            "gpg --passphrase mySecretPass1234 secret.gpg",
+            "restic --credential Sup3rSecretValue1 backup",
             # HTTP Basic auth header (base64 of user:pass).
             "http --header 'Authorization: Basic dXNlcjpwYXNzd29yZA==' api.example.com",
             # Opaque (non-JWT) bearer token with base64 padding chars.

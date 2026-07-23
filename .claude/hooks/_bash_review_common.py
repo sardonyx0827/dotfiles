@@ -1048,11 +1048,15 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ),
     # 空白区切りの長フラグ形式 (--password value / --token value 等)。短縮フラグ
     # (-p value) は mkdir -p / cp -p 等との誤検知が多すぎるため対象外 (割り切り)。
+    # キーワード集合は上の "secret assignment" と対称に保つ (passphrase / credential
+    # も含める): --passphrase / --credential は gpg / openssl / バックアップ系 CLI で
+    # 生の資格情報を渡す実在フラグで、片方の表にだけあると素通りする。
     (
         "secret flag",
         re.compile(
-            r"(?i)--(?:password|passwd|token|secret|api[_-]?key|access[_-]?key"
-            r"|auth[_-]?token|client[_-]?secret)\s+(?![-$])\S{6,}"
+            r"(?i)--(?:password|passwd|passphrase|token|secret|credential"
+            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
+            r"\s+(?![-$])\S{6,}"
         ),
     ),
 ]
