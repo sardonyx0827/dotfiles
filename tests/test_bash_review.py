@@ -155,6 +155,20 @@ class TestSafeSkip:
         assert res.decision == "ask"
         assert "High-risk" in res.reason
 
+    def test_pipe_into_shell_is_high_risk(self, run_hook):
+        # `echo ... | bash` executes stdin as shell code (== `sh -c`) but has no
+        # -c, so it used to land on the single-model fast path and auto-allow on
+        # a lone Gemini ALLOW. Gemini ALLOW + Codex ASK resolving to ask proves
+        # the dual-review tier now runs (the fast path would have allowed).
+        res = run_hook(
+            HOOK,
+            hook_payload("echo 'rm -rf /' | bash"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.decision == "ask"
+        assert "High-risk" in res.reason
+
 
 class TestGeminiStage:
     def test_gemini_allow_short_circuits_codex(self, run_hook):
@@ -970,6 +984,111 @@ class TestHighRiskClassifier:
     def test_single_command_classification(self, hook_fns, command, risky):
         label = hook_fns["_high_risk_label"](command)
         assert bool(label) is risky, f"{command!r} -> {label!r}"
+
+    @pytest.mark.parametrize(
+        ("command", "risky"),
+        [
+            # A bare interpreter on the receiving end of a pipe reads its program
+            # from stdin -- functionally `sh -c` -- but has no -c, so it slipped
+            # past the shell -c branch into the single-model fast path. This is
+            # the exact gap: `curl | sh` is caught only because curl is DENY;
+            # non-deny producers (echo/base64/cat) were downgraded, not blocked.
+            ("echo 'rm -rf /' | bash", True),
+            ("base64 -d payload | sh", True),
+            ("cat blob | zsh", True),
+            # Bundled flags on the receiver stay bare (no script file).
+            ("echo x | bash -x", True),
+            # `-s` reads the program from stdin and treats positionals as $1..,
+            # so an installer variant with args is still stdin execution.
+            ("echo x | sh -s -- stable", True),
+            # Eval interpreters read stdin as code the same way (bare / no file).
+            ("printf '%s' 'import os' | python3", True),
+            ("cat x | node", True),
+            ("cat x | perl", True),
+            # Input redirect / here-string / here-doc feed a bare shell too.
+            ("bash < evil.sh", True),
+            ("bash <<< 'rm -rf /'", True),
+            # Command substitution body is scanned like high_risk_label does.
+            ("echo $(base64 -d x | sh)", True),
+            # Both a per-subcommand label AND the stdin label merge together.
+            ("rm -rf ./x | bash", True),
+            # A wrapper that hides the executable (value-taking flag) can't be
+            # resolved to a bare interpreter here, but the same unresolvable
+            # form is caught as "wrapped command" by the per-subcommand layer,
+            # so piping into it still lands in the high-risk tier.
+            ("echo payload | env -u LD_PRELOAD bash", True),
+            # Newline is a shell separator too: a bare interpreter on the first
+            # line's pipe must be caught even with a follow-up line. shlex folds
+            # the newline, so without per-line splitting the second line's tokens
+            # were misread as a script arg and the receiver slipped through --
+            # the same per-line re-split high_risk_label / find_deny_command do.
+            ("base64 -d payload | bash\necho done", True),
+            # A shell -s BEFORE any script file reads the program from stdin.
+            ("echo x | bash -s", True),
+            # ...but a -s AFTER a script file is just $1: bash runs the file and
+            # ignores stdin, so it must NOT be flagged (no false positive).
+            ("echo x | bash foo.sh -s", False),
+            # --- Must NOT flag: a script/module file means stdin is data ---
+            ("bash script.sh", False),
+            ("python3 script.py", False),
+            ("cat data.csv | python3 process.py", False),  # data pipe into a file
+            ("python3 app.py < input.txt", False),  # data redirect into a file
+            ("bash --version", False),  # standalone, no stdin source
+            ("python3 -m http.server", False),  # module run, not stdin
+            ("ls | grep foo", False),  # receiver is not an interpreter
+            ("echo hi | cat", False),
+        ],
+    )
+    def test_stdin_interpreter_classification(self, hook_fns, command, risky):
+        # classify_high_risk needs the raw command (pipe/redirect context is lost
+        # once _split_commands drops the operators), so drive it end to end.
+        label = hook_fns["classify_high_risk"](
+            hook_fns["_split_commands"](command), command
+        )
+        assert bool(label) is risky, f"{command!r} -> {label!r}"
+
+    def test_stdin_interpreter_label_and_merge(self, hook_fns):
+        classify = hook_fns["classify_high_risk"]
+        split = hook_fns["_split_commands"]
+        assert classify(split("echo x | bash"), "echo x | bash") == "stdin into bash"
+        # The stdin label is additive to the per-subcommand labels, not a
+        # replacement -- both reasons reach the audit log / dual-review prompt.
+        merged = classify(split("rm -rf ./x | bash"), "rm -rf ./x | bash")
+        assert "rm recursive" in merged
+        assert "stdin into bash" in merged
+        # A trailing pipe yields an empty receiver segment; it must be skipped
+        # without error rather than misread as a bare interpreter.
+        assert classify(split("cat x |"), "cat x |") == ""
+
+    def test_heredoc_into_shell_is_high_risk(self, hook_fns):
+        # A here-doc feeds its body to a bare shell's stdin (== `sh -c`). The
+        # per-line re-split makes the `bash <<EOF` line visible even when a
+        # harmless command precedes it, so the receiver (and a nested pipe into
+        # node in the body) are both classified rather than slipping past.
+        classify, split = hook_fns["classify_high_risk"], hook_fns["_split_commands"]
+        cmd = "pwd\nbash <<EOF\necho payload | node\nEOF"
+        label = classify(split(cmd), cmd)
+        assert "stdin into bash" in label
+        assert "stdin into node" in label
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # These are documented, accepted residuals: the char-level parser
+            # (shared with the DENY/safe splitters, deliberately not shell-grade)
+            # does not resolve them, and fixing them would perturb that splitter
+            # for a non-adversarial threat model. Pinned so a future parser
+            # upgrade flips these on purpose, not by surprise.
+            "bash<evil.sh",  # no-space redirect: shlex fuses `<` into the exe
+            "bash 0< evil.sh",  # fd-numbered redirect: token doesn't start with <
+            "echo 'rm -rf /' |& bash",  # |& (stdout+stderr pipe): op reads as &
+        ],
+    )
+    def test_stdin_interpreter_accepted_residuals(self, hook_fns, command):
+        # Not caught by the stdin-interpreter layer today (see the residual notes
+        # in _bare_interpreter_stdin_label). Documented so the gap is a conscious
+        # trade-off, not a silent hole.
+        assert hook_fns["stdin_interpreter_label"](command) == ""
 
     @pytest.mark.parametrize(
         ("command", "expected_substr"),

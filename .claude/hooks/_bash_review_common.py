@@ -51,6 +51,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 
 # Gemini API / Codex 呼び出しで想定する回復可能な例外。ここに列挙したものは
 # フォールバック (Gemini フラッシュモデル / Gemini 判定へのフェイルクローズ) の
@@ -439,20 +440,23 @@ SENSITIVE_PATTERNS = re.compile(
 )
 
 
-def _split_top_level(cmd: str, *, split_ampersand: bool = False) -> list[str]:
-    """cmd を && / || / | / ; で分割する (クォート・エスケープ内の区切りは無視)。
+def _iter_top_level(
+    cmd: str, *, split_ampersand: bool = False
+) -> Iterator[tuple[str, str]]:
+    """cmd をトップレベルの区切りで分割し (op_before, segment) を順に yield する。
 
-    シェルはクォート内の ; や | を区切りとして解釈しないため、ここで分割すると
-    `python3 -c "a; b"` のようなクォート内文字列の断片が独立コマンドとして
-    DENY/SAFE 判定にかかってしまう (安全なコマンドの誤 DENY)。クォート外の
-    区切りのみで分割する。split_ampersand=True のときは単独の & (バック
-    グラウンド実行: 両側とも実行される) も区切りに加える。デフォルトで区切ら
-    ないのは、& を含む未分割パートをセーフスキップ判定に残し、従来どおり
-    COMPLEX_SHELL_SYNTAX にスキップを拒否させるため (_split_commands 参照)。
+    op_before は直前の区切り (最初のセグメントは "")。&& / || / | / ; で分割し、
+    split_ampersand=True のときは単独の & も区切りに加える。クォート・エスケープ
+    内の区切りは無視する (シェルはクォート内の ; や | を区切りとして解釈しない
+    ため、`python3 -c "a; b"` のクォート内断片を独立コマンドとして誤判定しない)。
+
+    segment は strip も空フィルタもしていない生の断片。区切り種別 (op_before) が
+    必要な呼び出し側 (パイプ受け手の特定など) はここを直接使い、単なる分割結果
+    だけ要る側は _split_top_level を使う。両者で走査規則を一元化しドリフトを防ぐ。
     """
-    parts: list[str] = []
     current: list[str] = []
     in_single = in_double = False
+    op_before = ""
     i, n = 0, len(cmd)
     while i < n:
         ch = cmd[i]
@@ -467,19 +471,41 @@ def _split_top_level(cmd: str, *, split_ampersand: bool = False) -> list[str]:
             in_double = not in_double
         if not in_single and not in_double:
             if cmd.startswith("&&", i) or cmd.startswith("||", i):
-                parts.append("".join(current))
+                yield op_before, "".join(current)
+                op_before = cmd[i : i + 2]
                 current = []
                 i += 2
                 continue
             if ch in (";|&" if split_ampersand else ";|"):
-                parts.append("".join(current))
+                yield op_before, "".join(current)
+                op_before = ch
                 current = []
                 i += 1
                 continue
         current.append(ch)
         i += 1
-    parts.append("".join(current))
-    return [p.strip() for p in parts if p.strip()]
+    yield op_before, "".join(current)
+
+
+def _split_top_level(cmd: str, *, split_ampersand: bool = False) -> list[str]:
+    """cmd を && / || / | / ; で分割する (クォート・エスケープ内の区切りは無視)。
+
+    シェルはクォート内の ; や | を区切りとして解釈しないため、ここで分割すると
+    `python3 -c "a; b"` のようなクォート内文字列の断片が独立コマンドとして
+    DENY/SAFE 判定にかかってしまう (安全なコマンドの誤 DENY)。クォート外の
+    区切りのみで分割する。split_ampersand=True のときは単独の & (バック
+    グラウンド実行: 両側とも実行される) も区切りに加える。デフォルトで区切ら
+    ないのは、& を含む未分割パートをセーフスキップ判定に残し、従来どおり
+    COMPLEX_SHELL_SYNTAX にスキップを拒否させるため (_split_commands 参照)。
+
+    走査規則は _iter_top_level に一元化し、ここでは区切り種別を捨てて
+    strip + 空フィルタした断片列だけを返す (従来と同一の出力)。
+    """
+    return [
+        seg.strip()
+        for _op, seg in _iter_top_level(cmd, split_ampersand=split_ampersand)
+        if seg.strip()
+    ]
 
 
 def _substitutions_at_level(text: str) -> list[str]:
@@ -863,6 +889,18 @@ _COMMAND_FLAG = re.compile(r"^-[A-Za-z]*c")
 # なので fullmatch で弾かれ、束ね扱いされない。
 _SHORT_FLAG_BUNDLE = re.compile(r"-[A-Za-z]+")
 
+# stdin からコードを読んで実行するインタプリタ (シェル + eval 系)。パイプの
+# 受け手やリダイレクトで stdin にコードを流されると `sh -c` / `python -c` と
+# 機能的に等価な任意コード実行になる。_INTERPRETER_EVAL_FLAGS のキーはバージョン
+# 接尾辞を剥がした正規形なので、この集合との照合前に _VERSION_SUFFIX で剥がす。
+_STDIN_CODE_INTERPRETERS = _SHELL_EXECUTABLES | frozenset(_INTERPRETER_EVAL_FLAGS)
+# シェルの -s は「プログラムを stdin から読む」を明示する (束ね形 `-xs` も含む)。
+# 位置引数は $0/$1... として渡るスクリプト引数であってスクリプトファイルでは
+# ないため、-s があるときは位置引数の有無に関わらず stdin 実行として扱う
+# (`curl url | sh -s -- stable` のインストーラ変種を取りこぼさない)。python の
+# -s は no-user-site であって stdin 実行ではないのでシェル限定。
+_SHELL_STDIN_FLAG = re.compile(r"^-[A-Za-z]*s")
+
 # docker はデーモン (root 相当) 経由で動くため、コンテナの分離を明示的に破る
 # 起動形はホスト root 相当の操作に直結する (--privileged、ホスト root /
 # docker.sock のマウント、ホスト PID 名前空間、SYS_ADMIN 級 capability)。
@@ -1045,6 +1083,120 @@ def high_risk_label(sub_commands: list[str]) -> str:
             if label and label not in labels:
                 labels.append(label)
     return ", ".join(labels)
+
+
+def _bare_interpreter_stdin_label(segment: str, *, is_pipe_target: bool) -> str:
+    """セグメントが stdin のコードを実行する裸のインタプリタなら ラベル、他は ""。
+
+    裸のインタプリタ = スクリプトファイル (位置引数) を持たない sh/bash/python 等。
+    その場合インタプリタは「プログラムを stdin から読む」ため、stdin にコードを
+    流し込む経路があれば `sh -c` 相当の任意コード実行になる。stdin ソースは
+    (1) パイプの受け手 (is_pipe_target) か (2) 入力リダイレクト `<` / `<<` / `<<<`。
+    これらが無い素の `bash` (エージェントの Bash ツールでは stdin 無し = 事実上
+    no-op) は誤検出を避けるため対象外にする。`sh -c` / `python -c` は位置引数
+    (コード文字列) を持つのでここでは裸と見なされず、_high_risk_label 側の
+    -c/-e 分岐が既に高リスクに載せている (二重計上も取りこぼしも起きない)。
+
+    ラッパー (env/timeout 等) で実行体を確定できない形は _split_prefix が None を
+    返し、その形は _high_risk_label が "wrapped command" として別途高リスクに
+    載せるため、ここでは "" を返して二重計上を避ける。
+
+    受容済みの残余 (宣言済み脅威モデル = 暴走エージェント抑止であって敵対的境界で
+    はない、の範囲で許容):
+      * 空白なしのリダイレクト `bash<evil.sh` は _tokenize (shlex) が `<` を語境界
+        と見なさず実行体が `bash<evil.sh` に化けるため取りこぼす。これは本ファイル
+        共通の tokenize 制約で、_high_risk_label も同形を拾えない。空白あり
+        (`bash < evil.sh`) は検出する。
+      * `foo | node --version` のように stdin を読まず即終了するフラグ (--version /
+        --help / -v) だけを伴う受け手は誤検出する (fail-safe = 余分な ask 1 回)。
+        ただしインタプリタへパイプしつつ --version を渡す形自体がほぼ無意味なので
+        実害は無視できる。素の `node --version` (パイプ/リダイレクト無し) は stdin
+        ソースが無いので対象外。
+      * `echo x |& bash` (bash/zsh の stdout+stderr パイプ) は _iter_top_level が
+        `|` と `&` を別々の区切りとして読み、受け手の op_before が `&` になるため
+        パイプ受け手と見なされない。ここを直すには共有分割器 _iter_top_level を
+        変える必要があり deny/safe 判定へ波及するので、非敵対の脅威モデル下では
+        触らない。
+      * fd 番号付きリダイレクト `bash 0< evil.sh` / `bash 0<<< 'x'` はトークンが
+        `<` で始まらないため has_input_redirect が拾わない。素の `<` (fd 0 既定) は
+        検出する。
+    """
+    rest = _split_prefix(_tokenize(segment))
+    if not rest:
+        return ""
+    exe = rest[0].rsplit("/", 1)[-1]
+    if _VERSION_SUFFIX.sub("", exe) not in _STDIN_CODE_INTERPRETERS:
+        return ""
+    args = rest[1:]
+
+    # stdin ソース: パイプ受け手か、入力リダイレクト (< / << / <<<)。
+    has_input_redirect = any(tok.startswith("<") for tok in args)
+    if not (is_pipe_target or has_input_redirect):
+        return ""
+
+    # スクリプトファイル/モジュールの位置引数を探して「裸」かどうかを決める。位置
+    # 引数が現れた時点でインタプリタはそれを実行し、stdin をコードとして読まない。
+    # 例外は 2 つ:
+    #   * 最初の位置引数より前の -s (シェル限定) は「プログラムを stdin から読む」
+    #     を明示するので、後続の位置引数は $0/$1... のスクリプト引数であって stdin
+    #     実行を妨げない (`curl url | sh -s -- stable`)。位置引数の後ろの -s は素の
+    #     引数なので引き金にしない (`bash foo.sh -s` は foo.sh を実行し stdin 未使用)。
+    #   * リダイレクト (`<` 以降) のトークン (`< file` のファイル名、`<<<data`、
+    #     heredoc 本体) は I/O であってスクリプトではないため位置引数に数えない。
+    #     これで `bash < evil.sh` / `bash <<< 'x'` / `bash <<EOF ...` は裸と判定でき、
+    #     `bash script.sh < input` / `python app.py < in` (データ入力) は除外できる。
+    for tok in args:
+        if tok.startswith("<") or tok.startswith(">"):
+            break  # リダイレクト以降は I/O。ここで打ち切る
+        if exe in _SHELL_EXECUTABLES and _SHELL_STDIN_FLAG.match(tok):
+            return f"stdin into {exe}"  # 位置引数より前の -s = stdin 実行
+        if not tok.startswith("-"):
+            return ""  # スクリプト/モジュールの位置引数 → stdin 実行ではない
+    return f"stdin into {exe}"
+
+
+def stdin_interpreter_label(command: str) -> str:
+    """パイプ/リダイレクトで stdin のコードを実行する裸のインタプリタを検出する。
+
+    `echo 'rm -rf /' | bash` / `base64 -d | sh` / `curl url | sh -s -- x` /
+    `bash < evil.sh` 等は `sh -c` と等価だが、-c が無いため _high_risk_label の
+    シェル -c 分岐に載らず高リスク層を素通りしていた (単独モデルの fast path に
+    格下げ)。区切り種別を保持する _iter_top_level でパイプ受け手を特定し、各
+    セグメントを _bare_interpreter_stdin_label で判定する。high_risk_label と
+    同じく置換 ($()/``/<()) の中身も走査し、`echo $(base64 -d x | sh)` を
+    取りこぼさない。
+
+    _iter_top_level は改行を区切りとして分割しない (シェルは分割する) ため、
+    high_risk_label / find_deny_command と同様にセグメントをさらに行単位へ割る。
+    改行を跨ぐと _tokenize (shlex) が次行のトークンを位置引数と誤読して判定が
+    抜けるため (`base64 -d x | bash\\necho done` の bash が素通りする)、各行を
+    独立に判定する。パイプ受け手性 (is_pipe_target) はセグメント先頭行にのみ及ぶ:
+    2 行目以降は改行後の新しいコマンドで pipe の stdin は受け継がない (ただし各行
+    が自前の < リダイレクトを持てば裸インタプリタとして拾う)。
+    """
+    labels: list[str] = []
+    for text in [command] + _substitution_bodies(command):
+        for op, segment in _iter_top_level(text, split_ampersand=True):
+            lines = [ln.strip() for ln in segment.splitlines() if ln.strip()]
+            for idx, line in enumerate(lines):
+                label = _bare_interpreter_stdin_label(
+                    line, is_pipe_target=(op == "|" and idx == 0)
+                )
+                if label and label not in labels:
+                    labels.append(label)
+    return ", ".join(labels)
+
+
+def classify_high_risk(sub_commands: list[str], command: str) -> str:
+    """高リスクラベル全体を返す (サブコマンド分類 + stdin インタプリタ検出)。
+
+    high_risk_label (サブコマンド単位の分類) は区切り種別を持たないためパイプ
+    受け手の裸インタプリタを拾えない。生コマンドを見る stdin_interpreter_label を
+    併せて両エントリ (claude / codex 変種) が同じ判定に載るよう共有モジュールで
+    結合する。どちらかが非空なら高リスク層 (二モデル AND ゲート + 必ず ask)。
+    """
+    parts = [high_risk_label(sub_commands), stdin_interpreter_label(command)]
+    return ", ".join(p for p in parts if p)
 
 
 def _parse_verdict(output: str) -> str:

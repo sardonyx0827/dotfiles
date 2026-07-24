@@ -154,6 +154,22 @@ class TestHighRisk:
         assert "Gemini=ALLOW" in res.stderr
         assert "Codex=ASK" in res.stderr
 
+    def test_pipe_into_shell_is_high_risk(self, run_hook):
+        # `echo ... | bash` runs stdin as shell code (== `sh -c`) with no -c, so
+        # it used to slip to the single-model fast path and exit 0 on a lone
+        # Gemini ALLOW. Exit 2 with both verdicts proves the dual-review AND-gate
+        # now runs in the codex variant too (fast path would have exited 0).
+        res = run_hook(
+            HOOK,
+            hook_payload("echo 'rm -rf /' | bash"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "High-risk" in res.stderr
+        assert "stdin into bash" in res.stderr
+
     def test_unanimous_deny_blocks(self, run_hook):
         res = run_hook(
             HOOK,

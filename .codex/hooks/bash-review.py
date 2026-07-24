@@ -32,10 +32,10 @@ from _bash_review_common import (
     _sanitize_notify,
     _split_commands,
     build_review_prompt,
+    classify_high_risk,
     combine_high_risk_verdicts,
     find_deny_command,
     format_dual_verdict_reason,
-    high_risk_label,
     notify,
     prune_dir,
     scan_secrets,
@@ -191,7 +191,7 @@ try:
     review_started = time.monotonic()
 
     # --- 高リスクコマンドの並列二重レビュー (モデル合意でも自動実行しない) ---
-    risk_label = high_risk_label(sub_commands)
+    risk_label = classify_high_risk(sub_commands, command)
     if risk_label:
         (gemini_verdict, gemini_output), (codex_verdict, codex_output) = (
             run_parallel_reviews()
