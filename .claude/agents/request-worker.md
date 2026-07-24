@@ -2,7 +2,21 @@
 name: request-worker
 description: General-purpose chore executor for a single docs/requests ticket (code, visual materials, research, writing). Use when the request-harness skill processes multiple independent tickets in parallel. Input is a ticket folder path; returns a summary only.
 tools:
-  ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "WebFetch", "WebSearch"]
+  [
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Grep",
+    "Glob",
+    "WebFetch",
+    "WebSearch",
+    "SendMessage",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
+  ]
 model: sonnet
 ---
 

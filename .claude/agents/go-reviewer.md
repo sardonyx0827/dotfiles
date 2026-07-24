@@ -1,7 +1,18 @@
 ---
 name: go-reviewer
 description: Expert Go code reviewer specializing in idiomatic Go, concurrency patterns, error handling, and performance. Use for all Go code changes. MUST BE USED for Go projects.
-tools: ["Read", "Grep", "Glob", "Bash"]
+tools:
+  [
+    "Read",
+    "Grep",
+    "Glob",
+    "Bash",
+    "SendMessage",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
+  ]
 model: sonnet
 ---
 

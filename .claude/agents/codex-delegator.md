@@ -3,7 +3,7 @@ name: codex-delegator
 description: >-
   Delegate specification discussions, bug fix strategy planning,
   or complex technical decisions to Codex MCP.
-tools: mcp__codex__codex, mcp__codex__codex-reply
+tools: mcp__codex__codex, mcp__codex__codex-reply, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet
 model: sonnet
 color: cyan
 ---

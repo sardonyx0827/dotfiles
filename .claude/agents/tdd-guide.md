@@ -1,7 +1,20 @@
 ---
 name: tdd-guide
 description: Test-Driven Development specialist enforcing write-tests-first methodology. Use PROACTIVELY when writing new features, fixing bugs, or refactoring code. Verifies coverage against the project's threshold.
-tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+tools:
+  [
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Grep",
+    "Glob",
+    "SendMessage",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
+  ]
 model: sonnet
 ---
 
