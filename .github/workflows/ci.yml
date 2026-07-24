@@ -183,3 +183,28 @@ jobs:
           # （実行時の cwd に依存させない）。
           # shellcheck disable=SC2086  # パスに空白は無いため意図的に単語分割する
           shellcheck -x -P SCRIPTDIR $files
+
+  # Neovim Lua ツリーの静的解析。これまで .config/nvim/*.lua は CI の外にあり、
+  # lazy.lua のコメントが記録する「未定義グローバル参照でエディタが静かに壊れた」
+  # クラスの退行を検知できなかった。stylua による整形強制は日常的な手調整と衝突
+  # するため意図的に入れず、luacheck を lint 専用で回して当該バグクラスだけを拾う。
+  #
+  # continue-on-error はジョブレベルに置く: これは助言的 (non-gating) チェックで
+  # あり、指摘があってもワークフローをブロックしない。apt/luarocks は外部ネット
+  # ワーク依存 = 失敗点だが、ジョブ全体を非ブロックにすることでその flakiness も
+  # 必須チェックへ波及させない。luacheck は集計/床ゲートの pip 群と違い版ピン留め
+  # しない: 助言的なので再現性より導入の確実性 (誤ピンで恒常的に赤くしない) を採る。
+  # 設定は .config/nvim/.luacheckrc (LuaJIT + vim グローバル。.luarc.json と一致)。
+  luacheck:
+    name: luacheck (advisory, non-gating)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Install luacheck
+        run: sudo apt-get update && sudo apt-get install -y luarocks && sudo luarocks install luacheck
+      - name: Run luacheck (Neovim Lua tree)
+        run: |
+          luacheck --version
+          luacheck --codes --config .config/nvim/.luacheckrc .config/nvim
