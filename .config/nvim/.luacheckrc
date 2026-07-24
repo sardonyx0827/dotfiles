@@ -14,7 +14,16 @@
 -- the language server agree on what is defined.
 
 std = "luajit" -- Neovim embeds LuaJIT (Lua 5.1 dialect); this defines its stdlib
-read_globals = { "vim" } -- injected by the Neovim runtime, never assigned here
+
+-- Known runtime globals. `vim`/`R` go in `globals` (read+write) because config
+-- code legitimately assigns their fields (`vim.opt.x = ...`) or defines them
+-- (`R` = a plenary reload helper); listing them in read_globals instead is what
+-- produced 77 spurious W122 "setting read-only field" warnings. `Snacks` is
+-- injected by snacks.nvim and only read, so read_globals is right for it.
+-- Declaring these known globals is what keeps the useful signal alive: a truly
+-- undefined global (a typo'd name) still surfaces as W113 against this baseline.
+globals = { "vim", "R" }
+read_globals = { "Snacks" }
 
 max_line_length = false -- formatting is hand-managed, not a lint concern
 unused_args = false -- plugin/event callbacks routinely take unused (_, opts)
