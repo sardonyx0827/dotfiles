@@ -27,3 +27,13 @@ read_globals = { "Snacks" }
 
 max_line_length = false -- formatting is hand-managed, not a lint concern
 unused_args = false -- plugin/event callbacks routinely take unused (_, opts)
+
+-- Suppress two diagnostics that only fire on deliberate idioms here. Kept
+-- narrow (just these codes) so genuine findings of every other kind still
+-- surface -- the W431 shadowing this list once flagged was fixed in code, not
+-- ignored.
+--   214: a `_`-prefixed parameter that is in fact used. The underscore is a
+--        chosen "usually skipped" hint (backend.lua's _skip_scan), not a bug.
+--   512: a loop that runs at most once -- used on purpose as "return the first
+--        match" (undotree_vimdiff.lua's gmatch-then-return).
+ignore = { "214", "512" }

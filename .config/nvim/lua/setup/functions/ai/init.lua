@@ -146,7 +146,7 @@ local function check_current_buffer()
     -- check-start time: the check can take a while and the report stays open
     -- for the user to read, so the outer `lines`/`buf` snapshot from the top of
     -- check_current_buffer may already be stale by the time `f` is pressed.
-    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local fix_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
     local fix_changedtick = vim.api.nvim_buf_get_changedtick(buf)
 
     local report = vim.trim(table.concat(report_lines, "\n"))
@@ -163,7 +163,7 @@ local function check_current_buffer()
       report,
       "",
       "## Current file content (each line: <number> │ <text>)",
-      prompt.number_lines(lines),
+      prompt.number_lines(fix_lines),
     }, "\n")
 
     vim.notify("Fixing buffer with Claude...", vim.log.levels.INFO)
@@ -172,7 +172,7 @@ local function check_current_buffer()
       mode = "diff",
       tools = { "claude" },
       filetype = filetype,
-      original = lines,
+      original = fix_lines,
       footer = " y:apply fix  Y:merged  q:cancel ",
       start = function(_, done)
         -- claude first; on error fall back to gemini (same order as the check).
@@ -198,7 +198,7 @@ local function check_current_buffer()
             done(false, {}, "適用できる修正がありませんでした。")
             return
           end
-          local patched, applied, skipped = prompt.apply_edits(lines, edits)
+          local patched, applied, skipped = prompt.apply_edits(fix_lines, edits)
           if applied == 0 then
             done(false, {}, "修正を安全に適用できませんでした（行が一致しません）。")
             return
