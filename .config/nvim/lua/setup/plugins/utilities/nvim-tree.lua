@@ -124,6 +124,81 @@ return {
     local function move_l()
       vim.cmd("wincmd l")
     end
+
+    -- Open every regular file directly under a directory as (unloaded, listed)
+    -- buffers. Directory node -> that directory; file node -> its parent
+    -- directory. Only direct children are opened (no recursion). The cursor
+    -- stays in the tree; `badd` just populates the bufferline (barbar).
+    -- Ask for confirmation when CONFIRM_THRESHOLD or more files would open.
+    local CONFIRM_THRESHOLD = 10
+    local function open_dir_files_as_buffers()
+      local api = require("nvim-tree.api")
+      local node = api.tree.get_node_under_cursor()
+      if not node then
+        return
+      end
+
+      local dir = node.type == "directory" and node.absolute_path
+          or vim.fn.fnamemodify(node.absolute_path, ":h")
+      local label = vim.fn.fnamemodify(dir, ":t")
+
+      local uv = vim.uv or vim.loop
+      local handle = uv.fs_scandir(dir)
+      if not handle then
+        vim.notify("nvim-tree: cannot read " .. dir, vim.log.levels.WARN)
+        return
+      end
+
+      local files = {}
+      while true do
+        local name, t = uv.fs_scandir_next(handle)
+        if not name then
+          break
+        end
+        if name ~= ".DS_Store" then
+          local full = dir .. "/" .. name
+          if t == "file" then
+            files[#files + 1] = full
+          elseif t ~= "directory" then
+            -- symlink / unknown: resolve target type (fs_stat follows links)
+            local st = uv.fs_stat(full)
+            if st and st.type == "file" then
+              files[#files + 1] = full
+            end
+          end
+        end
+      end
+
+      if #files == 0 then
+        vim.notify("nvim-tree: no files in " .. label, vim.log.levels.INFO)
+        return
+      end
+
+      if #files >= CONFIRM_THRESHOLD then
+        -- noice.nvim dedups identical consecutive messages (noice/ui/state.lua),
+        -- which drops the confirm prompt text on a repeated `L` over the same
+        -- dir. Clear the cached msg_show state so the message shows every time.
+        pcall(function()
+          require("noice.ui.state").clear("msg_show")
+        end)
+        local choice = vim.fn.confirm(
+          ("Open %d files from %s?"):format(#files, label), "&Yes\n&No", 2)
+        if choice ~= 1 then
+          return
+        end
+      end
+
+      table.sort(files)
+      for _, f in ipairs(files) do
+        vim.cmd("badd " .. vim.fn.fnameescape(f))
+      end
+
+      vim.notify(
+        ("nvim-tree: opened %d file(s) from %s"):format(#files, label),
+        vim.log.levels.INFO
+      )
+    end
+
     local function tree_on_attach(bufnr)
       local api = require "nvim-tree.api"
       local function opts(desc)
@@ -136,6 +211,7 @@ return {
       FloatPreview.attach_nvimtree(bufnr)
       -- custom mappings
       vim.keymap.set('n', 'l', api.node.open.edit, opts('Open'))
+      vim.keymap.set('n', 'L', open_dir_files_as_buffers, opts('Open dir files as buffers'))
       vim.keymap.set('n', 'h', function()
         local node = api.tree.get_node_under_cursor()
         if node and node.type == "directory" and node.open then

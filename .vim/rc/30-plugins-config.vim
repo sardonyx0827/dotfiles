@@ -48,6 +48,7 @@ let NERDTreeShowHidden = 1
 nnoremap <silent> <leader>e :NERDTreeFocusToggle<CR>
 
 " NERDTreeでlキー: ファイルなら開いてNERDTreeを閉じ、ディレクトリなら展開
+" NERDTreeでLキー: フォーカス中ディレクトリ(ファイルなら親)直下のファイルをバッファで開く
 augroup NERDTreeCustomMappings
   autocmd!
   autocmd FileType nerdtree call s:NERDTree_l_mapping()
@@ -55,6 +56,7 @@ augroup END
 
 function! s:NERDTree_l_mapping()
   nnoremap <buffer> l :call <SID>NERDTreeOpenOrExpand()<CR>
+  nnoremap <buffer> L :call <SID>NERDTreeOpenDirFilesAsBuffers()<CR>
 endfunction
 
 function! s:NERDTreeOpenOrExpand()
@@ -65,6 +67,53 @@ function! s:NERDTreeOpenOrExpand()
     execute "normal \r"
     NERDTreeClose
   endif
+endfunction
+
+" 直下(非再帰)の通常ファイルだけを badd でバッファリストに追加する。
+" カーソルはNERDTreeに残り、画面表示は変わらない(barbar相当のairlineタブに並ぶ)。
+" 開くファイル数が s:nerdtree_open_files_confirm 以上のときは確認する。
+let s:nerdtree_open_files_confirm = 10
+function! s:NERDTreeOpenDirFilesAsBuffers()
+  let l:node = g:NERDTreeFileNode.GetSelected()
+  if empty(l:node)
+    return
+  endif
+  let l:path = l:node.path.str()
+  let l:dir = l:node.path.isDirectory ? l:path : fnamemodify(l:path, ':h')
+  if !isdirectory(l:dir)
+    echohl WarningMsg | echo 'NERDTree: not a directory: ' . l:dir | echohl None
+    return
+  endif
+  let l:label = fnamemodify(substitute(l:dir, '/$', '', ''), ':t')
+
+  let l:files = []
+  for l:name in sort(readdir(l:dir))
+    if l:name ==# '.DS_Store'
+      continue
+    endif
+    let l:full = l:dir . '/' . l:name
+    if filereadable(l:full) && !isdirectory(l:full)
+      call add(l:files, l:full)
+    endif
+  endfor
+
+  if empty(l:files)
+    echo 'NERDTree: no files in ' . l:label
+    return
+  endif
+
+  if len(l:files) >= s:nerdtree_open_files_confirm
+    if confirm(printf('Open %d files from %s?', len(l:files), l:label), "&Yes\n&No", 2) != 1
+      return
+    endif
+  endif
+
+  for l:full in l:files
+    execute 'badd ' . fnameescape(l:full)
+  endfor
+
+  redraw
+  echo 'NERDTree: opened ' . len(l:files) . ' file(s) from ' . l:label
 endfunction
 
 " show nerdtree default
