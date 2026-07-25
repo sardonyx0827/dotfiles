@@ -62,7 +62,10 @@ ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
 # 入っている実行時依存が import を解決してしまい、ローカル緑・CI 赤という
 # 食い違いが起きる。
 mypy --no-site-packages .claude/hooks .claude/mcp-servers scripts
-mypy --no-site-packages .codex/hooks   # 同名モジュールの重複を避け root を分ける
+# root を分けるのは同名の bash-review.py の重複を避けるため。MYPYPATH は共有
+# モジュールの解決に必須（実体は .claude/hooks 側にしか無く、実行時の
+# sys.path.insert を mypy は追えない）
+MYPYPATH=.claude/hooks mypy --no-site-packages .codex/hooks
 ```
 
 > `tests/` は mypy の対象外です。conftest とフック本体を `sys.path` 操作で読み込む

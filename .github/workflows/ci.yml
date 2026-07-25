@@ -152,17 +152,23 @@ jobs:
       # 無言で乖離し得た。設定ファイルは置かない: 既定値で緑になり、唯一の例外
       # (Windows 専用の任意依存 win10toast) は import 箇所の inline ignore で
       # 完結するため。設定を足すのは、それが実際に何かを検出するときだけにする。
-      # 2 回に分けるのは .claude/hooks と .codex/hooks が同名モジュール
-      # (bash-review.py / _bash_review_common.py) を持ち、両方を 1 回の呼び出しに
-      # 渡すと mypy が重複モジュールとして実行を拒否するため。codex 側の
-      # bash-review.py は別実体 (exit-2 変種) なので除外ではなく個別に検査する。
+      # 2 回に分けるのは .claude/hooks と .codex/hooks が同名の bash-review.py を
+      # 持ち、両方を 1 回の呼び出しに渡すと mypy が重複モジュールとして実行を
+      # 拒否するため。codex 側の bash-review.py は別実体 (exit-2 変種) なので
+      # 除外ではなく個別に検査する。
+      # codex 側には MYPYPATH が要る: 共有モジュールの実体は .claude/hooks 側に
+      # しか無く、.codex/hooks/bash-review.py の sys.path.insert は実行時の操作
+      # なので mypy は追えない (共有ファイルが .codex/hooks に symlink として
+      # 置かれていた頃は隣接ファイルとして解決できていた)。MYPYPATH は実行時の
+      # sys.path と同じ場所を指すので、import を無視するのではなく実体に対して
+      # 型検査される。
       # tests/ は対象外: conftest / フック本体を sys.path 操作で読むため mypy の
       # モジュール解決と噛み合わず、緑にするには実挙動と無関係なスタブ整備が
       # 要る。守れない厳しさを掲げるより、本番コードを確実に縛る方を採る。
       - name: mypy (type check)
         run: |
           mypy .claude/hooks .claude/mcp-servers scripts
-          mypy .codex/hooks
+          MYPYPATH=.claude/hooks mypy .codex/hooks
 
   shellcheck:
     name: shellcheck
