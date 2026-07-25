@@ -270,11 +270,20 @@ function M.run_with_fallback(specs, done)
   -- Scan once over every spec's payload (fallbacks reuse the same input/prompt,
   -- differing only by tool), then skip the per-attempt scan so a fallback that
   -- fires on a later tick does not re-prompt.
+  --
+  -- Only the payloads actually bound for a cloud CLI are collected. M.run
+  -- exempts Ollama because it hits localhost and never leaves the machine;
+  -- gathering every spec unconditionally here would re-impose the prompt on an
+  -- all-Ollama list and make the two entry points disagree about the same
+  -- policy. When nothing external is left, skip the gate entirely.
   local parts = {}
   for _, s in ipairs(specs) do
-    parts[#parts + 1] = (s.input or "") .. "\n" .. (s.prompt or "")
+    local def = TOOLS[s.tool]
+    if not def or def.kind ~= "ollama" then
+      parts[#parts + 1] = (s.input or "") .. "\n" .. (s.prompt or "")
+    end
   end
-  if not confirm_send(table.concat(parts, "\n")) then
+  if #parts > 0 and not confirm_send(table.concat(parts, "\n")) then
     done(false, {}, "credential detected in payload; not sent to AI", nil)
     return nil
   end
