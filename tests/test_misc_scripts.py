@@ -1,6 +1,7 @@
 """Tests for utility scripts and syntax checks for all shell configs."""
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -10,6 +11,80 @@ from conftest import REPO_ROOT
 TMUX_SCRIPT = REPO_ROOT / "scripts/tmux_send_to_all_except_nvim.sh"
 UPDATE_SCRIPT = REPO_ROOT / "scripts/update_ai_tools.sh"
 ZSHRC = REPO_ROOT / ".zshrc"
+
+# Every function .zshrc defines. Sourcing the whole file is not an option: it
+# unconditionally sources oh-my-zsh.sh and would need a real Oh My Zsh install,
+# so each function is extracted and eval'd on its own under a stubbed PATH.
+ZSHRC_FUNCTIONS = [
+    "sshs",
+    "cf",
+    "vf",
+    "dwc",
+    "precmd",
+    "update_ai_tools",
+    "claude-teammates",
+    "translate",
+    "mc",
+    "_mc",
+]
+
+
+def extract_zsh_function(name: str) -> str:
+    """Return the source text of one function defined in .zshrc.
+
+    .zshrc spells definitions three ways -- `vf () {`, `function mc() {` and
+    `_mc() {` -- so match the shapes rather than one literal prefix. Anchoring
+    at line start keeps `mc` from matching `_mc`.
+    """
+    text = ZSHRC.read_text(encoding="utf-8")
+    opener = re.compile(
+        rf"^(?:function\s+)?{re.escape(name)}\s*\(\)\s*\{{", re.MULTILINE
+    )
+    match = opener.search(text)
+    if match is None:
+        raise AssertionError(f"no definition of {name}() found in .zshrc")
+
+    depth = 0
+    started = False
+    for index, char in enumerate(text[match.start() :], start=match.start()):
+        if char == "{":
+            depth += 1
+            started = True
+        elif char == "}":
+            depth -= 1
+            if started and depth == 0:
+                return text[match.start() : index + 1]
+    raise AssertionError(f"could not find end of {name}() in .zshrc")
+
+
+def run_zsh_function(name: str, call: str, *, cwd=None, env=None):
+    """Eval one extracted .zshrc function and invoke it."""
+    return subprocess.run(
+        ["zsh", "-c", f"{extract_zsh_function(name)}\n{call}"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+        env=env,
+        timeout=30,
+    )
+
+
+def stub_bin(directory, name: str, body: str):
+    """Drop an executable stub so the function under test cannot reach a real tool."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def path_env(bin_dir):
+    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+
+requires_zsh = pytest.mark.skipif(
+    shutil.which("zsh") is None, reason="zsh not installed"
+)
 
 OWN_BASH_SCRIPTS = sorted(
     [
@@ -131,21 +206,6 @@ class TestUpdateAiToolsFunction:
     hermetically.
     """
 
-    def _extract_function(self, name: str) -> str:
-        text = ZSHRC.read_text(encoding="utf-8")
-        start = text.index(f"function {name}()")
-        depth = 0
-        started = False
-        for i, ch in enumerate(text[start:], start=start):
-            if ch == "{":
-                depth += 1
-                started = True
-            elif ch == "}":
-                depth -= 1
-                if started and depth == 0:
-                    return text[start : i + 1]
-        raise AssertionError(f"could not find end of function {name}() in .zshrc")
-
     def test_resolves_dotfiles_dir_from_symlinked_zshrc(self, tmp_path):
         if shutil.which("zsh") is None:
             pytest.skip("zsh not installed")
@@ -163,7 +223,7 @@ class TestUpdateAiToolsFunction:
         home.mkdir()
         (home / ".zshrc").symlink_to(checkout / ".zshrc")
 
-        func_src = self._extract_function("update_ai_tools")
+        func_src = extract_zsh_function("update_ai_tools")
         env = {**os.environ, "HOME": str(home)}
         res = subprocess.run(
             ["zsh", "-c", f"{func_src}\nupdate_ai_tools"],
@@ -185,7 +245,7 @@ class TestUpdateAiToolsFunction:
         home.mkdir()
         (home / ".zshrc").write_text("# not a symlink\n", encoding="utf-8")
 
-        func_src = self._extract_function("update_ai_tools")
+        func_src = extract_zsh_function("update_ai_tools")
         env = {**os.environ, "HOME": str(home)}
         res = subprocess.run(
             ["zsh", "-c", f"{func_src}\nupdate_ai_tools"],
@@ -197,3 +257,141 @@ class TestUpdateAiToolsFunction:
 
         assert res.returncode != 0
         assert res.stderr.strip() != ""
+
+
+@requires_zsh
+@pytest.mark.parametrize("name", ZSHRC_FUNCTIONS)
+def test_extracted_function_is_syntactically_complete(name):
+    """Every extraction must be a complete, parseable function.
+
+    The extractor counts braces and does not know about braces inside strings,
+    comments or parameter expansions. Without this check, a mis-sliced body
+    would surface as a confusing behavioural failure in the tests below
+    instead of pointing at the extraction itself. It also fails loudly if a
+    function is renamed or removed from .zshrc.
+    """
+    source = extract_zsh_function(name)
+    res = subprocess.run(
+        ["zsh", "-n"], input=source, capture_output=True, text=True, timeout=30
+    )
+    assert res.returncode == 0, f"{name}: extracted body does not parse: {res.stderr}"
+
+
+@requires_zsh
+class TestVf:
+    """vf() picks a file with fzf, cd's to its directory, and opens it.
+
+    Because it cd's first, the path handed to the editor has to be the
+    basename. Reusing the original cwd-relative path made `src/foo` resolve to
+    `src/src/foo` after the cd, opening an empty buffer for anything below the
+    cwd (fixed in 11c35ac). These tests pin the composed result, not the
+    argument shape, so they fail for any variant of that mistake.
+    """
+
+    def _run(self, tmp_path, selection):
+        workdir = tmp_path / "work"
+        (workdir / "src").mkdir(parents=True)
+        (workdir / "src" / "foo.txt").write_text("content\n", encoding="utf-8")
+        (workdir / "top.txt").write_text("content\n", encoding="utf-8")
+
+        bin_dir = tmp_path / "bin"
+        record = tmp_path / "opened"
+        stub_bin(bin_dir, "fzf", f'printf "%s\\n" "{selection}"')
+        stub_bin(bin_dir, "nvim", f'printf "%s\\n%s\\n" "$PWD" "$1" >"{record}"')
+
+        res = run_zsh_function("vf", "vf", cwd=workdir, env=path_env(bin_dir))
+        assert res.returncode == 0, res.stderr
+        assert record.exists(), f"nvim was never invoked: {res.stderr}"
+        cwd, arg = record.read_text(encoding="utf-8").splitlines()
+        return workdir, cwd, arg
+
+    def test_opens_a_file_below_the_cwd(self, tmp_path):
+        workdir, cwd, arg = self._run(tmp_path, "src/foo.txt")
+
+        assert os.path.realpath(cwd) == os.path.realpath(workdir / "src")
+        assert arg == "foo.txt"
+        # The assertion that actually encodes the bug: whatever cwd/arg pair
+        # vf produces has to name a real file. The old code yielded
+        # <work>/src + src/foo.txt, i.e. <work>/src/src/foo.txt -- absent.
+        assert os.path.isfile(os.path.join(cwd, arg))
+
+    def test_opens_a_file_in_the_cwd(self, tmp_path):
+        workdir, cwd, arg = self._run(tmp_path, "top.txt")
+
+        assert os.path.realpath(cwd) == os.path.realpath(workdir)
+        assert arg == "top.txt"
+        assert os.path.isfile(os.path.join(cwd, arg))
+
+    def test_does_nothing_when_selection_is_empty(self, tmp_path):
+        bin_dir = tmp_path / "bin"
+        record = tmp_path / "opened"
+        stub_bin(bin_dir, "fzf", "true")
+        stub_bin(bin_dir, "nvim", f'echo ran >"{record}"')
+
+        res = run_zsh_function("vf", "vf", cwd=tmp_path, env=path_env(bin_dir))
+
+        assert res.returncode == 0, res.stderr
+        assert not record.exists(), "aborting fzf must not open an editor"
+
+
+@requires_zsh
+class TestCf:
+    """cf() picks a directory with fzf and cd's into it."""
+
+    def test_changes_into_the_selected_directory(self, tmp_path):
+        workdir = tmp_path / "work"
+        (workdir / "nested" / "deep").mkdir(parents=True)
+        bin_dir = tmp_path / "bin"
+        stub_bin(bin_dir, "fzf", 'printf "%s\\n" "./nested/deep"')
+
+        res = run_zsh_function("cf", "cf; pwd", cwd=workdir, env=path_env(bin_dir))
+
+        assert res.returncode == 0, res.stderr
+        assert os.path.realpath(res.stdout.strip()) == os.path.realpath(
+            workdir / "nested" / "deep"
+        )
+
+    def test_stays_put_when_selection_is_empty(self, tmp_path):
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        bin_dir = tmp_path / "bin"
+        stub_bin(bin_dir, "fzf", "true")
+
+        res = run_zsh_function("cf", "cf; pwd", cwd=workdir, env=path_env(bin_dir))
+
+        assert res.returncode == 0, res.stderr
+        assert os.path.realpath(res.stdout.strip()) == os.path.realpath(workdir)
+
+
+@requires_zsh
+class TestDwc:
+    """dwc() wraps a recursive wget; the depth argument defaults to 5."""
+
+    def _run(self, tmp_path, call):
+        bin_dir = tmp_path / "bin"
+        record = tmp_path / "wget-args"
+        stub_bin(bin_dir, "wget", f'printf "%s\\n" "$*" >"{record}"')
+        res = run_zsh_function("dwc", call, cwd=tmp_path, env=path_env(bin_dir))
+        return res, record
+
+    def test_rejects_a_missing_url_without_calling_wget(self, tmp_path):
+        res, record = self._run(tmp_path, "dwc")
+
+        assert res.returncode == 1
+        assert "Usage:" in res.stderr, "usage must go to stderr, not stdout"
+        assert res.stdout == ""
+        assert not record.exists(), "no URL means wget must not run at all"
+
+    def test_defaults_to_depth_5(self, tmp_path):
+        res, record = self._run(tmp_path, "dwc https://example.com")
+
+        assert res.returncode == 0, res.stderr
+        assert "-l 5" in record.read_text(encoding="utf-8")
+
+    def test_honours_an_explicit_depth(self, tmp_path):
+        res, record = self._run(tmp_path, "dwc https://example.com 2")
+
+        assert res.returncode == 0, res.stderr
+        args = record.read_text(encoding="utf-8")
+        assert "-l 2" in args
+        assert "https://example.com" in args
