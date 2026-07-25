@@ -1,1 +1,0 @@
-../../.claude/hooks/_format_common.sh

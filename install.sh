@@ -1011,9 +1011,11 @@ _link_codex_config() {
   # from hooks.json.template (see below).
   #
   # The shared skill set is defined in the repo tree, not here: .codex/skills
-  # holds relative symlinks into .claude/skills (same convention as the
-  # .codex/hooks/_*.sh helpers). Share or drop a skill by adding or removing a
-  # link there.
+  # holds relative symlinks into .claude/skills. Share or drop a skill by adding
+  # or removing a link there. (The hooks used to share files the same way, but
+  # now resolve ../../.claude/hooks by path instead -- symlinks break a
+  # core.symlinks=false checkout, and Codex reads the skills dir itself so the
+  # same fix does not apply there. See INSTALL_PLATFORM.md.)
   #
   # Note that ~/.codex/skills and ~/.codex/agents resolve into the checkout, so
   # whatever Codex writes there lands in the repo working tree: its managed

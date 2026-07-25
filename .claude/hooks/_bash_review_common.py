@@ -1,28 +1,31 @@
 # _bash_review_common.py
 # bash-review 系フックで共有する定数・判定ロジック・通知・ログ処理。
 #
-# このファイルが実体で、.codex/hooks/_bash_review_common.py は
-# ../../.claude/hooks/_bash_review_common.py への相対 symlink。編集はここだけでよい。
+# このファイルが唯一の実体。.codex/hooks/ 側には複製もリンクも置かず、あちらの
+# エントリポイントが ../../.claude/hooks を自力で解決して読む。編集はここだけでよい。
 #
-# 以前はバイト単位で同一の複製 2 つを tests/test_hook_sync.py で突き合わせていたが、
-# その守り方は事後検知であり、監視対象に名指ししたファイルしか見ない。実際 52fdba4 で
-# 「ガード導入の翌日に、共有ロジック約 80 行がガード外へ漏れていた」ことが判明した。
-# symlink なら実体が 1 つなのでドリフトが構造的に起こらない。
+# 共有方法は 3 世代目。それぞれ前の世代の失敗を潰している:
+#   1. バイト単位で同一の複製 2 つを tests/test_hook_sync.py で突き合わせる方式。
+#      事後検知であり、監視対象に名指ししたファイルしか見ない。実際 52fdba4 で
+#      「ガード導入の翌日に、共有ロジック約 80 行がガード外へ漏れていた」ことが判明。
+#   2. 相対 symlink。実体が 1 つになりドリフトは構造的に起こらなくなったが、
+#      core.symlinks=false (Git for Windows の既定) で clone すると git が symlink を
+#      「リンク先パスを書いたテキストファイル」として展開するため、import がその
+#      パス文字列をソースとして読んで落ちる。install.sh は OS="windows"
+#      (msys/cygwin) を宣言済みスコープに含むので、これは実在の退行だった。
+#   3. 現行。参照側 (.codex/hooks/bash-review.py) が realpath(__file__) から
+#      ../../.claude/hooks を sys.path に足す。実体は 1 つのままドリフト不能で、
+#      かつ checkout に git が特別扱いすべきものが何も残らない。
 #
-# このモジュールを開くのは CPython の import 機構で、symlink は透過的に辿られる。
-# hooks.json は絶対パスで bash-review.py を起動するだけで、そこから先に Codex は
-# 関与しない。
+# realpath であって abspath でない点が要: install.sh は ~/.codex/hooks を
+# <repo>/.codex/hooks への symlink にするため、本番では __file__ の親が $HOME 側に
+# なる。abspath はリンクを解決しないので ../../.claude/hooks が ~/.claude/hooks を
+# 指し、install.sh がそちらも張っているという偶然でしか解決しない。シェル側
+# (.codex/hooks/lint.sh, auto-format.sh) が cd -P を使うのも同じ理由。
 #
-# 既知の非対応 (意図的に受け入れたトレードオフ): core.symlinks=false — Git for Windows
-# の既定 — で clone すると、git は symlink をパス文字列入りのテキストファイルとして
-# 展開するため import が失敗する。symlink 化前は実ファイルだったので動いていた。
-# つまりこの変更は Windows/Git Bash の clone 者に対する退行であり、install.sh の
-# OS="windows" (msys/cygwin) は宣言済みスコープなので、黙って落とすのではなくここに書く。
-# tests/test_hook_sync.py は形を検査するが、これは救済にならない: CI は ubuntu なので
-# 緑のままで、Windows 側の利用者は自分で pytest を回さない限り気付けない。
-# 移植性が必要になったら symlink をやめ、.codex/hooks/bash-review.py 側で
-# realpath(__file__) から ../../.claude/hooks を sys.path に足す方式にすれば、
-# 複製も core.symlinks 依存も無くせる。
+# 不変条件は tests/test_hook_sync.py が固定する: .codex 側に複製もリンクも無いこと、
+# .codex/hooks 配下に mode 120000 の追跡エントリが 1 つも無いこと、そして
+# symlink 化されたフックディレクトリ経由でも共有ヘルパーが実際に読めること。
 #
 # Gemini 一次レビュー / Codex 二次レビュー / 高リスク並列レビューの呼び出し
 # ロジックもここに集約する。2 つの bash-review.py (claude / codex 変種) は

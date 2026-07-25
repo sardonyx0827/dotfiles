@@ -47,16 +47,26 @@ LOG_FILE="$LOG_DIR/format.log"
 mkdir -p "$LOG_DIR"
 
 # 共有ヘルパー(hook_log / hook_notify)と整形マトリクス(hook_format_file)。
-# 実体は .claude/hooks/ 側、こちらは symlink。source する側で `exec 1>/dev/null`
-# する前に読み込むため、共有ファイルは source 時に何も出力しない契約。
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 実体は .claude/hooks/ 側の一本で、こちらには複製もリンクも置かず直接読む。
+# 以前は同名の相対 symlink を置いていたが、core.symlinks=false (Git for Windows
+# の既定) の clone では git が symlink をリンク先パス入りのテキストファイルとして
+# 展開するため source が失敗する。install.sh は OS="windows" を宣言済みスコープに
+# 含むのでリンクをやめた。
+#
+# cd -P で物理解決するのは、install.sh が ~/.codex/hooks を <repo>/.codex/hooks
+# への symlink にするため。論理解決では ../../.claude/hooks が ~/.claude/hooks を
+# 指し、install.sh がそちらも張っているという偶然にぶら下がってしまう。
+#
+# source する側で `exec 1>/dev/null` する前に読み込むため、共有ファイルは
+# source 時に何も出力しない契約。
+SHARED_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../.claude/hooks" 2>/dev/null && pwd)"
 # shellcheck source=../../.claude/hooks/_hook_common.sh
-. "$HOOK_DIR/_hook_common.sh"
+. "$SHARED_DIR/_hook_common.sh"
 # shellcheck source=../../.claude/hooks/_format_common.sh
-. "$HOOK_DIR/_format_common.sh"
+. "$SHARED_DIR/_format_common.sh"
 if ! declare -F hook_log >/dev/null 2>&1 ||
   ! declare -F hook_format_file >/dev/null 2>&1; then
-  echo "auto-format.sh: could not load shared hook helpers from $HOOK_DIR" >&2
+  echo "auto-format.sh: could not load shared hook helpers from ${SHARED_DIR:-<unresolved>}" >&2
   exit 0
 fi
 

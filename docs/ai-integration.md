@@ -30,7 +30,7 @@ Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DE
 </p>
 
 - **実装**: [`.claude/hooks/bash-review-launcher.sh`](../.claude/hooks/bash-review-launcher.sh)（起動ラッパー: python3 不在・本体クラッシュ時に fail-open ではなく ask へ倒す）→ [`.claude/hooks/bash-review.py`](../.claude/hooks/bash-review.py)（入口）/ 判定ロジック共有モジュール [`_bash_review_common.py`](../.claude/hooks/_bash_review_common.py)
-- Claude 変種と Codex 変種 (`.codex/hooks/`) は共有モジュールの**実体を 1 つだけ持つ**: `.codex/hooks/_bash_review_common.py` は `.claude/hooks/` 側への相対シンボリックリンクで、ドリフトは検知するまでもなく構造的に起こりません。[`tests/test_hook_sync.py`](../tests/test_hook_sync.py) はそのリンクの形（symlink であること / 相対であること / import 可能であること）を固定します。
+- Claude 変種と Codex 変種 (`.codex/hooks/`) は共有モジュールの**実体を 1 つだけ持つ**: 実体は `.claude/hooks/_bash_review_common.py` だけで、`.codex/hooks/` には複製もリンクも置かず、`bash-review.py` が `os.path.realpath(__file__)` から `../../.claude/hooks` を解決して直接 import します（シェル側は `cd -P`）。ドリフトは検知するまでもなく構造的に起こらず、かつ `core.symlinks=false`（Git for Windows の既定）の clone でも壊れません。[`tests/test_hook_sync.py`](../tests/test_hook_sync.py) が「複製もリンクも無いこと / 追跡 symlink がゼロであること / symlink 化されたフックディレクトリ経由でも実際にロードできること」を固定します。
 - 詳細な脅威モデルと設計判断は [`.claude/hooks/README.md`](../.claude/hooks/README.md) を参照。
 
 ---

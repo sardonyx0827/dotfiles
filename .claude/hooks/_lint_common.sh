@@ -2,7 +2,8 @@
 # _lint_common.sh
 # lint.sh が共有する言語別 静的解析マトリクス。
 #
-# このファイルが実体で、.codex/hooks/_lint_common.sh は相対 symlink。編集はここだけ。
+# このファイルが唯一の実体。.codex/hooks/ 側には複製もリンクも無く、あちらの
+# lint.sh が cd -P で ../../.claude/hooks を解決して直接読む。編集はここだけ。
 # 契約(source 時に副作用を持たない / exit せず return する / hook_ 名前空間)は
 # _hook_common.sh のヘッダを参照。hook_log を使うので、source する側は先に
 # _hook_common.sh を読み込んでいること。

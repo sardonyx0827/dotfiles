@@ -133,7 +133,7 @@ Ctrl+a ]        # ペースト
 
 - **`.claude/`**: Claude Code のグローバル指示（`CLAUDE.md`）、`settings.json`、カスタムサブエージェント（`agents/`）、スラッシュコマンド（`commands/`）、フック（`hooks/`）、スキル（`skills/`）、ワークフロー / セキュリティルール（`rules/`）、自作 MCP サーバー（`mcp-servers/`）、ステータスライン
 - **`.codex/`**: Codex 向け指示（`AGENTS.md`）、エージェント定義（`agents/*.toml`）、フック（`hooks/` + `hooks.json.template`）、スキル（`skills/`）、`config.toml.template`（`hooks.json` / `config.toml` の実体は `install.sh` が `~/.codex/` 側へ生成）
-  - `agents/` と `skills/` はディレクトリごとリンクします。共有スキルはリポジトリ内の相対シンボリックリンク（`.codex/skills/<name>` → `../../.claude/skills/<name>`）として定義しており、`.codex/hooks/_*.sh` と同じ方式です。共有の追加・削除はこのリンクの増減で行い、`install.sh` 側にスキル一覧は持ちません
+  - `agents/` と `skills/` はディレクトリごとリンクします。共有スキルはリポジトリ内の相対シンボリックリンク（`.codex/skills/<name>` → `../../.claude/skills/<name>`）として定義しています。共有の追加・削除はこのリンクの増減で行い、`install.sh` 側にスキル一覧は持ちません（なおフックは以前この方式でしたが、`core.symlinks=false` の clone で壊れるため参照側のパス解決に移行済みです。スキルは Codex 自身がディレクトリを読むため同じ手は使えません）
   - `~/.codex/skills` はチェックアウト内を指すため、Codex が書き込む組込みスキル `.system/` はリポジトリ配下に出現します（`.gitignore` 済み）
 - **`.gemini/`**: Gemini CLI の指示（`GEMINI.md`）と `settings.json`
 

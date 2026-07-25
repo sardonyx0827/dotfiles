@@ -172,10 +172,23 @@ sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 | `_lint_common.sh`        | 言語別 静的解析マトリクス      | `lint.sh` が source                    |
 | `_format_common.sh`      | 言語別 フォーマッタマトリクス  | `auto-format.sh` が source             |
 
-`~/.codex/hooks/` 経由で起動しても解決される。Python は sys.path[0] を realpath
-で解決してリポジトリ内に入り、bash の `source` は OS がリンクを透過的に辿る。
+4 つとも実体は `.claude/hooks/` 側だけにあり、**この `.codex/hooks/` には複製も
+symlink も置かない**。読み込む側が自分の物理パスから `../../.claude/hooks` を
+解決して直接読む (`bash-review.py` は `os.path.realpath(__file__)`、`lint.sh` /
+`auto-format.sh` は `cd -P`)。
 
-`tests/test_hook_sync.py` が 4 つすべてについてリンクの形 (symlink であること /
-相対であること / 実体に解決すること / 実際にロードできること) を固定する。
-`core.symlinks=false` の clone ではリンクがテキストファイルとして展開されて壊れる
-ため、各 wrapper は読み込み後に関数の存在を確認して落ちる (INSTALL_PLATFORM.md 参照)。
+以前はここに相対 symlink を置いていた。実体が 1 つという性質は同じだが、
+`core.symlinks=false` (Git for Windows の既定) の clone では git が symlink を
+「リンク先パスを書いたテキストファイル」として展開するため、import / `source` が
+そのパス文字列を読んで壊れる。リンクを持たない今の形なら、その clone でも作業
+ツリーが他と同一になる。
+
+物理解決である点が要: `install.sh` は `~/.codex/hooks` → `<repo>/.codex/hooks` を
+張るため、論理解決だと `../../.claude/hooks` が `~/.claude/hooks` を指し、
+`install.sh` がそちらも張っているという偶然にぶら下がってしまう。
+
+`tests/test_hook_sync.py` が不変条件を固定する: `.codex` 側に複製もリンクも無い
+こと、`.codex/hooks` 配下に mode 120000 の追跡エントリが 1 つも無いこと、そして
+symlink 化されたフックディレクトリ経由でも共有ヘルパーが実際に読めること。
+解決に失敗した場合に備え、各 wrapper は読み込み後に関数の存在を確認して落ちる
+(INSTALL_PLATFORM.md 参照)。

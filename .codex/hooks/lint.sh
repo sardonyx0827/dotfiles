@@ -25,18 +25,29 @@ command -v jq >/dev/null 2>&1 || exit 0
 # -------------------------------------------------------------------
 # 共有ヘルパー(hook_log / hook_notify)
 #
-# 実体は .claude/hooks/_hook_common.sh で、こちらの _hook_common.sh はそこへの
-# symlink。source 側で `exec 1>/dev/null` する前に読み込むため、共有ファイルは
+# 実体は .claude/hooks/_hook_common.sh 一本で、こちら側には複製もリンクも置かず
+# 直接あちらを読む。以前は同名の相対 symlink を置いていたが、core.symlinks=false
+# (Git for Windows の既定) で clone すると git が symlink を「リンク先パスを書いた
+# テキストファイル」として展開するため、source がそのパス文字列を実行しようとして
+# helpers が未定義のまま進む。install.sh は OS="windows" (msys/cygwin) を宣言済み
+# スコープに含むので、リンクをやめて参照側で解決する。
+#
+# cd -P で物理解決する点が要: install.sh は ~/.codex/hooks を <repo>/.codex/hooks
+# への symlink にするため、論理解決だと ../../.claude/hooks が ~/.claude/hooks を
+# 指し、install.sh がそちらも張っているという偶然にぶら下がる (Codex 側だけ導入
+# した場合に静かに壊れる)。
+#
+# source 側で `exec 1>/dev/null` する前に読み込むため、共有ファイルは
 # source 時に何も出力しない契約になっている(詳細は _hook_common.sh のヘッダ)。
 # -------------------------------------------------------------------
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SHARED_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../.claude/hooks" 2>/dev/null && pwd)"
 # shellcheck source=../../.claude/hooks/_hook_common.sh
-. "$HOOK_DIR/_hook_common.sh"
-# 読み込めていなければ fail-open で抜ける。checkout で symlink がテキスト化した
-# 場合(core.symlinks=false)もここに落ちる。黙って進むと macOS では `log` が
+. "$SHARED_DIR/_hook_common.sh"
+# 読み込めていなければ fail-open で抜ける (解決失敗時は SHARED_DIR が空になり
+# source が失敗してここに落ちる)。黙って進むと macOS では `log` が
 # /usr/bin/log に解決されてしまい、記録が静かにシステムログへ消える。
 if ! declare -F hook_log >/dev/null 2>&1; then
-  echo "lint.sh: could not load _hook_common.sh from $HOOK_DIR" >&2
+  echo "lint.sh: could not load _hook_common.sh from ${SHARED_DIR:-<unresolved>}" >&2
   exit 0
 fi
 
@@ -147,13 +158,13 @@ collect_targets() {
 #
 # 1 ファイルを解析する。問題が見つかったら ALL_ERRORS に積んで 1 を返す。
 # -------------------------------------------------------------------
-# 言語別 静的解析は .claude/hooks/_lint_common.sh と共有する(実体はあちら、
-# こちらの _lint_common.sh は symlink)。対象の集約と終了コードの決定だけが
-# Codex 固有なのでここに残る。
+# 言語別 静的解析は .claude/hooks/_lint_common.sh と共有する(実体はあちら一本で、
+# こちらには複製もリンクも置かない。解決方法は上の SHARED_DIR のコメント参照)。
+# 対象の集約と終了コードの決定だけが Codex 固有なのでここに残る。
 # shellcheck source=../../.claude/hooks/_lint_common.sh
-. "$HOOK_DIR/_lint_common.sh"
+. "$SHARED_DIR/_lint_common.sh"
 if ! declare -F hook_lint_file >/dev/null 2>&1; then
-  echo "lint.sh: could not load _lint_common.sh from $HOOK_DIR" >&2
+  echo "lint.sh: could not load _lint_common.sh from ${SHARED_DIR:-<unresolved>}" >&2
   exit 0
 fi
 

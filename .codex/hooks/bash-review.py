@@ -26,7 +26,25 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 共有モジュールの実体は .claude/hooks/_bash_review_common.py 一本で、こちらには
+# 複製もリンクも置かない。以前は .codex/hooks/_bash_review_common.py を相対
+# symlink にしていたが、core.symlinks=false (Git for Windows の既定) で clone
+# すると git が symlink を「リンク先パスを書いたテキストファイル」として展開する
+# ため import がそのパス文字列をソースとして読んで落ちる。install.sh は
+# OS="windows" (msys/cygwin) を宣言済みスコープに含むので、リンクをやめて
+# .claude 側を直接参照する。
+#
+# realpath であって abspath ではない: install.sh は ~/.codex/hooks を
+# <repo>/.codex/hooks への symlink にするため、本番では __file__ の親が $HOME
+# 側になる。abspath はリンクを解決しないので ../../.claude/hooks が
+# ~/.claude/hooks を指し、install.sh がそちらも張っているという偶然でしか
+# 解決しない (Codex 側だけ導入した利用者では静かに失敗する)。
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), "..", "..", ".claude", "hooks"
+    ),
+)
 from _bash_review_common import (
     _can_skip_review,
     _sanitize_notify,

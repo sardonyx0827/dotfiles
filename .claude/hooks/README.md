@@ -57,12 +57,25 @@ Matcher: `Write|Edit|MultiEdit` (runs in order):
 
 These four files hold the per-file logic shared between the two sides — the
 lint/format matrices and bash-review's verdict logic. They live here as the
-real files; `.codex/hooks/` holds relative symlinks to them, so this shared
-logic cannot drift apart. The hooks that consume it (`lint.sh`,
-`auto-format.sh`, `bash-review.py`, …) are _not_ symlinked: each side keeps its
-own copy, because Claude and Codex differ in how they receive targets, report
-verdicts, and place hooks on events. See `.codex/hooks/README.md` for the full
-table and those differences.
+_only_ copies: `.codex/hooks/` carries neither a duplicate nor a link, and its
+entry points resolve `../../.claude/hooks` from their own **physical** location
+(`os.path.realpath(__file__)` in Python, `cd -P` in shell) and load these files
+from there. One file means the shared logic cannot drift apart, and a
+symlink-free subtree means a `core.symlinks=false` checkout — Git for Windows'
+default, which materialises a symlink as a text file holding its target path —
+gets the same working tree as everyone else. (An earlier design used relative
+symlinks; it had the same anti-drift property but broke exactly that checkout.)
+
+Physical resolution is the load-bearing part: `install.sh` links
+`~/.codex/hooks` → `<repo>/.codex/hooks`, so a _logical_ `../../.claude/hooks`
+would land on `~/.claude/hooks` and resolve only by the coincidence that
+`install.sh` links that path too. `tests/test_hook_sync.py` pins all of it.
+
+The hooks that consume this logic (`lint.sh`, `auto-format.sh`,
+`bash-review.py`, …) are _not_ shared: each side keeps its own copy, because
+Claude and Codex differ in how they receive targets, report verdicts, and place
+hooks on events. See `.codex/hooks/README.md` for the full table and those
+differences.
 
 - **`_hook_common.sh`**: `hook_log` (timestamped, size-capped) and
   `hook_notify` (terminal-notifier / osascript / notify-send).

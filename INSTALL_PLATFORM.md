@@ -200,10 +200,15 @@ git config --global core.symlinks true
 # 設定済みのクローンには遡って効かないので、クローンし直す
 ```
 
-本リポジトリは `.codex/hooks/_bash_review_common.py` をリポジトリ内シンボリック
-リンクとして追跡している（実体は `.claude/hooks/` 側）。これがテキスト化すると
-Codex の bash-review フックが import に失敗する。`pytest tests/test_hook_sync.py`
-で検出できる。
+**フック（`.codex/hooks/`）はこの設定に依存しない。** 共有ロジックの実体は
+`.claude/hooks/` 側の 1 本だけで、Codex 側は複製もリンクも持たず、自分の物理パス
+から `../../.claude/hooks` を解決して直接読む。`core.symlinks=false` でも壊れない
+（`pytest tests/test_hook_sync.py` が追跡 symlink ゼロを含めて固定している）。
+
+一方 `.codex/skills/` は `.claude/skills/` 配下の各スキルへのシンボリックリンク
+として追跡している。これがテキスト化すると **Codex が該当スキルを認識しなくなる**
+（フックのように実行時エラーにはならず、静かに欠落する）。スキルを使うなら上記の
+`core.symlinks=true` を有効にしてクローンし直すこと。
 
 #### 文字コードの問題
 

@@ -2,7 +2,9 @@
 # _hook_common.sh
 # lint.sh / auto-format.sh が共有するログ出力とデスクトップ通知。
 #
-# このファイルが実体で、.codex/hooks/_hook_common.sh は相対 symlink。編集はここだけ。
+# このファイルが唯一の実体。.codex/hooks/ 側には複製もリンクも無く、あちらの
+# lint.sh / auto-format.sh が cd -P で ../../.claude/hooks を解決して直接読む。
+# 編集はここだけ。
 # 実体を 1 つにしてドリフトを構造的に防ぐ経緯は _bash_review_common.py のヘッダを参照。
 #
 # ■ source 側との契約
