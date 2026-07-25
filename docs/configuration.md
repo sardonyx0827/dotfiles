@@ -70,6 +70,14 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 - **AI 連携**: copilot.lua
 - **カラースキーム**: Rosé Pine（gruvbox / kanagawa / tokyonight / onedark なども同梱）
 
+### VS Code (.config/Code/User/)
+
+- **管理対象**: `settings.json` と `keybindings.json` の 2 ファイルのみ。`User/` ディレクトリごとリンクしないのは、VS Code が同じ場所へ `globalStorage/` などの実行時データを書くため
+- **リンク先が OS 依存**: macOS は `~/Library/Application Support/Code/User/`、それ以外は `~/.config/Code/User/`（`install.sh` の `_link_editor_configs` が判定）
+- **Vim エミュレーション**: VSCodeVim。リーダーキーは `,`、easymotion 有効
+- **キーマップ**: Vim / Neovim 側と揃えた移動・検索に加えて、`<leader>tc` で Claude Code、`<leader>cx` で Codex をターミナルペインに起動
+- **エクスプローラー**: `a` 新規ファイル / `shift+a` 新規ディレクトリ / `r` リネーム（NERDTree・nvim-tree と同じ操作感）
+
 ### tmux (.tmux.conf)
 
 - **プレフィックスキー**: `Ctrl+a` (デフォルトの `Ctrl+b` から変更)
@@ -208,16 +216,19 @@ ZSH_THEME="your-theme-name"
 
 ### Vimプラグインの追加
 
-`.vimrc`を編集：
+`.vimrc` は `.vim/rc/*.vim` を読み込むだけのローダーなので、編集するのは
+**`.vim/rc/00-plugins.vim`**（`plug#begin()` / `plug#end()` はここにある）：
 
 ```vim
-" Plug install packagesセクションに追加
-call plug#begin()
+" 「Plug install packages」セクションの Plug 行に追加する
+" (plug#begin() / plug#end() は既にこのファイルにあるので書き足さない)
 Plug 'username/plugin-name'
-call plug#end()
 ```
 
 その後、Vimで`:PlugInstall`を実行。
+
+プラグイン固有の設定は `.vim/rc/30-plugins-config.vim`、キーマップは
+`.vim/rc/60-mappings.vim` に置きます。
 
 ### tmuxプレフィックスキーの変更
 

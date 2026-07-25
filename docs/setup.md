@@ -170,6 +170,19 @@ ln -sf ~/dotfiles/.wezterm.lua ~/.wezterm.lua
 mkdir -p ~/.config
 ln -sf ~/dotfiles/.config/nvim ~/.config/nvim
 
+# VS Code設定 (ユーザー設定の置き場所が OS 依存。macOS は ~/.config ではない)
+# User/ ディレクトリごとリンクせず個別ファイルにするのは、VS Code が同じ場所へ
+# globalStorage/ workspaceStorage/ 等の実行時データを書くため。
+if [ "$(uname -s)" = "Darwin" ]; then
+  vscode_user_dir="$HOME/Library/Application Support/Code/User"
+else
+  vscode_user_dir="$HOME/.config/Code/User"
+fi
+mkdir -p "$vscode_user_dir"
+for e in settings.json keybindings.json; do
+  ln -sf ~/dotfiles/.config/Code/User/$e "$vscode_user_dir/$e"
+done
+
 # Claude Code設定 (CLIの実行時データを巻き込まないよう個別にリンク)
 mkdir -p ~/.claude
 for e in CLAUDE.md settings.json statusline-command.sh agents commands hooks mcp-servers rules skills; do

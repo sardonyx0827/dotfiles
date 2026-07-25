@@ -60,7 +60,7 @@
 │   └── custom/themes/              # Zshテーマ (px-rose-pine: pixeljae 製 agnoster ベースを vendored)
 ├── .vim/rc/                        # Vim設定本体 (分割ロード: 00-plugins, 10-basic ...)
 ├── assets/                         # README / docs から参照する構成図 (SVG)
-├── docs/                           # 補助ドキュメント (ai-integration.md)
+├── docs/                           # 補助ドキュメント (setup / configuration / testing / ai-integration)
 ├── .gitconfig                      # Git設定
 ├── .gitignore_global               # グローバルgitignore
 ├── .tmux.conf                      # tmux設定
@@ -71,7 +71,7 @@
 ├── LICENSE                         # MITライセンス
 ├── install.sh                      # クロスプラットフォーム対応インストールスクリプト
 ├── pytest.ini                      # pytest設定
-├── scripts/                        # ユーティリティスクリプト (AIツール更新, tmuxヘルパー)
+├── scripts/                        # ユーティリティスクリプト (AIツール更新, tmuxヘルパー, 秘密スキャナ, Codexエージェント生成)
 └── tests/                          # フック / スクリプトの pytest スイート (hermetic)
 ```
 
