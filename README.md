@@ -55,7 +55,7 @@
 │   ├── Code/                       # VS Code (settings / keybindings)
 │   └── nvim/                       # Neovim (lazy.nvim) 設定
 ├── .gemini/                        # Gemini CLI設定 (GEMINI.md, settings.json)
-├── .github/workflows/              # GitHub Actions CI (pytest / ruff / bandit / shellcheck / mypy)
+├── .github/workflows/              # GitHub Actions CI (pytest / ruff / bandit / shellcheck / mypy / luacheck)
 ├── .oh-my-zsh/                     # Oh My Zsh設定
 │   └── custom/themes/              # Zshテーマ (px-rose-pine: pixeljae 製 agnoster ベースを vendored)
 ├── .vim/rc/                        # Vim設定本体 (分割ロード: 00-plugins, 10-basic ...)
@@ -191,7 +191,7 @@ npm install -g @github/copilot
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | [docs/setup.md](docs/setup.md)                       | 手動インストール手順・バックアップと復旧・トラブルシューティング                                      |
 | [docs/configuration.md](docs/configuration.md)       | Zsh / Vim / Neovim / tmux / WezTerm / Git / AI 各ツールの設定、ユーティリティスクリプト、カスタマイズ |
-| [docs/testing.md](docs/testing.md)                   | pytest スイート・カバレッジゲート・静的解析（ruff / bandit / shellcheck / mypy）                      |
+| [docs/testing.md](docs/testing.md)                   | pytest スイート・カバレッジゲート・静的解析（ruff / bandit / shellcheck / mypy / luacheck）           |
 | [docs/ai-integration.md](docs/ai-integration.md)     | 複数 LLM 連携・Bash 安全ゲート（bash-review）・Neovim のエディタ内 AI の構成                          |
 | [.claude/hooks/README.md](.claude/hooks/README.md)   | フックシステムの設計根拠と脅威モデル                                                                  |
 | [.claude/agents/README.md](.claude/agents/README.md) | カスタムサブエージェントの解説                                                                        |

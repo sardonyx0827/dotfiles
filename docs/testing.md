@@ -50,8 +50,10 @@ python3 -m pytest \
 ### 静的解析
 
 CI は pytest に加えて `ruff`（lint / format）、`bandit`（medium 以上のセキュリティ
-指摘）、`shellcheck`（全シェルスクリプト、`-x` で source 先も追跡）、`mypy`（型検査）
-を実行します。mypy は設定ファイルを持たず既定値で通ります。
+指摘）、`shellcheck`（全シェルスクリプト、`-x` で source 先も追跡）、`mypy`（型検査）、
+`luacheck`（Neovim Lua ツリー）を実行します。mypy は設定ファイルを持たず既定値で
+通ります。luacheck は Lua ツリーに対する唯一の自動検査なので **gating**（版は
+1.2.0 に固定）です。
 
 ```bash
 ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts

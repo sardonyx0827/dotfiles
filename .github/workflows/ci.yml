@@ -189,21 +189,27 @@ jobs:
   # クラスの退行を検知できなかった。stylua による整形強制は日常的な手調整と衝突
   # するため意図的に入れず、luacheck を lint 専用で回して当該バグクラスだけを拾う。
   #
-  # continue-on-error はジョブレベルに置く: これは助言的 (non-gating) チェックで
-  # あり、指摘があってもワークフローをブロックしない。apt/luarocks は外部ネット
-  # ワーク依存 = 失敗点だが、ジョブ全体を非ブロックにすることでその flakiness も
-  # 必須チェックへ波及させない。luacheck は集計/床ゲートの pip 群と違い版ピン留め
-  # しない: 助言的なので再現性より導入の確実性 (誤ピンで恒常的に赤くしない) を採る。
+  # 助言的 (continue-on-error) から gating へ格上げした。Lua ツリーは約 4,500 行
+  # あってこのリポジトリ最大の未検証面であり、テストも無いので luacheck だけが
+  # 唯一の自動検査になる。非ブロックのままでは「赤くならない警告」を誰も読まず、
+  # 検知できても退行を止められない。格上げの前提として、直近の main で
+  # 0 warnings / 0 errors in 50 files を確認済み。
+  #
+  # gating にしたので版をピン留めする: 助言的だった頃は「誤ピンで恒常的に赤く
+  # しない」ことを優先して未固定だったが、ブロックする以上は luacheck の新版が
+  # 出た瞬間に無関係な指摘で main が止まる方が困る。luarocks 自体は apt 由来で
+  # 未固定のままなので、これは完全な再現性ではなく「検査ツールの固定」である。
+  # apt/luarocks の外部ネットワーク依存が失敗点になる点は gating な test ジョブが
+  # 既に apt-get install zsh で負っている露出と同じで、新たに増やしてはいない。
   # 設定は .config/nvim/.luacheckrc (LuaJIT + vim グローバル。.luarc.json と一致)。
   luacheck:
-    name: luacheck (advisory, non-gating)
+    name: luacheck
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - name: Install luacheck
-        run: sudo apt-get update && sudo apt-get install -y luarocks && sudo luarocks install luacheck
+        run: sudo apt-get update && sudo apt-get install -y luarocks && sudo luarocks install luacheck 1.2.0
       - name: Run luacheck (Neovim Lua tree)
         run: |
           luacheck --version
