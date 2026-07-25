@@ -161,9 +161,9 @@ sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 スクリプトは `~/.codex/hooks/` から本リポジトリの `.codex/hooks/` へシンボリック
 リンクを張る。
 
-`.codex/hooks/` にある次の 4 つは、いずれも `.claude/hooks/` 側の実体への相対
-シンボリックリンク (Claude 版と完全に同一のロジックなので、実体を 1 つにして
-ドリフトを構造的に起こらなくしてある):
+次の 4 つは Claude 版と完全に同一のロジックなので、実体を 1 つだけ持ってドリフトを
+構造的に起こらなくしてある。**その 1 つは `.claude/hooks/` 側にあり、この
+`.codex/hooks/` には存在しない** (下記参照):
 
 | ファイル                 | 中身                           | 読み込む側                             |
 | ------------------------ | ------------------------------ | -------------------------------------- |
@@ -172,10 +172,10 @@ sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 | `_lint_common.sh`        | 言語別 静的解析マトリクス      | `lint.sh` が source                    |
 | `_format_common.sh`      | 言語別 フォーマッタマトリクス  | `auto-format.sh` が source             |
 
-4 つとも実体は `.claude/hooks/` 側だけにあり、**この `.codex/hooks/` には複製も
-symlink も置かない**。読み込む側が自分の物理パスから `../../.claude/hooks` を
-解決して直接読む (`bash-review.py` は `os.path.realpath(__file__)`、`lint.sh` /
-`auto-format.sh` は `cd -P`)。
+**この `.codex/hooks/` には複製も symlink も置かない**。代わりに読み込む側が
+自分の物理パスから `../../.claude/hooks` を解決して直接読む (`bash-review.py` は
+`os.path.realpath(__file__)`、`lint.sh` / `auto-format.sh` は `cd -P`)。
+つまり上の表のファイル名でこのディレクトリを探しても見つからない。
 
 以前はここに相対 symlink を置いていた。実体が 1 つという性質は同じだが、
 `core.symlinks=false` (Git for Windows の既定) の clone では git が symlink を

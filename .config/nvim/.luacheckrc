@@ -1,10 +1,12 @@
 -- .luacheckrc — luacheck config for the Neovim Lua tree.
 --
--- luacheck runs NON-GATING in CI (advisory only; see the `luacheck` job in
--- .github/workflows/ci.yml). Its job is to surface the one bug class that has
--- silently broken the editor before -- an undefined global (a typo'd name, or
--- a `require` result used where a global was meant), which lazy.lua's own
--- comment records as having "degraded the editor silently". It is kept
+-- luacheck GATES CI: the `luacheck` job in .github/workflows/ci.yml fails the
+-- build. It was advisory (continue-on-error) until the tree was verified clean,
+-- and the version is pinned precisely because it now blocks. Its job is to
+-- surface the one bug class that has silently broken the editor before -- an
+-- undefined global (a typo'd name, or a `require` result used where a global
+-- was meant), which lazy.lua's own comment records as having "degraded the
+-- editor silently". It is kept
 -- deliberately lenient so it never fights the hand-tuning this tree gets:
 -- formatting is not enforced (stylua is intentionally absent) and the noisier
 -- style diagnostics are off. Widen the checks only if a real regression slips
