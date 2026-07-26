@@ -186,14 +186,21 @@ when reviewing their own work.
 ### Concurrency guideline
 
 Target 2–4 simultaneous SubAgents. Beyond 4, coordination overhead and context
-merging costs outweigh the parallelism gains.
+merging costs outweigh the parallelism gains — never exceed 4 unless the user
+explicitly asks for a wider fan-out.
+
+This is a ceiling, not a target to fill. Hitting 2 is not a goal; one SubAgent,
+or none, is the right answer more often than the number suggests. See §8.
 
 ---
 
-## 5. Model Tier Selection
+## 5. Model Tier and Effort Selection
 
-Per `performance.md` and `CLAUDE.md`. Assign the **cheapest tier that can do
-the job**, and retry one tier up on failure.
+Per `performance.md` and `CLAUDE.md`. Two independent axes — **tier** sets the
+capability ceiling, **effort** sets how much thinking and tool work is spent
+reaching it. Assign the cheapest combination that can do the job. Tier alone is
+a pre-effort mental model; a SubAgent prompt that names only a tier is
+underspecified.
 
 | Task type                           | Model            | Examples                                                                               |
 | ----------------------------------- | ---------------- | -------------------------------------------------------------------------------------- |
@@ -207,11 +214,41 @@ Ask: "Could I write a regex or a short bash script to do this?" → Haiku.
 Ask: "Does this require understanding intent, tradeoffs, or multi-file reasoning?" → Sonnet.
 Ask: "Is this a design decision or coordination role?" → Opus.
 
+### Effort
+
+Set per agent with an `effort:` key in `.claude/agents/*.md` frontmatter
+(`low` | `medium` | `high` | `xhigh` | `max`, or an integer). Omit it and the
+agent inherits the session's `effortLevel`.
+
+| Effort   | Use for                                                                   |
+| -------- | ------------------------------------------------------------------------- |
+| `low`    | Mechanical fan-out: file sweeps, extraction, single-fact lookups          |
+| `medium` | Routine implementation and review where the answer is not in doubt        |
+| `high`   | Intelligence-sensitive work — the sensible floor for anything non-obvious |
+| `xhigh`  | Coding and agentic work, long-horizon or multi-file tracks                |
+| `max`    | Hardest cases only, where correctness outweighs latency and cost          |
+
+On the current Opus, `low` and `medium` are far stronger than their names
+suggest — they often beat a previous generation's `high` at a fraction of the
+tokens. Prefer lowering effort over dropping a tier for mechanical SubAgents:
+the capability ceiling stays available if the task turns out to need it.
+
+Effort values inherited from an older model are usually the wrong setting.
+Sweep `low` / `medium` / `high` on a representative task before committing —
+especially for agents that loop against tool output (build/lint resolvers),
+where the "low punches above its weight" result is not established.
+
 ### Retry protocol
 
-If a Haiku SubAgent returns incorrect or incomplete results, re-run at Sonnet.
-If a Sonnet SubAgent fails twice, escalate to Opus or consult Codex MCP per
-the `codex-consultation` skill.
+**Raise effort first, tier second.** Escalating the tier when an effort bump
+would have done wastes budget and latency.
+
+1. A SubAgent returns incorrect or incomplete results → re-run at one effort
+   level higher, same tier.
+2. Still failing at `high` or above → move up one tier, back at your starting
+   effort.
+3. A Sonnet SubAgent fails twice across both axes → escalate to Opus, or
+   consult Codex MCP per the `codex-consultation` skill.
 
 ---
 
@@ -296,9 +333,30 @@ Per the Single-layer policy in `CLAUDE.md`, keep work inline when:
 - Edits are sequential: step 2 depends on what step 1 produced.
 - The change touches only 1–2 files.
 - You want to pause for user review mid-way.
+- You could finish it yourself in a handful of tool calls — a few reads, a
+  simple search, a couple of edits.
 
 Spawning a SubAgent for a 10-line edit adds latency, coordination overhead, and
 a context-handoff risk. Do it yourself.
+
+### Don't over-fan-out either
+
+Splitting one modest job across several SubAgents costs more than it saves:
+each one re-establishes context, re-explores, and reports back, and you then
+re-read every report. Parallel fan-out is for genuinely independent tracks
+(unrelated modules, a wide multi-file investigation), not for slicing a single
+task into pieces.
+
+- If one SubAgent would do, use one. Keep spawn counts low.
+- Brief precisely the first time. Launching, waiting, and re-briefing burns two
+  round trips to buy what one good prompt would have.
+- Once you delegate, commit to it — do not redo a SubAgent's work or re-derive
+  its findings after it reports back.
+
+Review delegation is the deliberate exception: `CLAUDE.md` mandates the
+**code-reviewer** agent (Go: **go-reviewer**) after code changes, and Gate 3
+above requires writer/reviewer separation. A fresh-context reviewer beats
+self-critique, which has confirmation bias. Keep that one.
 
 ---
 
@@ -341,5 +399,7 @@ Before firing any SubAgent call, verify:
 - [ ] Return is a summary/verdict — not raw logs or full file dumps
 - [ ] Parallelism gates passed: tasks are independent, no two writers on same file
 - [ ] Model tier matches task complexity (Haiku / Sonnet / Opus)
+- [ ] Effort matches task complexity, and is not an unswept value inherited from an older model
+- [ ] Spawn count is the minimum that works — one SubAgent if one would do, never more than 4
 - [ ] If exploration: breadth instruction given or iterative-retrieval pattern invoked
-- [ ] Task does NOT belong in Single layer (not conversation-dependent, not 1-2 file sequential edit)
+- [ ] Task does NOT belong in Single layer (not conversation-dependent, not 1-2 file sequential edit, not finishable in a handful of tool calls)

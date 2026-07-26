@@ -29,11 +29,19 @@ If any of the following apply, execute sequentially without delegating to SubAge
 
 ### 2. SubAgents (launched in parallel with the Agent tool)
 
-If any of the following apply, actively launch SubAgents in parallel (guideline: 2–4 simultaneously):
+Delegating is not free: each SubAgent re-establishes context, re-explores, and reports back, and the main agent then re-reads that report. Delegate when the payoff clearly exceeds that overhead — if any of the following apply (guideline: 2–4 simultaneously, never more than 4 unless the user asks):
 
 - Large-scale exploration where you don't want to pollute the context (Glob/Grep, log scanning, understanding the entire codebase)
 - Parallel tasks that can run independently of each other (generating multiple proposals, multi-perspective reviews, test generation)
 - Work where quality improves through role separation, such as Writer / Reviewer
+
+Do NOT delegate when:
+
+- You could finish the work yourself in a handful of tool calls (a few reads, a simple search, a couple of edits)
+- One modest job would be split across several SubAgents. Parallel fan-out is for genuinely independent tracks, not for slicing one small task
+- One SubAgent would do. Prefer one over several; keep spawn counts low
+
+Once you delegate, commit to it: do not redo a SubAgent's work or re-derive its findings after it reports back.
 
 Conventions when calling:
 
@@ -53,11 +61,28 @@ Launch conditions (when any of the following are met):
 
 ## Model Selection Guidelines (Common to Single / SubAgent / AgentTeam)
 
+Two independent axes: **model tier** (capability ceiling) and **effort** (how much thinking and tool work is spent reaching it). Tier alone is a pre-effort mental model — pick both.
+
+### Model tier
+
 - Main session: Opus (CLI default; not pinned via `model` in `settings.json`)
 - Haiku: Tasks requiring no reasoning such as Glob/Grep, template extraction, document consistency checks
 - Sonnet: Implementation / debugging / review (default for SubAgents)
 - Opus: Design / large-scale refactoring / overall analysis / team lead
-- On failure, retry with the next higher model
+- Fable: reserve for the hardest long-horizon work, and only when explicitly chosen — it is priced above the Opus tier and requires 30-day data retention (unavailable under ZDR)
+
+### Effort
+
+Set via `effortLevel` in `settings.json` (session-wide, currently `xhigh`), `/effort` for one session, or an `effort:` key in `.claude/agents/*.md` frontmatter (`low` | `medium` | `high` | `xhigh` | `max`, or an integer).
+
+- On the current Opus, `low` and `medium` are far stronger than their names suggest — they often beat a previous generation's `high` at a fraction of the tokens and latency
+- `xhigh` is the right default for coding and agentic work (and the Claude Code default); `high` for other intelligence-sensitive work
+- Effort levels carried over from an older model are usually the wrong setting — sweep before trusting them
+- Lower effort for mechanical SubAgents rather than dropping a tier: the capability ceiling stays available if the task turns out to need it
+
+### On failure
+
+Raise **effort first, model tier second.** Escalating the tier when an effort bump would have done wastes budget and latency. Only after effort is exhausted at the current tier should you move up a tier, or consult Codex MCP per the `codex-consultation` skill.
 
 ## Development Workflow
 
