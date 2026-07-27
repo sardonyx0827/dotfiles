@@ -142,6 +142,18 @@ local function build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_
     -- copilot CLI does not read stdin as context, so inline the payload into the
     -- prompt. `instruction` already carries the task/language context; `-s` keeps
     -- stdout to the agent response only so clean_cli_lines gets usable text.
+    --
+    -- Deliberate exception to the "payload on stdin, never argv" rule stated at
+    -- the top of this file (and in scripts/secret_scan.py / .vim/rc/70-ai.vim):
+    -- there is no stdin path for this tool, so the choice is argv or no copilot
+    -- at all. The cost is real -- while the job runs, the whole payload is
+    -- visible to any process on this machine via `ps aux`, and unlike the
+    -- tmpfile the CLI tools use it is not confined to nvim's 0700 temp dir.
+    -- The pre-send scan in M.run still runs for copilot (kind = "cli"), so a
+    -- credential the scanner RECOGNISES is refused before it reaches argv; what
+    -- leaks is what value-scanning cannot see (see the note in M.run). Prefer a
+    -- stdin tool for anything sensitive; if copilot ever grows a stdin mode,
+    -- move it there and delete this branch.
     local copilot_prompt = string.format("%s\n\n## Input\n```\n%s\n```",
       instruction, input)
     return string.format("copilot --model %s -s -p %s",
