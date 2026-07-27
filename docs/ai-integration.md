@@ -45,3 +45,31 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 
 - **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`backend` = ツール起動、`ui` = フローティングウィンドウ）
 - インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES · 機密パスは `should_attach` で除外）
+
+### classic Vim との対応関係
+
+**揃っているのは「選択範囲のリライト」だけ**です。この機能に限れば両エディタが同じ 5 ツール
+（Claude / Codex / Gemini / Copilot / Gemma）を同じキーで提供し、`<C-l>`（all）が並列に起動する
+のも同じ 4 ツール（Claude / Codex / Gemini / Copilot）です。ここを揃えてあるのは、2 つのエディタ
+を行き来しても指が同じキーで同じ相手に届くようにするためです。
+
+| キー（ビジュアルモード）    | ツール                                       |
+| --------------------------- | -------------------------------------------- |
+| `<C-c>` / `<C-x>` / `<C-g>` | Claude / Codex / Gemini                      |
+| `<C-p>`                     | Copilot                                      |
+| `<C-o>`                     | Gemma（ローカル Ollama）                     |
+| `<C-l>`                     | all（上記 4 ツールを並列実行し、タブで比較） |
+
+**揃っていないもの** — Neovim だけが持つ機能は classic Vim には無く、移植の予定もありません
+（コミットメッセージ生成・バッファ校正・LSP 診断コピー・インライン補完、および `claude → gemini`
+フォールバック）。コミットメッセージ生成の `all` は Neovim 内でも別構成で、Gemini を含まず
+Claude / Codex / Copilot の 3 つです。
+
+Copilot だけは CLI に stdin 経路が無く、選択範囲を argv に載せます。ジョブ実行中は `ps aux` から
+同一マシンの任意プロセスに見えるため、機密を含む可能性がある選択範囲では stdin 系のツールを
+選んでください（秘密スキャンゲート自体は Copilot にも適用されます）。argv には長さ上限
+（ARG_MAX）があるので、両エディタとも大きすぎる選択範囲は送信前に拒否します
+（`all` では Copilot のタブだけが失敗し、他のツールは動きます）。
+
+- **実装**: [`.vim/rc/70-ai.vim`](../.vim/rc/70-ai.vim)（`s:ai_all_tools` が `all` の構成、
+  `s:AI_BuildCmd` がツールごとの起動コマンド）
