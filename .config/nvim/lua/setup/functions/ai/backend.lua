@@ -107,6 +107,23 @@ local function confirm_send(text)
   return ok
 end
 
+-- Upper bound on the `sh -c` command string. Every request runs as
+-- jobstart({ "sh", "-c", cmd }), so `cmd` is a single argv entry and counts
+-- against ARG_MAX (argv + envp; 1 MB on this machine, measured). Tools that
+-- pipe the payload in from a temp file keep `cmd` tiny no matter how large the
+-- input is, so this only ever trips for copilot, which inlines the payload into
+-- argv. The check is on the BUILT string, not on the raw input: shellescape's
+-- quoting can inflate a payload several-fold, so an input-side estimate is
+-- wrong in both directions.
+--
+-- Distinct from ai.init's MAX_DIFF_BYTES, which bounds what is worth sending
+-- for commit generation and can truncate safely. Here the payload IS the text
+-- about to be replaced, so truncating it would produce a reply written for a
+-- fragment and then apply it over the whole range -- worse than the failure it
+-- would be papering over. Refuse instead, and say which tools do not have the
+-- limit. In "all" mode only the offending tool's tab fails; the rest run.
+local MAX_CMD_BYTES = 256 * 1024
+
 --- Build the shell command for a CLI tool. Most tools read the payload from
 --- `tmpfile` over stdin; copilot inlines `input` into the prompt instead.
 --- `skip_git_check` adds codex's --skip-git-repo-check (used by the replace
@@ -141,6 +158,17 @@ local function run_cli(tool, model, instruction, input, skip_git_check, done)
   local tmpfile = vim.fn.tempname()
   vim.fn.writefile(vim.split(input, "\n", { plain = true }), tmpfile)
   local cmd = build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_check)
+  -- Refuse rather than let exec fail with a bare E2BIG, which surfaces to the
+  -- user as an opaque "exit code 1" with no hint that the SIZE was the problem.
+  if #cmd > MAX_CMD_BYTES then
+    vim.fn.delete(tmpfile)
+    done(false, {}, string.format(
+      "payload too large for %s: the command line would be %d KB (limit %d KB). "
+      .. "%s inlines the payload into argv; use a stdin-based tool "
+      .. "(claude / codex / gemini) or select a smaller range.",
+      tool, math.floor(#cmd / 1024), math.floor(MAX_CMD_BYTES / 1024), tool))
+    return nil
+  end
 
   local result = {}
   local job_id = vim.fn.jobstart({ "sh", "-c", cmd }, {
