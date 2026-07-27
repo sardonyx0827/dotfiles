@@ -452,7 +452,7 @@ local function ask_ai_and_replace(start_line, end_line, tool)
       vim.api.nvim_win_close(prompt_win, true)
     end
   end
-  map("n", "q", close_prompt, { buffer = prompt_buf, desc = "Cancel prompt" })
+  map("n", "q", close_prompt, { buf = prompt_buf, desc = "Cancel prompt" })
 
   local function replace_range(lines)
     if not vim.api.nvim_buf_is_valid(target_buf) then
@@ -514,7 +514,7 @@ local function ask_ai_and_replace(start_line, end_line, tool)
   end
 
   map({ "n", "i" }, "<C-s>", submit,
-    { buffer = prompt_buf, desc = "Submit prompt to " .. tool })
+    { buf = prompt_buf, desc = "Submit prompt to " .. tool })
 end
 
 local function replace_mapping(tool)

@@ -369,42 +369,42 @@ function M.run_multi(opts)
   local function setup_keymaps(buf)
     if mode == "popup" then
       vim.keymap.set("n", "y", function() popup_accept(false) end,
-        { buffer = buf, desc = "Yank active response" })
+        { buf = buf, desc = "Yank active response" })
       vim.keymap.set("n", "p", function() popup_accept(true) end,
-        { buffer = buf, desc = "Yank and paste active response" })
+        { buf = buf, desc = "Yank and paste active response" })
       vim.keymap.set("n", "q", close_all,
-        { buffer = buf, desc = "Close window" })
+        { buf = buf, desc = "Close window" })
     else
       vim.keymap.set("n", "y", diff_accept,
-        { buffer = buf, desc = "Replace selection with active response" })
+        { buf = buf, desc = "Replace selection with active response" })
       vim.keymap.set("n", "Y", diff_accept_merged,
-        { buffer = buf, desc = "Replace selection with merged original buffer" })
+        { buf = buf, desc = "Replace selection with merged original buffer" })
       vim.keymap.set("n", "q", close_all,
-        { buffer = buf, desc = "Cancel and close" })
+        { buf = buf, desc = "Cancel and close" })
       vim.keymap.set("n", "<C-w>h", focus_original,
-        { buffer = buf, desc = "Focus original pane" })
+        { buf = buf, desc = "Focus original pane" })
       vim.keymap.set("n", "<C-w><C-h>", focus_original,
-        { buffer = buf, desc = "Focus original pane" })
+        { buf = buf, desc = "Focus original pane" })
       vim.keymap.set("n", "<C-w>l", focus_response,
-        { buffer = buf, desc = "Focus response pane" })
+        { buf = buf, desc = "Focus response pane" })
       vim.keymap.set("n", "<C-w><C-l>", focus_response,
-        { buffer = buf, desc = "Focus response pane" })
+        { buf = buf, desc = "Focus response pane" })
       vim.keymap.set("n", "<C-w>j", function() switch_offset(1) end,
-        { buffer = buf, desc = "Next response" })
+        { buf = buf, desc = "Next response" })
       vim.keymap.set("n", "<C-w><C-j>", function() switch_offset(1) end,
-        { buffer = buf, desc = "Next response" })
+        { buf = buf, desc = "Next response" })
       vim.keymap.set("n", "<C-w>k", function() switch_offset(-1) end,
-        { buffer = buf, desc = "Prev response" })
+        { buf = buf, desc = "Prev response" })
       vim.keymap.set("n", "<C-w><C-k>", function() switch_offset(-1) end,
-        { buffer = buf, desc = "Prev response" })
+        { buf = buf, desc = "Prev response" })
     end
     vim.keymap.set("n", "<Tab>", function() switch_offset(1) end,
-      { buffer = buf, desc = "Next response" })
+      { buf = buf, desc = "Next response" })
     vim.keymap.set("n", "<S-Tab>", function() switch_offset(-1) end,
-      { buffer = buf, desc = "Prev response" })
+      { buf = buf, desc = "Prev response" })
     for i = 1, #tools do
       vim.keymap.set("n", tostring(i), function() switch_to(i) end,
-        { buffer = buf, desc = "Switch to response " .. i })
+        { buf = buf, desc = "Switch to response " .. i })
     end
   end
 
@@ -516,16 +516,16 @@ function M.open_report(opts)
     end
   end
 
-  vim.keymap.set("n", "q", close, { buffer = buf, desc = "Close report" })
-  vim.keymap.set("n", "y", yank, { buffer = buf, desc = "Yank report to clipboard" })
-  vim.keymap.set("n", "tw", toggle_wrap, { buffer = buf, desc = "Toggle line wrap" })
+  vim.keymap.set("n", "q", close, { buf = buf, desc = "Close report" })
+  vim.keymap.set("n", "y", yank, { buf = buf, desc = "Yank report to clipboard" })
+  vim.keymap.set("n", "tw", toggle_wrap, { buf = buf, desc = "Toggle line wrap" })
 
   -- Caller-supplied keymaps. Each fn gets a context with the report handle and
   -- the current job status so it can act only once the report is ready.
   for _, km in ipairs(opts.keymaps or {}) do
     vim.keymap.set("n", km.key, function()
       km.fn({ buf = buf, win = win, close = close, status = state.status })
-    end, { buffer = buf, desc = km.desc })
+    end, { buf = buf, desc = km.desc })
   end
 
   -- Stream the job's result into the buffer.
