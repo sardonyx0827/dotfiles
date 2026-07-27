@@ -149,13 +149,20 @@ function M.bound_commit_diff(full, stat, max_bytes)
 end
 
 --- System prompt for "ask AI and replace the selection".
+--- Deliberately says nothing about HOW the selection arrives. Most tools get it
+--- on stdin, but copilot has no stdin path and backend.build_cli_cmd appends it
+--- to this instruction under an `## Input` heading -- so a prompt that named
+--- stdin was telling copilot to look somewhere the text was not. commit_instruction
+--- has always been worded this way ("the following diff") and reaches copilot too.
+--- Keep this sentence byte-identical to the one in .vim/rc/70-ai.vim's s:AI_Submit;
+--- only the editor name differs.
 --- @param lang string filetype (or "plain text")
 --- @param user_request string the user's instruction
 --- @return string
 function M.replace_system(lang, user_request)
   return string.format(
     "You are an AI assistant integrated into a Neovim editor. "
-    .. "The selected %s code/text is provided via stdin. "
+    .. "The selected %s code/text is provided as the input to this request. "
     .. "Apply the user's request and reply ONLY with the resulting text that should replace the selection. "
     .. "Do NOT wrap the output in markdown code fences. "
     .. "Do NOT include explanations, preambles, or trailing commentary. "

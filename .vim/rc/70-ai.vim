@@ -708,9 +708,14 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       return
     endif
     bwipeout
+    " Says nothing about HOW the selection arrives: most tools get it on stdin,
+    " but copilot has no stdin path and s:AI_BuildCmd appends it to this
+    " instruction under an `## Input` heading, so naming stdin pointed copilot at
+    " somewhere the text was not. Byte-identical to prompt.replace_system on the
+    " Neovim side apart from the editor name; keep the two in step.
     let l:sys = printf(
           \ "You are an AI assistant integrated into a Vim editor. "
-          \ . "The selected %s code/text is provided via stdin. "
+          \ . "The selected %s code/text is provided as the input to this request. "
           \ . "Apply the user's request and reply ONLY with the resulting text that should replace the selection. "
           \ . "Do NOT wrap the output in markdown code fences. "
           \ . "Do NOT include explanations, preambles, or trailing commentary. "
