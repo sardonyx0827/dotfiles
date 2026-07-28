@@ -1,4 +1,24 @@
-# Agent Orchestration
+# Agent Catalog
+
+Role separation (single source of truth):
+
+- **`CLAUDE.md` § Execution Layer Selection**: whether to delegate at all and how many
+  SubAgents to spawn — the only place those rules live
+- **Each agent's own `description`**: the situation that agent covers, including when it
+  applies (`code-reviewer` says "immediately after writing or modifying code")
+- **`CLAUDE.md` § Model Selection Guidelines**: model tier and effort per agent
+- **This README**: a catalog of which agents exist and what each one is for. It carries no
+  delegation policy; if something here reads like an instruction to launch an agent, it
+  has drifted and `CLAUDE.md` wins
+
+This file used to duplicate the policy ("Immediate Agent Usage — no user prompt needed",
+"ALWAYS use parallel Task execution", a five-role fan-out) and drifted into contradicting
+`CLAUDE.md`'s Single-is-default rule and its cap of four simultaneous SubAgents. Keep it a
+catalog.
+
+The `When to Use` column describes the situation an agent fits, not a trigger that fires on
+its own: delegation is decided in `CLAUDE.md` first, and this table only answers "which
+one" once that decision is made.
 
 ## Available Agents
 
@@ -48,43 +68,11 @@ Located in `~/.claude/agents/`:
 | -------------- | ------ | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | request-worker | sonnet | Execute one docs/requests ticket end-to-end (request-harness skill) | Parallel processing of independent tickets picked up by /requests |
 
-## Immediate Agent Usage
+## Codex counterparts
 
-No user prompt needed:
-
-1. Complex feature requests - Use **planner** agent
-2. Code just written/modified - Use **code-reviewer** agent (**go-reviewer** for Go)
-3. Bug fix or new feature - Use **tdd-guide** agent
-4. Architectural decision - Use **architect** agent
-5. Build failure - Use **build-error-resolver** (**go-build-resolver** for Go)
-6. SQL / migration / schema work - Use **database-reviewer** agent
-7. Handling auth, user input, or secrets - Use **security-reviewer** agent
-8. Spec / strategy needs a second opinion - Use **codex-delegator** agent
-
-## Parallel Task Execution
-
-ALWAYS use parallel Task execution for independent operations:
-
-```markdown
-# GOOD: Parallel execution
-
-Launch 3 agents in parallel:
-
-1. Agent 1: Security analysis of auth.ts
-2. Agent 2: Performance review of cache system
-3. Agent 3: Type checking of utils.ts
-
-# BAD: Sequential when unnecessary
-
-First agent 1, then agent 2, then agent 3
-```
-
-## Multi-Perspective Analysis
-
-For complex problems, use split role sub-agents:
-
-- Factual reviewer
-- Senior engineer
-- Security expert
-- Consistency reviewer
-- Redundancy checker
+`.codex/agents/*.toml` is generated from these `.md` files by
+`scripts/gen_codex_agents.py`, and `tests/test_gen_codex_agents.py` pins the committed
+output byte-for-byte — edit the `.md` here and regenerate, never hand-edit the generated
+`.toml`. `codex-delegator` is the one exception (hand-written, because its Claude body
+documents the advisor-first escalation tier that has no Codex counterpart);
+`tests/test_agent_parity.py` keeps its description in sync.

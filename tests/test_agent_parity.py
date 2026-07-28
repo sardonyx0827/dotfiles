@@ -13,6 +13,8 @@ does not cover:
   instruction files that different runtimes read.
 """
 
+import re
+
 import tomllib
 from conftest import REPO_ROOT
 from gen_codex_agents import HAND_MAINTAINED, frontmatter_value, split_frontmatter
@@ -78,3 +80,70 @@ def test_secrets_gate_line_consistent_across_instruction_files():
     for path in SECURITY_FILES:
         text = path.read_text(encoding="utf-8")
         assert SECRETS_GATE_LINE in text, f"{path}: secrets pre-commit gate drifted"
+
+
+# --- The delegation policy lives in one place, and the catalog must not re-grow it ---
+# CLAUDE.md and AGENTS.md both said "Single is the default" and "do not delegate what you
+# could finish yourself" while their Development Workflow section separately ordered a
+# code-reviewer run after *every* edit. That second definition is gone: CLAUDE.md's
+# Execution Layer Selection decides whether to delegate at all, and each agent's own
+# description says when that agent applies. Nothing else may define review timing.
+#
+# The catalog must not grow its own policy back. Anchored to the heading form (`## ` at
+# line start) on purpose: the README's own history paragraph quotes these titles inline
+# while explaining why they were removed, and a plain substring test would fail on it.
+AGENT_CATALOG = REPO_ROOT / ".claude/agents/README.md"
+POLICY_HEADINGS = [
+    "## Immediate Agent Usage",
+    "## Parallel Task Execution",
+    "## Multi-Perspective Analysis",
+]
+
+# `| <agent> | <model> | ...` -- the catalog's first two columns. The separator row's
+# dashes also match the agent group (`-` is in the class) and the `| Agent | Model |`
+# header does not (uppercase); both are dropped by the "is there a matching .md" filter.
+_CATALOG_ROW = re.compile(
+    r"^\|\s*(?P<agent>[a-z0-9-]+)\s*\|\s*(?P<model>[a-z]+)\s*\|", re.M
+)
+
+
+def test_agent_catalog_carries_no_delegation_policy():
+    """agents/README.md is a catalog; CLAUDE.md owns when to delegate."""
+    text = AGENT_CATALOG.read_text(encoding="utf-8")
+    # Positive anchor first: a "must not contain" assertion alone would keep passing
+    # against an emptied or renamed file.
+    assert "Role separation (single source of truth):" in text, (
+        "agents/README.md lost the block that points delegation policy at CLAUDE.md"
+    )
+    lines = text.splitlines()
+    offenders = [
+        f"{n}: {line}"
+        for n, line in enumerate(lines, 1)
+        for heading in POLICY_HEADINGS
+        if line.startswith(heading)
+    ]
+    assert not offenders, (
+        "agents/README.md re-grew a delegation-policy section; that policy belongs in "
+        f"CLAUDE.md § Execution Layer Selection: {offenders}"
+    )
+
+
+def test_agent_catalog_model_column_matches_frontmatter():
+    """The catalog's Model column duplicates frontmatter -- the same copy-without-a-guard
+    shape that let the delegation policy drift. Pin it rather than trust it."""
+    rows = {
+        m.group("agent"): m.group("model")
+        for m in _CATALOG_ROW.finditer(AGENT_CATALOG.read_text(encoding="utf-8"))
+        if (CLAUDE_AGENTS_DIR / f"{m.group('agent')}.md").is_file()
+    }
+    stems = {p.stem for p in CLAUDE_AGENTS_DIR.glob("*.md")} - {"README"}
+    assert rows.keys() == stems, (
+        f"catalog rows and agents/*.md disagree on which agents exist: {rows.keys() ^ stems}"
+    )
+    for stem, model in sorted(rows.items()):
+        fm, _ = split_frontmatter(
+            (CLAUDE_AGENTS_DIR / f"{stem}.md").read_text(encoding="utf-8"), stem
+        )
+        assert frontmatter_value(fm, "model", stem) == model, (
+            f"{stem}: catalog Model column drifted from the frontmatter"
+        )
