@@ -18,6 +18,12 @@ When instructed to push / commit / create a PR, follow the Command Triggers in `
 
 When receiving a task, evaluate in the following order and execute at the first matching layer.
 
+**This section is the single source of truth for delegation.** The `description` fields in
+`.claude/agents/*.md` ("Use PROACTIVELY", "MUST BE USED for all code changes", "Automatically
+activated") exist so the _right_ agent is picked once delegation is already warranted — they are
+capability advertisements, **not invocation mandates**, and they never override the layers below.
+Where a description and this section disagree, this section wins.
+
 ### 1. Single (executed by the main agent itself) - Default
 
 If any of the following apply, execute sequentially without delegating to SubAgent / AgentTeam:

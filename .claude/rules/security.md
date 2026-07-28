@@ -8,11 +8,11 @@ Role separation (single source of truth):
 
 ## Triggers
 
-| Situation                                                                                 | Action                                      |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Implementing auth, user input handling, secrets, API endpoints, payments, or file uploads | Follow the **security-review** skill        |
-| Code written/modified in the above areas, or before commit                                | Run the **security-reviewer** agent         |
-| Security issue discovered                                                                 | Follow the Security Response Protocol below |
+| Situation                                                                                               | Action                                      |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Implementing auth, user input handling, secrets, API endpoints, payments, or file uploads               | Follow the **security-review** skill        |
+| Before a commit or PR that touches those areas, or the secrets / permission / hook config guarding them | Run the **security-reviewer** agent         |
+| Security issue discovered                                                                               | Follow the Security Response Protocol below |
 
 ## Pre-Commit Gate
 

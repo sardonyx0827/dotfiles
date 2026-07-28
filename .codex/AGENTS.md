@@ -69,6 +69,12 @@
 
 When a task is received, evaluate in the following order and execute at the first matching layer.
 
+**This section is the single source of truth for delegation.** The `description` fields in
+`.codex/agents/*.toml` ("Use PROACTIVELY", "MUST BE USED for all code changes", "Automatically
+activated") exist so the _right_ agent is picked once delegation is already warranted — they are
+capability advertisements, **not invocation mandates**, and they never override the layers below.
+Where a description and this section disagree, this section wins.
+
 ### 1. Single (executed by the main agent itself) — Default
 
 If any of the following apply, execute sequentially without delegating to SubAgents:
@@ -80,11 +86,19 @@ If any of the following apply, execute sequentially without delegating to SubAge
 
 ### 2. SubAgents (launched in parallel via Codex's agent feature)
 
-If any of the following apply, actively launch SubAgents in parallel (follow the `[agents]` settings in `config.toml`):
+Delegating is not free: each SubAgent re-establishes context, re-explores, and reports back, and the main agent then re-reads that report. Delegate when the payoff clearly exceeds that overhead — if any of the following apply (follow the `[agents]` settings in `config.toml` for the concurrency cap):
 
 - Large-scale exploration where you don't want to pollute the context (Grep/search, log scanning, understanding the entire codebase)
 - Parallel tasks that can run independently of each other (generating multiple proposals, multi-perspective reviews, test generation)
 - Work where quality improves through role separation, such as Writer / Reviewer
+
+Do NOT delegate when:
+
+- You could finish the work yourself in a handful of tool calls (a few reads, a simple search, a couple of edits)
+- One modest job would be split across several SubAgents. Parallel fan-out is for genuinely independent tracks, not for slicing one small task
+- One SubAgent would do. Prefer one over several; keep spawn counts low
+
+Once you delegate, commit to it: do not redo a SubAgent's work or re-derive its findings after it reports back.
 
 Conventions when calling:
 
