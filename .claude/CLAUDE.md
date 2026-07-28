@@ -15,48 +15,57 @@
 
 When instructed to push / commit / create a PR, follow the Command Triggers in `@~/.claude/rules/git-workflow.md`
 
-## Execution Layer Selection (Single / SubAgents / AgentTeams)
-
-When receiving a task, evaluate in the following order and execute at the first matching layer.
+## Execution Layer Selection (SubAgents / Single / AgentTeams)
 
 **This section is the single source of truth for delegation.** The `description` fields in
 `.claude/agents/*.md` ("Use PROACTIVELY", "MUST BE USED for all code changes", "Automatically
 activated") exist so the _right_ agent is picked once delegation is already warranted — they are
-capability advertisements, **not invocation mandates**, and they never override the layers below.
-Where a description and this section disagree, this section wins.
+capability advertisements, **not invocation mandates**, and they never override this section.
+Delegation triggers live here and nowhere else.
 
-### 1. Single (executed by the main agent itself) - Default
+**Default posture: delegate.** A SubAgent costs tokens and a round trip. Not delegating costs a
+polluted main context, serialized work, and a review that never happens — that second cost used to
+go unpriced here. Check the triggers below first; fall through to Single only when none match.
 
-If any of the following apply, execute sequentially without delegating to SubAgent / AgentTeam:
+### SubAgents (the Agent tool) — the default whenever a trigger matches
 
-- Work that strongly depends on the immediately preceding conversation context or unconfirmed premises
-- Continuously editing the same file, or where edit locations depend on the result of the previous step
-- State transitions are sequential and intermediate results need review / user confirmation
-- Small-scale changes of 1–2 files, interactive debugging, minor fixes
+These fire on the situation, not on a user request, and not on a fresh cost/benefit judgment.
+"I could probably do this inline" is not a reason to skip one.
 
-### 2. SubAgents (launched in parallel with the Agent tool)
+| Situation                                                                              | Agent                                                                      |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| A feature, fix, or refactor is complete, or a commit is about to be made               | `code-reviewer` (Go: `go-reviewer`; SQL / migrations: `database-reviewer`) |
+| A question that needs sweeping many files, directories, or naming conventions          | `Explore` (read-only fan-out; returns the conclusion, not the file dumps)  |
+| A new feature, or a refactor spanning more than a couple of files, before writing code | `planner` (system-level: `architect`)                                      |
+| Build, type, or vet errors that are mechanical to clear                                | `build-error-resolver` (Go: `go-build-resolver`)                           |
+| Independent tickets, competing proposals, or distinct review angles                    | one SubAgent per track                                                     |
 
-Delegating is not free: each SubAgent re-establishes context, re-explores, and reports back, and the main agent then re-reads that report. Delegate when the payoff clearly exceeds that overhead — if any of the following apply (guideline: 2–4 simultaneously, never more than 4 unless the user asks):
+Security review keeps its own trigger table in `@~/.claude/rules/security.md` — follow it there, and
+treat the agent it names as a trigger of the same standing as the rows above.
 
-- Large-scale exploration where you don't want to pollute the context (Glob/Grep, log scanning, understanding the entire codebase)
-- Parallel tasks that can run independently of each other (generating multiple proposals, multi-perspective reviews, test generation)
-- Work where quality improves through role separation, such as Writer / Reviewer
+**How many.** Match the count to the number of genuinely independent tracks: one track, one agent;
+five independent tickets, five agents. Past ~6 concurrent, coordination and report-reading outweigh
+the parallelism — run the rest as a second wave. Do not slice one modest job across several agents.
 
-Do NOT delegate when:
-
-- You could finish the work yourself in a handful of tool calls (a few reads, a simple search, a couple of edits)
-- One modest job would be split across several SubAgents. Parallel fan-out is for genuinely independent tracks, not for slicing one small task
-- One SubAgent would do. Prefer one over several; keep spawn counts low
-
-Once you delegate, commit to it: do not redo a SubAgent's work or re-derive its findings after it reports back.
-
-Conventions when calling:
+Conventions when calling — this is what keeps delegation cheap enough to be the default:
 
 - Specify the "file path" and "format of the artifact to return" for each SubAgent
 - Return only a summary (diff / conclusion). Do not return raw logs to the main agent
 - Do not launch SubAgents that write to the same file simultaneously (to avoid conflicting overwrites)
+- Launch independent SubAgents in a single message so they run concurrently
+- Follow the **subagent-prompt-design** skill when writing the prompt itself
 
-### 3. AgentTeams (tmux)
+### Single (executed by the main agent itself) — when no trigger matches
+
+- A single-line or mechanical edit whose location is already known, or a follow-up question about
+  work already in context
+- Interactive debugging where each step depends on the previous result and on user judgment
+- State transitions that are sequential and need user review between steps
+- Anything the user asked the main agent to do itself
+
+Once you delegate, commit to it: do not redo a SubAgent's work or re-derive its findings after it reports back.
+
+### AgentTeams (tmux)
 
 Use only for intermediate cases between Single and SubAgents where parallel processing is possible but context maintenance is difficult with SubAgents alone.
 Launch conditions (when any of the following are met):
@@ -94,7 +103,7 @@ Raise **effort first, model tier second.** Escalating the tier when an effort bu
 ## Development Workflow
 
 - For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first; it defines the coverage policy)
-- After writing or modifying code, review with the **code-reviewer** agent (for Go, use **go-reviewer**)
+- Review timing for code changes is a delegation trigger — see § Execution Layer Selection
 - Do not always load code pattern/style details; instead follow the relevant skill (backend-patterns / frontend-patterns / golang-patterns, etc.)
 
 ## Safety Guards

@@ -16,9 +16,10 @@ This file used to duplicate the policy ("Immediate Agent Usage — no user promp
 `CLAUDE.md`'s Single-is-default rule and its cap of four simultaneous SubAgents. Keep it a
 catalog.
 
-The `When to Use` column describes the situation an agent fits, not a trigger that fires on
-its own: delegation is decided in `CLAUDE.md` first, and this table only answers "which
-one" once that decision is made.
+The `When to Use` column describes the situation an agent fits; it is not a trigger in its
+own right. Delegation is decided in `CLAUDE.md` § Execution Layer Selection — some of these
+situations do appear there as triggers that fire without a judgment call, but that table is
+where they live. This one only answers "which agent" once the decision is made.
 
 ## Available Agents
 

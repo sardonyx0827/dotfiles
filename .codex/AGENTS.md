@@ -65,46 +65,53 @@
 
 > On `git push`, the PreToolUse hook (`hooks/git-push-review.sh`) presents a summary of the commits to be pushed and blocks the operation, so review the contents before re-running.
 
-## 4. Execution Layer Selection (Single / SubAgents)
-
-When a task is received, evaluate in the following order and execute at the first matching layer.
+## 4. Execution Layer Selection (SubAgents / Single)
 
 **This section is the single source of truth for delegation.** The `description` fields in
 `.codex/agents/*.toml` ("Use PROACTIVELY", "MUST BE USED for all code changes", "Automatically
 activated") exist so the _right_ agent is picked once delegation is already warranted — they are
-capability advertisements, **not invocation mandates**, and they never override the layers below.
-Where a description and this section disagree, this section wins.
+capability advertisements, **not invocation mandates**, and they never override this section.
+Delegation triggers live here and nowhere else.
 
-### 1. Single (executed by the main agent itself) — Default
+**Default posture: delegate.** A SubAgent costs tokens and a round trip. Not delegating costs a
+polluted main context, serialized work, and a review that never happens — that second cost used to
+go unpriced here. Check the triggers below first; fall through to Single only when none match.
 
-If any of the following apply, execute sequentially without delegating to SubAgents:
+### SubAgents (launched via Codex's agent feature) — the default whenever a trigger matches
 
-- Work that strongly depends on the immediately preceding conversation context or unconfirmed premises
-- Continuously editing the same file, or where edit locations depend on the result of the previous step
-- State transitions are sequential and intermediate results need review / user confirmation
-- Small-scale changes of 1–2 files, interactive debugging, minor fixes
+These fire on the situation, not on a user request, and not on a fresh cost/benefit judgment.
+"I could probably do this inline" is not a reason to skip one.
 
-### 2. SubAgents (launched in parallel via Codex's agent feature)
+| Situation                                                                              | Agent                                                                      |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| A feature, fix, or refactor is complete, or a commit is about to be made               | `code-reviewer` (Go: `go-reviewer`; SQL / migrations: `database-reviewer`) |
+| A new feature, or a refactor spanning more than a couple of files, before writing code | `planner` (system-level: `architect`)                                      |
+| Build, type, or vet errors that are mechanical to clear                                | `build-error-resolver` (Go: `go-build-resolver`)                           |
+| Independent tickets, competing proposals, or distinct review angles                    | one SubAgent per track                                                     |
 
-Delegating is not free: each SubAgent re-establishes context, re-explores, and reports back, and the main agent then re-reads that report. Delegate when the payoff clearly exceeds that overhead — if any of the following apply (follow the `[agents]` settings in `config.toml` for the concurrency cap):
+Also delegate large-scale exploration you do not want polluting the main context (Grep/search, log
+scanning, understanding the whole codebase). Codex has no read-only fan-out agent to name here, so
+brief a SubAgent for the search itself and have it return only the conclusion.
 
-- Large-scale exploration where you don't want to pollute the context (Grep/search, log scanning, understanding the entire codebase)
-- Parallel tasks that can run independently of each other (generating multiple proposals, multi-perspective reviews, test generation)
-- Work where quality improves through role separation, such as Writer / Reviewer
+**How many.** Match the count to the number of genuinely independent tracks: one track, one agent;
+five independent tickets, five agents. Follow the `[agents]` settings in `config.toml` for the
+concurrency cap. Do not slice one modest job across several agents.
 
-Do NOT delegate when:
-
-- You could finish the work yourself in a handful of tool calls (a few reads, a simple search, a couple of edits)
-- One modest job would be split across several SubAgents. Parallel fan-out is for genuinely independent tracks, not for slicing one small task
-- One SubAgent would do. Prefer one over several; keep spawn counts low
-
-Once you delegate, commit to it: do not redo a SubAgent's work or re-derive its findings after it reports back.
-
-Conventions when calling:
+Conventions when calling — this is what keeps delegation cheap enough to be the default:
 
 - Specify the "target file path" and "format of the artifact to return" for each SubAgent
 - Return only a summary (diff / conclusion). Do not return raw logs to the main agent
 - Do not launch SubAgents that write to the same file simultaneously (to avoid conflicting overwrites)
+
+### Single (executed by the main agent itself) — when no trigger matches
+
+- A single-line or mechanical edit whose location is already known, or a follow-up question about
+  work already in context
+- Interactive debugging where each step depends on the previous result and on user judgment
+- State transitions that are sequential and need user review between steps
+- Anything the user asked the main agent to do itself
+
+Once you delegate, commit to it: do not redo a SubAgent's work or re-derive its findings after it reports back.
 
 > Codex does not have an AgentTeam (tmux) layer like Claude. Parallel processing is done with SubAgents.
 
@@ -118,7 +125,7 @@ Conventions when calling:
 ## 6. Development Workflow
 
 - For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first; it defines the coverage policy)
-- After writing or modifying code, review with the **code-reviewer** agent (for Go, use **go-reviewer**)
+- Review timing for code changes is a delegation trigger — see § 4 Execution Layer Selection
 - Do not constantly inline the details of coding standards or patterns; instead follow the relevant skill
   (backend-patterns / frontend-patterns / golang-patterns / docker-patterns / postgres-patterns, etc.)
 - Requests dropped into `docs/requests/` are driven to completion following the **request-harness** skill (auto-activates when handling `docs/requests/`)
