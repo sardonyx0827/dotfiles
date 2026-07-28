@@ -112,8 +112,7 @@
       "mcp__serena__insert_after_symbol",
       "mcp__serena__insert_before_symbol",
       "mcp__serena__rename_symbol",
-      "mcp__serena__safe_delete_symbol",
-      "mcp__serena__check_onboarding_performed"
+      "mcp__serena__safe_delete_symbol"
     ],
     "deny": [
       "Bash(shutdown:*)",
