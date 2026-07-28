@@ -7,8 +7,9 @@
 
 ## Browser Operations
 
-- Use claude-in-chrome for fetching/operating web content
-- If fetch / curl is needed, explain the reason before executing
+- **claude-in-chrome**: pages that need interaction, authentication, or JS rendering. It drives a logged-in browser session, so treat it as the heavier path, not the default one
+- **`WebFetch` / `WebSearch`**: plain read-only fetches and searches. Both are allow-listed, so no justification is needed
+- `curl` / `wget` / `nc` / `ssh` are hard-denied by `permissions.deny` and by the bash-review hook, so they are not an available fetch path — do not plan a step around them
 
 ## Git Operations
 

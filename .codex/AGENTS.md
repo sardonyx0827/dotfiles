@@ -11,7 +11,7 @@
 ## 2. Web / Browser Operations
 
 - Prefer Codex's web search feature (`web_search`) for searching and fetching web content
-- If fetch / curl is needed, explain the reason before executing
+- `curl` / `wget` / `nc` / `ssh` are hard-denied by the bash-review hook, so they are not an available fetch path — do not plan a step around them
 - Do not send personal information or secrets to external services
 
 ## 3. Git Workflow
