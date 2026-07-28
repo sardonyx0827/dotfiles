@@ -55,6 +55,34 @@ jobs:
       - name: Install zsh
         if: matrix.python-version == env.PRIMARY_PYTHON
         run: sudo apt-get update && sudo apt-get install -y zsh
+      # tests/test_nvim_ai_prompt.py が ai/prompt.lua を headless Neovim
+      # (nvim -l) 上で直接呼ぶために必要。zsh と同じ扱いで、未導入なら該当
+      # テストは skip され、代表レッグにだけ導入する。
+      #
+      # apt を使わないのは noble の neovim が古く、このツリーが移行済みの
+      # 0.12 API より前の世代だから。luacheck 1.2.0 や pytest 9.0.1 と同じく
+      # バージョンを固定し、加えてリリース資産の sha256 も検証する
+      # (GitHub API の digest 由来)。バージョンを上げるときは URL と
+      # NVIM_SHA256 の両方を更新すること。
+      - name: Install Neovim (pinned)
+        if: matrix.python-version == env.PRIMARY_PYTHON
+        env:
+          NVIM_VERSION: v0.12.4
+          NVIM_SHA256: 012bf3fcac5ade43914df3f174668bf64d05e049a4f032a388c027b1ebd78628
+        run: |
+          set -euo pipefail
+          url="https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-x86_64.tar.gz"
+          curl -fsSL --retry 3 -o nvim.tar.gz "$url"
+          echo "${NVIM_SHA256}  nvim.tar.gz" | sha256sum -c -
+          sudo mkdir -p /opt/nvim
+          # --strip-components=1 so the archive's top-level directory name is
+          # not baked in here; it has been renamed before (nvim-linux64 ->
+          # nvim-linux-x86_64 in 0.10.4) and a stale guess would only surface
+          # as a dangling symlink at `nvim --version`.
+          sudo tar -xzf nvim.tar.gz -C /opt/nvim --strip-components=1
+          sudo ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
+          rm nvim.tar.gz
+          nvim --version | head -1
       # フックは stdin/subprocess/urlopen を全てスタブ化した hermetic テスト。
       # codex / gemini / tmux 等の実バイナリは不要（conftest.py 参照）。
       # Python フックは in-process で exec されるためカバレッジを実測でき、
