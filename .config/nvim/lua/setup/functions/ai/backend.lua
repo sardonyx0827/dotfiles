@@ -344,4 +344,21 @@ function M.run_with_fallback(specs, done)
   return handle
 end
 
+-- Test seam. These two are private -- nothing outside tests/ may read this --
+-- but they carry the invariants worth pinning: the pre-send credential gate and
+-- the shape of the argv handed to each tool. Reaching them through
+-- debug.getupvalue instead would couple the tests to this file's call graph,
+-- and a source-level splice would load the module differently from production;
+-- a plain table costs four lines and gets checked for free, because a rename of
+-- either local turns the reference below into an undefined global that the
+-- gating luacheck job reports (W113).
+--
+-- MAX_CMD_BYTES is deliberately NOT exposed: the limit is observable in the
+-- refusal message run_cli produces, and a test that hardcodes 256 KB is
+-- supposed to fail when the bound moves.
+M._internal = {
+  scan_payload = scan_payload,
+  build_cli_cmd = build_cli_cmd,
+}
+
 return M
