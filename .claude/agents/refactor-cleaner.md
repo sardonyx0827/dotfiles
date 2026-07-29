@@ -16,6 +16,7 @@ tools:
     "TaskGet",
   ]
 model: opus
+effort: medium
 ---
 
 # Refactor & Dead Code Cleaner

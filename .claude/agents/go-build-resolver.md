@@ -16,6 +16,7 @@ tools:
     "TaskGet",
   ]
 model: sonnet
+effort: medium
 ---
 
 # Go Build Error Resolver

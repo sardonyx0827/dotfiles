@@ -5,6 +5,7 @@ description: >-
   or complex technical decisions to Codex MCP.
 tools: mcp__codex__codex, mcp__codex__codex-reply, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet
 model: sonnet
+effort: low
 color: cyan
 ---
 

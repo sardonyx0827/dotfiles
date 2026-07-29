@@ -108,6 +108,9 @@ Set via `effortLevel` in `settings.json` (session-wide, currently `xhigh`), `/ef
 - `xhigh` is the right default for coding and agentic work (and the Claude Code default); `high` for other intelligence-sensitive work
 - Effort levels carried over from an older model are usually the wrong setting — sweep before trusting them
 - Lower effort for mechanical SubAgents rather than dropping a tier: the capability ceiling stays available if the task turns out to need it
+- Pin `effort:` in an agent's frontmatter **only to go below the session default**. An agent that should
+  track `effortLevel` leaves the key unset — pinning it everywhere silently disables `/effort` and the
+  `settings.json` knob for that agent
 
 ### On failure
 
