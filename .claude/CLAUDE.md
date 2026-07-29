@@ -23,13 +23,17 @@ activated") exist so the _right_ agent is picked once delegation is already warr
 capability advertisements, **not invocation mandates**, and they never override this section.
 Delegation triggers live here and nowhere else.
 
+**These triggers are a request, not just a policy.** I wrote them down in advance so that I would not
+have to ask for the same delegation again in every session. When one of them matches, I am asking for
+that SubAgent.
+
 **Default posture: delegate.** A SubAgent costs tokens and a round trip. Not delegating costs a
 polluted main context, serialized work, and a review that never happens — that second cost used to
 go unpriced here. Check the triggers below first; fall through to Single only when none match.
 
 ### SubAgents (the Agent tool) — the default whenever a trigger matches
 
-These fire on the situation, not on a user request, and not on a fresh cost/benefit judgment.
+These fire on the situation, and not on a fresh cost/benefit judgment made in the moment.
 "I could probably do this inline" is not a reason to skip one.
 
 | Situation                                                                              | Agent                                                                      |
