@@ -33,13 +33,15 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN="${DRY_RUN:-0}"
 
 # --- Pinned upstream bootstrap scripts ---------------------------------------
-# These installers are fetched over the network and executed -- two of them by
-# root. Pointing at HEAD/master means the bytes that run can change between two
-# runs of this script with no signal to us, so each is pinned to an immutable
-# commit. raw.githubusercontent.com serves any commit SHA, and a commit SHA
-# already identifies its content cryptographically, so pinning the ref gives
-# the same guarantee a separate checksum table would -- without a manifest to
-# maintain, and without breaking every time upstream ships a release.
+# These four refs are fetched over the network: three are executed (Homebrew,
+# lazydocker, ohmyzsh) and one is downloaded as a plugin file (vim-plug). All
+# four run as the invoking user -- none of them under sudo. Pointing at
+# HEAD/master means the bytes that run can change between two runs of this
+# script with no signal to us, so each is pinned to an immutable commit.
+# raw.githubusercontent.com serves any commit SHA, and a commit SHA already
+# identifies its content cryptographically, so pinning the ref gives the same
+# guarantee a separate checksum table would -- without a manifest to maintain,
+# and without breaking every time upstream ships a release.
 #
 # What this does NOT cover: the pinned installer still downloads whatever is
 # current when it runs (Homebrew's own formulae, the ohmyzsh clone, ...). The
@@ -50,6 +52,22 @@ DRY_RUN="${DRY_RUN:-0}"
 # get.docker.com, deb.nodesource.com) that expose no immutable ref, so they
 # stay unpinned; pinning them would require a content hash re-pinned on every
 # upstream release.
+#
+# Note the asymmetry that leaves, because it runs opposite to what the pinned
+# set above suggests: of the bootstrap scripts this block covers, the only two
+# whose downloaded bytes are *executed* as root are get.docker.com (`sudo sh`)
+# and deb.nodesource.com (`sudo -E bash`) -- and those are exactly the two that
+# cannot be pinned. The highest-privilege step carries the weakest integrity
+# check. That is accepted rather than solved here (the alternative is a content
+# hash re-pinned on every upstream release), but it should not be mistaken for
+# the pinned set covering the root-execution risk. It does not.
+#
+# Scope of that "only two", so it does not rot into a false claim: it counts
+# fetched scripts that are executed. Other places pipe a download into a root
+# process to *store* bytes, not run them (`curl | sudo gpg --dearmor` and
+# `curl | sudo dd` for apt keyrings), and `sudo apt-get install` runs vendor
+# dpkg maintainer scripts as root -- both are separate trust paths that pinning
+# a raw.githubusercontent.com ref would not address either way.
 #
 # To refresh a pin (do this deliberately, and review the diff):
 #   git ls-remote https://github.com/Homebrew/install HEAD
