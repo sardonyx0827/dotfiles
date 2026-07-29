@@ -69,10 +69,19 @@ Conventions when calling — this is what keeps delegation cheap enough to be th
 
 Once you delegate, commit to it: do not redo a SubAgent's work or re-derive its findings after it reports back.
 
-### AgentTeams (tmux)
+### AgentTeams — named, mutually-addressable SubAgents
 
-Use only for intermediate cases between Single and SubAgents where parallel processing is possible but context maintenance is difficult with SubAgents alone.
-Launch conditions (when any of the following are met):
+There is no separate "launch a team" step: every session already has one implicit team
+(`~/.claude/teams/session-<id>/`, created at startup), and the Agent tool's `team_name` parameter is
+deprecated and ignored. A teammate is simply a SubAgent given a `name` — what differs from the table
+above is lifetime and addressability, not the tool:
+
+- `Agent({ name: "...", subagent_type: ... })` per teammate; the `name` is what makes it reachable
+- `SendMessage({ to: "<name>" })` to consult a running teammate, or to let teammates consult each
+  other, instead of waiting for a one-shot final report
+- `TaskList` / `TaskOutput` to check on them, `TaskStop` to end one early
+
+Use this shape rather than one-shot SubAgents when any of the following are met:
 
 - The user has explicitly instructed AgentTeam / team / tmux launch
 - Changes span multiple layers such as FE / BE / tests, and teammates need to consult with each other
