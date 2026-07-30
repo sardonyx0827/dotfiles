@@ -71,7 +71,7 @@
 ├── LICENSE                         # MITライセンス
 ├── install.sh                      # クロスプラットフォーム対応インストールスクリプト
 ├── pytest.ini                      # pytest設定
-├── scripts/                        # ユーティリティスクリプト (AIツール更新, tmuxヘルパー, 秘密スキャナ, Codexエージェント生成)
+├── scripts/                        # ユーティリティスクリプト (AIツール更新, プロジェクト雛形, tmuxヘルパー, 秘密スキャナ, Codexエージェント生成)
 └── tests/                          # フック / スクリプトの pytest スイート (hermetic)
 ```
 

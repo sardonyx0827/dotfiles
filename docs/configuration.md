@@ -18,6 +18,7 @@
 - **言語環境**: `pyenv`（インストール時のみ初期化）、Rust の cargo bin
 - **履歴**: 10万件・`share_history` / 重複除去などの最適化
 - **fzf 連携関数**: `cf`（ディレクトリ移動）/ `vf`（プレビュー付きで開く）/ `sshs`（SSH ホスト選択）
+- **プロジェクト雛形**: `np [-n|--dry-run] [DIR]` — `scripts/new_project.sh` を呼んで雛形を用意し、作成先へ移動する（詳細は下記「ユーティリティスクリプト」）
 - **AI ツールのエイリアス / 関数**:
   - `c` / `cl`: Claude Code、`cx`: Codex、`ge` / `g`: Gemini CLI、`cop`: GitHub Copilot CLI
   - `mc`（補完付き）: `mc explain` / `mc translate` / `mc commit` / `mc push` など Claude を用途別モデルで起動
@@ -186,6 +187,33 @@ tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペ
 ```bash
 # 使用例
 ./scripts/tmux_send_to_all_except_nvim.sh "git status"
+```
+
+### scripts/new_project.sh
+
+新規プロジェクトの雛形（`docs/` / `assets/` / `README.md` / git リポジトリ）を用意します。**既存のファイルやディレクトリは上書きしない**ため、途中まで手で作ったプロジェクトに対して何度実行しても安全です。
+
+```bash
+# 使用例（作成先を省略するとカレントディレクトリ）
+./scripts/new_project.sh ~/work/github/myproject
+
+# 何も作らず、作る予定のものだけを表示する
+./scripts/new_project.sh --dry-run ~/work/github/myproject
+```
+
+- `docs/` `assets/` を作成し、**空のときだけ** `.gitkeep` を置く（空ディレクトリは git が追跡しないため。中身があるディレクトリには置かない）
+- `README.md` の雛形を作成する（見出しはディレクトリ名から生成）
+- リポジトリがまだ無ければ `git init`。既定ブランチは `main`（`.gitconfig` に `init.defaultBranch` が無く、素の `git init` では `master` になり得るため明示。`git init -b` が無い git 2.28 未満では `symbolic-ref` で張り替える）
+- 既に git 作業ツリーの内側にある場合と、作成先が `$HOME` の場合は `git init` を行わない（入れ子リポジトリとホーム全体のリポジトリ化を防ぐ）
+- シンボリックリンク（リンク切れを含む）には触れない。リンクの先へ書き抜けたり、プロジェクトの外に `.gitkeep` を置いたりしないため
+- まだ存在しないディレクトリの下に `..` を含むパス（例: `foo/bar/..`）は解決できないため拒否する。`../foo` のように実在するディレクトリを経由する `..` は問題なく扱える
+
+日常的には `.zshrc` のラッパ関数 `np` から呼びます。作成先へ `cd` するのが `np` の存在理由で、子プロセスであるスクリプト自身は親シェルの cwd を変えられません（作成先は環境変数 `NEW_PROJECT_DIR_FILE` で指定されたファイル経由で受け渡します）。`--dry-run` と失敗時はこのファイルを書かないため、`np` も移動しません。
+
+```bash
+np                    # カレントディレクトリを整える
+np ~/work/github/foo  # 作って移動する
+np -n ~/work/github/foo
 ```
 
 ### scripts/update_ai_tools.sh

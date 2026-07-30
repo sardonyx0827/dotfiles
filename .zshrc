@@ -104,6 +104,64 @@ alias nvim_attach="nvim --remote-ui --server localhost:22222"
 # change directory to workspace
 alias cw="cd ~/work"
 
+# Resolve a script inside the dotfiles checkout and print its absolute path.
+# Prefer the location ~/.zshrc points to if it's a symlink into a dotfiles
+# checkout (as install.sh sets up); otherwise fall back to known checkout
+# locations, since ~/.zshrc may instead be a plain copy with no symlink to
+# follow (as on this machine). ${:-...} lets us apply :A/:h modifiers to a
+# literal path (there is no real parameter to attach them to).
+function _dotfiles_script() {
+  local rel="$1" dotfiles_dir script
+  local -a candidates=(
+    "${${:-$HOME/.zshrc}:A:h}"
+    "$HOME/work/github/dotfiles"
+    "$HOME/dotfiles"
+    "$HOME/.dotfiles"
+  )
+  for dotfiles_dir in "${candidates[@]}"; do
+    script="$dotfiles_dir/$rel"
+    if [ -f "$script" ]; then
+      print -r -- "$script"
+      return 0
+    fi
+  done
+  echo "_dotfiles_script: could not find $rel (checked: ${(j:, :)candidates})" >&2
+  return 1
+}
+
+# 新規プロジェクトの雛形作成。実処理は scripts/new_project.sh 側にあり、この
+# 関数は「作成先へ cd する」ためだけに存在する (子プロセスは親シェルの cwd を
+# 変えられない)。引数はすべてスクリプトへ素通しするので、オプションの知識は
+# こちらには持たせないこと。移動先は一時ファイル経由で受け取り、スクリプトが
+# 何も書かなかったとき (--dry-run / --help / 失敗) はその場に留まる。
+#   np                 カレントディレクトリを整える
+#   np ~/work/foo      作って移動する
+#   np -n ~/work/foo   作らずに予定だけ見る
+function np() {
+  local script dir_file target ret=1
+  script=$(_dotfiles_script scripts/new_project.sh) || return 1
+  dir_file=$(mktemp "${TMPDIR:-/tmp}/np.XXXXXX") || return 1
+
+  # 受け渡し用の一時ファイルの後始末。always ブロックは正常終了・エラー・
+  # return は拾うが、シグナルでは走らない (Ctrl-C で実測済み) ので、trap と
+  # 併用する。local_options / local_traps により、ここでのオプション変更と
+  # trap は関数を抜けるときに元へ戻る。
+  setopt local_options local_traps
+  trap 'rm -f "$dir_file"' INT TERM HUP
+  {
+    NEW_PROJECT_DIR_FILE="$dir_file" "$script" "$@"
+    ret=$?
+    [ -s "$dir_file" ] && target=$(<"$dir_file")
+  } always {
+    rm -f "$dir_file"
+  }
+
+  if [ "$ret" -eq 0 ] && [ -n "$target" ]; then
+    cd "$target" || return 1
+  fi
+  return $ret
+}
+
 # gimp (macOS の GIMP.app のみ)
 if [[ "$_os" == macos ]]; then
   alias gimp="/Applications/GIMP.app/Contents/MacOS/gimp"
@@ -160,27 +218,9 @@ export OLLAMA_KEEP_ALIVE="-1"
 
 ## update
 function update_ai_tools() {
-  # Resolve the dotfiles checkout. Prefer the location ~/.zshrc points to
-  # if it's a symlink into a dotfiles checkout (as install.sh sets up);
-  # otherwise fall back to known checkout locations, since ~/.zshrc may
-  # instead be a plain copy with no symlink to follow (as on this
-  # machine). ${:-...} lets us apply :A/:h modifiers to a literal path
-  # (there is no real parameter to attach them to).
-  local dotfiles_dir script
-  local -a candidates=(
-    "${${:-$HOME/.zshrc}:A:h}"
-    "$HOME/work/github/dotfiles"
-    "$HOME/dotfiles"
-    "$HOME/.dotfiles"
-  )
-  for dotfiles_dir in "${candidates[@]}"; do
-    script="$dotfiles_dir/scripts/update_ai_tools.sh"
-    [ -f "$script" ] && break
-  done
-  if [ ! -f "$script" ]; then
-    echo "update_ai_tools: could not find scripts/update_ai_tools.sh (checked: ${(j:, :)candidates})" >&2
-    return 1
-  fi
+  # チェックアウトの解決は _dotfiles_script() に集約してある (np() と共通)。
+  local script
+  script=$(_dotfiles_script scripts/update_ai_tools.sh) || return 1
   "$script"
 }
 

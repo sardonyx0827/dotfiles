@@ -1636,6 +1636,7 @@ main() {
   echo
   print_info "Utility scripts:"
   echo "  - ./scripts/update_ai_tools.sh : Update all AI tools"
+  echo "  - ./scripts/new_project.sh : Scaffold a new project (docs/, assets/, README.md, git init; 'np' in zsh)"
   echo "  - ./scripts/tmux_send_to_all_except_nvim.sh : Send commands to tmux panes"
   echo
 }
