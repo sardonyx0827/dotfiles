@@ -327,6 +327,42 @@ class TestCreateSymlinks:
         assert config.is_file()
         assert not config.is_symlink()
 
+    # --- ~/.zsh_secrets: seeded in $HOME, never in the checkout -------------
+    # ~/.zshrc is a symlink into the repo, so an `export API_KEY=...` added to
+    # it is edited inside the working tree and one `git add` from being
+    # committed. The seeded file is the sanctioned place for those exports.
+
+    def test_zsh_secrets_is_seeded_outside_the_checkout_owner_readable_only(
+        self, shell_env
+    ):
+        home = shell_env.home
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        secrets = home / ".zsh_secrets"
+        assert secrets.is_file()
+        assert not secrets.is_symlink(), (
+            "a symlink would put the user's API keys inside the checkout"
+        )
+        # 0600: the umask subshell must leave no window where the file is
+        # group/world readable.
+        assert secrets.stat().st_mode & 0o077 == 0
+        # Nothing by this name may appear in the repo itself.
+        assert not (REPO_ROOT / ".zsh_secrets").exists()
+
+    def test_zsh_secrets_is_never_overwritten(self, shell_env):
+        """The whole point: a re-run must not wipe the keys already in it."""
+        home = shell_env.home
+        secrets = home / ".zsh_secrets"
+        secrets.write_text("export GEMINI_API_KEY=real-key\n", encoding="utf-8")
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert secrets.read_text(encoding="utf-8") == "export GEMINI_API_KEY=real-key\n"
+        # Not backed up either -- it was never replaced, so there is nothing
+        # to move aside.
+        assert not any(p.exists() for p in home.glob(".dotfiles_backup_*/.zsh_secrets"))
+
     # --- Git identity: rendered per machine, never tracked ------------------
 
     def test_git_identity_is_inherited_from_the_previous_config(
@@ -1294,6 +1330,20 @@ class TestDryRun:
         assert any(c.startswith("brew install --cask") for c in shell_env.calls), (
             "install_fonts must hit the brew backstop stub, never the host brew"
         )
+
+    def test_zsh_secrets_preview_reflects_an_existing_file(self, shell_env):
+        # The preview must announce the decision it would make, not just the
+        # write -- "would create" on a machine that already has the file is
+        # the same misreport the hooks.json preview once carried.
+        secrets = shell_env.home / ".zsh_secrets"
+        secrets.write_text("export GEMINI_API_KEY=real-key\n", encoding="utf-8")
+
+        env = {**shell_env.env, "DRY_RUN": "1"}
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+        assert "[DRY-RUN] would keep existing" in res.stdout
+        assert "would create" not in res.stdout
+        assert secrets.read_text(encoding="utf-8") == "export GEMINI_API_KEY=real-key\n"
 
     def test_change_shell_does_not_invoke_chsh(self, shell_env):
         shell_env.stub("zsh")

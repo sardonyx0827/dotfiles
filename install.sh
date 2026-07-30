@@ -912,6 +912,47 @@ _link_top_level_dotfiles() {
   done
 }
 
+_seed_zsh_secrets() {
+  # ~/.zsh_secrets is the only place secrets belong once ~/.zshrc is a symlink
+  # into the checkout: an `export API_KEY=...` added to .zshrc itself is edited
+  # inside the working tree and is one `git add` away from being committed. The
+  # last line of .zshrc sources this file when present, so it lives in $HOME and
+  # is never tracked -- the same separation ~/.codex/config.toml gets by not
+  # being linked, and ~/.config/git/user.gitconfig by being rendered per machine.
+  #
+  # Seeded only when absent, like those two: this file is the user's, and a
+  # re-run must never clobber the keys already in it. The commented-out exports
+  # are just a starting point, so an empty stub is still a success.
+  local secrets="$HOME/.zsh_secrets"
+  # Dry-run previews the decision it would actually make, not just the write:
+  # a bare "would create" on a machine that already has the file would misreport
+  # the plan the same way the hooks.json preview once did.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    if [ -e "$secrets" ]; then
+      print_info "[DRY-RUN] would keep existing $secrets"
+    else
+      print_info "[DRY-RUN] would create $secrets (mode 600) with commented-out example exports"
+    fi
+    return 0
+  fi
+  if [ -e "$secrets" ]; then
+    print_info "Keeping existing $secrets"
+    return 0
+  fi
+  # umask in a subshell, not a chmod afterwards: the file must never exist
+  # world-readable, not even for the instant between creation and chmod.
+  (
+    umask 077
+    cat >"$secrets" <<'EOF'
+# Secrets sourced by ~/.zshrc. Keep this file OUT of the dotfiles checkout --
+# ~/.zshrc is a symlink into it, so anything written there is tracked by git.
+# export GEMINI_API_KEY=...
+# export GITHUB_ACCESS_TOKEN=...
+EOF
+  )
+  print_success "Created $secrets (fill in your API keys)"
+}
+
 _render_git_local_config() {
   # Captured by create_symlinks BEFORE the .gitconfig link replaces whatever
   # identity git currently resolves.
@@ -1163,6 +1204,7 @@ create_symlinks() {
   [ "$DRY_RUN" -eq 1 ] || mkdir -p "$backup_dir"
 
   _link_top_level_dotfiles
+  _seed_zsh_secrets
   _render_git_local_config "$prior_git_name" "$prior_git_email"
   _link_editor_configs
   _link_claude_config
@@ -1629,9 +1671,10 @@ main() {
   echo "  5. Customize configurations as needed"
   echo
   print_info "Secrets / credentials still required (cannot be installed):"
-  echo "  - GEMINI_API_KEY : export in your shell for the gemini-api bash-review hook"
-  echo "                     and the gemini-consultant MCP server"
-  echo "  - GITHUB_ACCESS_TOKEN : export in your shell for the GitHub MCP server (.gemini/settings.json resolves \${GITHUB_ACCESS_TOKEN})"
+  echo "  Put the exports in ~/.zsh_secrets (sourced by .zshrc, outside the checkout)."
+  echo "  Never in ~/.zshrc itself -- it is a symlink into the repo, so git tracks it."
+  echo "  - GEMINI_API_KEY : the gemini-api bash-review hook and the gemini-consultant MCP server"
+  echo "  - GITHUB_ACCESS_TOKEN : the GitHub MCP server (.gemini/settings.json resolves \${GITHUB_ACCESS_TOKEN})"
   echo "  - gh auth login   : authenticate GitHub CLI (used by .gitconfig credential helper)"
   echo
   print_info "Utility scripts:"

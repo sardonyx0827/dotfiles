@@ -143,6 +143,10 @@ curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
 ```bash
 # Zsh設定
 ln -sf ~/dotfiles/.zshrc ~/.zshrc
+# リンクを張った時点で ~/.zshrc への編集はチェックアウト内のファイルへの編集になる。
+# API キー等は .zshrc に直接書かず、$HOME 側の ~/.zsh_secrets に置く (.zshrc の
+# 末尾が存在すれば source する)。install.sh は未作成のときだけ雛形を生成する。
+[ -e ~/.zsh_secrets ] || (umask 077 && printf '# export GEMINI_API_KEY=...\n' > ~/.zsh_secrets)
 
 # Vim設定
 ln -sf ~/dotfiles/.vimrc ~/.vimrc

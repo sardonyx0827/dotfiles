@@ -108,8 +108,9 @@ alias cw="cd ~/work"
 # Prefer the location ~/.zshrc points to if it's a symlink into a dotfiles
 # checkout (as install.sh sets up); otherwise fall back to known checkout
 # locations, since ~/.zshrc may instead be a plain copy with no symlink to
-# follow (as on this machine). ${:-...} lets us apply :A/:h modifiers to a
-# literal path (there is no real parameter to attach them to).
+# follow -- a hand-installed machine, or one that predates the symlink.
+# ${:-...} lets us apply :A/:h modifiers to a literal path (there is no real
+# parameter to attach them to).
 #
 # 名前のアンダースコアが 2 個なのは意図的。Claude Code はシェルの関数を
 # `typeset +f | grep -vE '^_[^_]'` でスナップショットに焼くので、_ 1 個始まりの
@@ -435,3 +436,12 @@ _mc() {
   esac
 }
 compdef _mc mc
+
+# API key やパスワードなどの秘密情報は ~/.zsh_secrets に書き、Git 管理下に置かない。
+# `&&` ではなく if で書くのは、ここが .zshrc の最終行だから。`[ -f ... ] && ...` は
+# ファイルが無いとき 1 を返し、それがそのまま .zshrc 自身の終了ステータスになる
+# (install.sh の雛形生成をまだ走らせていないマシンがこれに当たる)。else の無い if は
+# 条件が偽でも 0 を返すので、その窓を塞げる。
+if [ -f ~/.zsh_secrets ]; then
+  source ~/.zsh_secrets
+fi

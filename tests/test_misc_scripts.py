@@ -83,6 +83,31 @@ def run_zsh_function(name: str, call: str, *, cwd=None, env=None):
     )
 
 
+def extract_zsh_secrets_guard() -> str:
+    """Return .zshrc's trailing ~/.zsh_secrets block.
+
+    Not a function, so extract_zsh_function() cannot reach it: take the marker
+    comment through EOF. Sourcing the whole .zshrc is no more possible here
+    than anywhere else in this file, and the block's *exit status* is the
+    whole point -- it is the last thing .zshrc runs, so it becomes .zshrc's.
+    """
+    text = ZSHRC.read_text(encoding="utf-8")
+    index = text.find("~/.zsh_secrets")
+    if index == -1:
+        raise AssertionError("no ~/.zsh_secrets block found in .zshrc")
+    block = text[text.rfind("\n", 0, index) + 1 :]
+    # Slicing to EOF only extracts the guard while the guard *is* the tail, and
+    # "runs last" is the whole invariant under test. Pin it here so appending to
+    # .zshrc fails loudly instead of quietly widening what these tests execute.
+    last = [line.strip() for line in block.splitlines() if line.strip()][-1]
+    if last != "fi":
+        raise AssertionError(
+            f"the ~/.zsh_secrets guard no longer ends .zshrc (tail is {last!r}); "
+            "whatever now runs last owns .zshrc's exit status instead"
+        )
+    return block
+
+
 def stub_bin(directory, name: str, body: str):
     """Drop an executable stub so the function under test cannot reach a real tool."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -483,6 +508,46 @@ class TestSyntax:
             timeout=30,
         )
         assert res.returncode == 0, res.stderr
+
+
+class TestZshSecretsGuard:
+    """.zshrc's trailing ~/.zsh_secrets block.
+
+    It is the last thing .zshrc runs, so its exit status becomes .zshrc's own.
+    ~/.zsh_secrets is absent on any machine that has this .zshrc but has not
+    run install.sh's seeding yet, and a bare `[ -f ... ] && source ...` leaves
+    that status at 1 -- a fresh shell reporting failure for nothing.
+    """
+
+    def _run(self, home, trailer: str = ""):
+        if shutil.which("zsh") is None:
+            pytest.skip("zsh not installed")
+        env = {**os.environ, "HOME": str(home)}
+        return subprocess.run(
+            ["zsh", "-c", f"{extract_zsh_secrets_guard()}\n{trailer}"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+
+    def test_exits_zero_when_the_file_is_absent(self, tmp_path):
+        assert not (tmp_path / ".zsh_secrets").exists()
+        res = self._run(tmp_path)
+        assert res.returncode == 0, (
+            "the guard is .zshrc's last line, so a non-zero status here makes a "
+            f"fresh shell report failure: {res.stderr}"
+        )
+
+    def test_sources_the_file_when_present(self, tmp_path):
+        (tmp_path / ".zsh_secrets").write_text(
+            "export SEEDED_BY_TEST=yes\n", encoding="utf-8"
+        )
+        res = self._run(tmp_path, trailer='printf "%s" "$SEEDED_BY_TEST"')
+        assert res.returncode == 0, res.stderr
+        assert res.stdout == "yes", (
+            "guarding the exit status must not stop the file from being sourced"
+        )
 
 
 class TestUpdateAiToolsFunction:

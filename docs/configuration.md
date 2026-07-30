@@ -17,6 +17,7 @@
 - **PATH設定**: Go、npm global、PHP 8.4、pyenv、Rust (cargo)
 - **言語環境**: `pyenv`（インストール時のみ初期化）、Rust の cargo bin
 - **履歴**: 10万件・`share_history` / 重複除去などの最適化
+- **秘密情報**: `~/.zsh_secrets`（存在すれば末尾で `source`）。`~/.zshrc` はチェックアウトへのシンボリックリンクなので、API キーを `.zshrc` に直接書くと git の管理下に入る。`install.sh` は未作成のときだけ 600 の雛形を生成し、既存ファイルは決して上書きしない
 - **fzf 連携関数**: `cf`（ディレクトリ移動）/ `vf`（プレビュー付きで開く）/ `sshs`（SSH ホスト選択）
 - **プロジェクト雛形**: `np [-n|--dry-run] [DIR]` — `scripts/new_project.sh` を呼んで雛形を用意し、作成先へ移動する（詳細は下記「ユーティリティスクリプト」）
 - **AI ツールのエイリアス / 関数**:
