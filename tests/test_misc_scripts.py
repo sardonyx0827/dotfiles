@@ -24,7 +24,7 @@ ZSHRC_FUNCTIONS = [
     "vf",
     "dwc",
     "precmd",
-    "_dotfiles_script",
+    "__dotfiles_script",
     "update_ai_tools",
     "np",
     "claude-teammates",
@@ -65,7 +65,7 @@ def extract_zsh_function(name: str) -> str:
 def extract_zsh_functions(*names: str) -> str:
     """Return several .zshrc functions joined, for callers that need helpers.
 
-    `np` and `update_ai_tools` both delegate to `_dotfiles_script`, which has
+    `np` and `update_ai_tools` both delegate to `__dotfiles_script`, which has
     to be in scope for the extracted body to run at all.
     """
     return "\n".join(extract_zsh_function(name) for name in names)
@@ -511,7 +511,7 @@ class TestUpdateAiToolsFunction:
         home.mkdir()
         (home / ".zshrc").symlink_to(checkout / ".zshrc")
 
-        func_src = extract_zsh_functions("_dotfiles_script", "update_ai_tools")
+        func_src = extract_zsh_functions("__dotfiles_script", "update_ai_tools")
         env = {**os.environ, "HOME": str(home)}
         res = subprocess.run(
             ["zsh", "-c", f"{func_src}\nupdate_ai_tools"],
@@ -533,7 +533,7 @@ class TestUpdateAiToolsFunction:
         home.mkdir()
         (home / ".zshrc").write_text("# not a symlink\n", encoding="utf-8")
 
-        func_src = extract_zsh_functions("_dotfiles_script", "update_ai_tools")
+        func_src = extract_zsh_functions("__dotfiles_script", "update_ai_tools")
         env = {**os.environ, "HOME": str(home)}
         res = subprocess.run(
             ["zsh", "-c", f"{func_src}\nupdate_ai_tools"],
@@ -573,7 +573,7 @@ class TestNpFunction:
 
     def _run_np(self, home, cwd, *args):
         """np を呼び、終了ステータスと最終的な cwd の両方を返す。"""
-        src = extract_zsh_functions("_dotfiles_script", "np")
+        src = extract_zsh_functions("__dotfiles_script", "np")
         quoted = " ".join(f"'{a}'" for a in args)
         program = f'{src}\nnp {quoted}\nst=$?\nprint -r -- "pwd=$PWD"\nexit $st\n'
         return subprocess.run(
@@ -647,7 +647,7 @@ class TestNpFunction:
             [
                 "zsh",
                 "-c",
-                f"{extract_zsh_functions('_dotfiles_script', 'np')}\n"
+                f"{extract_zsh_functions('__dotfiles_script', 'np')}\n"
                 f"np '{tmp_path / 'proj'}'",
             ],
             capture_output=True,
@@ -671,7 +671,7 @@ class TestNpFunction:
             [
                 "zsh",
                 "-c",
-                f"{extract_zsh_functions('_dotfiles_script', 'np')}\n"
+                f"{extract_zsh_functions('__dotfiles_script', 'np')}\n"
                 f"np '{tmp_path / 'proj'}'",
             ],
             stdout=subprocess.PIPE,

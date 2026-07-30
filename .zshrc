@@ -110,7 +110,13 @@ alias cw="cd ~/work"
 # locations, since ~/.zshrc may instead be a plain copy with no symlink to
 # follow (as on this machine). ${:-...} lets us apply :A/:h modifiers to a
 # literal path (there is no real parameter to attach them to).
-function _dotfiles_script() {
+#
+# 名前のアンダースコアが 2 個なのは意図的。Claude Code はシェルの関数を
+# `typeset +f | grep -vE '^_[^_]'` でスナップショットに焼くので、_ 1 個始まりの
+# 名前は補完関数とみなされて捨てられる。呼び出し側の np()/update_ai_tools() は
+# 普通の名前なので残り、消えたヘルパを呼んで command not found になる。
+# private のつもりで _ 1 個に戻さないこと。
+function __dotfiles_script() {
   local rel="$1" dotfiles_dir script
   local -a candidates=(
     "${${:-$HOME/.zshrc}:A:h}"
@@ -125,7 +131,7 @@ function _dotfiles_script() {
       return 0
     fi
   done
-  echo "_dotfiles_script: could not find $rel (checked: ${(j:, :)candidates})" >&2
+  echo "__dotfiles_script: could not find $rel (checked: ${(j:, :)candidates})" >&2
   return 1
 }
 
@@ -139,7 +145,7 @@ function _dotfiles_script() {
 #   np -n ~/work/foo   作らずに予定だけ見る
 function np() {
   local script dir_file target ret=1
-  script=$(_dotfiles_script scripts/new_project.sh) || return 1
+  script=$(__dotfiles_script scripts/new_project.sh) || return 1
   dir_file=$(mktemp "${TMPDIR:-/tmp}/np.XXXXXX") || return 1
 
   # 受け渡し用の一時ファイルの後始末。always ブロックは正常終了・エラー・
@@ -218,9 +224,9 @@ export OLLAMA_KEEP_ALIVE="-1"
 
 ## update
 function update_ai_tools() {
-  # チェックアウトの解決は _dotfiles_script() に集約してある (np() と共通)。
+  # チェックアウトの解決は __dotfiles_script() に集約してある (np() と共通)。
   local script
-  script=$(_dotfiles_script scripts/update_ai_tools.sh) || return 1
+  script=$(__dotfiles_script scripts/update_ai_tools.sh) || return 1
   "$script"
 }
 
