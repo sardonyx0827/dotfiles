@@ -715,9 +715,26 @@ class TestInstallOhMyZsh:
         assert not (home / ".oh-my-zsh/custom").is_symlink()
 
 
-# Simulates Oh My Zsh's own official installer: it refuses to run when $ZSH
-# (~/.oh-my-zsh) already exists. Written to curl's `-o` target so
-# fetch_and_run executes it in place of a real download.
+# Simulates Oh My Zsh's own official installer. Two behaviours matter here and
+# both are copied from the real tools/install.sh:
+#
+#   1. it refuses to run when $ZSH (~/.oh-my-zsh) already exists;
+#   2. setup_zshrc moves an existing ~/.zshrc aside to ~/.zshrc.pre-oh-my-zsh
+#      and writes its own template in its place. Its guard is
+#      `[ -f "$zdot/.zshrc" ] || [ -h "$zdot/.zshrc" ]`, so a SYMLINK trips it
+#      too, and `--unattended` alone does not suppress it -- that flag sets
+#      RUNZSH / CHSH / OVERWRITE_CONFIRMATION but leaves KEEP_ZSHRC at its `no`
+#      default, which merely makes the clobber silent. Only `--keep-zshrc`
+#      stops it.
+#
+# Simplified deliberately: the real setup_zshrc also writes its template when
+# no ~/.zshrc existed at all (the write sits outside the clobber guard). No
+# test here reaches that path -- create_symlinks always runs first and leaves
+# a symlink behind -- so the stub only models the clobber branch.
+#
+# Written to curl's `-o` target so fetch_and_run executes it in place of a real
+# download; the installer body therefore receives install.sh's own flags in
+# "$@" (see fetch_and_run's `sh <tmp> --unattended ...` form).
 _OMZ_OFFICIAL_INSTALLER_STUB = r"""
 out=""; prev=""
 for a in "$@"; do
@@ -732,6 +749,16 @@ if [ -d "$HOME/.oh-my-zsh" ]; then
 fi
 mkdir -p "$HOME/.oh-my-zsh"
 echo "# stub entry point" > "$HOME/.oh-my-zsh/oh-my-zsh.sh"
+
+keep_zshrc=no
+for a in "$@"; do
+  [ "$a" = "--keep-zshrc" ] && keep_zshrc=yes
+done
+# setup_zshrc: -f OR -h, so a symlink counts as "an existing zshrc".
+if [ "$keep_zshrc" = no ] && { [ -f "$HOME/.zshrc" ] || [ -h "$HOME/.zshrc" ]; }; then
+  mv "$HOME/.zshrc" "$HOME/.zshrc.pre-oh-my-zsh"
+  echo "# oh-my-zsh default template (stub)" > "$HOME/.zshrc"
+fi
 INSTALLER
 fi
 """
@@ -773,6 +800,41 @@ class TestOhMyZshFreshInstallOrdering:
             theme_link.resolve()
             == (REPO_ROOT / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme").resolve()
         )
+
+    def test_fresh_install_keeps_the_zshrc_symlink_create_symlinks_just_made(
+        self, shell_env
+    ):
+        """Oh My Zsh must not be allowed to clobber our ~/.zshrc symlink.
+
+        main() runs create_symlinks BEFORE install_oh_my_zsh, so on a genuinely
+        fresh machine ~/.zshrc is already a symlink into the checkout by the
+        time Oh My Zsh's installer runs. setup_zshrc's guard is `-f OR -h`, so
+        it treats that symlink as "an existing zshrc", moves it to
+        ~/.zshrc.pre-oh-my-zsh and drops its own template in its place --
+        silently, because --unattended suppressed the confirmation prompt
+        without setting KEEP_ZSHRC.
+
+        The install then reports success while none of the repo's zsh config is
+        live: no aliases, no PATH, no plugin list, no ~/.zsh_secrets sourcing,
+        no px-rose-pine theme. Only a second full run repairs it (Oh My Zsh
+        short-circuits on oh-my-zsh.sh, create_symlinks relinks), which is
+        exactly why this went unnoticed.
+        """
+        shell_env.stub("curl", body=_OMZ_OFFICIAL_INSTALLER_STUB)
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        assert not (home / ".oh-my-zsh").exists()  # genuinely fresh machine
+
+        res = run_sourced("create_symlinks && install_oh_my_zsh", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+
+        zshrc = home / ".zshrc"
+        assert zshrc.is_symlink(), (
+            "Oh My Zsh replaced the ~/.zshrc symlink with its own template; "
+            "pass --keep-zshrc to its installer"
+        )
+        assert zshrc.resolve() == (REPO_ROOT / ".zshrc").resolve()
+        assert not (home / ".zshrc.pre-oh-my-zsh").exists()
 
     def test_create_symlinks_alone_does_not_create_oh_my_zsh_dir(self, shell_env):
         # The root cause, isolated: create_symlinks must not touch

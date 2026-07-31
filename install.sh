@@ -733,7 +733,20 @@ install_oh_my_zsh() {
     # Download-then-run for the same truncation safety as Homebrew. `--unattended`
     # is a positional arg to the installer (keeps it from starting a shell or
     # running chsh -- install.sh handles the shell change separately), so it goes
-    # after `--`, yielding `sh <tmp> --unattended`.
+    # after `--`, yielding `sh <tmp> --unattended --keep-zshrc`.
+    #
+    # `--keep-zshrc` is not optional here. main() runs create_symlinks BEFORE
+    # this, so ~/.zshrc is already a symlink into the checkout by now, and Oh My
+    # Zsh's setup_zshrc guards on `-f OR -h` -- a symlink counts as "an existing
+    # zshrc". Without the flag it moves our link to ~/.zshrc.pre-oh-my-zsh and
+    # installs its own template, and `--unattended` makes that silent: that flag
+    # sets RUNZSH / CHSH / OVERWRITE_CONFIRMATION but leaves KEEP_ZSHRC at `no`,
+    # so it suppresses the confirmation prompt without suppressing the clobber.
+    # The install then reports success with none of this repo's zsh config live.
+    # Dropping `--unattended` would not help either: Oh My Zsh sets
+    # OVERWRITE_CONFIRMATION=no on its own whenever stdin is not a tty, which is
+    # exactly how fetch_and_run invokes it. KEEP_ZSHRC is the only knob that
+    # stops the clobber rather than merely silencing the prompt about it.
     #
     # Guarded like every other optional installer (install_uv / install_pyenv /
     # install_lazydocker / install_docker / install_nodejs). Unguarded, a
@@ -741,7 +754,7 @@ install_oh_my_zsh() {
     # and killed main() outright -- taking vim-plug, tmux plugins, the Neovim
     # setup, the AI tools, the MCP registration, the theme symlink and the
     # shell change down with it, for a component none of them depend on.
-    if fetch_and_run "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/$OHMYZSH_INSTALL_REF/tools/install.sh" sh -- --unattended; then
+    if fetch_and_run "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/$OHMYZSH_INSTALL_REF/tools/install.sh" sh -- --unattended --keep-zshrc; then
       print_success "Oh My Zsh installed"
     else
       print_warning "Failed to install Oh My Zsh (continuing; the zsh theme and plugins below may be incomplete)"
