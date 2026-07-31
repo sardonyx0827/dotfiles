@@ -30,6 +30,31 @@ fi
 
 cmd=$(echo "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 
+# 非 push コマンドをここで捨てる。settings.json から `if: Bash(git push*)` を
+# 外した (best-effort な前方一致フィルタが `git -C <dir> push` / `eval "git push"`
+# を取りこぼし、このスクリプトの検知が production で到達できなかった) 結果、
+# このフックは全 Bash 呼び出しで走る。下の strip_quoted_ranges は 1 文字ずつの
+# 状態機械 = O(n^2) で、20KB のコマンドに 4.5 秒掛かっていた。
+#
+# 打ち切って安全な理由: 判定対象 cmd_for_match は $cmd から「文字を削除」して
+# 作られる (strip_quoted_ranges はクォート区間と行継続ごと、インタプリタ経路の
+# コピーはクォート文字だけを削除する) ため、そこにリテラル `push` が現れるには
+# $cmd 中に p,u,s,h がこの順で並んでいなければならない。$cmd からクォート・
+# バックスラッシュ・改行を落とした文字列はそれらの削除の過剰近似なので、そこに
+# `push` が無ければ下の判定は必ず「該当なし」になる。
+#
+# 必ず jq 復号後の $cmd を見ること。生 stdin に対して同じ tr を掛けると、JSON が
+# 改行を符号化した `\n` の backslash だけが消えて復号後には存在しない `n` が残り、
+# `git pu\<改行>sh` (シェルが行継続で git push に結合する) が `git punsh` に化けて
+# 取りこぼす。8f2d386 が塞いだ行継続バイパスの再発で、実際に一度作り込んだ。
+#
+# 唯一の挙動差は `git pus"XX"h` 形: strip_quoted_ranges はクォート区間ごと消して
+# `git push` を作るのでガード前は ask だったが、シェルの実際の実行結果は
+# `git pusXXh` であって push ではない。抑止側が正しく、取りこぼしではない。
+if ! printf '%s' "$cmd" | tr -d '\\"'"'"'\n' | grep -q push; then
+  exit 0
+fi
+
 # シングル/ダブルクォートで囲まれた区間は実行されるコマンドではなく単なる
 # 文字列(コミットメッセージ等)なので、誤検知を避けるため push 判定の前に
 # 除去する (例: `git commit -m "please dont git push this yet"` は push
@@ -178,7 +203,13 @@ strip_quoted_ranges() {
   printf '%s' "$out"
 }
 
-cmd_for_match=$(strip_quoted_ranges "$cmd")
+# クォート文字もバックスラッシュも無ければ除去対象が無く、状態機械は入力を
+# そのまま返す。上のガードを通り抜けた長いコマンド (push を含む heredoc 等) で
+# O(n^2) を払わずに済むよう、結果が同一と分かるこの場合は素通しする。
+case "$cmd" in
+*[\'\"\\]*) cmd_for_match=$(strip_quoted_ranges "$cmd") ;;
+*) cmd_for_match="$cmd" ;;
+esac
 
 # `eval` / `sh -c` / `bash -c` は文字列引数を「データ」ではなく「コード」として
 # 実行する。つまり strip_quoted_ranges が「単なるメッセージ」として捨てたクォート

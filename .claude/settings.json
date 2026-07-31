@@ -115,6 +115,7 @@
       "mcp__serena__rename_symbol",
       "mcp__serena__safe_delete_symbol"
     ],
+    "ask": ["Bash(git push:*)"],
     "deny": [
       "Bash(shutdown:*)",
       "Bash(reboot:*)",
@@ -210,8 +211,7 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/git-push-review.sh",
-            "if": "Bash(git push*)"
+            "command": "bash ~/.claude/hooks/git-push-review.sh"
           }
         ]
       }

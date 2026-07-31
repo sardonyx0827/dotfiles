@@ -26,11 +26,34 @@
   See **bash-review — design rationale & threat model** below for why the
   tiers are structured this way and what they do (and do not) defend against.
 - **git-push-review** (`hooks/git-push-review.sh`, matcher: `Bash`,
-  if: `Bash(git push*)`):
+  no `if` filter — deliberately unconditional):
   Detects `git push` commands and forces a confirmation prompt
   (permissionDecision: ask) with a summary of the branch, commits,
   and diffstat about to be pushed. Enforces the pre-push review step
   of `rules/git-workflow.md`.
+  This entry used to carry `if: Bash(git push*)`. That filter prefix-matches
+  each sub-command, so it never fired for the very forms this script exists
+  to catch — `git -C <dir> push`, `git --no-pager push`, `git -c k=v push`,
+  `eval "git push …"` — leaving the script's own detection unreachable in
+  production while `permissions.allow` (`Bash(git:*)`, defaultMode `auto`)
+  let those forms through with no confirmation at all. The Claude Code docs
+  are explicit: "Because the filter is best-effort, use the permission system
+  rather than a hook to enforce a hard allow or deny."
+  Per that advice `permissions.ask` now carries `Bash(git push:*)` as a
+  backstop for when this hook fails (it is fail-open by design, and Claude
+  Code treats a crashed or timed-out hook as non-blocking). That rule
+  prefix-matches exactly like `if` did, so it covers only the plain form —
+  the two layers are complementary, not redundant: the hook covers every
+  form while healthy, the permission rule covers the common form regardless.
+  Running on every Bash call costs a flat ~70 ms rather than scaling with
+  command length: the script short-circuits before the O(n^2) quote-stripping
+  state machine, on a grep of the jq-decoded command with quotes, backslashes
+  and newlines removed. That probe must run on the DECODED command — the same
+  `tr` over the raw stdin turns JSON's `\n` escape into a stray `n`, which
+  splits `git pu\<newline>sh` into `git punsh` and reopens the line-continuation
+  bypass 8f2d386 closed.
+  `tests/test_config_wiring.py::test_pretooluse_bash_hooks_are_unconditional`
+  keeps the filter from coming back.
 
 ### PostToolUse
 

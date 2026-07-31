@@ -181,13 +181,104 @@ def test_no_write_verb_deny_rules():
     )
 
 
-def _pretooluse_bash_commands() -> list[str]:
+def _pretooluse_bash_hooks() -> list[dict]:
     settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
-    commands = []
+    hooks = []
     for entry in settings["hooks"]["PreToolUse"]:
         if entry.get("matcher") == "Bash":
-            commands += [hook["command"] for hook in entry["hooks"]]
-    return commands
+            hooks += entry["hooks"]
+    return hooks
+
+
+def _pretooluse_bash_commands() -> list[str]:
+    return [hook["command"] for hook in _pretooluse_bash_hooks()]
+
+
+def test_pretooluse_bash_hooks_are_unconditional():
+    """A safety gate must not be narrowed by an `if` filter.
+
+    `if` prefix-matches the command string per sub-command, so a gate written
+    as `Bash(git push*)` never fires for the very forms its script exists to
+    catch -- `git -C <dir> push`, `git --no-pager push`, `eval "git push ..."`.
+    git-push-review.sh detects all of those (see its executes_string_arg /
+    git_c_re regexes) and DETECTION_CASES in tests/test_git_push_review.py
+    pins that detection, but the script was unreachable for those cases in
+    production because the filter ran first. Worse, `permissions.allow` holds
+    `Bash(git:*)` with defaultMode `auto`, and at the time there was no `ask`
+    list at all, so the hook was the only confirmation left before a push.
+    (`Bash(git push:*)` now backstops it -- see
+    test_git_push_asks_at_the_permission_layer_too -- but that rule
+    prefix-matches too, so it does not cover the forms this test protects.)
+
+    Claude Code's own docs say so directly:
+
+        "Because the filter is best-effort, use the permission system rather
+        than a hook to enforce a hard allow or deny."
+
+    Paying for that correctness is cheap: git-push-review.sh short-circuits
+    before strip_quoted_ranges (its O(n^2) quote-stripping state machine) on a
+    grep of the jq-decoded command, so a non-push command costs a flat ~70ms
+    regardless of command length. The .codex side has always wired this hook
+    unconditionally.
+    """
+    hooks = _pretooluse_bash_hooks()
+    # Anti-vacuity: without this, deleting the hook entry (or renaming the
+    # matcher) empties the list and the assertion below passes while the gate
+    # this test exists to protect is gone. Same convention as the deny-rule
+    # helpers above.
+    assert hooks, "expected PreToolUse hooks under matcher 'Bash'"
+    assert any("git-push-review.sh" in h["command"] for h in hooks), (
+        "the git push confirmation gate must stay wired under PreToolUse/Bash"
+    )
+    conditional = [hook["command"] for hook in hooks if "if" in hook]
+    assert not conditional, (
+        "PreToolUse Bash hooks must run unconditionally; `if` is best-effort "
+        f"and silently narrows the gate: {conditional}"
+    )
+
+
+def test_git_push_asks_at_the_permission_layer_too():
+    """The push gate must not be hook-only, because the hook fails OPEN.
+
+    git-push-review.sh is deliberately fail-open everywhere (`|| exit 0`,
+    `2>/dev/null`) so a broken summary never blocks a real command, and Claude
+    Code treats a hook that cannot start, crashes, or times out as a
+    non-blocking error. With `Bash(git:*)` in allow, defaultMode `auto` and the
+    hook as the only gate, every one of those failure modes let a push through
+    with no confirmation at all.
+
+    `Bash(git push:*)` in `ask` is the backstop for that: it is enforced by the
+    permission system rather than by a script that can die. It is NOT a
+    replacement for the unconditional hook wiring -- `ask` prefix-matches the
+    same way `if` did, so it does not fire for `git -C <dir> push` or
+    `eval "git push ..."`. The two layers cover different failure modes: the
+    hook covers every FORM while it is healthy, this rule covers the common
+    form even when it is not.
+    """
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    ask = settings["permissions"].get("ask", [])
+    assert "Bash(git push:*)" in ask, (
+        "permissions.ask must keep a git push entry so the gate survives a "
+        f"hook failure; current ask rules: {ask}"
+    )
+
+
+def test_codex_pretooluse_bash_hooks_are_unconditional():
+    """Parity guard for the same hole on the Codex side (it has no `if` today,
+    and nothing stopped one from being added)."""
+    text = CODEX_HOOKS_TEMPLATE.read_text(encoding="utf-8")
+    data = json.loads(text.replace("__HOME__", "/home/tester"))
+    hooks = [
+        hook
+        for entry in data["hooks"]["PreToolUse"]
+        if entry.get("matcher") == "Bash"
+        for hook in entry["hooks"]
+    ]
+    assert hooks, "expected codex PreToolUse hooks under matcher 'Bash'"
+    conditional = [hook["command"] for hook in hooks if "if" in hook]
+    assert not conditional, (
+        f"codex PreToolUse Bash hooks must run unconditionally: {conditional}"
+    )
 
 
 def test_bash_review_is_wired_through_failclosed_launcher():
