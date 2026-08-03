@@ -118,12 +118,25 @@ local WRAPPER_TYPES = {
   pair = true,
 }
 
--- Comment node names across grammars (rust splits it into three).
+-- Comment node names across grammars. Most call it `comment`; the rest were
+-- found by inspecting real trees rather than guessed, because a missing name
+-- here fails quietly and asymmetrically: the definition still resolves, so the
+-- feature looks like it works while the doc comment -- the half this feature
+-- exists to compare against the code -- is silently left out.
+--   line_comment / block_comment / doc_comment : rust
+--   multiline_comment                          : kotlin (`/** ... */`)
+--   documentation_comment                      : dart (`/// ...`)
+--   haddock                                    : haskell (`-- | ...`)
+-- Widening this table cannot over-capture: comments are only ever absorbed
+-- directly above a definition, or selected on their own.
 local COMMENT_TYPES = {
   comment = true,
   line_comment = true,
   block_comment = true,
   doc_comment = true,
+  multiline_comment = true,
+  documentation_comment = true,
+  haddock = true,
 }
 
 -- Absorbed above a definition alongside comments: these decorate the thing
@@ -573,6 +586,7 @@ M._internal = {
   at_cursor_in = at_cursor_in,
   is_definition_type = function(t) return DEFINITION_TYPES[t] == true end,
   is_wrapper_type = function(t) return WRAPPER_TYPES[t] == true end,
+  is_comment_type = function(t) return COMMENT_TYPES[t] == true end,
   is_banner_line = is_banner_line,
 }
 

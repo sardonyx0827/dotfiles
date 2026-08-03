@@ -652,6 +652,43 @@ class TestNodeTypeMatchers:
         assert matched is False, f"{node_type} matched, but {why}"
 
     @pytest.mark.parametrize(
+        ("node_type", "language"),
+        [
+            ("comment", "most grammars"),
+            ("line_comment", "rust"),
+            ("block_comment", "rust"),
+            ("doc_comment", "rust"),
+            ("multiline_comment", "kotlin: /** ... */"),
+            ("documentation_comment", "dart: /// ..."),
+            ("haddock", "haskell: -- | ..."),
+        ],
+    )
+    def test_comment_types(self, node_type, language):
+        """A missing comment type fails quietly and asymmetrically: the
+        definition still resolves, so the feature looks like it works while the
+        doc comment -- the half it exists to compare against the code -- is
+        left out. kotlin shipped exactly that way until its `multiline_comment`
+        was found by inspecting a real tree."""
+        (matched,) = context_call("_internal.is_comment_type", node_type)
+        assert matched is True, f"{node_type} ({language}) is not a comment"
+
+    @pytest.mark.parametrize(
+        ("node_type", "why"),
+        [
+            ("comment_content", "lua: the payload INSIDE a comment node"),
+            ("string", "a string literal is not a comment"),
+        ],
+    )
+    def test_non_comments_are_excluded(self, node_type, why):
+        """`comment_content` matters most: it is the innermost node at a cursor
+        sitting in a lua comment, and `enclosing_comment` has to keep walking
+        past it to the `comment` itself. Treating it as a comment would run the
+        sibling scan one level too deep, where the neighbouring comment lines
+        are not siblings at all."""
+        (matched,) = context_call("_internal.is_comment_type", node_type)
+        assert matched is False, f"{node_type} matched, but {why}"
+
+    @pytest.mark.parametrize(
         ("node_type", "why"),
         [
             ("decorated_definition", "python: decorators wrap the def"),
