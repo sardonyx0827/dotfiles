@@ -101,8 +101,8 @@
   <text x="80" y="703" font-size="15" font-weight="700" fill="#e0def4">カーソル文脈ヒント</text>
   <line x1="62" y1="718" x2="1178" y2="718" stroke="#403d52"/>
   <g class="mono" font-size="13" fill="#e0def4">
-    <text x="62" y="748">&lt;leader&gt;qh でヒント</text>
-    <text x="62" y="775">claude(sonnet) → gemini</text>
+    <text x="62" y="748">&lt;leader&gt;qh claude(sonnet)→gemini</text>
+    <text x="62" y="775">&lt;leader&gt;qg gemini 直接(fallback無)</text>
     <text x="455" y="748">treesitter で定義 + 直上 docstring</text>
     <text x="455" y="775">コメント塊 → 直後の定義へ昇格</text>
     <text x="848" y="748">表示専用（適用経路なし）</text>

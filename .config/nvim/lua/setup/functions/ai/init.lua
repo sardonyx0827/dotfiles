@@ -285,9 +285,22 @@ map("n", "<leader>qf", check_current_buffer,
 -- difference from the check flow: hints are prose to read next to the code,
 -- not edits to splice into it.
 --
--- Same tiers as the check, for the same reason: this is a review task, and the
--- fallback exists so a claude outage costs quality rather than the feature.
-local HINT_MODELS = { claude = "sonnet", gemini = "gemini-flash-lite-latest" }
+-- Which tools a hint keymap tries, in order, keyed by the tool the keymap asks
+-- for. <leader>qh leads with claude and falls back to gemini for the same
+-- reason the buffer check does: an outage should cost quality, not the feature.
+-- <leader>qg is a deliberate choice of the other vendor, so it does NOT fall
+-- back to claude -- silently answering with the tool the user just declined
+-- would defeat the point of having a second key. Same rule as <leader>cg and
+-- <C-g>, which are direct too.
+local HINT_CHAINS = {
+  claude = {
+    { tool = "claude", model = "sonnet" },
+    { tool = "gemini", model = "gemini-flash-lite-latest" },
+  },
+  gemini = {
+    { tool = "gemini", model = "gemini-flash-lite-latest" },
+  },
+}
 
 -- A unit longer than this still goes out -- refusing would be worse, since a
 -- long function is exactly where a review helps -- but the user is told, because
@@ -295,7 +308,12 @@ local HINT_MODELS = { claude = "sonnet", gemini = "gemini-flash-lite-latest" }
 -- costs what a whole-buffer check costs.
 local HINT_LARGE_UNIT = 400
 
-local function hint_at_cursor()
+local function hint_at_cursor(tool)
+  local chain = HINT_CHAINS[tool]
+  if not chain then
+    vim.notify("Unknown hint tool: " .. tostring(tool), vim.log.levels.ERROR)
+    return
+  end
   local buf = vim.api.nvim_get_current_buf()
   local cursor = vim.api.nvim_win_get_cursor(0)
   local unit = context.at_cursor(buf, cursor[1], cursor[2])
@@ -327,7 +345,16 @@ local function hint_at_cursor()
       string.format("対象が %d 行あります。ヒントは粗くなる可能性があります。", #unit.lines),
       vim.log.levels.WARN)
   end
-  vim.notify("Collecting hints with Claude...", vim.log.levels.INFO)
+  -- One spec per step of the chain; a one-step chain is simply a request with
+  -- nothing to fall back to, which is exactly what a tool-specific keymap means.
+  local specs, models = {}, {}
+  for i, step in ipairs(chain) do
+    specs[i] = { tool = step.tool, model = step.model, prompt = system, input = input }
+    models[step.tool] = step.model
+  end
+  local lead = chain[1].tool
+
+  vim.notify("Collecting hints with " .. lead .. "...", vim.log.levels.INFO)
 
   ui.open_report({
     name = "[AI Hint]",
@@ -337,24 +364,24 @@ local function hint_at_cursor()
     fail_label = "hint",
     copy_notify = "Hints copied to clipboard.",
     start = function(done)
-      -- claude first; on error fall back to gemini (see backend.run_with_fallback).
-      return backend.run_with_fallback({
-        { tool = "claude", prompt = system, input = input, model = HINT_MODELS.claude },
-        { tool = "gemini", prompt = system, input = input, model = HINT_MODELS.gemini },
-      }, function(ok, result, err, tool)
+      -- Tries each spec in order, stopping at the first success; with one spec
+      -- there is no fallback (see backend.run_with_fallback).
+      return backend.run_with_fallback(specs, function(ok, result, err, answered)
         if not ok then
           done(false, {}, err)
           return
         end
-        if tool ~= "claude" then
-          vim.notify("Claude failed; fell back to " .. tool .. ".", vim.log.levels.WARN)
+        if answered ~= lead then
+          vim.notify(
+            lead .. " failed; fell back to " .. answered .. ".", vim.log.levels.WARN)
         end
         -- Header records what was reviewed and by whom: the report outlives the
         -- cursor that produced it, and the range is the one thing the reader
         -- cannot recover from the hints themselves.
         local out = {
           string.format("> %s — %s", filepath, label),
-          string.format("> Hinted with **%s** (%s)", tool, HINT_MODELS[tool] or "default"),
+          string.format("> Hinted with **%s** (%s)",
+            answered, models[answered] or "default"),
           "",
         }
         vim.list_extend(out, result)
@@ -363,8 +390,10 @@ local function hint_at_cursor()
     end,
   })
 end
-map("n", "<leader>qh", hint_at_cursor,
-  { desc = "Hint about the unit under the cursor (AI)", noremap = true })
+map("n", "<leader>qh", function() hint_at_cursor("claude") end,
+  { desc = "Hint about the unit under the cursor (AI: Claude)", noremap = true })
+map("n", "<leader>qg", function() hint_at_cursor("gemini") end,
+  { desc = "Hint about the unit under the cursor (AI: Gemini)", noremap = true })
 
 ---------------------------------------------------------
 -- Copy file + line reference from a visual selection
