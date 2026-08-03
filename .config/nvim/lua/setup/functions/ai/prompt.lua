@@ -47,14 +47,23 @@ end
 --- reviewer can cite accurate line numbers. The prefix is NOT valid source; the
 --- accompanying prompt tells the model to ignore it. The caller's list is not
 --- mutated.
+---
+--- `start` is the buffer line number of `lines[1]`, for callers that send a
+--- RANGE rather than a whole buffer (see ai.context): a review of lines 120-140
+--- has to cite L120, not L1, or every hint points at the wrong place. It
+--- defaults to 1, which is byte-identical to numbering a whole buffer.
 --- @param lines string[]
+--- @param start integer|nil buffer line number of lines[1] (default 1)
 --- @return string numbered lines joined by "\n"
-function M.number_lines(lines)
-  local width = #tostring(#lines)
+function M.number_lines(lines, start)
+  start = start or 1
+  -- Pad to the widest number actually rendered, which is the LAST one -- not
+  -- the count, once the numbering no longer begins at 1.
+  local width = #tostring(start + #lines - 1)
   local fmt = "%" .. width .. "d │ %s"
   local out = {}
   for i, line in ipairs(lines) do
-    out[i] = string.format(fmt, i, line)
+    out[i] = string.format(fmt, start + i - 1, line)
   end
   return table.concat(out, "\n")
 end
@@ -111,6 +120,97 @@ function M.fix_buffer_system(lang, filepath)
     .. "- Do NOT wrap the output in code fences. If there is nothing to fix, reply with "
     .. "exactly: []",
     lang, filepath)
+end
+
+--- System prompt for "give me hints about the unit under the cursor".
+--- Sent with ONE syntactic unit (see ai.context) whose lines carry their real
+--- buffer numbers via M.number_lines, so every citation lands where the user's
+--- cursor already is.
+---
+--- Two rules carry most of the value here, and both exist because the obvious
+--- prompt fails in a specific way:
+---   * hints must quote something from the range. An LLM handed a short snippet
+---     and asked to "suggest improvements" reliably returns advice that could
+---     have been written without reading it ("add tests", "consider error
+---     handling"), which is worse than silence -- it looks like review.
+---   * it must not rewrite the code. The ask is a hint message, and this
+---     feature deliberately has no apply path: a returned patch would invite
+---     hand-copying an edit that nothing verified against the buffer (unlike
+---     M.fix_buffer_system, whose edits M.apply_edits checks line by line).
+---
+--- The unit is cut out of its file, so callers, callees, and types defined
+--- elsewhere are genuinely unknown. Saying so is what keeps the model from
+--- reporting a guess about the surroundings as a defect.
+---
+--- Deliberately transport-neutral about HOW the code arrives: naming stdin here
+--- is the mistake 3fae7ab had to undo in M.replace_system.
+---
+--- The unit's DESCRIPTION (its name, from the buffer) deliberately does not
+--- appear here -- it travels in the payload, via M.hint_input. This instruction
+--- ends up in argv (`claude -p <instruction>`), where every process on the
+--- machine can read it via `ps aux`, so nothing derived from buffer *content*
+--- may be built into it. Only the filetype, the path and the line numbers are,
+--- exactly as in M.check_buffer_system.
+--- @param lang string filetype (or "plain text")
+--- @param filepath string relative path, shown for context
+--- @param start_line integer first buffer line of the unit
+--- @param end_line integer last buffer line of the unit
+--- @return string
+function M.hint_system(lang, filepath, start_line, end_line)
+  return string.format(
+    "You are a meticulous code reviewer integrated into a Neovim editor. "
+    .. "A single unit taken from a %s file (%s) is provided as the input to this "
+    .. "request. The input opens with a one-line description of that unit, then "
+    .. "its code. The unit covers lines %d-%d of the file, and every code line is "
+    .. "prefixed with its real buffer line number and a '│' separator; that "
+    .. "prefix is NOT part of the file -- ignore it and never report it.\n\n"
+    .. "Read the code together with any comment or docstring attached to it, and "
+    .. "reply in Japanese, in Markdown only, with no preamble. Use exactly these "
+    .. "three headings, in this order:\n"
+    .. "## 要約\n"
+    .. "1〜2 行で、この単位が何をしているかを述べる。\n"
+    .. "## 改善ヒント\n"
+    .. "`- L<n>: <問題点> -> <改善案>` の形式の箇条書き。重要な順に最大 8 件。\n"
+    .. "## 確認が必要な点\n"
+    .. "範囲外の情報が無いと断定できないことを箇条書きにする。無ければ「なし」。\n\n"
+    .. "Rules:\n"
+    .. "- Every hint MUST quote an identifier or a line from the range shown, and "
+    .. "MUST cite the buffer line number it applies to. Generic advice that could "
+    .. "be written without reading this code (\"add tests\", \"consider error "
+    .. "handling\") is worse than saying nothing -- omit it.\n"
+    .. "- Look for, among other things: a comment or docstring that no longer "
+    .. "matches what the code does (wrong parameter names, a documented return "
+    .. "value that is not returned, a described behaviour that changed); missing "
+    .. "or misleading names; unhandled edge cases and error paths; and typos in "
+    .. "identifiers, comments, and strings.\n"
+    .. "- Do NOT output a rewritten version, a diff, or a patch. Inline fragments "
+    .. "of a few tokens inside a hint are fine; a code block reproducing the unit "
+    .. "is not.\n"
+    .. "- This unit was cut out of its file. Callers, callees, and anything "
+    .. "defined elsewhere are unknown to you, so do not report a guess about them "
+    .. "as a defect -- put it under 確認が必要な点 instead.\n"
+    .. "- If there is genuinely nothing worth raising, reply with exactly: "
+    .. "`指摘はありません。`",
+    lang, filepath, start_line, end_line)
+end
+
+--- Payload for M.hint_system: the unit's description followed by its numbered
+--- source. Both halves ride here rather than in the instruction because this
+--- string is written to a temp file and piped in on stdin, while the
+--- instruction is passed in argv -- and `label` carries an identifier read out
+--- of the user's buffer.
+--- @param label string one-line description of the unit (see ai.context.describe)
+--- @param lines string[] the unit's lines
+--- @param start_line integer buffer line number of lines[1]
+--- @return string
+function M.hint_input(label, lines, start_line)
+  return table.concat({
+    "## 対象",
+    label,
+    "",
+    "## コード (各行: <行番号> │ <本文>)",
+    M.number_lines(lines, start_line),
+  }, "\n")
 end
 
 --- Instruction for generating a git commit message from a diff.

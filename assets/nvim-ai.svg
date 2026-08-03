@@ -1,14 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 904" width="1240" height="904" font-family="'Helvetica Neue', Arial, 'Hiragino Sans', 'Noto Sans JP', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 1064" width="1240" height="1064" font-family="'Helvetica Neue', Arial, 'Hiragino Sans', 'Noto Sans JP', sans-serif">
   <defs>
     <style>.mono { font-family: 'SF Mono', 'Menlo', 'Consolas', 'DejaVu Sans Mono', monospace; }</style>
   </defs>
 
-  <rect x="0" y="0" width="1240" height="904" fill="#191724"/>
-  <rect x="8" y="8" width="1224" height="888" rx="18" fill="none" stroke="#26233a" stroke-width="1.5"/>
+  <rect x="0" y="0" width="1240" height="1064" fill="#191724"/>
+  <rect x="8" y="8" width="1224" height="1048" rx="18" fill="none" stroke="#26233a" stroke-width="1.5"/>
 
   <!-- header -->
   <text x="42" y="70" font-size="32" font-weight="700" fill="#c4a7e7">Neovim AI</text>
-  <text x="44" y="100" font-size="15" fill="#908caa">エディタ内マルチ LLM — 統一バックエンドで補完・生成・校正・リライト</text>
+  <text x="44" y="100" font-size="15" fill="#908caa">エディタ内マルチ LLM — 統一バックエンドで補完・生成・校正・リライト・ヒント</text>
 
   <!-- tool registry band -->
   <rect x="40" y="124" width="1160" height="84" rx="14" fill="#1f1d2e" stroke="#403d52"/>
@@ -94,20 +94,35 @@
     <text x="848" y="582">AI へ貼り付け用</text>
   </g>
 
+  <!-- feature grid row 3 -->
+  <!-- 7. cursor-context hints (gold, full width) -->
+  <rect x="40" y="668" width="1160" height="140" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <circle cx="64" cy="698" r="6" fill="#f6c177"/>
+  <text x="80" y="703" font-size="15" font-weight="700" fill="#e0def4">カーソル文脈ヒント</text>
+  <line x1="62" y1="718" x2="1178" y2="718" stroke="#403d52"/>
+  <g class="mono" font-size="13" fill="#e0def4">
+    <text x="62" y="748">&lt;leader&gt;qh でヒント</text>
+    <text x="62" y="775">claude(sonnet) → gemini</text>
+    <text x="455" y="748">treesitter で定義 + 直上 docstring</text>
+    <text x="455" y="775">コメント塊 → 直後の定義へ昇格</text>
+    <text x="848" y="748">表示専用（適用経路なし）</text>
+    <text x="848" y="775">該当なしは広げずに中止</text>
+  </g>
+
   <!-- design notes band -->
-  <rect x="40" y="664" width="1160" height="92" rx="14" fill="#1f1d2e" stroke="#403d52"/>
-  <text x="66" y="690" font-size="13" font-weight="700" fill="#6e6a86">設計ポイント</text>
+  <rect x="40" y="824" width="1160" height="92" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <text x="66" y="850" font-size="13" font-weight="700" fill="#6e6a86">設計ポイント</text>
   <g class="mono" font-size="12.5" fill="#908caa">
-    <text x="66" y="714">統一 backend.run — CLI(stdin) / Ollama(HTTP:11434) · run_with_fallback で claude→gemini フォールバック</text>
-    <text x="66" y="738">構造化編集は original を buffer と照合して安全適用（不一致はスキップ） · all は複数ツール同時 → Tab 切替</text>
+    <text x="66" y="874">統一 backend.run — CLI(stdin) / Ollama(HTTP:11434) · run_with_fallback で claude→gemini フォールバック</text>
+    <text x="66" y="898">構造化編集は original を buffer と照合して安全適用（不一致はスキップ） · all は複数ツール同時 → Tab 切替</text>
   </g>
 
   <!-- pre-send secret scan band -->
-  <rect x="40" y="772" width="1160" height="92" rx="14" fill="#1f1d2e" stroke="#403d52"/>
-  <text x="66" y="798" font-size="13" font-weight="700" fill="#6e6a86">送信前 秘密スキャン (外部送信ガード)</text>
+  <rect x="40" y="932" width="1160" height="92" rx="14" fill="#1f1d2e" stroke="#403d52"/>
+  <text x="66" y="958" font-size="13" font-weight="700" fill="#6e6a86">送信前 秘密スキャン (外部送信ガード)</text>
   <g class="mono" font-size="12.5" fill="#908caa">
-    <text x="66" y="822">backend.run / s:AI_Submit で選択・diff・指示を secret_scan.py に通し、生の資格情報を検出 → confirm(既定 No)で送信中止</text>
-    <text x="66" y="846">Copilot 補完は should_attach で機密パス(.env/鍵/kubeconfig/クラウド鍵)を除外 · ローカル Ollama は対象外 · scanner 不在時は fail-open</text>
+    <text x="66" y="982">backend.run / s:AI_Submit で選択・diff・指示を secret_scan.py に通し、生の資格情報を検出 → confirm(既定 No)で送信中止</text>
+    <text x="66" y="1006">Copilot 補完は should_attach で機密パス(.env/鍵/kubeconfig/クラウド鍵)を除外 · ローカル Ollama は対象外 · scanner 不在時は fail-open</text>
   </g>
 
 </svg>

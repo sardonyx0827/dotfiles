@@ -3,11 +3,13 @@
 -- Wires the AI features to keymaps. The heavy lifting lives in the sibling
 -- modules:
 --   ai.prompt   - prompt builders & diagnostic formatting (pure helpers)
+--   ai.context  - resolve the cursor to one syntactic unit (treesitter)
 --   ai.backend  - tool invocation (CLI / Ollama), job & temp-file management
 --   ai.ui       - the shared floating-window driver (popup / diff)
 -- A feature here is just "build a prompt + pick the input + choose the UI".
 ---------------------------------------------------------
 local backend = require("setup.functions.ai.backend")
+local context = require("setup.functions.ai.context")
 local prompt = require("setup.functions.ai.prompt")
 local ui = require("setup.functions.ai.ui")
 
@@ -272,6 +274,97 @@ local function check_current_buffer()
 end
 map("n", "<leader>qf", check_current_buffer,
   { desc = "Check current buffer for typos/syntax errors (AI)", noremap = true })
+
+---------------------------------------------------------
+-- Hints for the function / comment / definition under the cursor
+---------------------------------------------------------
+-- The narrow sibling of <leader>qf: instead of the whole buffer, ai.context
+-- resolves the cursor to ONE unit (a definition together with the doc comment
+-- above it, or a standalone comment run) and asks for improvement hints on that
+-- alone. Display only -- there is no apply path here, which is the whole
+-- difference from the check flow: hints are prose to read next to the code,
+-- not edits to splice into it.
+--
+-- Same tiers as the check, for the same reason: this is a review task, and the
+-- fallback exists so a claude outage costs quality rather than the feature.
+local HINT_MODELS = { claude = "sonnet", gemini = "gemini-flash-lite-latest" }
+
+-- A unit longer than this still goes out -- refusing would be worse, since a
+-- long function is exactly where a review helps -- but the user is told, because
+-- past roughly this size the reply thins out into generalities and the request
+-- costs what a whole-buffer check costs.
+local HINT_LARGE_UNIT = 400
+
+local function hint_at_cursor()
+  local buf = vim.api.nvim_get_current_buf()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local unit = context.at_cursor(buf, cursor[1], cursor[2])
+  if not unit then
+    vim.notify(
+      "カーソル位置に関数・コメント・定義が見つかりません。"
+      .. "定義やコメントの上にカーソルを置いてから実行してください。",
+      vim.log.levels.WARN)
+    return
+  end
+
+  local filetype = vim.bo[buf].filetype
+  local lang = filetype ~= "" and filetype or "plain text"
+  local filepath = vim.fn.expand("%:.")
+  if filepath == "" then filepath = "[No Name]" end
+
+  local label = context.describe(unit)
+  local system = prompt.hint_system(lang, filepath, unit.start_line, unit.end_line)
+  -- The description goes in the PAYLOAD, not the instruction: the instruction
+  -- is passed in argv (`claude -p ...`) where `ps aux` can read it, and the
+  -- description carries an identifier taken from the buffer. The payload is
+  -- piped in on stdin. Numbered from the unit's real first line, so every
+  -- `L<n>` in the reply is a line the user can jump to rather than an offset
+  -- into the excerpt.
+  local input = prompt.hint_input(label, unit.lines, unit.start_line)
+
+  if #unit.lines > HINT_LARGE_UNIT then
+    vim.notify(
+      string.format("対象が %d 行あります。ヒントは粗くなる可能性があります。", #unit.lines),
+      vim.log.levels.WARN)
+  end
+  vim.notify("Collecting hints with Claude...", vim.log.levels.INFO)
+
+  ui.open_report({
+    name = "[AI Hint]",
+    filetype = "markdown",
+    winbar = " AI Hint    y:yank  tw:wrap  q:close ",
+    pending_text = "[collecting hints...]",
+    fail_label = "hint",
+    copy_notify = "Hints copied to clipboard.",
+    start = function(done)
+      -- claude first; on error fall back to gemini (see backend.run_with_fallback).
+      return backend.run_with_fallback({
+        { tool = "claude", prompt = system, input = input, model = HINT_MODELS.claude },
+        { tool = "gemini", prompt = system, input = input, model = HINT_MODELS.gemini },
+      }, function(ok, result, err, tool)
+        if not ok then
+          done(false, {}, err)
+          return
+        end
+        if tool ~= "claude" then
+          vim.notify("Claude failed; fell back to " .. tool .. ".", vim.log.levels.WARN)
+        end
+        -- Header records what was reviewed and by whom: the report outlives the
+        -- cursor that produced it, and the range is the one thing the reader
+        -- cannot recover from the hints themselves.
+        local out = {
+          string.format("> %s — %s", filepath, label),
+          string.format("> Hinted with **%s** (%s)", tool, HINT_MODELS[tool] or "default"),
+          "",
+        }
+        vim.list_extend(out, result)
+        done(true, out, nil)
+      end)
+    end,
+  })
+end
+map("n", "<leader>qh", hint_at_cursor,
+  { desc = "Hint about the unit under the cursor (AI)", noremap = true })
 
 ---------------------------------------------------------
 -- Copy file + line reference from a visual selection

@@ -489,6 +489,136 @@ class TestNumberLines:
         (numbered,) = prompt_call("number_lines", [])
         assert numbered == ""
 
+    def test_numbering_can_start_at_a_buffer_offset(self):
+        """A range review (ai.context) must cite the buffer's own line numbers.
+
+        Numbering an excerpt from 1 would make every `L<n>` in the reply point
+        at the wrong place -- silently, since the numbers still look plausible.
+        """
+        (numbered,) = prompt_call("number_lines", ["alpha", "beta"], 10)
+        assert numbered == "10 │ alpha\n11 │ beta"
+
+    def test_offset_width_follows_the_last_number_not_the_count(self):
+        """Two lines starting at 9 render 9 and 10, so the column is two wide.
+
+        Padding to the *count* (one digit here) would ragged the │ separator
+        exactly when the range crosses a power of ten.
+        """
+        (numbered,) = prompt_call("number_lines", ["alpha", "beta"], 9)
+        assert numbered == " 9 │ alpha\n10 │ beta"
+
+    def test_an_explicit_start_of_one_matches_the_default(self):
+        """The default path must stay byte-identical; every existing caller
+        (the buffer check and its fix step) relies on it."""
+        (implicit,) = prompt_call("number_lines", ["alpha", "beta"])
+        (explicit,) = prompt_call("number_lines", ["alpha", "beta"], 1)
+        assert implicit == explicit
+
+
+class TestHintSystem:
+    """The cursor-unit hint prompt (<leader>qh).
+
+    Its two load-bearing instructions are negative ones, and a prompt edit that
+    drops either turns the feature into something else: without the
+    quote-the-code rule the reply is advice that never read the input, and
+    without the no-rewrite rule the user gets a patch that nothing verified
+    against the buffer (unlike the fix flow, where apply_edits checks it).
+    """
+
+    LANG = "lua"
+    PATH = "lua/x.lua"
+    LABEL = "定義 `greet` (function_declaration) L12-30"
+
+    def system(self):
+        (text,) = prompt_call("hint_system", self.LANG, self.PATH, 12, 30)
+        return text
+
+    def test_carries_the_language_path_and_range(self):
+        text = self.system()
+        assert self.LANG in text
+        assert self.PATH in text
+        assert "12-30" in text
+
+    def test_holds_nothing_read_out_of_the_buffer(self):
+        """The instruction is passed in argv (`claude -p <instruction>`), where
+        `ps aux` shows it to every process on the machine. The unit's
+        description carries an identifier lifted from the user's buffer, so it
+        must travel in the stdin payload instead -- see hint_input. Only the
+        filetype, the path and the line numbers belong here, matching what
+        check_buffer_system already puts in argv.
+        """
+        assert "greet" not in self.system()
+
+    def test_requires_every_hint_to_quote_the_code(self):
+        text = self.system()
+        assert "MUST quote an identifier or a line" in text
+        assert "add tests" in text, "the generic-advice example was dropped"
+
+    def test_forbids_returning_rewritten_code(self):
+        text = self.system()
+        assert "Do NOT output a rewritten version, a diff, or a patch." in text
+
+    def test_declares_the_three_report_headings(self):
+        for heading in ("## 要約", "## 改善ヒント", "## 確認が必要な点"):
+            assert heading in self.system()
+
+    def test_asks_for_the_line_number_citation_format(self):
+        assert "`- L<n>: <問題点> -> <改善案>`" in self.system()
+
+    def test_says_the_number_prefix_is_not_part_of_the_file(self):
+        """number_lines' `N │` prefix is not valid source; without this the
+        model reports the separator itself as a syntax error."""
+        text = self.system()
+        assert "'│' separator" in text
+        assert "NOT part of the file" in text
+
+    def test_warns_that_the_unit_was_cut_out_of_its_file(self):
+        """Callers and callees are genuinely absent from the payload, so a
+        guess about them must land under 確認が必要な点, not in the hints."""
+        text = self.system()
+        assert "cut out of its file" in text
+
+    def test_defines_an_exact_reply_for_nothing_to_report(self):
+        assert "指摘はありません。" in self.system()
+
+    def test_does_not_name_a_transport(self):
+        """Same trap as replace_system (3fae7ab): naming stdin points a tool
+        with no stdin path at somewhere the code is not. This prompt goes to
+        claude and gemini today; the wording must not be what breaks if it
+        ever goes anywhere else."""
+        assert "stdin" not in self.system().lower()
+
+    def test_announces_the_shape_hint_input_produces(self):
+        """The instruction promises a description followed by numbered code;
+        hint_input is what has to deliver it. Split across two functions, the
+        two can drift silently."""
+        text = self.system()
+        assert "opens with a one-line description" in text
+
+
+class TestHintInput:
+    """The stdin half of the hint request. Everything derived from buffer
+    contents lives here rather than in the instruction, because only this half
+    avoids argv."""
+
+    LABEL = "定義 `greet` (function_declaration) L12-13"
+    LINES = ["local function greet(name)", "end"]
+
+    def payload(self):
+        (text,) = prompt_call("hint_input", self.LABEL, self.LINES, 12)
+        return text
+
+    def test_leads_with_the_unit_description(self):
+        assert self.payload().startswith("## 対象\n" + self.LABEL)
+
+    def test_numbers_the_code_from_its_buffer_line(self):
+        text = self.payload()
+        assert "12 │ local function greet(name)" in text
+        assert "13 │ end" in text
+
+    def test_labels_the_number_prefix_the_way_the_instruction_describes_it(self):
+        assert "## コード (各行: <行番号> │ <本文>)" in self.payload()
+
 
 class TestFormatDiagnostics:
     # vim.diagnostic.severity: ERROR=1, WARN=2, INFO=3, HINT=4.

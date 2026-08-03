@@ -453,6 +453,8 @@ end
 ---   filetype = string|nil,     -- ft for the result buffer
 ---   winbar = string|nil,       -- header/help line pinned above the buffer
 ---   wrap = boolean|nil,        -- initial wrap state (default true)
+---   pending_text = string|nil, -- placeholder while the job runs
+---   fail_label = string|nil,   -- names the job in the failure line
 ---   copy_notify = string|nil,  -- notify text on yank
 ---   keymaps = table[]|nil,     -- extra buffer keymaps: { key, desc?, fn(ctx) }
 ---                              -- ctx = { buf, win, close, status }
@@ -463,7 +465,13 @@ function M.open_report(opts)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = opts.filetype or ""
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "[checking buffer...]" })
+  -- Both strings are caller-supplied because this driver now backs more than
+  -- the buffer check it was written for; a report collecting hints about one
+  -- function saying "checking buffer..." describes a different, more expensive
+  -- request. The defaults reproduce the original wording byte for byte, and the
+  -- label is interpolated rather than taken as a format string so a caller can
+  -- never turn a stray "%" in its own text into a format error.
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { opts.pending_text or "[checking buffer...]" })
   vim.bo[buf].modifiable = false
   pcall(vim.api.nvim_buf_set_name, buf, opts.name or "[AI Report]")
 
@@ -538,7 +546,8 @@ function M.open_report(opts)
     else
       state.status = "failed"
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-        string.format("[check failed: %s]", err or "unknown error"),
+        string.format("[%s failed: %s]",
+          opts.fail_label or "check", err or "unknown error"),
       })
     end
     vim.bo[buf].modifiable = false
