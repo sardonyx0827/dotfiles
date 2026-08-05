@@ -13,17 +13,18 @@ Contract (kept small on purpose so editor glue stays trivial):
     exit 0  -> clean: no credential value found, nothing written to stdout
     exit 1  -> credential detected: a generic category label on stdout
                (the matched value is NEVER printed — it must not leak onward)
-    exit 2  -> the scan did not happen, for any reason: the import failed, the
-               payload could not be read (a buffer that is not valid UTF-8), or
-               the scanner raised. Callers treat a non-{0,1} exit (this, or 127
-               when python is missing) as "cannot verify" and fail open with a
-               visible warning.
+    exit 2  -> the scan did not happen: the import failed, stdin could not be
+               read at all, or the scanner raised. Callers treat a non-{0,1}
+               exit (this, or 127 when python is missing) as "cannot verify"
+               and fail open with a visible warning.
 
-Note which way 2 differs from 1. A payload that could not be READ has not been
-cleared — but it has not been found guilty either, and reporting it as 1 was
-worse than fail-open: with nothing on stdout the editors raise a confirm dialog
-whose label is empty, which teaches the habit of approving a prompt that says
-nothing. An honest warning beats a meaningless question.
+Bytes that are not valid UTF-8 are NOT in that third state: they are decoded
+with replacement and scanned, so the exit code depends only on the payload and
+a token pasted into an otherwise binary buffer is still caught. Reading through
+sys.stdin's own text layer would instead make the result follow the ambient
+locale, and on the strict side that surfaced as an exit the editors read as a
+detection — a confirm dialog with an empty label, which teaches the habit of
+approving a prompt that says nothing.
 
 Payload is read from stdin, never argv: a secret on argv would show up in
 `ps aux`, which is its own leak.
@@ -50,11 +51,21 @@ def main() -> int:
     # The editor payload is free text; feed it as the command haystack. The
     # second arg mirrors scan_secrets' (command, tool_input) shape.
     try:
-        # Reading stdin belongs INSIDE the guard. A buffer that is not valid
-        # UTF-8 raises UnicodeDecodeError here, and letting it escape exits 1 --
-        # which callers read as a detection, producing exactly the empty-label
-        # "credential detected" dialog that the 1-vs-2 split exists to avoid.
-        text = sys.stdin.read()
+        # Decode explicitly rather than reading sys.stdin's text layer, whose
+        # error handler follows the ambient locale: strict under a UTF-8 locale,
+        # surrogateescape under C/POSIX (PEP 538). The same buffer therefore
+        # raised on a developer's machine and decoded silently in CI, making the
+        # exit code depend on the environment instead of the payload -- and on
+        # the raising side it exited 1, which callers read as a detection.
+        #
+        # Replacing undecodable bytes rather than refusing them also keeps the
+        # scan meaningful: a token pasted into an otherwise binary buffer is
+        # still matched, where bailing out would have skipped the scan entirely
+        # and handed the payload onward under a "cannot verify" warning.
+        #
+        # The read stays inside the guard: an I/O failure is the scanner being
+        # unavailable (2), never a detection (1).
+        text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         found, label = scan_secrets(text, {})
     except Exception as exc:  # noqa: BLE001 - never misreport a crash as clean
         # An unexpected scanner failure must read as "unavailable" (exit 2), not
