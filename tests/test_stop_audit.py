@@ -41,6 +41,20 @@ class TestClaudeVariant:
         assert "app.ts" in result["reason"]
         assert "console.log" in result["reason"]
 
+    def test_backslash_c_in_a_hit_does_not_truncate_findings(self, shell_env, git_repo):
+        # The matched source line is echoed into the reason, so a `\c` in the
+        # code lands in the accumulated string. printf %b stops printing there,
+        # dropping every later file from the block reason -- the gate still
+        # fires, but names only part of what it found.
+        (git_repo / "a.ts").write_text('console.log("first")\n', encoding="utf-8")
+        (git_repo / "b.ts").write_text('console.log("re \\c mid")\n', encoding="utf-8")
+        (git_repo / "c.ts").write_text('console.log("last")\n', encoding="utf-8")
+        res = shell_env.run(CLAUDE_HOOK, stdin="{}", cwd=git_repo)
+        result = json.loads(res.stdout)
+        assert result["decision"] == "block"
+        assert "a.ts" in result["reason"]
+        assert "c.ts" in result["reason"], "reason truncated at the \\c escape"
+
     def test_debugger_statement_blocks(self, shell_env, git_repo):
         (git_repo / "app.js").write_text("debugger;\n", encoding="utf-8")
         res = shell_env.run(CLAUDE_HOOK, stdin="{}", cwd=git_repo)
@@ -118,6 +132,15 @@ class TestCodexVariant:
         assert res.returncode == 2
         assert "app.ts" in res.stderr
         assert "console.log" in res.stderr
+
+    def test_backslash_c_in_a_hit_does_not_truncate_findings(self, shell_env, git_repo):
+        (git_repo / "a.ts").write_text('console.log("first")\n', encoding="utf-8")
+        (git_repo / "b.ts").write_text('console.log("re \\c mid")\n', encoding="utf-8")
+        (git_repo / "c.ts").write_text('console.log("last")\n', encoding="utf-8")
+        res = shell_env.run(CODEX_HOOK, stdin="{}", cwd=git_repo)
+        assert res.returncode == 2
+        assert "a.ts" in res.stderr
+        assert "c.ts" in res.stderr, "report truncated at the \\c escape"
 
     def test_stop_hook_active_exits_immediately(self, shell_env, git_repo):
         (git_repo / "app.ts").write_text('console.log("x")\n', encoding="utf-8")

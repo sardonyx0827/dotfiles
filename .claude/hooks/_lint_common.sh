@@ -360,7 +360,10 @@ hook_lint_file() {
 
   if [ -n "$LINT_ERRORS" ]; then
     hook_log "$hook_log_file" "FAILED: $BASENAME"
-    printf "%b" "$LINT_ERRORS" >>"$hook_log_file"
+    # `%b` ではなく `\n` だけを実改行へ戻す。区切りとしてリテラル `\n` を積む以上
+    # 復元は要るが、`%b` は `\c` も解釈し「以降の出力を打ち切る」ため、linter が
+    # 引用したソース行に `\c` が含まれるとそこから先の指摘が丸ごと消える。
+    printf '%s' "${LINT_ERRORS//\\n/$'\n'}" >>"$hook_log_file"
     printf -v "$hook_out_var" '%s' "$LINT_ERRORS"
     return 1
   fi

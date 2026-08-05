@@ -59,7 +59,10 @@ hook_notify "Lint Failed" "$BASENAME に問題が見つかりました" 15
 echo "" >&2
 echo "Lint errors found in $BASENAME:" >&2
 echo "---" >&2
-printf "%b" "$lint_errors" >&2
+# `%b` ではなく `\n` だけを実改行へ戻す。`%b` は `\c` を「以降の出力を打ち切る」と
+# 解釈するので、linter が引用したソース行に `\c` があると後続の指摘が Claude に
+# 一件も届かない (exit 2 でブロックはするが、直すべき内容が渡らない)。
+printf '%s' "${lint_errors//\\n/$'\n'}" >&2
 echo "---" >&2
 echo "Please fix the above issues." >&2
 exit 2 # Claudeが内容を読んで自動修正を試みる

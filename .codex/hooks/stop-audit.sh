@@ -65,6 +65,10 @@ done < <(
 
 [ -z "$findings" ] && exit 0
 
-# Codex の Stop フックでは exit 2 + stderr でブロックし、内容をエージェントに伝える
-printf '%b' "Debug statements remain in modified files. Remove console.log / debugger / breakpoint() before finishing:\n${findings}" >&2
+# Codex の Stop フックでは exit 2 + stderr でブロックし、内容をエージェントに伝える。
+# `%b` ではなく `\n` だけを実改行へ戻す: `%b` は `\c` を「以降の出力を打ち切る」と
+# 解釈するので、検出行に `\c` (正規表現 `/\c/`、Windows パス `"C:\components"` 等)
+# があると、それ以降に見つけたファイルが報告から丸ごと消える。
+reason="Debug statements remain in modified files. Remove console.log / debugger / breakpoint() before finishing:\n${findings}"
+printf '%s' "${reason//\\n/$'\n'}" >&2
 exit 2

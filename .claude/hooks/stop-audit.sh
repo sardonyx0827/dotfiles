@@ -66,5 +66,10 @@ done < <(
 [ -z "$findings" ] && exit 0
 
 reason="Debug statements remain in modified files. Remove console.log / debugger / breakpoint() before finishing:\n${findings}"
-jq -cn --arg reason "$(printf '%b' "$reason")" '{decision: "block", reason: $reason}'
+# `%b` ではなく `\n` だけを実改行へ戻す。`%b` は `\c` を「以降の出力を打ち切る」と
+# 解釈するので、検出行に `\c` (正規表現 `/\c/`、Windows パス `"C:\components"` 等)
+# があると、それ以降に見つけたファイルが reason から丸ごと消える。
+# $( ) で包むのは末尾改行を落とすため (findings は必ず `\n` で終わる)。外すと
+# reason の末尾に空行が 1 つ増えるので、整理のつもりで外さないこと。
+jq -cn --arg reason "$(printf '%s' "${reason//\\n/$'\n'}")" '{decision: "block", reason: $reason}'
 exit 0

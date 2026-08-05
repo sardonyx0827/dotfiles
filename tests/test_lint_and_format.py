@@ -167,6 +167,25 @@ class TestLint:
         assert res.returncode == 2
         assert "[shellcheck]" in res.stderr
 
+    def test_backslash_c_in_linter_output_does_not_truncate(
+        self, LINT, shell_env, tmp_path
+    ):
+        # Linters quote the offending source line back, so a file containing
+        # `\c` puts that sequence in their output. printf %b reads `\c` as
+        # "stop printing here", which silently dropped every finding after it:
+        # the hook still exited 2, but the model received nothing to act on.
+        shell_env.stub(
+            "shellcheck",
+            body=r"printf '%s\n' 'SC2154 first' 'msg=a\cb' 'SC2086 last'",
+            exit_code=1,
+        )
+        target = tmp_path / "x.sh"
+        target.write_text("echo hi\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "SC2154 first" in res.stderr
+        assert "SC2086 last" in res.stderr, "report truncated at the \\c escape"
+
     def test_missing_jq_exits_zero(self, LINT, shell_env):
         jq_path = shutil.which("jq")
         assert jq_path, "jq must be installed for this test to be meaningful"
