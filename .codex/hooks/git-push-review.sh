@@ -183,7 +183,21 @@ strip_quoted_ranges() {
   printf '%s' "$out"
 }
 
-cmd_for_match=$(strip_quoted_ranges "$cmd")
+# `${IFS}` / `$IFS` は bash が空白へ展開してから語分割するため、`git${IFS}push`
+# はシェルにとって本当に `git push` である。以降の検知はどれも「生バイトとしての
+# 空白」を要求するので、ここで一度だけ空白へ畳んでから全ての検査に回す。
+# インタプリタ検知より前で畳むのが要点で、後ろでやると `sh${IFS}-c "git push"`
+# がインタプリタとして認識されず、クォート区間ごと落ちて push が消える。
+#
+# 展開一般 (`${x}` や `$(...)` で語を組み立てる形) の解決は範囲外 — 実行前に
+# 確定するにはシェルの評価が要る。そちらは _bash_review_common.py の
+# _UNRESOLVABLE_EXPANSION が「実行体を確定できない」として high-risk (二重モデル
+# AND ゲート) へ倒す方で受ける。ここで畳むのは IFS だけ = 空白そのものを隠す
+# 定型手口で、かつ副作用なく正規化できるため。
+cmd_norm="${cmd//\$\{IFS\}/ }"
+cmd_norm="${cmd_norm//\$IFS/ }"
+
+cmd_for_match=$(strip_quoted_ranges "$cmd_norm")
 
 # `eval` / `sh -c` / `bash -c` は文字列引数を「データ」ではなく「コード」として
 # 実行する。つまり strip_quoted_ranges が「単なるメッセージ」として捨てたクォート
@@ -202,9 +216,13 @@ cmd_for_match=$(strip_quoted_ranges "$cmd")
 # だけ素通りするという不整合な穴が残る。
 # shellcheck disable=SC2016  # 正規表現中の $ とバッククォートはリテラル
 executes_string_arg='(^|[;&|[:space:](`/])(eval|(bash|sh|zsh|dash|ksh)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[A-Za-z]*c)([[:space:]]|$)'
-if printf '%s' "$cmd" | grep -qE "$executes_string_arg"; then
+# 照合を -i にするのは、既定の macOS (APFS) / Windows のファイルシステムが
+# 大文字小文字を区別せず `BASH -c "git push"` が本当に bash を走らせるから。
+# bash 自身の `-c` は大小を区別する (`-C` は別物) ので -i は過検知側に振れるが、
+# 上記のとおり push 確認は余分にブロックへ倒れる方が安全側。
+if printf '%s' "$cmd_norm" | grep -qiE "$executes_string_arg"; then
   cmd_for_match="${cmd_for_match}
-$(printf '%s' "$cmd" | tr -d "\"'")"
+$(printf '%s' "$cmd_norm" | tr -d "\"'")"
 fi
 
 # コマンド文字列のどこかに git ... push が含まれるか(チェーン・サブシェル・
@@ -214,8 +232,12 @@ fi
 # 先頭が - 以外のトークンに限定)。push の直後は空白・行末だけでなく、
 # `;` `&` `|` `)` と閉じバッククォートも文の終端になり得る
 # (`git push;true` / `(git push)` / `$(git push)` を見逃さない)。
+#
+# 境界に `/` を含める理由は上の executes_string_arg と同じ: パス指定の
+# `/usr/bin/git push` も同じコマンドで、`/` が境界でないと裸の `git push` は
+# 捕まるのにパス付きだけ素通りするという不整合な穴が残る。
 # shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル(展開させない)
-echo "$cmd_for_match" | grep -qE '(^|[;&|[:space:](`])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:];&|)`]|$)' || exit 0
+echo "$cmd_for_match" | grep -qiE '(^|[;&|[:space:](`/])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:];&|)`]|$)' || exit 0
 
 # `git -C <dir> push` のように push 対象リポジトリが明示されている場合、
 # サマリもフック自身の cwd ではなく同じ <dir> を対象に生成する。
@@ -225,7 +247,12 @@ echo "$cmd_for_match" | grep -qE '(^|[;&|[:space:](`])git([[:space:]]+-[^[:space
 # (途中はダッシュフラグのみ) だけを push 対象の -C として拾う。
 git_c_opt=()
 # shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル(展開させない)
-git_c_re='(^|[;&|[:space:](`])git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-C[[:space:]]+([^[:space:]]+)'
+# 大小の扱いは検知側と違い、`git` の綴りだけ [Gg][Ii][Tt] で許して `-C` は区別
+# したままにする。nocasematch で一括に畳むと `-C` が git の実在フラグ `-c`
+# (`git -c key=val push` の config 指定) にも一致し、その値をリポジトリパスとして
+# 掴んでサマリを壊す — 値がたまたま実在リポジトリなら、別リポジトリの要約を見せて
+# 承認させる形になる。
+git_c_re='(^|[;&|[:space:](`/])[Gg][Ii][Tt][[:space:]]+(-[^[:space:]]+[[:space:]]+)*-C[[:space:]]+([^[:space:]]+)'
 if [[ "$cmd_for_match" =~ $git_c_re ]]; then
   git_c_opt=(-C "${BASH_REMATCH[3]}")
 fi

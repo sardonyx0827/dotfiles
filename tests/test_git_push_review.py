@@ -251,6 +251,42 @@ class TestClaudeVariant:
         assert "branch: feature-target" in reason
         assert "target repo commit" in reason
 
+    def test_dash_c_summary_survives_path_qualified_git(self, shell_env, tmp_path):
+        # Showing the WRONG repo's commits in a confirmation prompt is worse
+        # than showing none: the user approves against a summary that does not
+        # describe what is about to be pushed. The `-C` extraction has to count
+        # `/` as a token boundary for the same reason detection does.
+        target = make_target_repo(tmp_path)
+        outside = tmp_path / "not-a-repo"
+        outside.mkdir()
+        res = shell_env.run(
+            CLAUDE_HOOK, stdin=payload(f"/usr/bin/git -C {target} push"), cwd=outside
+        )
+        assert res.returncode == 0
+        output = json.loads(res.stdout)["hookSpecificOutput"]
+        assert output["permissionDecision"] == "ask"
+        reason = output["permissionDecisionReason"]
+        assert "branch: feature-target" in reason
+        assert "target repo commit" in reason
+
+    def test_lowercase_dash_c_config_flag_is_not_a_repo_path(self, shell_env, tmp_path):
+        # `git -c <key>=<value>` sets config; it is NOT `-C <dir>`. Matching the
+        # repo-path flag case-insensitively would consume the config value as a
+        # directory, blanking the summary -- or, if the value happened to name a
+        # real repo, describing the wrong one in the confirmation prompt.
+        target = make_target_repo(tmp_path)
+        res = shell_env.run(
+            CLAUDE_HOOK,
+            stdin=payload("git -c commit.gpgsign=false push"),
+            cwd=target,
+        )
+        assert res.returncode == 0
+        output = json.loads(res.stdout)["hookSpecificOutput"]
+        assert output["permissionDecision"] == "ask"
+        reason = output["permissionDecisionReason"]
+        assert "branch: feature-target" in reason
+        assert "target repo commit" in reason
+
     def test_dash_c_in_earlier_chain_command_does_not_shadow_target(
         self, shell_env, tmp_path
     ):
@@ -446,6 +482,31 @@ DETECTION_CASES = [
     ('/bin/bash -c "git push origin main"', True),
     ('/bin/sh -c "git push origin main"', True),
     ("/usr/bin/env bash -c 'git push origin main'", True),
+    # `git` itself is the same command when path-qualified, for exactly the
+    # reason the interpreter check above already counts `/` as a boundary. If
+    # the push check disagrees, `/usr/bin/git push` slips past while the bare
+    # form is caught -- the inconsistent hole that comment warns about.
+    ("/usr/bin/git push origin main", True),
+    ("/opt/homebrew/bin/git -C /repo push --force", True),
+    ('sh -c "/usr/bin/git push"', True),
+    # `${IFS}` expands to whitespace and then word-splits, so bash runs this as
+    # `git push origin main` even though no literal space separates the tokens.
+    ("git${IFS}push origin main", True),
+    ("$IFS git${IFS}push --force", True),
+    # The default macOS/Windows filesystems are case-insensitive, so `GIT` and
+    # `BASH` really do resolve to git and bash. Matching folds case or the whole
+    # gate is one Shift key away.
+    ("GIT push origin main", True),
+    ("Git Push origin main", True),
+    ('BASH -c "git push origin main"', True),
+    # The interpreter check reads the command too, so it needs the same `${IFS}`
+    # normalisation the push check got -- otherwise the quoted payload is
+    # discarded as an inert message and the push inside it disappears.
+    ('sh${IFS}-c "git push origin main"', True),
+    ('eval${IFS}"git push origin main"', True),
+    ("GIT status", False),
+    # ...but path-qualifying a non-push git command must stay quiet.
+    ("/usr/bin/git status", False),
     ("git status", False),
     ("git stash push", False),
     ('echo "git push"', False),
