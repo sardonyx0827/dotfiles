@@ -6,6 +6,7 @@ tool functions stay plain callables.
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import time
@@ -230,3 +231,69 @@ class TestNotifyInjection:
         assert "printenv CLAUDE_NOTIFY_TITLE" in script
         assert kwargs["env"]["CLAUDE_NOTIFY_TITLE"] == malicious_title
         assert kwargs["env"]["CLAUDE_NOTIFY_MESSAGE"] == malicious_message
+
+
+class TestLoggingNeverCostsTheResponse:
+    """A response is already paid for by the time it is written to the log."""
+
+    @staticmethod
+    def _fill_log_past_rotation(server):
+        os.makedirs(os.path.dirname(server.log_file), exist_ok=True)
+        with open(server.log_file, "w", encoding="utf-8") as f:
+            f.writelines("x\n" for _ in range(server.MAX_LOG_LINES + 5))
+
+    @pytest.mark.parametrize("tool", ["consult_gemini", "review_gemini"])
+    def test_rotation_failure_still_returns_the_response(
+        self, server, monkeypatch, tool
+    ):
+        # _append_log re-raises OSError after cleaning up its temp file, and
+        # neither except clause catches a bare OSError -- URLError is a SUBCLASS
+        # of OSError, not its parent -- so a failed rotation propagated straight
+        # out of the tool and discarded a successful answer.
+        def boom(*_a, **_k):
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini("the answer"))
+        self._fill_log_past_rotation(server)
+        monkeypatch.setattr(os, "replace", boom)
+        assert getattr(server, tool)("question") == "the answer"
+
+    @pytest.mark.parametrize("tool", ["consult_gemini", "review_gemini"])
+    def test_rotation_failure_on_the_error_path_still_returns_the_message(
+        self, server, monkeypatch, tool
+    ):
+        # The error path logs too, so the same OSError could replace a tidy
+        # "Gemini API error: ..." string with a crash.
+        def boom(*_a, **_k):
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini(URLError("down")))
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+        self._fill_log_past_rotation(server)
+        monkeypatch.setattr(os, "replace", boom)
+        assert "Gemini API error" in getattr(server, tool)("question")
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            OSError("no space left on device"),
+            UnicodeEncodeError("utf-8", "x", 0, 1, "surrogates not allowed"),
+        ],
+        ids=["oserror", "unicodeencodeerror"],
+    )
+    @pytest.mark.parametrize("tool", ["consult_gemini", "review_gemini"])
+    def test_any_log_failure_still_returns_the_response(
+        self, server, monkeypatch, tool, exc
+    ):
+        # Suppressing only OSError left the same bug reachable by another type:
+        # a lone surrogate survives json.loads but cannot be encoded as UTF-8,
+        # so writing the log raises UnicodeEncodeError -- a ValueError subclass,
+        # which the first except clause then reports as "APIキー未設定" while
+        # discarding the answer. Logging is a side effect; it never costs the
+        # response, whatever it fails with.
+        def boom(*_a, **_k):
+            raise exc
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini("the answer"))
+        monkeypatch.setattr(server, "_append_log", boom)
+        assert getattr(server, tool)("question") == "the answer"

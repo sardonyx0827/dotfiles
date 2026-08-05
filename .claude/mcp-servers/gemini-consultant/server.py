@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -100,6 +101,39 @@ def log_entry(tool: str, status: str, prompt: str, response: str = "") -> None:
     lines.append(separator)
 
     _append_log(lines)
+
+
+def _log_quietly(tool: str, status: str, prompt: str, response: str = "") -> None:
+    """ログ書き込みの失敗で Gemini の応答そのものを失わせない。
+
+    _append_log はローテーション失敗時、一時ファイルを片付けたうえで OSError を
+    再送出する (中途半端な状態のまま黙るより呼び出し側に伝える、という設計)。
+    ただし tool にとってログは副作用でしかなく、応答は既に API 呼び出しを払って
+    得た成果物なので、ここで握って応答を優先する。
+
+    握る型は 2 つ。OSError は書き込み・ローテーション失敗 (握らないと tool の外まで
+    抜ける: except は ValueError と (URLError, TimeoutError, ...) だけで、素の
+    OSError はどちらにも該当しない。URLError は OSError の *サブクラス* であって
+    親ではない)。UnicodeError は応答が UTF-8 で書けない場合 — lone surrogate は
+    json.loads を通るがファイルへは書けず、UnicodeEncodeError は ValueError の
+    サブクラスなので、握らないと `except ValueError` が「APIキー未設定」という
+    事実と異なる通知を出したうえで応答を捨てる。
+
+    ValueError 全体ではなく UnicodeError に絞るのは、ログの整形バグ (書式指定子の
+    取り違え等) まで無言で飲み込まないため。
+    """
+    try:
+        log_entry(tool, status, prompt, response)
+    except (OSError, UnicodeError) as exc:
+        # stdout は MCP の JSON-RPC 専用なので絶対に使わない。完全な無言だと
+        # 「ログが恒久的に書けない」状態に誰も気付けないため stderr にだけ残す。
+        #
+        # その警告自体も握る: stderr が閉じていれば print は BrokenPipeError
+        # (= OSError) を投げ、それは呼び出し側の except をどれも通らず tool の外
+        # まで抜ける — この関数が塞いだのと寸分違わぬ失敗モードを、報告のために
+        # 作り直すことになる。
+        with contextlib.suppress(OSError):
+            print(f"gemini-consultant: log write failed: {exc}", file=sys.stderr)
 
 
 # -------------------------------------------------------------------
@@ -252,11 +286,11 @@ def consult_gemini(question: str) -> str:
 
     try:
         result = call_gemini(prompt, model=DEEP_MODEL)
-        log_entry("consult_gemini", "OK", prompt, result)
+        _log_quietly("consult_gemini", "OK", prompt, result)
         notify("Gemini Consultant", f"設計相談完了: {question[:40]}", 4)
         return result
     except ValueError as e:
-        log_entry("consult_gemini", "ERROR", prompt, str(e))
+        _log_quietly("consult_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIキー未設定", 8)
         return f"Gemini API error: {e}"
     except (
@@ -266,7 +300,7 @@ def consult_gemini(question: str) -> str:
         IndexError,
         KeyError,
     ) as e:
-        log_entry("consult_gemini", "ERROR", prompt, str(e))
+        _log_quietly("consult_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIエラーが発生しました", 10)
         return f"Gemini API error: {e}"
 
@@ -288,11 +322,11 @@ def review_gemini(question: str) -> str:
 
     try:
         result = call_gemini(prompt, model=LIGHT_MODEL)
-        log_entry("review_gemini", "OK", prompt, result)
+        _log_quietly("review_gemini", "OK", prompt, result)
         notify("Gemini Consultant", f"レビュー完了: {question[:40]}", 4)
         return result
     except ValueError as e:
-        log_entry("review_gemini", "ERROR", prompt, str(e))
+        _log_quietly("review_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIキー未設定", 8)
         return f"Gemini API error: {e}"
     except (
@@ -302,7 +336,7 @@ def review_gemini(question: str) -> str:
         IndexError,
         KeyError,
     ) as e:
-        log_entry("review_gemini", "ERROR", prompt, str(e))
+        _log_quietly("review_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIエラーが発生しました", 10)
         return f"Gemini API error: {e}"
 
