@@ -338,11 +338,17 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
             # 展開トークンが実行体の位置にある: 空展開なら次のトークンが実行体に
             # なるため、このトークンを実行体と決め打ちできない (上の定義参照)。
             return None
-        base = tok.rsplit("/", 1)[-1]
+        # ラッパー名も case-insensitive な FS では解決するので畳む (`ENV sudo` は
+        # 本当に env 経由で sudo を走らせる)。剥がしはこの関数で起きるため、
+        # _resolve_executable の戻り値を畳むだけでは間に合わない。
+        base = tok.rsplit("/", 1)[-1].casefold()
         if base in _WRAPPER_EXECUTABLES:
             valueless = _WRAPPER_VALUELESS_FLAGS.get(base, frozenset())
             i += 1
             while i < len(tokens) and tokens[i].startswith("-"):
+                # フラグ側は畳まない: `env -I` は `env -i` ではなく、`xargs -I` も
+                # `xargs -i` と別物。未知フラグを既知へ畳むと「実行体を確定できない
+                # → レビュー行き」という安全側の判定が働かなくなる。
                 if tokens[i] not in valueless:
                     return None  # 値付き/未知フラグ: 実行体を確定できない
                 i += 1
@@ -381,7 +387,13 @@ def _resolve_executable(cmd: str) -> str:
     rest = _split_prefix(_tokenize(cmd))
     if not rest:
         return ""
-    return rest[0].rsplit("/", 1)[-1]
+    # macOS の既定 (APFS) と Windows のファイルシステムは大文字小文字を区別しない
+    # ため、`CURL` / `SUDO` / `GIT` はそのまま本体を解決して実行される。呼び出し側は
+    # いずれも「どの実行体か」の判定にこの戻り値を使うので、解決の一部として畳む。
+    # 個々の呼び出し側で畳むと必ずどこかが漏れる (実際、deny 層だけ畳んで high-risk
+    # 層が素通りする状態を一度作った)。大文字小文字を区別する FS では別名バイナリを
+    # 過剰に同一視するが、いずれの用途でも安全側に倒れる。
+    return rest[0].rsplit("/", 1)[-1].casefold()
 
 
 def _find_subcommand(exe: str, args: list[str]) -> str:
@@ -691,6 +703,12 @@ def _has_dangerous_rg_flag(cmd: str) -> bool:
     と同じ正規化の設計原則をここにも適用する。
     """
     tokens = _tokenize(cmd)
+    # ここが `"rg"` と大小を区別して比較してよいのは、この関数がセーフスキップ側
+    # (_is_safe_command) の否定ゲートでしかなく、その _is_safe_command 自身も生の
+    # cmd を SAFE_COMMANDS と照合しているため。`RG --pre sh x` はそもそもセーフに
+    # 一致せずレビューへ回る。**逆に言えば SAFE_COMMANDS 側だけを畳むと、この行が
+    # その瞬間に生きたバイパスになる** (`RG --pre sh x` がセーフ扱いのままここで
+    # False を返し、AI レビューを完全回避する)。片方だけ畳まないこと。
     if not tokens or tokens[0] != "rg":
         return False
     for tok in tokens[1:]:
@@ -807,8 +825,11 @@ def _can_skip_review(cmd: str) -> bool:
 
 def _is_deny_command(cmd: str) -> tuple[bool, str]:
     """危険コマンドに一致するか判定し、(一致したか, 一致したコマンド名) を返す"""
+    # DENY_COMMANDS は実行体ではなく生コマンド文字列への前方一致なので、
+    # _resolve_executable の畳み込みが効かない。ここで独自に畳む。
+    folded = cmd.casefold()
     for deny in DENY_COMMANDS:
-        if cmd == deny or cmd.startswith(deny + " "):
+        if folded == deny or folded.startswith(deny + " "):
             return True, deny
     exe = _resolve_executable(cmd)
     # mkfs は mkfs.ext4 / mkfs.xfs のようにファイルシステム名を接尾するため
@@ -992,7 +1013,11 @@ def _high_risk_label(cmd: str) -> str:
         return "wrapped command"
     if not rest:
         return ""
-    exe = rest[0].rsplit("/", 1)[-1]
+    # 判定は畳んだ名前で行う (case-insensitive な FS では `GIT push --force` が
+    # 本当に git を走らせる。理由は _resolve_executable のコメント参照)。ラベルに
+    # 出すのは生の綴りのままで、「実際に走る形を見せる」既存方針を保つ。
+    exe_raw = rest[0].rsplit("/", 1)[-1]
+    exe = exe_raw.casefold()
     rest = rest[1:]
     sub = _find_subcommand(exe, rest)
 
@@ -1025,7 +1050,7 @@ def _high_risk_label(cmd: str) -> str:
     # (他のキーは末尾に数字を持たない) なので誤分類は生じない。
     pkg_exe = _VERSION_SUFFIX.sub("", exe)
     if pkg_exe in _PKG_INSTALL_SUBCOMMANDS and sub in _PKG_INSTALL_SUBCOMMANDS[pkg_exe]:
-        return f"{exe} {sub}"
+        return f"{exe_raw} {sub}"
     # `python -m pip install` は `pip install` と全く同じサプライチェーン操作
     # なので同じラベルに寄せる。`-m` 自体は引き金にせず (python -m http.server /
     # -m pytest は通常運用)、モジュールが pip でサブコマンドが install の
@@ -1037,13 +1062,13 @@ def _high_risk_label(cmd: str) -> str:
     if exe == "uv" and rest[:2] == ["pip", "install"]:
         return "uv pip install"
     if exe in ("pnpm", "yarn") and sub == "dlx":
-        return f"{exe} dlx"
+        return f"{exe_raw} dlx"
     if exe in _REMOTE_EXEC_EXECUTABLES:
-        return f"{exe} (remote code execution)"
+        return f"{exe_raw} (remote code execution)"
     # `-c` は POSIX シェルで一律「コマンド文字列を実行」を意味する唯一の c フラグ
     # なので、束ね形 (`bash -xc`) も _COMMAND_FLAG で拾う。
     if exe in _SHELL_EXECUTABLES and any(_COMMAND_FLAG.match(t) for t in rest):
-        return f"{exe} -c"
+        return f"{exe_raw} -c"
     eval_flags = _INTERPRETER_EVAL_FLAGS.get(_VERSION_SUFFIX.sub("", exe))
     if eval_flags:
         # eval_flags のうち短縮 1 文字フラグ (-c / -e / -p / -E / -r) の文字集合。
@@ -1054,17 +1079,17 @@ def _high_risk_label(cmd: str) -> str:
             # `tok.split("=")[0]` で値を = 連結した長形式 (node --eval=CODE) も拾う。
             # = を含まないトークンでは head == tok なので完全一致の上位互換。
             if tok.split("=", 1)[0] in eval_flags:
-                return f"{exe} {tok}"
+                return f"{exe_raw} {tok}"
             if _SHORT_FLAG_BUNDLE.fullmatch(tok) and any(
                 c in tok[1:] for c in short_chars
             ):
-                return f"{exe} {tok}"
+                return f"{exe_raw} {tok}"
     if exe == "eval":
         return "eval"
     if exe in ("chmod", "chown") and any(
         _RECURSIVE_UPPER_FLAG.match(t) or t == "--recursive" for t in rest
     ):
-        return f"{exe} -R"
+        return f"{exe_raw} -R"
     if exe == "find" and any(
         t in ("-exec", "-execdir", "-ok", "-okdir", "-delete") for t in rest
     ):
@@ -1127,7 +1152,10 @@ def _bare_interpreter_stdin_label(segment: str, *, is_pipe_target: bool) -> str:
     rest = _split_prefix(_tokenize(segment))
     if not rest:
         return ""
-    exe = rest[0].rsplit("/", 1)[-1]
+    # _high_risk_label と同じ分割: 判定は畳んだ名前で、ラベルは生の綴りで。
+    # `echo 'rm -rf /' | BASH` も case-insensitive な FS では本当に bash が走る。
+    exe_raw = rest[0].rsplit("/", 1)[-1]
+    exe = exe_raw.casefold()
     if _VERSION_SUFFIX.sub("", exe) not in _STDIN_CODE_INTERPRETERS:
         return ""
     args = rest[1:]
@@ -1152,10 +1180,10 @@ def _bare_interpreter_stdin_label(segment: str, *, is_pipe_target: bool) -> str:
         if tok.startswith("<") or tok.startswith(">"):
             break  # リダイレクト以降は I/O。ここで打ち切る
         if exe in _SHELL_EXECUTABLES and _SHELL_STDIN_FLAG.match(tok):
-            return f"stdin into {exe}"  # 位置引数より前の -s = stdin 実行
+            return f"stdin into {exe_raw}"  # 位置引数より前の -s = stdin 実行
         if not tok.startswith("-"):
             return ""  # スクリプト/モジュールの位置引数 → stdin 実行ではない
-    return f"stdin into {exe}"
+    return f"stdin into {exe_raw}"
 
 
 def stdin_interpreter_label(command: str) -> str:

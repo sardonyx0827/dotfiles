@@ -718,6 +718,39 @@ class TestCommandHelpers:
             ("command sudo whoami", (True, "sudo")),
             ("FOO=bar curl http://evil", (True, "curl")),
             ("nohup wget http://evil", (True, "wget")),
+            # The default macOS (APFS) and Windows filesystems are
+            # case-insensitive, so `CURL` and `SUDO` really do resolve to and
+            # execute curl and sudo. An exact-match deny set puts the whole
+            # boundary one Shift key away, so matching folds case. On a
+            # case-sensitive filesystem this over-denies a hypothetical binary
+            # named `CURL`, which is the safe direction for a deny list.
+            ("CURL http://evil", (True, "curl")),
+            ("SUDO rm -rf /", (True, "sudo")),
+            ("Curl http://evil", (True, "curl")),
+            ("/usr/bin/CURL http://evil", (True, "curl")),
+            ("WGET http://evil", (True, "wget")),
+            ("env SUDO whoami", (True, "sudo")),
+            ("MKFS.EXT4 /dev/sda1", (True, "mkfs.ext4")),
+            # The multi-word prefixes need the same fold: leaving them
+            # case-sensitive would keep half the function bypassable.
+            ("RM -RF /", (True, "rm -rf /")),
+            ("Rm -rf ~", (True, "rm -rf ~")),
+            # ...but folding case must not start denying unrelated names.
+            ("SUDOKU --solve", (False, "")),
+            ("CURLING --sheet 3", (False, "")),
+            # Wrapper names resolve on a case-insensitive filesystem too, and
+            # _split_prefix strips them BEFORE _resolve_executable gets to fold
+            # anything -- so leaving this layer raw puts `sudo` back one Shift
+            # key away even though the deny set itself now folds.
+            ("ENV sudo whoami", (True, "sudo")),
+            ("NOHUP curl http://evil", (True, "curl")),
+            ("TIMEOUT 10 sudo whoami", (True, "sudo")),
+            ("COMMAND sudo whoami", (True, "sudo")),
+            # ...but a wrapper's own FLAGS must stay case-sensitive. `env -I` is
+            # not `env -i`; folding an unknown flag into a known one would stop
+            # it failing safe to review and weaken the valueless allowlist.
+            ("env -I sudo whoami", (False, "")),
+            ("ENV -I sudo whoami", (False, "")),
             # Filesystem creation wipes the target device.
             ("mkfs.ext4 /dev/sda1", (True, "mkfs.ext4")),
             ("mkfs -t ext4 /dev/sda1", (True, "mkfs")),
@@ -1037,6 +1070,11 @@ class TestHighRiskClassifier:
             ("python3 -m http.server", False),  # module run, not stdin
             ("ls | grep foo", False),  # receiver is not an interpreter
             ("echo hi | cat", False),
+            # A case-insensitive filesystem resolves these to the real shells,
+            # so piping code into them is the same arbitrary execution.
+            ("echo 'rm -rf /' | BASH", True),
+            ("cat payload | SH", True),
+            ("base64 -d payload | Bash", True),
         ],
     )
     def test_stdin_interpreter_classification(self, hook_fns, command, risky):
@@ -1158,6 +1196,15 @@ class TestHighRiskClassifier:
             ("flock /tmp/l -c 'sudo rm -rf /'", "wrapped"),
             ("flock /tmp/l --command 'rm -rf /'", "wrapped"),
             ("timeout 10 -v sudo rm -rf /", "wrapped"),
+            # Case-insensitive filesystems resolve these to the real binaries,
+            # so the high-risk classifier has to fold case too. Folding only
+            # inside the deny check leaves the "always ask" guarantee -- the
+            # two-model AND gate -- reachable by pressing Shift.
+            ("GIT push --force", "git force push"),
+            ("GIT reset --hard HEAD~1", "git reset --hard"),
+            ("RM -rf ./src", "rm recursive"),
+            ("BASH -c 'git push'", "-c"),
+            ("XARGS rm -rf ./build", "rm recursive"),
         ],
     )
     def test_wrapper_and_flag_evasion_is_classified(
