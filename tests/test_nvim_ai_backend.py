@@ -38,6 +38,7 @@ from test_bash_review import FAKE_AWS_KEY
 
 HARNESS = REPO_ROOT / "tests/lua/nvim_call.lua"
 BACKEND_MODULE = "setup.functions.ai.backend"
+UI_MODULE = "setup.functions.ai.ui"
 NVIM = shutil.which("nvim")
 
 pytestmark = pytest.mark.skipif(NVIM is None, reason="nvim not installed")
@@ -59,6 +60,32 @@ class LuaResult:
 
 
 CALLBACK = {"__callback": True}
+
+
+def _lua_probe(tmp_path, body):
+    """Run `body` in a bare `nvim -l` with the repo's lua tree on package.path.
+
+    For invariants that only nvim itself can decide (does this API accept these
+    arguments?) rather than ones a returned value can show.
+    """
+    binroot = make_bin(tmp_path, "probebin")
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    probe = tmp_path / "probe.lua"
+    probe.write_text(
+        f'package.path = "{REPO_ROOT}/.config/nvim/lua/?.lua;"\n'
+        f'  .. "{REPO_ROOT}/.config/nvim/lua/?/init.lua;" .. package.path\n' + body,
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [NVIM, "-l", str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={"PATH": str(binroot), "HOME": str(home)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip()
 
 
 def make_bin(tmp_path, name, tools=("sh",)):
@@ -113,10 +140,10 @@ def fake_repo(tmp_path, scanner_body=None):
     return root
 
 
-def backend_call(fn, *args, binroot, tmp_path, xdg=None):
-    """Call `ai.backend.<fn>` (dotted paths allowed) in a sealed headless nvim."""
+def backend_call(fn, *args, binroot, tmp_path, xdg=None, module=BACKEND_MODULE):
+    """Call `ai.<module>.<fn>` (dotted paths allowed) in a sealed headless nvim."""
     request = {
-        "module": BACKEND_MODULE,
+        "module": module,
         "fn": fn,
         "args": list(args),
         "nargs": len(args),
@@ -444,7 +471,7 @@ def test_the_test_seam_exposes_exactly_what_these_tests_use(tmp_path):
         env={"PATH": str(binroot), "HOME": str(home)},
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == "build_cli_cmd,scan_payload"
+    assert proc.stdout.strip() == "build_cli_cmd,cli_failure_reason,scan_payload"
 
 
 def test_nvim_l_does_not_load_the_user_config(tmp_path):
@@ -483,3 +510,120 @@ def test_nvim_l_does_not_load_the_user_config(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "false false"
+
+
+class TestCliFailureReason:
+    """What the hint report says when a CLI run does not produce an answer.
+
+    Two things were wrong. `exit code 0` was reported when the tool succeeded
+    but printed nothing -- stating a success as the cause of a failure. And
+    with no on_stderr handler the CLI's own diagnosis was thrown away: a
+    missing binary exits 127 with "command not found" on stderr, so the reader
+    saw a bare number and no way to tell that the tool simply is not installed.
+    """
+
+    def reason(self, tmp_path, exit_code, stderr):
+        return backend_call(
+            "_internal.cli_failure_reason",
+            exit_code,
+            stderr,
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+        ).only
+
+    def test_exit_zero_is_never_reported_as_an_exit_code(self, tmp_path):
+        assert "exit code 0" not in self.reason(tmp_path, 0, [])
+
+    def test_exit_zero_reports_an_empty_response(self, tmp_path):
+        assert "empty" in self.reason(tmp_path, 0, []).lower()
+
+    def test_stderr_is_carried_into_the_reason(self, tmp_path):
+        r = self.reason(tmp_path, 127, ["sh: gemini: command not found"])
+        assert "127" in r
+        assert "command not found" in r
+
+    def test_bare_exit_code_when_the_tool_said_nothing(self, tmp_path):
+        assert self.reason(tmp_path, 2, []) == "exit code 2"
+
+    def test_blank_stderr_does_not_leave_a_dangling_separator(self, tmp_path):
+        assert self.reason(tmp_path, 2, ["", ""]) == "exit code 2"
+
+    def test_truncation_does_not_split_a_multibyte_character(self, tmp_path):
+        # CLIs localise their errors. Cutting the quote at a byte offset lands
+        # mid-character for anything outside ASCII and emits invalid UTF-8.
+        r = self.reason(tmp_path, 1, ["\u30a8\u30e9\u30fc" * 400])
+        assert "\ufffd" not in r, "truncated mid-character"
+        assert r.endswith("...")
+
+
+class TestFailureMessageReachesTheBuffer:
+    """A failure reason is rendered with nvim_buf_set_lines, which REJECTS an
+    item containing a newline ('replacement string' item contains newlines).
+
+    While the reason was always `exit code N` this could not happen. Quoting
+    the tool's stderr made multi-line reasons the normal case -- a traceback is
+    exactly what MAX_STDERR_CHARS was sized for -- so the display has to split
+    the message instead of handing it over as one line.
+    """
+
+    def lines(self, tmp_path, label, err):
+        return backend_call(
+            "_internal.failure_lines",
+            label,
+            err,
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+            module=UI_MODULE,
+        ).ret[0]
+
+    def test_no_item_contains_a_newline(self, tmp_path):
+        got = self.lines(tmp_path, "gemini", "exit code 1: Traceback\n  File x\nBoom")
+        assert got, "expected at least one line"
+        assert all("\n" not in item for item in got), got
+
+    def test_a_single_line_reason_stays_one_line(self, tmp_path):
+        got = self.lines(tmp_path, "gemini", "exit code 2")
+        assert len(got) == 1
+        assert "gemini" in got[0] and "exit code 2" in got[0]
+
+    def test_a_nil_reason_is_still_reported(self, tmp_path):
+        got = self.lines(tmp_path, "gemini", None)
+        assert len(got) == 1
+        assert "unknown error" in got[0]
+
+    def test_every_stderr_line_survives(self, tmp_path):
+        got = self.lines(tmp_path, "codex", "exit code 1: first\nsecond\nthird")
+        joined = "\n".join(got)
+        for part in ("first", "second", "third"):
+            assert part in joined, f"{part} missing from {got}"
+
+    def test_nvim_actually_accepts_the_result(self, tmp_path):
+        # The property that matters is not "no newline in a string" -- that is
+        # the test above -- but "nvim_buf_set_lines takes these lines", so push
+        # them through it for real rather than restating the same assertion.
+        out = _lua_probe(
+            tmp_path,
+            'local ui = require("setup.functions.ai.ui")\n'
+            'local lines = ui._internal.failure_lines("gemini", "exit code 1: a\\nb\\nc")\n'
+            "local buf = vim.api.nvim_create_buf(false, true)\n"
+            "local ok, err = pcall("
+            "vim.api.nvim_buf_set_lines, buf, 0, -1, false, lines)\n"
+            'io.stdout:write(ok and "ok" or ("ERR: " .. tostring(err)), "\\n")\n',
+        )
+        assert out == "ok", out
+
+
+def test_the_ui_test_seam_exposes_exactly_what_these_tests_use(tmp_path):
+    """Same guard as the backend seam: keep `_internal` from growing into a
+    second public API. Add a name here only together with the test that uses it.
+    """
+    out = _lua_probe(
+        tmp_path,
+        "local names = {}\n"
+        'for k in pairs(require("setup.functions.ai.ui")._internal) do\n'
+        "  names[#names + 1] = k\n"
+        "end\n"
+        "table.sort(names)\n"
+        'io.stdout:write(table.concat(names, ","), "\\n")\n',
+    )
+    assert out == "failure_lines"

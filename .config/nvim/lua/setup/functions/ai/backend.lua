@@ -124,6 +124,11 @@ end
 -- limit. In "all" mode only the offending tool's tab fails; the rest run.
 local MAX_CMD_BYTES = 256 * 1024
 
+-- How much of a failing tool's stderr to quote in the report. The useful part
+-- is the first line or two ("command not found", "invalid API key"); a Python
+-- traceback would otherwise push it out of view.
+local MAX_STDERR_CHARS = 500
+
 --- Build the shell command for a CLI tool. Most tools read the payload from
 --- `tmpfile` over stdin; copilot inlines `input` into the prompt instead.
 --- `skip_git_check` adds codex's --skip-git-repo-check (used by the replace
@@ -164,6 +169,36 @@ local function build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_
   end
 end
 
+--- Why a CLI run produced no answer, phrased for whoever reads the report.
+---
+--- The exit code alone is a poor message. It does not say WHICH tool is
+--- missing or misconfigured -- a tool that is not installed exits 127 and puts
+--- "command not found" on stderr, which is the whole diagnosis -- and for a
+--- run that exited 0 with no output it produced "exit code 0", stating a
+--- success as the reason for a failure.
+---
+--- @param exit_code integer
+--- @param stderr string[]|nil captured stderr lines
+--- @return string
+local function cli_failure_reason(exit_code, stderr)
+  local detail = vim.trim(table.concat(stderr or {}, "\n"))
+  -- Long tracebacks push the useful first line out of view in the report.
+  -- Measured and cut in CHARACTERS, not bytes: CLIs localise their errors, and
+  -- `:sub` at a byte offset lands mid-character for anything outside ASCII,
+  -- emitting invalid UTF-8 into the buffer.
+  if vim.fn.strchars(detail) > MAX_STDERR_CHARS then
+    detail = vim.fn.strcharpart(detail, 0, MAX_STDERR_CHARS) .. "..."
+  end
+  if exit_code == 0 then
+    -- Reached only when the tool succeeded but printed nothing usable.
+    return detail ~= "" and ("empty response: " .. detail) or "empty response"
+  end
+  if detail ~= "" then
+    return string.format("exit code %d: %s", exit_code, detail)
+  end
+  return string.format("exit code %d", exit_code)
+end
+
 --- Run a CLI tool: write `input` to a temp file, pipe it into the tool, and
 --- return the cleaned stdout lines. Returns the job id (or <=0 on failure).
 local function run_cli(tool, model, instruction, input, skip_git_check, done)
@@ -183,11 +218,21 @@ local function run_cli(tool, model, instruction, input, skip_git_check, done)
   end
 
   local result = {}
+  local stderr = {}
   local job_id = vim.fn.jobstart({ "sh", "-c", cmd }, {
     stdout_buffered = true,
+    stderr_buffered = true,
     on_stdout = function(_, data)
       if data then
         result = prompt.clean_cli_lines(data)
+      end
+    end,
+    -- Without this the tool's own explanation is discarded and the report can
+    -- only quote a number. run_ollama has parse_ollama to fall back on; a CLI
+    -- has nothing else to say why it failed.
+    on_stderr = function(_, data)
+      if data then
+        stderr = data
       end
     end,
     on_exit = function(_, exit_code)
@@ -196,7 +241,7 @@ local function run_cli(tool, model, instruction, input, skip_git_check, done)
         if exit_code == 0 and #result > 0 then
           done(true, result, nil)
         else
-          done(false, {}, string.format("exit code %d", exit_code))
+          done(false, {}, cli_failure_reason(exit_code, stderr))
         end
       end)
     end,
@@ -359,6 +404,7 @@ end
 M._internal = {
   scan_payload = scan_payload,
   build_cli_cmd = build_cli_cmd,
+  cli_failure_reason = cli_failure_reason,
 }
 
 return M

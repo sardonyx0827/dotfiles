@@ -17,6 +17,27 @@
 ---------------------------------------------------------
 local M = {}
 
+--- Lines for a "this tool failed" buffer.
+---
+--- nvim_buf_set_lines REJECTS an item containing a newline ("'replacement
+--- string' item contains newlines"), and both failure paths below are inside a
+--- vim.schedule callback with no pcall: the throw would leave the buffer on its
+--- pending text, still modifiable, with the title and diff never refreshed.
+---
+--- This stayed unreachable only while the reason was always `exit code N`.
+--- run_cli now quotes the tool's own stderr -- a traceback is exactly what that
+--- quoting is for -- and run_ollama can produce a multi-line reason too, since
+--- parse_ollama surfaces the API's error string. Splitting here covers both
+--- rather than flattening the message at each producer.
+---
+--- @param label string tool name shown in the message
+--- @param err string|nil
+--- @return string[] always at least one line
+local function failure_lines(label, err)
+  local msg = string.format("[%s failed: %s]", label, err or "unknown error")
+  return vim.split(msg, "\n", { plain = true })
+end
+
 -- Status highlight groups for the title tabs. default=true preserves user themes.
 local function ensure_highlights()
   vim.api.nvim_set_hl(0, "AskAiTabDone",
@@ -429,9 +450,7 @@ function M.run_multi(opts)
         vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
       else
         state.status[current] = "failed"
-        vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-          string.format("[%s failed: %s]", current, err or "unknown error"),
-        })
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, failure_lines(current, err))
         vim.bo[buf].modifiable = false
       end
 
@@ -545,15 +564,20 @@ function M.open_report(opts)
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     else
       state.status = "failed"
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-        string.format("[%s failed: %s]",
-          opts.fail_label or "check", err or "unknown error"),
-      })
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false,
+        failure_lines(opts.fail_label or "check", err))
     end
     vim.bo[buf].modifiable = false
   end)
 
   return { win = win, buf = buf, close = close }
 end
+
+-- Test seam. Same intent as backend.lua's: failure_lines is private, but the
+-- invariant it carries (no item ever contains a newline) is what keeps the
+-- failure path from throwing, and that is worth pinning directly.
+M._internal = {
+  failure_lines = failure_lines,
+}
 
 return M
