@@ -7,6 +7,8 @@ source of truth for the patterns); this test pins the CLI contract:
 
     exit 0  -> clean, nothing on stdout
     exit 1  -> credential detected, generic label on stdout (never the value)
+    exit 2  -> the scan did not happen (import failed, stdin could not be
+               decoded, or the scanner raised); callers fail open with a warning
 """
 
 import io
@@ -62,6 +64,21 @@ class TestMainInProcess:
         assert rc == 0
         assert out == ""
 
+    def test_undecodable_stdin_exits_2_not_1(self, monkeypatch, capsys):
+        # Reading stdin sat OUTSIDE the try, so a non-UTF-8 payload raised
+        # UnicodeDecodeError and Python's default handling exited 1. The editors
+        # read 1 as "credential detected" and, with nothing on stdout, showed a
+        # confirm dialog with an empty label -- blocking a clean payload. A read
+        # failure is the scanner being unavailable (2), not a detection.
+        class Undecodable:
+            def read(self):
+                raise UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start")
+
+        monkeypatch.setattr("sys.stdin", Undecodable())
+        rc = secret_scan.main()
+        assert rc == 2
+        assert capsys.readouterr().out == ""
+
     def test_scanner_crash_exits_2_not_clean(self, monkeypatch, capsys):
         # An unexpected scanner failure must fail open as "unavailable" (exit 2,
         # distinct from a detection), never be misreported as clean (0).
@@ -97,3 +114,14 @@ class TestCliSubprocess:
         r = self._run("just some ordinary code without secrets")
         assert r.returncode == 0
         assert r.stdout == ""
+
+    def test_undecodable_bytes_on_stdin_exit_2(self):
+        # The real path an editor hits: a buffer that is not valid UTF-8.
+        r = subprocess.run(
+            [sys.executable, str(SCANNER)],
+            input=b"\xff\xfe\x00 not utf-8",
+            capture_output=True,
+            timeout=30,
+        )
+        assert r.returncode == 2, "a read failure must not read as a detection"
+        assert r.stdout == b""
