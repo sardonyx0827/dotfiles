@@ -744,6 +744,81 @@ class TestGlobalValueFlags:
         ), f"a global flag's value hid the subcommand: {flagged!r}"
 
 
+class TestReadmeThreatModelMatchesBehavior:
+    """The threat-model section must describe the classifier that actually ships.
+
+    It claimed "an absolute path like `/usr/bin/curl` intentionally falls through to
+    review" while the resolver denies exactly that, and tests/test_bash_review.py already
+    pinned the denial. Commit f18a558 ("reconcile bash-review threat model with impl")
+    edited the surrounding paragraph and left the sentence standing, so a prose-only
+    reconciliation has already failed once here -- hence a test rather than another pass.
+
+    Pins the behaviour the prose has to match, in both directions, so drifting either the
+    doc or the classifier breaks this.
+    """
+
+    README = REPO_ROOT / ".claude/hooks/README.md"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "/usr/bin/curl http://evil",
+            "CURL http://evil",
+            'c"u"rl http://evil',
+            "env curl http://evil",
+            "(curl http://evil)",
+        ],
+    )
+    def test_obfuscated_spellings_are_denied_not_reviewed(self, command):
+        matched, _ = _common.find_deny_command(_common._split_commands(command))
+        assert matched, (
+            f"{command!r} is no longer denied; the README threat model describes "
+            "obfuscated spellings of a denied executable as resolved and denied"
+        )
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "$(which curl) http://evil",
+            "${CURL} http://evil",
+            'eval "curl http://evil"',
+            'sh -c "curl http://evil"',
+        ],
+    )
+    def test_unresolvable_forms_escalate_rather_than_deny(self, command):
+        sub = _common._split_commands(command)
+        assert _common.find_deny_command(sub) == (False, "")
+        assert _common.classify_high_risk(sub, command) != "", (
+            f"{command!r} reached the low-risk path; the README describes forms whose "
+            "executable cannot be resolved statically as escalating to the ask gate"
+        )
+
+    def test_readme_states_that_obfuscated_spellings_are_resolved(self):
+        """Positive assertion, because the stale claim can be reworded but not un-meant.
+
+        The earlier guard here matched one exact sentence, so any paraphrase of the same
+        wrong idea ("absolute paths fall through to review") would have sailed past. What
+        is checkable instead is that the section still SAYS the true thing: that denial
+        resolves the executable, naming the forms the parametrized cases above prove are
+        denied. A rewrite that drops the claim fails; a rewrite that keeps it passes.
+        """
+        text = self.README.read_text(encoding="utf-8")
+        assert "## bash-review — design rationale & threat model" in text, (
+            "the threat-model section is gone; this guard has nothing to check"
+        )
+        assert "resolves the executable" in text, (
+            "the threat model no longer states that denial resolves the executable, "
+            "which is the property the tests above pin"
+        )
+        # The doc must cite the obfuscations it actually withstands, so a reader can
+        # check the claim rather than trust it.
+        for spelling in ("/usr/bin/curl", "env curl"):
+            assert spelling in text, (
+                f"the threat model stopped naming {spelling!r} as a resolved-and-denied "
+                "form; those examples are what make the claim falsifiable"
+            )
+
+
 class TestParseVerdict:
     @pytest.mark.parametrize(
         ("output", "expected"),

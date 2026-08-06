@@ -118,20 +118,37 @@ with a caller's local fails silently.
 `bash-review` is a **guardrail against an over-eager agent**, not an adversarial
 security boundary. Its goal is to stop _the assistant_ from running something
 destructive or secret-leaking — not to withstand a human who is actively trying
-to defeat it. The hard boundary is `permissions.deny` in `settings.json`
-(`rm -rf`, `sudo`, `curl`/`wget`, reads of `*.key` / `.env`, …); this hook is an
-advisory layer on top of it.
+to defeat it. `permissions.deny` in `settings.json` (`rm -rf`, `sudo`,
+`curl`/`wget`, reads of `*.key` / `.env`, …) sits underneath it.
+
+Do not read that layering as "the hook is advisory because `permissions.deny` is
+the hard boundary." `permissions.deny` matches on the command prefix, so shell
+grammar defeats it: a denied command is refused when written plainly and runs
+when wrapped in a subshell (verified with a harmless probe — bare `rm -r <path>`
+refused, `( rm -r <path> )` executed). Neither layer is a boundary an adversary
+cannot cross; they are two independent chances to catch a mistake, which is why
+this hook resolves obfuscated spellings itself rather than deferring.
 
 Given that model, the flow is tuned by **how dangerous the command is**, keeping
 latency low for the common case:
 
-1. **Fast pre-block / safe-skip (no AI call).** Obvious-dangerous prefixes
-   (`curl`, `dd`, `rm -rf /`, …) are denied outright and obvious read-only
-   commands (`ls`, `cat`, `git status`, …) are allowed — both without any
-   API/CLI round-trip. These lists are _convenience fast-paths, not boundaries_:
-   an absolute path like `/usr/bin/curl` intentionally falls through to review,
-   and anything touching a sensitive path (`.env`, `id_rsa`, `.ssh`, …) is forced
-   to review even when its prefix looks safe.
+1. **Fast pre-block / safe-skip (no AI call).** Dangerous executables (`curl`,
+   `nc`/`netcat`/`ncat`, `dd`, `sudo`, …) are denied outright and obvious
+   read-only commands (`ls`, `cat`, `git status`, …) are allowed — both without
+   any API/CLI round-trip.
+
+   The two sides are not symmetric. Denial **resolves the executable** rather
+   than matching a literal prefix, so `/usr/bin/curl`, `CURL`, `c"u"rl`,
+   `env curl` and `(curl …)` all resolve to `curl` and are denied. What it
+   cannot resolve — `$(which curl)`, `${CURL}`, `eval "…"`, `sh -c "…"` — is not
+   waved through either: those escalate to the high-risk gate below (two models
+   must agree, and the run still stops for confirmation).
+
+   Safe-skip is the conservative side: it matches the raw command string against
+   an allowlist and never consults the resolver, so anything wrapped in grammar
+   simply fails to match and goes to review. A sensitive path (`.env`, `id_rsa`,
+   `.ssh`, …) forces review even when the prefix looks safe.
+
 2. **Secret pre-send scan (no external call).** Before any command is handed to
    an LLM, a static scan (`scan_secrets`) checks the command _and_ the full
    `tool_input` for raw credential **values** — known-format tokens (GitHub /
