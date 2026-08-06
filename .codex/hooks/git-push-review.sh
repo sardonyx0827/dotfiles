@@ -35,6 +35,31 @@ fi
 
 cmd=$(echo "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 
+# 非 push コマンドをここで捨てる。hooks.json.template はこのフックを matcher
+# "Bash" で無条件に配線しているため、全 Bash 呼び出しで下の strip_quoted_ranges
+# (1 文字ずつの状態機械 = O(n^2)) が走っていた。20KB のコマンドで実測 4.5 秒。
+# .claude 側は 982c9be でこのガードを入れたが、こちらへは伝播していなかった
+# (同コミットの本文いわく「.codex 側は元から無条件配線」= より重い露出)。
+#
+# 打ち切って安全な理由: 判定対象 cmd_for_match は $cmd から「文字を削除」して
+# 作られる (strip_quoted_ranges はクォート区間と行継続ごと、インタプリタ経路の
+# コピーはクォート文字だけを削除する) ため、そこにリテラル `push` が現れるには
+# $cmd 中に p,u,s,h がこの順で並んでいなければならない。$cmd からクォート・
+# バックスラッシュ・改行を落とした文字列はそれらの削除の過剰近似なので、そこに
+# `push` が無ければ下の判定は必ず「該当なし」になる。
+#
+# 必ず jq 復号後の $cmd を見ること。生 stdin に対して同じ tr を掛けると、JSON が
+# 改行を符号化した `\n` の backslash だけが消えて復号後には存在しない `n` が残り、
+# `git pu\<改行>sh` (シェルが行継続で git push に結合する) が `git punsh` に化けて
+# 取りこぼす。8f2d386 が塞いだ行継続バイパスの再発。
+#
+# grep は -i で引く。case-insensitive な FS では `GIT Push` も git を走らせるので、
+# 下の検知が -i である以上ここだけ大小を区別すると、打ち切りガードの方が厳しく
+# なって検知に到達できない。上の過剰近似の議論は大小を問わず成り立つ。
+if ! printf '%s' "$cmd" | tr -d '\\"'"'"'\n' | grep -qi push; then
+  exit 0
+fi
+
 # シングル/ダブルクォートで囲まれた区間は実行されるコマンドではなく単なる
 # 文字列(コミットメッセージ等)なので、誤検知を避けるため push 判定の前に
 # 除去する (例: `git commit -m "please dont git push this yet"` は push
@@ -197,7 +222,13 @@ strip_quoted_ranges() {
 cmd_norm="${cmd//\$\{IFS\}/ }"
 cmd_norm="${cmd_norm//\$IFS/ }"
 
-cmd_for_match=$(strip_quoted_ranges "$cmd_norm")
+# クォートもバックスラッシュも無いなら strip_quoted_ranges は恒等変換なので、
+# 1 文字ずつの走査を丸ごと省く。上の打ち切りを通過した大きな push コマンド
+# (`git push origin main # <長いコメント>` 等) はこちらで受ける。
+case "$cmd_norm" in
+*[\'\"\\]*) cmd_for_match=$(strip_quoted_ranges "$cmd_norm") ;;
+*) cmd_for_match="$cmd_norm" ;;
+esac
 
 # `eval` / `sh -c` / `bash -c` は文字列引数を「データ」ではなく「コード」として
 # 実行する。つまり strip_quoted_ranges が「単なるメッセージ」として捨てたクォート

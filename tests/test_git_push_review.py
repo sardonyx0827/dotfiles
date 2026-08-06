@@ -1,6 +1,7 @@
 """Tests for git-push-review.sh (.claude JSON-ask variant, .codex exit-2 variant)."""
 
 import json
+import time
 
 import pytest
 from conftest import REPO_ROOT
@@ -551,3 +552,55 @@ def test_detection_parity(shell_env, git_repo, variant, hook, command, should_de
         _assert_push_detected(res, variant, command)
     else:
         _assert_push_not_detected(res, variant, command)
+
+
+# Detection parity above says both variants decide the SAME. It says nothing about what
+# deciding COSTS, and the two had drifted badly apart there: commit 982c9be measured
+# 4.5s for a 20KB command and added two guards to the .claude copy only -- an early
+# "no `push` substring => exit 0" short-circuit, and a fast path that skips the
+# character-at-a-time strip_quoted_ranges when the command holds no quote or backslash.
+# The .codex copy is wired unconditionally on matcher "Bash" (.codex/hooks.json.template),
+# so every Bash call in a Codex session paid the full O(n^2) scan. Measured here before
+# the port: .claude 0.074s vs .codex 4.523s on the same input.
+#
+# The bound is deliberately loose (a shared CI runner is noisy, and this asserts an
+# algorithmic class, not a stopwatch figure): an unguarded quadratic scan lands in
+# seconds, a guarded one in tens of milliseconds, so anything under a second separates
+# them without being flaky.
+_QUADRATIC_BUDGET_SECONDS = 1.5
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_large_non_push_command_is_short_circuited(shell_env, git_repo, variant, hook):
+    """A 20KB command with no `push` in it must not be scanned character by character."""
+    big = 'echo "' + ("x" * 20_000) + '"'
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin=payload(big), cwd=git_repo)
+    elapsed = time.monotonic() - started
+
+    _assert_push_not_detected(res, variant, big)
+    assert elapsed < _QUADRATIC_BUDGET_SECONDS, (
+        f"{variant}: a 20KB non-push command took {elapsed:.2f}s -- the early "
+        f"short-circuit is missing, so every Bash call pays an O(n^2) quote scan"
+    )
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_large_quote_free_push_command_skips_the_quote_scan(
+    shell_env, git_repo, variant, hook
+):
+    """`push` present but no quotes: the strip_quoted_ranges fast path must apply.
+
+    This is the case the short-circuit above cannot catch, so it pins the second guard
+    independently -- without it, a large legitimate push command still pays the scan.
+    """
+    big = "git push origin main # " + ("x" * 20_000)
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin=payload(big), cwd=git_repo)
+    elapsed = time.monotonic() - started
+
+    _assert_push_detected(res, variant, big)
+    assert elapsed < _QUADRATIC_BUDGET_SECONDS, (
+        f"{variant}: a 20KB quote-free push command took {elapsed:.2f}s -- the "
+        f"strip_quoted_ranges fast path is missing"
+    )
