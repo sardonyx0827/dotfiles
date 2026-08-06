@@ -31,16 +31,15 @@ def _commands() -> int:
 
 
 def _skills() -> int:
-    # The figures count *deployable* skills; the `*-example` template skill
-    # (project-guidelines-example) is intentionally excluded, matching the
-    # "23 skills" the diagrams render.
-    return len(
-        [
-            p
-            for p in (REPO_ROOT / ".claude/skills").glob("*/SKILL.md")
-            if not p.parent.name.endswith("-example")
-        ]
-    )
+    # Every skill on disk, templates included. The figures used to exclude the
+    # `*-example` template and render 23 while docs/claude-architecture.md said
+    # 24, so the repo carried two authoritative answers to "how many skills".
+    # Neither was wrong -- they counted different things -- but a reader has no
+    # way to tell which definition a given "N skills" is using. Settled on the
+    # raw count, because the architecture doc's Codex-sharing breakdown ("24 中
+    # 18 を共有") is already stated in those terms and the template is a real
+    # directory that Codex-side sharing decisions apply to like any other.
+    return len(list((REPO_ROOT / ".claude/skills").glob("*/SKILL.md")))
 
 
 def _test_suites() -> int:
@@ -125,4 +124,54 @@ def test_orchestration_svg_counts_match_repo():
     )
     assert int(pair.group(2)) == _codex_agents(), (
         f"llm-orchestration.svg: parity pair Codex side {pair.group(2)} != {_codex_agents()}"
+    )
+
+
+# The prose architecture doc is the side this repo settled on as authoritative when the
+# skill count disagreed (it said 24; the SVGs said 23 because the figure helper excluded
+# the *-example template). The exclusion is gone and the SVGs now render 24 -- but the
+# doc itself was the one artifact with nothing checking it, so the number everyone else
+# was aligned TO could drift freely. Tie it to the filesystem too.
+ARCHITECTURE_DOC = REPO_ROOT / "docs/claude-architecture.md"
+
+
+def _codex_skill_links() -> int:
+    """Skills shared with Codex = the symlinks into .claude/skills, and only those.
+
+    Counts symlinks rather than directory entries: `.codex/skills/.system/` is Codex
+    CLI's own managed directory (gitignored, not ours), and pathlib's glob("*") -- unlike
+    the shell's -- returns dotted names, so a plain entry count is one too many.
+    """
+    return len([p for p in (REPO_ROOT / ".codex/skills").glob("*") if p.is_symlink()])
+
+
+def test_architecture_doc_counts_match_repo():
+    text = ARCHITECTURE_DOC.read_text(encoding="utf-8")
+    # Every way the doc spells a skill total: the inventory sentence, the mermaid node,
+    # and the sharing-boundary node. All must equal the same filesystem count.
+    for pattern, expected, label in (
+        (r"スキル\s*(\d+)", _skills(), "skills (inventory sentence)"),
+        (r"(\d+)\s*スキル", _skills(), "skills (mermaid node)"),
+        (r"エージェント\s*(\d+)", _claude_agents(), "agents"),
+        (r"コマンド\s*(\d+)", _commands(), "commands"),
+    ):
+        _assert_all(text, pattern, expected, label, "claude-architecture.md")
+
+    # `skills/ (N)` appears twice with DIFFERENT meanings: the Claude side is every
+    # skill, the Codex side is how many are symlinked across. Match them in order.
+    boxes = [int(m) for m in re.findall(r"skills/\s*\((\d+)\)", text)]
+    assert boxes == [_skills(), _codex_skill_links()], (
+        f"claude-architecture.md: skills/ boxes {boxes} != "
+        f"[{_skills()}, {_codex_skill_links()}]"
+    )
+
+    # "24 中 18 を共有" -- the same two numbers restated in prose.
+    shared = re.search(r"(\d+)\s*中\s*(\d+)\s*を共有", text)
+    assert shared, "claude-architecture.md: the sharing-ratio sentence is gone"
+    assert (int(shared.group(1)), int(shared.group(2))) == (
+        _skills(),
+        _codex_skill_links(),
+    ), (
+        f"claude-architecture.md: sharing ratio {shared.groups()} != "
+        f"({_skills()}, {_codex_skill_links()})"
     )
