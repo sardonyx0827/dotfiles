@@ -138,6 +138,40 @@ OWN_BASH_SCRIPTS = sorted(
 )
 
 
+class TestTmuxLoggingBind:
+    """`.tmux.conf`'s C-p logging bind must create its own output directory.
+
+    The bind inlines its own `pipe-pane` shell command instead of calling the
+    tmux-logging plugin's script, so it never benefits from that script's `mkdir -p`.
+    install.sh only creates `~/.tmux`, not `~/.tmux/log`, so on a freshly installed
+    machine the redirect failed with "No such file or directory" -- and because
+    `pipe-pane` is chained with `\\; display-message "Logging start."`, tmux reported
+    success anyway. The bug self-heals the moment a user presses the plugin's own
+    M-p/M-P once, which is why it never showed up on an established machine.
+
+    Asserted at text level: exercising the real bind needs a live tmux pane, and
+    executing a string extracted from a config file is a pattern this repo's own
+    bash-review hook and bandit both refuse -- correctly.
+    """
+
+    def test_logging_bind_creates_its_log_directory(self):
+        conf = (REPO_ROOT / ".tmux.conf").read_text(encoding="utf-8")
+        bind = [
+            line for line in conf.splitlines() if line.startswith("bind C-p pipe-pane")
+        ]
+        assert bind, "the C-p logging bind is gone"
+        (line,) = bind
+        assert ".tmux/log" in line, "the logging bind no longer writes to ~/.tmux/log"
+        # Must create the LOG directory, not merely some directory: `mkdir -p
+        # ${HOME}/.tmux` (the parent install.sh already makes) satisfies a bare
+        # "mkdir -p appears somewhere" check while leaving the original bug live.
+        assert re.search(r"mkdir -p [^;]*\.tmux/log\b", line), (
+            "the C-p logging bind redirects into ~/.tmux/log without creating that "
+            "directory; on a fresh install it does not exist, the redirect fails, and "
+            f"the chained display-message still claims logging started: {line}"
+        )
+
+
 class TestTmuxSendToAllExceptNvim:
     def _stub_tmux(self, shell_env, sync_state: str):
         body = (
@@ -213,6 +247,34 @@ class TestUpdateAiTools:
         ]
         for call in expected:
             assert call in shell_env.calls
+
+    def test_one_tool_failing_does_not_abort_the_rest(self, shell_env):
+        """run_if_installed's whole purpose is that one bad tool cannot stop the run.
+
+        It only ever guarded against a tool being *absent*. An installed tool whose
+        update exits nonzero propagated that status, and `set -euo pipefail` killed the
+        script on the spot -- so a transient npm-registry blip while updating the first
+        tool silently skipped every later update and the entire version report. That is
+        both likelier and quieter than the missing-CLI case the guard was written for.
+        """
+        for tool in ("claude", "codex", "gemini", "copilot", "npm"):
+            shell_env.stub(tool)
+        shell_env.stub("claude", exit_code=1)
+
+        res = shell_env.run(UPDATE_SCRIPT)
+
+        assert res.returncode == 0, f"a failing tool aborted the script: {res.stderr}"
+        for call in (
+            "npm update -g @openai/codex",
+            "npm upgrade -g @google/gemini-cli",
+            "copilot update",
+            "codex --version",
+            "gemini --version",
+            "copilot --version",
+        ):
+            assert call in shell_env.calls, (
+                f"{call!r} never ran after an earlier tool failed"
+            )
 
 
 class TestNewProject:
