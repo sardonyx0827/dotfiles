@@ -38,7 +38,12 @@ if !has('nvim')
 
   augroup AICopilotSensitiveGuard
     autocmd!
-    autocmd BufReadPost,BufNewFile,BufWinEnter * call s:AI_CopilotGuard()
+    " BufFilePost covers the rename path: a buffer that BECOMES sensitive via
+    " `:saveas ~/.env` or `:file id_rsa` fires only BufFilePre/BufFilePost, none
+    " of the three events above, so without it the guard never re-runs and
+    " Copilot keeps completing that buffer under its new name for the rest of
+    " the session.
+    autocmd BufReadPost,BufNewFile,BufWinEnter,BufFilePost * call s:AI_CopilotGuard()
   augroup END
 endif
 
