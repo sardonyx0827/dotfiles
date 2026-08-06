@@ -429,6 +429,68 @@ class TestSummaryLogRotation:
         )
 
 
+class TestPruneDirConcurrency:
+    """prune_dir deletes from a stale listdir snapshot; the loser of a race must not raise.
+
+    append_and_rotate (directly above) was hardened against exactly this concurrency and
+    documents it at length; prune_dir sits in the same call path, is reached on every
+    invocation once the log dir hits its cap, and was left unguarded. The failure is not
+    a lost log line: both entry points wrap main() in a catch-all that converts any
+    exception into a verdict, so a FileNotFoundError here becomes a verdict on whatever
+    benign command happened to be running -- "ask" in .claude/hooks/bash-review.py and a
+    hard exit-2 BLOCK in the .codex variant.
+    """
+
+    def test_a_racing_deleter_does_not_raise(self, tmp_path, monkeypatch):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        for i in range(10):
+            (log_dir / f"{i:03d}.log").write_text("x", encoding="utf-8")
+
+        real_remove = _common.os.remove
+
+        def remove_twice(path):
+            """Stand in for the other process: the file is already gone on our turn."""
+            real_remove(path)
+            real_remove(path)  # raises FileNotFoundError, as a lost race would
+
+        monkeypatch.setattr(_common.os, "remove", remove_twice)
+
+        # keep=5 over 10 files => 5 deletions, every one of them losing the race.
+        _common.prune_dir(str(log_dir), keep=5)
+
+        assert sorted(p.name for p in log_dir.iterdir()) == [
+            f"{i:03d}.log" for i in range(5, 10)
+        ], "prune_dir kept the wrong files"
+
+    def test_pruning_still_deletes_when_uncontended(self, tmp_path):
+        """The guard must suppress a lost race, not the pruning itself."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        for i in range(10):
+            (log_dir / f"{i:03d}.log").write_text("x", encoding="utf-8")
+
+        _common.prune_dir(str(log_dir), keep=5)
+
+        assert sorted(p.name for p in log_dir.iterdir()) == [
+            f"{i:03d}.log" for i in range(5, 10)
+        ]
+
+    def test_a_real_permission_error_is_not_swallowed(self, tmp_path, monkeypatch):
+        """Only the benign already-deleted case is suppressed; other OSErrors surface."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        for i in range(10):
+            (log_dir / f"{i:03d}.log").write_text("x", encoding="utf-8")
+
+        def denied(path):
+            raise PermissionError("read-only filesystem")
+
+        monkeypatch.setattr(_common.os, "remove", denied)
+        with pytest.raises(PermissionError, match="read-only filesystem"):
+            _common.prune_dir(str(log_dir), keep=5)
+
+
 class TestParseVerdict:
     @pytest.mark.parametrize(
         ("output", "expected"),

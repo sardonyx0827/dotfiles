@@ -1669,11 +1669,27 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
 
 
 def prune_dir(log_dir: str, keep: int = 1000) -> None:
-    """log_dir 内のファイルが keep 件を超えたら名前順で古いものから削除する。"""
+    """log_dir 内のファイルが keep 件を超えたら名前順で古いものから削除する。
+
+    削除は listdir で撮ったスナップショットに対して行うので、フックが並行して
+    走ると (Claude と Codex のセッションが同時に動く、1 ターンで複数の Bash 呼び出しが
+    処理される、など) 双方が同じ「最古の n 件」を選び、負けた側の os.remove が
+    FileNotFoundError を投げる。直上の append_and_rotate は同じ並行性に対して
+    既に堅牢化されているが、その手当てはこちらへ伝播していなかった。
+
+    ここでの失敗の出方が悪質なのは、失うのがログではなく「判定」だという点。
+    両エントリポイントは main() を catch-all で包んで例外を判定に変換するため、
+    この FileNotFoundError はたまたま走っていた無害なコマンドへの判定に化ける
+    (.claude/hooks/bash-review.py では ask、.codex 変種では exit 2 = ハードブロック)。
+
+    そこで「既に消えている」= 目的は達成済み、として握りつぶす。抑止するのは
+    この良性ケースだけで、PermissionError 等の本物の異常はそのまま送出する。
+    """
     files = sorted(os.listdir(log_dir))
     excess = len(files) - keep
     for f in files[: max(0, excess)]:
-        os.remove(os.path.join(log_dir, f))
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(log_dir, f))
 
 
 def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None:
