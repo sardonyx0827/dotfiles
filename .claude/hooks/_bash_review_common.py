@@ -142,7 +142,12 @@ DENY_EXECUTABLES = frozenset(
     {
         "curl",
         "wget",
+        # nc / netcat / ncat は同じ道具の別パッケージ名 (BSD netcat は netcat、
+        # ncat は nmap 版の書き直し)。nc だけを載せるのは能力ではなく綴りを
+        # 拒否しているだけで、残り 2 つは単独モデルの低リスク経路まで落ちていた。
         "nc",
+        "netcat",
+        "ncat",
         "ssh",
         "shred",
         "dd",
@@ -264,6 +269,26 @@ _GLOBAL_VALUE_FLAGS = {
     "npm": frozenset({"--prefix", "-C", "-w", "--workspace"}),
     "pnpm": frozenset({"--prefix", "-C", "-w", "--workspace", "--filter"}),
     "yarn": frozenset({"--cwd"}),
+    # パッケージインストーラ群。未登録だと値 (プロキシ URL や証明書パス) が
+    # サブコマンド扱いになり、`pip install` 等の高リスク判定 = 二重モデル
+    # AND ゲート + 強制 ask が丸ごと外れる。docker の注記と同じ失敗。
+    "pip": frozenset(
+        {
+            "--proxy",
+            "--cert",
+            "--client-cert",
+            "--log",
+            "--cache-dir",
+            "--timeout",
+            "--retries",
+            "--python",
+        }
+    ),
+    "uv": frozenset(
+        {"--directory", "--project", "--config-file", "--cache-dir", "--python"}
+    ),
+    "go": frozenset({"-C"}),
+    "gem": frozenset({"--config-file"}),
     # TLS 系はリモート daemon 接続 (docker -H tcp://... --tlscacert ca.pem ...)
     # で使う値付きフラグ。登録漏れがあると値 (ca.pem) をサブコマンドと誤認し、
     # 後段の docker 脱出級判定が丸ごと素通りする。
@@ -452,12 +477,26 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         # 同じトークンを実行体として読み直す (`(`/`{` は語の一部になり得ない)。
         # `((` のように記号しか無いトークンは剥がすと空になるので、実行体を
         # 空文字列と誤認しないようトークンごと読み飛ばす。
+        #
+        # 閉じ側も一緒に剥がす: `(curl)` のように引数を取らない形では `)` が
+        # 語に密着したまま残り、実行体が `curl)` に解決されて DENY に一致しない。
+        # 開き括弧を剥がしたトークンに限って対称に閉じるので、下の case パターン
+        # (開き括弧を持たない `b)`) と取り違えない。
         if len(tok) > 1 and tok[0] in "({":
-            stripped = tok.lstrip("({")
+            stripped = tok.lstrip("({").rstrip(")}")
             if not stripped:
                 i += 1
                 continue
             tokens = [*tokens[:i], stripped, *tokens[i + 1 :]]
+            continue
+        # case のパターン終端 (`b)`, `*)`, `a|b)`)。開き括弧を伴わずに `)` で
+        # 終わる語が実行体の位置に来るのはこの形だけで、実行体は次のトークン。
+        # 多腕 case では `;;` が空セグメントを生むため 2 腕目以降がこの形の
+        # 独立セグメントになり、剥がさないとパターン語が実行体に解決されて
+        # 本体 (sudo/curl/rm) が丸ごと未分類のまま素通りしていた。
+        # 実行体名が `)` で終わることは無いので、読み飛ばしは厳しくなる方向のみ。
+        if tok.endswith(")"):
+            i += 1
             continue
         # 実行体位置のリダイレクト。演算子単独なら次のトークン (リダイレクト先) も
         # 一緒に落とす。これを怠るとリダイレクト先が実行体に化ける (上の定義参照)。
@@ -525,19 +564,19 @@ def _resolve_executable(cmd: str) -> str:
     return rest[0].rsplit("/", 1)[-1].casefold()
 
 
-def _find_subcommand(exe: str, args: list[str]) -> str:
-    """実行体 exe の引数列から最初のサブコマンドを返す (無ければ "")。
+def _strip_global_flags(exe: str, args: list[str]) -> list[str]:
+    """実行体 exe の引数列から先頭のグローバルフラグを落とした残りを返す。
 
-    git/npm 等の「値を空白区切りで取るグローバルフラグ」を読み飛ばしてから
-    最初の非フラグトークンを拾う。`git -C <dir> reset` の <dir> や
-    `npm --prefix <dir> install` の <dir> を誤ってサブコマンド扱いしない。
+    git/npm 等の「値を空白区切りで取るグローバルフラグ」を読み飛ばす。
+    `git -C <dir> reset` の <dir> や `npm --prefix <dir> install` の <dir> を
+    誤ってサブコマンド扱いしないための共通処理。
     """
     value_flags = _GLOBAL_VALUE_FLAGS.get(exe, frozenset())
     i = 0
     while i < len(args):
         tok = args[i]
         if not tok.startswith("-"):
-            return tok
+            return args[i:]
         if "=" in tok:  # --flag=value は 1 トークンで完結
             i += 1
             continue
@@ -545,7 +584,13 @@ def _find_subcommand(exe: str, args: list[str]) -> str:
             i += 2
             continue
         i += 1
-    return ""
+    return []
+
+
+def _find_subcommand(exe: str, args: list[str]) -> str:
+    """実行体 exe の引数列から最初のサブコマンドを返す (無ければ "")。"""
+    stripped = _strip_global_flags(exe, args)
+    return stripped[0] if stripped else ""
 
 
 # Safe-skip is intentionally conservative: these tokens can hide execution
@@ -956,10 +1001,28 @@ def _is_deny_command(cmd: str) -> tuple[bool, str]:
     """危険コマンドに一致するか判定し、(一致したか, 一致したコマンド名) を返す"""
     # DENY_COMMANDS は実行体ではなく生コマンド文字列への前方一致なので、
     # _resolve_executable の畳み込みが効かない。ここで独自に畳む。
-    folded = cmd.casefold()
+    #
+    # 生文字列だけを見ると先頭にシェル文法が付くだけで前方一致が外れる
+    # (`(rm -rf /)`, `then rm -rf /`, `*) rm -rf /` は全て決定論的 DENY を逃れ、
+    # 高リスクの ask まで格下げされていた)。_split_prefix で文法とラッパーを
+    # 剥がした形も候補に加える。末尾の `)`/`}` はサブシェルや case アームの
+    # 閉じで、最後の引数に密着して残るため落とす (`(rm -rf /)` → `rm -rf /`)。
+    # 実行体位置のトークンに空白が入っているなら、それは shlex が丸ごと 1 語に
+    # した「クォートされた塊」であって実行体+引数ではない。正規化候補を作ると
+    # クォートが外れて塊の中身がそのまま前方一致に掛かり、コマンドを実行せず
+    # 言及しているだけの文字列 (Python ソース中の `"rm -rf / --no-preserve-root",`
+    # 等) をハード DENY してしまう。層 1 の deny は ask で覆せないので、ここでの
+    # 誤検知は「確認を求める」ではなく「作業を止める」になる。
+    candidates = [cmd.casefold()]
+    rest = _split_prefix(_tokenize(cmd))
+    if rest and " " not in rest[0]:
+        normalized = list(rest)
+        normalized[-1] = normalized[-1].rstrip(")}")
+        candidates.append(" ".join(t for t in normalized if t).casefold())
     for deny in DENY_COMMANDS:
-        if folded == deny or folded.startswith(deny + " "):
-            return True, deny
+        for candidate in candidates:
+            if candidate == deny or candidate.startswith(deny + " "):
+                return True, deny
     exe = _resolve_executable(cmd)
     # mkfs は mkfs.ext4 / mkfs.xfs のようにファイルシステム名を接尾するため
     # 前方一致で拾う (対象デバイスを問答無用で消去する)。
@@ -1188,7 +1251,11 @@ def _high_risk_label(cmd: str) -> str:
         module_args = rest[rest.index("-m") + 1 :]
         if module_args[:2] == ["pip", "install"]:
             return "pip install"
-    if exe == "uv" and rest[:2] == ["pip", "install"]:
+    # 2 段のサブコマンドなので _find_subcommand (1 個目しか返さない) では足りず、
+    # グローバルフラグを落とした残りの先頭 2 つを見る。rest をそのまま見ると
+    # `uv --directory . pip install` が ["--directory", "."] に一致せず、
+    # インストーラ判定が丸ごと外れる。
+    if exe == "uv" and _strip_global_flags(exe, rest)[:2] == ["pip", "install"]:
         return "uv pip install"
     if exe in ("pnpm", "yarn") and sub == "dlx":
         return f"{exe_raw} dlx"

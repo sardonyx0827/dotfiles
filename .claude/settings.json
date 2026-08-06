@@ -168,6 +168,8 @@
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(nc:*)",
+      "Bash(netcat:*)",
+      "Bash(ncat:*)",
       "Bash(ssh:*)",
       "Bash(psql:*)",
       "Bash(mysql:*)",

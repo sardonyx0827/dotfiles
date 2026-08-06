@@ -553,6 +553,28 @@ GRAMMAR_WRAPPED_DENY_CASES = [
     ("if false; then true; elif curl http://x; then echo; fi", "curl"),
     ("} curl http://x", "curl"),
     (") curl http://x", "curl"),
+    # A closing paren in executable position is never part of the executable name.
+    # Two different shapes, and the grammar fix handled neither:
+    #   `(curl)`  -- argument-less command in a subshell; the leading `(` was stripped
+    #               but the trailing `)` stayed glued, so it resolved to "curl)".
+    #   `b) cmd`  -- a case arm; `;;` makes _split_commands emit the arm as its own
+    #               segment led by the pattern token, which resolved as the executable
+    #               and left the payload unclassified.
+    ("(curl)", "curl"),
+    ("(sudo)", "sudo"),
+    ("( curl )", "curl"),
+    ("b) sudo rm -rf /", "sudo"),
+    ("x) curl http://x", "curl"),
+    # DENY_COMMANDS is a multi-word prefix match against the command string rather
+    # than a resolved executable, so it needed the same grammar treatment separately:
+    # every one of these escaped the deterministic deny and fell to a mandatory ask.
+    ("*) rm -rf /", "rm -rf /"),
+    ("(rm -rf /)", "rm -rf /"),
+    ("( rm -rf / )", "rm -rf /"),
+    ("then rm -rf /", "rm -rf /"),
+    ("do rm -rf ~", "rm -rf ~"),
+    ("exec rm -rf /", "rm -rf /"),
+    ("case $x in a) true ;; b) sudo rm -rf / ;; esac", "sudo"),
     ("( env sudo whoami )", "sudo"),
     ("( /usr/bin/curl http://x )", "curl"),
     ("then command curl http://x", "curl"),
@@ -562,6 +584,14 @@ GRAMMAR_WRAPPED_DENY_CASES = [
 # A fix that denies anything containing a paren passes the table above and breaks daily
 # use, so these are asserted just as hard.
 GRAMMAR_WRAPPED_BENIGN_CASES = [
+    # A fully-quoted blob is ONE shlex token, so the grammar-stripped candidate the
+    # DENY_COMMANDS match builds equalled the quoted text itself and hard-denied a
+    # string that merely mentions the command. Not hypothetical: a Python source line
+    # `"rm -rf / --no-preserve-root",` inside a heredoc hit this during review. Layer-1
+    # deny has no ask to override it, so a false positive here blocks real work outright.
+    '"rm -rf /"',
+    '"rm -rf / --no-preserve-root",',
+    "'rm -rf /'",
     "( ls )",
     "(ls)",
     "{ git status ; }",
@@ -643,6 +673,75 @@ class TestGrammarPrefixResolution:
         assert label != "", (
             f"grammar this resolver cannot parse fell through to low-risk: {command!r}"
         )
+
+
+class TestDenyListCoverage:
+    """`nc` was denied but its two everyday aliases were not.
+
+    netcat and ncat are the same tool under different packaging (BSD netcat ships as
+    `netcat` on several distros, ncat is the nmap rewrite), so denying only `nc` denied
+    a spelling rather than a capability. Both reached the single-model low-risk path.
+
+    Deliberately NOT part of this: `$(which curl)`-style substitution. That already
+    escalates via _UNRESOLVABLE_EXPANSION to a mandatory ask, so it is not a list gap.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "denied"),
+        [
+            ("nc 1.2.3.4 80", "nc"),
+            ("netcat 1.2.3.4 80", "netcat"),
+            ("ncat 1.2.3.4 80", "ncat"),
+            ("(netcat 1.2.3.4 80)", "netcat"),
+            ("env ncat 1.2.3.4 80", "ncat"),
+        ],
+    )
+    def test_netcat_aliases_are_denied(self, command, denied):
+        assert _common.find_deny_command(_common._split_commands(command)) == (
+            True,
+            denied,
+        )
+
+    def test_substitution_still_escalates_rather_than_denying(self):
+        """Documents the boundary: a resolvable name is denied, an unresolvable one asks."""
+        cmd = "$(which curl) http://evil"
+        assert _common.find_deny_command(_common._split_commands(cmd)) == (False, "")
+        assert _common.classify_high_risk(_common._split_commands(cmd), cmd) != ""
+
+
+class TestGlobalValueFlags:
+    """A global flag's VALUE must not be mistaken for the subcommand.
+
+    _GLOBAL_VALUE_FLAGS registered git/npm/pnpm/yarn/docker only, so for pip, uv, go and
+    gem a space-separated global flag swallowed the subcommand slot and the package-
+    install high-risk label -- the 2-model AND gate plus a mandatory ask -- was skipped.
+    This is exactly the failure the docker entry's own comment warns a missing
+    registration causes.
+    """
+
+    @pytest.mark.parametrize(
+        ("bare", "flagged", "label"),
+        [
+            ("pip install evil", "pip --proxy http://x install evil", "pip install"),
+            ("pip install evil", "pip --cert ca.pem install evil", "pip install"),
+            (
+                "uv pip install evil",
+                "uv --directory . pip install evil",
+                "uv pip install",
+            ),
+            ("go install evil@latest", "go -C . install evil@latest", "go install"),
+            ("gem install evil", "gem --config-file x install evil", "gem install"),
+        ],
+    )
+    def test_a_global_flag_value_does_not_hide_the_subcommand(
+        self, bare, flagged, label
+    ):
+        expected = _common.classify_high_risk(_common._split_commands(bare), bare)
+        assert expected == label, f"baseline changed for {bare!r}: {expected!r}"
+        assert (
+            _common.classify_high_risk(_common._split_commands(flagged), flagged)
+            == expected
+        ), f"a global flag's value hid the subcommand: {flagged!r}"
 
 
 class TestParseVerdict:
