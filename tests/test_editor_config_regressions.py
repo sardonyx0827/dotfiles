@@ -127,39 +127,31 @@ def test_vim_ai_failure_message_can_carry_a_reason():
 def _real_vim() -> str | None:
     """Path to a genuine Vim, or None.
 
-    `vim` on PATH is commonly Neovim (this repo aliases it, and 70-ai.vim is guarded by
-    `if !has('nvim')`), in which case the whole file is skipped and nothing under test is
-    even defined. Probe for a binary that reports has('nvim') == 0.
+    Must match 70-ai.vim's OWN guard, not just "is it Vim". The file is wrapped in
+    `if !has('nvim') && has('job') && has('channel') && has('timers')`, so a build
+    missing any of those (vim-tiny, and whatever a given CI image ships as `vim`)
+    defines none of the functions under test -- the tests would fail rather than skip,
+    for a reason that has nothing to do with the code. `vim` on PATH is also commonly
+    Neovim here, since this repo aliases it.
     """
     for candidate in ("/usr/bin/vim", shutil.which("vim")):
         if not candidate:
             continue
         try:
-            res = subprocess.run(  # noqa: S603
-                [candidate, "-es", "-u", "NONE", "-N", "--cmd", "qa!"],
-                capture_output=True,
-                text=True,
-                timeout=20,
-            )
+            if _vim_guard_holds(candidate):
+                return candidate
         except (OSError, subprocess.TimeoutExpired):
             continue
-        if res.returncode != 0:
-            continue
-        probe = subprocess.run(  # noqa: S603
-            [candidate, "-es", "-u", "NONE", "-N", "--cmd", "qa!"],
-            input="",
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        if probe.returncode == 0 and _vim_has_nvim(candidate) == 0:
-            return candidate
     return None
 
 
-def _vim_has_nvim(binary: str) -> int:
-    script = "call writefile([has('nvim')], $PROBE_OUT)\nqa!\n"
-    return int(_run_vim_script(binary, script, extra_source=None).strip() or "1")
+def _vim_guard_holds(binary: str) -> bool:
+    """True when `binary` satisfies every condition 70-ai.vim's own `if` requires."""
+    script = (
+        "call writefile([(!has('nvim') && has('job') && has('channel')"
+        " && has('timers')) ? 'yes' : 'no'], $PROBE_OUT)\nqa!\n"
+    )
+    return _run_vim_script(binary, script, extra_source=None).strip() == "yes"
 
 
 def _run_vim_script(binary: str, script: str, extra_source: str | None) -> str:
