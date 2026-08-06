@@ -13,8 +13,10 @@ Role separation (single source of truth):
 
 This file used to duplicate the policy ("Immediate Agent Usage — no user prompt needed",
 "ALWAYS use parallel Task execution", a five-role fan-out) and drifted into contradicting
-`CLAUDE.md`'s Single-is-default rule and its cap of four simultaneous SubAgents. Keep it a
-catalog.
+`CLAUDE.md`'s Single-is-default rule and its concurrency ceiling. Keep it a catalog — and
+note the second-order lesson: the sentence you are reading also used to name that ceiling
+as a figure, which went stale the moment `CLAUDE.md` changed it. Point at the SSOT rather
+than quoting its numbers.
 
 The `When to Use` column describes the situation an agent fits; it is not a trigger in its
 own right. Delegation is decided in `CLAUDE.md` § Execution Layer Selection — some of these

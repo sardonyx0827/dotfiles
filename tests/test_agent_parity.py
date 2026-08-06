@@ -128,6 +128,66 @@ def test_agent_catalog_carries_no_delegation_policy():
     )
 
 
+# --- The concurrency cap is a number, and a number copied is a number that drifts ---
+# CLAUDE.md § Execution Layer Selection owns how many SubAgents may run at once. Two
+# dependents restated it as their own figure and then went stale when CLAUDE.md's cap
+# moved: subagent-prompt-design/SKILL.md said "Per `CLAUDE.md`: run 2-4" (an attribution
+# CLAUDE.md never supported) and hard-capped its checklist at 4, while agents/README.md
+# described "CLAUDE.md's ... cap of four". CLAUDE.md says ~6 and endorses "five
+# independent tickets, five agents", so the skill's checklist forbade a fan-out the SSOT
+# explicitly allows -- a live contradiction an agent had to arbitrate mid-task.
+#
+# The fix is not "update 4 to 6" (that just re-arms the same trap); it is that these two
+# files must not carry a global cap figure at all. Scoped counts stay legal on purpose:
+# a command or skill saying "launch 2-4 request-workers *for this task*" is a recipe, not
+# a claim about the global ceiling, so this guard covers only the two policy dependents.
+CAP_DEPENDENTS = (
+    REPO_ROOT / ".claude/skills/subagent-prompt-design/SKILL.md",
+    REPO_ROOT / ".claude/agents/README.md",
+)
+
+# Matches a *global ceiling* phrasing only. "never exceed 4", "cap of four", "no more
+# than 4 simultaneous" -- not a bare "2-4" range, which scoped recipes legitimately use.
+_GLOBAL_CAP_CLAIM = re.compile(
+    r"(never (?:exceed|more than)\s+\w+"
+    r"|cap of \w+"
+    r"|(?:maximum|max|at most|no more than)\s+\w+\s+(?:simultaneous|concurrent|parallel))",
+    re.I,
+)
+
+# The second half of the same defect: SKILL.md opened its parallelism section with
+# "Per `CLAUDE.md`: run 2-4 SubAgents concurrently". A bare "2-4" is legal (scoped
+# recipes use it), but *sourcing a count to CLAUDE.md* is checkable and was false --
+# CLAUDE.md has never carried that range. Citing the SSOT by name is what makes a
+# reader stop verifying, so a wrong citation costs more than an uncited wrong number.
+_ATTRIBUTED_COUNT = re.compile(
+    r"(?:per|from|follows?)\s+.{0,4}CLAUDE\.md.{0,40}?\d", re.I
+)
+
+
+def test_dependents_do_not_restate_the_subagent_concurrency_cap():
+    """CLAUDE.md owns the concurrency ceiling; nothing else may name its own number."""
+    claude_md = (REPO_ROOT / ".claude/CLAUDE.md").read_text(encoding="utf-8")
+    # Positive anchor: if CLAUDE.md ever loses the sentence, the guard below would
+    # silently start policing a cap that no longer has an owner.
+    assert "Past ~6 concurrent" in claude_md, (
+        "CLAUDE.md lost its concurrency-cap sentence; this guard has no SSOT to defer to"
+    )
+
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}:{n}: {line.strip()}"
+        for path in CAP_DEPENDENTS
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _GLOBAL_CAP_CLAIM.search(line) or _ATTRIBUTED_COUNT.search(line)
+    ]
+    assert not offenders, (
+        "a delegation-policy dependent restated the global SubAgent concurrency cap, or "
+        "sourced a count to CLAUDE.md that CLAUDE.md does not carry; defer to "
+        "CLAUDE.md § Execution Layer Selection instead of naming a figure that goes "
+        f"stale when CLAUDE.md's changes: {offenders}"
+    )
+
+
 def test_agent_catalog_model_column_matches_frontmatter():
     """The catalog's Model column duplicates frontmatter -- the same copy-without-a-guard
     shape that let the delegation policy drift. Pin it rather than trust it."""

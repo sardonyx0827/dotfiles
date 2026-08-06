@@ -143,7 +143,8 @@ the main context stays clean.
 
 ## 4. Parallelization Rules
 
-Per `CLAUDE.md`: run 2–4 SubAgents concurrently for independent tasks. Before
+`CLAUDE.md` § Execution Layer Selection decides **how many** run at once; this
+section decides **whether** a given set may run in parallel at all. Before
 launching in parallel, verify these gates:
 
 ### Gate 1: Independence
@@ -185,12 +186,15 @@ when reviewing their own work.
 
 ### Concurrency guideline
 
-Target 2–4 simultaneous SubAgents. Beyond 4, coordination overhead and context
-merging costs outweigh the parallelism gains — never exceed 4 unless the user
-explicitly asks for a wider fan-out.
+The ceiling lives in `CLAUDE.md` § Execution Layer Selection ("How many") — read
+it there rather than trusting a figure repeated here. This file used to carry its
+own number, CLAUDE.md's moved, and the stale copy then forbade a fan-out the SSOT
+explicitly endorses.
 
-This is a ceiling, not a target to fill. Hitting 2 is not a goal; one SubAgent,
-or none, is the right answer more often than the number suggests. See §8.
+What this skill adds is the shape of the judgment, which does not change with the
+number: match the count to genuinely independent tracks, and treat the ceiling as
+a ceiling rather than a target to fill. One SubAgent, or none, is the right answer
+more often than any range suggests. See §8.
 
 ---
 
@@ -400,6 +404,6 @@ Before firing any SubAgent call, verify:
 - [ ] Parallelism gates passed: tasks are independent, no two writers on same file
 - [ ] Model tier matches task complexity (Haiku / Sonnet / Opus)
 - [ ] Effort matches task complexity, and is not an unswept value inherited from an older model
-- [ ] Spawn count is the minimum that works — one SubAgent if one would do, never more than 4
+- [ ] Spawn count is the minimum that works — one SubAgent if one would do, and within CLAUDE.md's ceiling
 - [ ] If exploration: breadth instruction given or iterative-retrieval pattern invoked
 - [ ] Task does NOT belong in Single layer (not conversation-dependent, not 1-2 file sequential edit, not finishable in a handful of tool calls)
