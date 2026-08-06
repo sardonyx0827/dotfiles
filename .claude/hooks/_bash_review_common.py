@@ -184,6 +184,9 @@ _WRAPPER_EXECUTABLES = frozenset(
         "setsid",
         "watch",
         "flock",
+        # シェル組み込みだが実行体を後続に取る点はラッパーと同じ。文法トークンとして
+        # 無条件に剥がすとフラグが実行体に化けるため、こちらで扱う (定義側の注記参照)。
+        "exec",
     }
 )
 
@@ -195,6 +198,8 @@ _WRAPPER_VALUELESS_FLAGS = {
     "command": frozenset({"-p", "-v", "-V"}),
     "nohup": frozenset(),
     "nice": frozenset(),  # -n は値付き。無印 nice のみ透過
+    # -a NAME は値付き → 未収録のまま判定不能 (None → ask) へ倒す
+    "exec": frozenset({"-c", "-l"}),
     "time": frozenset({"-p"}),
     "stdbuf": frozenset(),  # -i/-o/-e は値付き
     # -s/--signal と -k/--kill-after は値付き → 判定不能へ
@@ -299,6 +304,87 @@ def _normalize_cmd(cmd: str) -> str:
     return _QUOTE_OR_ESCAPE.sub("", cmd)
 
 
+# 直後に実行体が来るシェル文法トークン。剥がして次を見る。
+#
+# 未対応のままだと _split_prefix がこれらを「未知の実行体」として返し、
+# `(curl http://evil)` の実行体が `(` に解決されて DENY 層にも高リスク層にも
+# 一致せず、単独モデルの低リスク経路まで格下げされていた (`curl http://evil`
+# 単体は DENY されるのに、括弧で囲むだけで抜けた)。同じ括弧は settings.json の
+# permissions.deny も破るので、二層が同時に無効化される。
+#
+# _split_commands が ; && || | で先に割るため、危険なコマンドは必ず自分の
+# セグメントの先頭にこれらを 1 つ被った形で現れる (`then curl ...`,
+# `do sudo ...`)。したがって「剥がして次を見る」で実行体に到達できる。
+#
+# `for` / `case` / `select` はここに入れない: 直後に来るのは実行体ではなく
+# 変数名やパターンで、そこを剥がすと語の意味を取り違える。`for` は本体が
+# `do` セグメント側に落ちるので取りこぼしは無い。`case` / `select` は下の
+# _UNRESOLVABLE_GRAMMAR で安全側へ倒す。
+#
+# ただし case の被覆は「本体が同一セグメントに残るから」ではない。多腕 case では
+# `;;` が空セグメントを生むため、2 腕目以降は `b) sudo rm -rf /` のように
+# パターン語で始まる独立セグメントになり、それ単体では `b)` が実行体に解決されて
+# 本体を取りこぼす (実測: そのセグメント単独の高リスクラベルは "")。
+#
+# 全体として安全なのは、high_risk_label が「実行体を解決できたセグメント」だけで
+# なく全セグメントを分類し、兄弟の `case ...` と `esac` が両方とも
+# _UNRESOLVABLE_GRAMMAR に載って None を返し、_high_risk_label がそれを
+# "wrapped command" へ escalate するため。
+#
+# 効いているのは走査順ではなく、この None → "wrapped command" 変換そのもの。
+# 変異検査で確認済み: high_risk_label を「最初の非空ラベルで打ち切り」に変えても
+# (前方・後方どちらの順でも) 多腕 case は依然 escalate する — case と esac が
+# 独立に倒れるので、どこで打ち切っても必ずどれかに当たる。一方 _high_risk_label の
+# `if rest is None: return "wrapped command"` を `return ""` に変えると、多腕 case も
+# 単腕 case も `exec -a zzz curl` も揃って低リスクへ落ちる。集合から case を抜いた
+# 場合も同様にラベルが "" になる。つまり防御線は「case/esac がこの集合に載っている
+# こと」と「None が escalate されること」の 2 点で、短絡の有無ではない。
+# tests/test_bash_review.py の TestGrammarPrefixResolution が両方を固定している。
+#
+# 受け入れているコスト: 正当な case/select も一律 escalate = 強制 ask になる。
+# 実行体を確定できない以上この過検知は意図的な設計であって事故ではない。
+#
+# 残る限界: 本体セグメント自身は依然として分類されない。`b)` のような
+# パターン語トークンを読み飛ばせば sudo を直接 DENY できるが、実行体解決に
+# 規則を足す変更なので別途扱う (このコメントの直前に exec を無条件に剥がして
+# `exec -c curl` を素通りさせた前例がある)。
+_GRAMMAR_PREFIXES = frozenset(
+    {
+        "(",
+        ")",
+        "{",
+        "}",
+        "!",
+        "then",
+        "do",
+        "else",
+        "elif",
+        "if",
+        "while",
+        "until",
+        "coproc",
+    }
+)
+# `exec` はここに入れない。フラグを取る (-c 環境を消す / -l argv[0] に - を付ける /
+# -a NAME argv[0] を差し替える) ので、無条件に剥がすとフラグ自身が実行体として
+# 解決され (`exec -c curl ...` の実行体が `-c` になる)、まさにこの修正が塞いだ
+# はずの低リスク経路が再び開く。実 bash は -c/-l/-a いずれの形でも対象を実行する
+# ため取りこぼしは現実の穴になる。フラグを解する _WRAPPER_EXECUTABLES 側で扱う。
+
+# 実行体の位置をこの解決器では特定できない文法。判定不能 (None) を返して
+# 呼び出し側に安全側 (高リスク = 二重モデル AND ゲート + 強制 ask) へ倒させる。
+# 素通りさせるより厳しく、DENY と偽るより正直な扱い。
+_UNRESOLVABLE_GRAMMAR = frozenset({"case", "select", "esac"})
+
+# 実行体位置のリダイレクト。`2>/dev/null sudo ls` のように shlex は演算子を
+# 語に密着させたまま返すので、そのままでは `2>/dev/null` が実行体になる。
+# 演算子単独形 (`> out cmd`) は次のトークンがリダイレクト先なので 2 つ読み飛ばす。
+# 密着形 (`>out`, `2>&1`) は 1 つでよい。両者を取り違えると、前者でリダイレクト先
+# (`out`) が実行体に化けて後続の危険コマンドが素通りする。
+_REDIRECT_ALONE = re.compile(r"^\d*(?:>>|>&|>\||>|<<<|<<|<&|<)$")
+_REDIRECT_GLUED = re.compile(r"^\d*(?:>>|>&|>\||>|<<<|<<|<&|<)\S")
+
+
 def _tokenize(cmd: str) -> list[str]:
     """シェルの語分割規則でトークン列に分解する。
 
@@ -321,12 +407,27 @@ def _tokenize(cmd: str) -> list[str]:
 
 
 def _split_prefix(tokens: list[str]) -> list[str] | None:
-    """先頭の VAR=value 代入とラッパーを剥がした残余トークン列を返す。
+    """先頭の VAR=value 代入・シェル文法・ラッパーを剥がした残余トークン列を返す。
 
-    ラッパーは「値を取らない既知フラグ」のみ読み飛ばす。値付き/未知フラグに
-    当たったら実行体を確定できないものとして None を返し、呼び出し側で安全側
-    (DENY 側はレビューへ、高リスク側は ask へ) に倒させる。全トークンが剥がし
-    対象だった場合は空リストを返す。
+    剥がす対象は 4 種で、それぞれ定義側にコメントがある:
+
+    - `VAR=value` 代入 (_ENV_ASSIGNMENT)
+    - シェル文法 (_GRAMMAR_PREFIXES): `(`, `{`, `then`, `do`, `if` 等。直後に
+      実行体が来るので剥がして次を見る。語へ密着した `(curl` の形も剥がす。
+    - 実行体位置のリダイレクト (_REDIRECT_ALONE / _REDIRECT_GLUED): 演算子単独形は
+      リダイレクト先ごと 2 トークン、密着形は 1 トークン読み飛ばす。
+    - ラッパー (_WRAPPER_EXECUTABLES): `env` / `command` / `exec` 等。「値を取らない
+      既知フラグ」のみ読み飛ばす。
+
+    None は「実行体を確定できない」の意味で、呼び出し側に安全側 (DENY 側は
+    レビューへ、高リスク側は ask へ) へ倒させる契約。None を返す条件は 3 つ:
+
+    - ラッパーの値付き/未知フラグ (`env -u X rm -rf /`, `exec -a NAME cmd`)
+    - 実行体位置の展開トークン (_UNRESOLVABLE_EXPANSION)
+    - 実行体位置を特定できない文法 (_UNRESOLVABLE_GRAMMAR): `case` / `select` / `esac`
+
+    全トークンが剥がし対象だった場合は空リストを返す (None とは別物で、
+    こちらは「実行体が無い」= 判定対象なしを意味する)。
     """
     i = 0
     while i < len(tokens):
@@ -338,6 +439,34 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
             # 展開トークンが実行体の位置にある: 空展開なら次のトークンが実行体に
             # なるため、このトークンを実行体と決め打ちできない (上の定義参照)。
             return None
+        # シェル文法は実行体ではない。剥がして次を見る (上の定義参照)。
+        # 大小は畳む: `THEN`/`DO` は文法としては効かないが、畳んでも実行体を
+        # 取り違える方向には倒れない (剥がした先の本体を見に行くだけ)。
+        lowered = tok.casefold()
+        if lowered in _UNRESOLVABLE_GRAMMAR:
+            return None
+        if lowered in _GRAMMAR_PREFIXES:
+            i += 1
+            continue
+        # `(curl` のように文法記号が語へ密着している形。記号だけ剥がして
+        # 同じトークンを実行体として読み直す (`(`/`{` は語の一部になり得ない)。
+        # `((` のように記号しか無いトークンは剥がすと空になるので、実行体を
+        # 空文字列と誤認しないようトークンごと読み飛ばす。
+        if len(tok) > 1 and tok[0] in "({":
+            stripped = tok.lstrip("({")
+            if not stripped:
+                i += 1
+                continue
+            tokens = [*tokens[:i], stripped, *tokens[i + 1 :]]
+            continue
+        # 実行体位置のリダイレクト。演算子単独なら次のトークン (リダイレクト先) も
+        # 一緒に落とす。これを怠るとリダイレクト先が実行体に化ける (上の定義参照)。
+        if _REDIRECT_ALONE.match(tok):
+            i += 2
+            continue
+        if _REDIRECT_GLUED.match(tok):
+            i += 1
+            continue
         # ラッパー名も case-insensitive な FS では解決するので畳む (`ENV sudo` は
         # 本当に env 経由で sudo を走らせる)。剥がしはこの関数で起きるため、
         # _resolve_executable の戻り値を畳むだけでは間に合わない。

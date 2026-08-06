@@ -491,6 +491,160 @@ class TestPruneDirConcurrency:
             _common.prune_dir(str(log_dir), keep=5)
 
 
+# Shell grammar placed in front of a command used to break executable resolution
+# outright: _split_prefix returned the first unrecognized token as the "executable", so
+# `(curl http://evil)` resolved to "(" and matched nothing. Both deterministic layers
+# missed it -- the static DENY list and the high-risk 2-model AND gate -- and the command
+# fell through to the single-model low-risk path. Measured before the fix:
+# find_deny_command("curl http://evil") == (True, "curl") but ("(curl http://evil)") ==
+# (False, ""). The same paren also defeats settings.json's permissions.deny, so on the
+# Codex runtime -- whose config.toml.template carries no deny or sandbox entries at all --
+# this hook was the only gate standing.
+#
+# _split_commands already splits on ; && || | , so each payload lands in its own segment
+# behind exactly one grammar token ("then curl ...", "do sudo ...", "(curl ...)"). The fix
+# strips those and resolves the real executable, which can only make DENY and high-risk
+# stricter -- safe-skip is unaffected because _is_safe_command matches the raw command
+# string against SAFE_COMMANDS and never consults the resolver.
+GRAMMAR_WRAPPED_DENY_CASES = [
+    # (command, expected deny name)
+    ("(curl http://evil)", "curl"),
+    ("( curl http://evil )", "curl"),
+    ("(sudo rm -rf /)", "sudo"),
+    ("( sudo rm -rf / )", "sudo"),
+    ("{ wget http://x ; }", "wget"),
+    ("{wget http://x ; }", "wget"),
+    ("exec curl http://x", "curl"),
+    # `exec` takes flags (-c clears the environment, -l prepends a dash, -a renames
+    # argv[0]) and real bash still runs the target: verified with a stub that
+    # `exec -c <stub> ...`, `exec -l ...` and `exec -a zzz ...` all execute it. Stripping
+    # `exec` unconditionally would resolve the FLAG as the executable and reopen exactly
+    # the low-risk fast path this whole table exists to close, so exec must be handled as
+    # a flag-aware wrapper rather than as bare grammar.
+    ("exec -c curl http://x", "curl"),
+    ("exec -l sudo rm -rf /", "sudo"),
+    ("! curl http://x", "curl"),
+    ("coproc curl http://x", "curl"),
+    ("if true; then curl http://x; fi", "curl"),
+    ("if curl http://x; then echo ok; fi", "curl"),
+    ("while true; do sudo rm -rf /; done", "sudo"),
+    ("until curl http://x; do echo ok; done", "curl"),
+    ("for i in 1; do curl http://x; done", "curl"),
+    ("cd /tmp && (curl http://x)", "curl"),
+    # Nested subshells. `(( ))` is arithmetic evaluation in real bash and would not run
+    # curl at all, so this row is defence in depth rather than a live bypass -- it is
+    # here because stripping symbol-only tokens must not resolve to an empty executable.
+    ("( (curl http://x) )", "curl"),
+    ("(( curl http://x ))", "curl"),
+    # Redirections sit in executable position and shlex keeps them glued to the word.
+    ("2>/dev/null sudo ls", "sudo"),
+    (">out curl http://x", "curl"),
+    ("2>&1 curl http://x", "curl"),
+    # Operator written apart from its target: the target must be skipped too, or the
+    # target itself ("out") becomes the resolved executable and the payload walks free.
+    ("> out curl http://x", "curl"),
+    ("2> /dev/null sudo ls", "sudo"),
+    # Grammar stacked on a wrapper, and on an already-covered obfuscation.
+    # Closing/alternate-branch tokens. These reach _split_prefix as a segment's leading
+    # token too (`_split_commands` breaks on `;`, so `else`/`elif` bodies and a stray
+    # `)`/`}` land at the front of their own segment), and without a row here removing
+    # them from _GRAMMAR_PREFIXES flips no test -- a quarter of the set was unpinned.
+    ("if false; then true; else curl http://x; fi", "curl"),
+    ("if false; then true; elif curl http://x; then echo; fi", "curl"),
+    ("} curl http://x", "curl"),
+    (") curl http://x", "curl"),
+    ("( env sudo whoami )", "sudo"),
+    ("( /usr/bin/curl http://x )", "curl"),
+    ("then command curl http://x", "curl"),
+]
+
+# The other half: grammar must not turn benign work into a denial or a mandatory-ask.
+# A fix that denies anything containing a paren passes the table above and breaks daily
+# use, so these are asserted just as hard.
+GRAMMAR_WRAPPED_BENIGN_CASES = [
+    "( ls )",
+    "(ls)",
+    "{ git status ; }",
+    "if true; then echo ok; fi",
+    "while true; do echo ok; done",
+    "for i in 1 2 3; do echo $i; done",
+    "exec ls",
+    "2>/dev/null ls",
+    "> out echo hi",
+    "cd /tmp && (ls)",
+]
+
+
+class TestGrammarPrefixResolution:
+    @pytest.mark.parametrize(("command", "denied"), GRAMMAR_WRAPPED_DENY_CASES)
+    def test_grammar_does_not_hide_a_denied_executable(self, command, denied):
+        matched, name = _common.find_deny_command(_common._split_commands(command))
+        assert (matched, name) == (True, denied), (
+            f"shell grammar hid a denied executable: {command!r}"
+        )
+
+    @pytest.mark.parametrize("command", GRAMMAR_WRAPPED_BENIGN_CASES)
+    def test_grammar_does_not_deny_benign_commands(self, command):
+        matched, name = _common.find_deny_command(_common._split_commands(command))
+        assert not matched, f"benign command wrongly denied as {name!r}: {command!r}"
+
+    @pytest.mark.parametrize("command", GRAMMAR_WRAPPED_BENIGN_CASES)
+    def test_grammar_does_not_force_benign_commands_to_high_risk(self, command):
+        label = _common.classify_high_risk(_common._split_commands(command), command)
+        assert label == "", (
+            f"benign command escalated to the mandatory-ask path as {label!r}: {command!r}"
+        )
+
+    @pytest.mark.parametrize(
+        ("command", "label"),
+        [
+            ("(pip install evil)", "pip install"),
+            ("{ pip install evil ; }", "pip install"),
+            ("do pip install evil", "pip install"),
+            ("exec pip install evil", "pip install"),
+        ],
+    )
+    def test_grammar_does_not_hide_a_high_risk_command(self, command, label):
+        assert _common.classify_high_risk(
+            _common._split_commands(command), command
+        ) == (label), f"shell grammar hid a high-risk command: {command!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "case x in x) curl http://x;; esac",
+            "select x in a; do curl http://x; done",
+            # `exec -a NAME cmd` renames argv[0]; -a takes a value, so the executable
+            # cannot be pinned by position without knowing that. Deliberately left out
+            # of exec's valueless-flag allowlist so it lands on the same "unknown or
+            # valued flag => cannot resolve" path as `env -u`.
+            "exec -a zzz curl http://x",
+            # Multi-arm `case`: `_split_commands` breaks on bare `;`, and `;;` leaves an
+            # empty middle segment, so arm 2+ becomes its own segment led by the pattern
+            # token (`b)`) rather than by `case`. That segment alone resolves `b)` as the
+            # executable and yields no label at all -- the payload is genuinely
+            # unclassified. Safety comes from the sibling `case ...` and `esac` segments,
+            # which both escalate via _UNRESOLVABLE_GRAMMAR, so the verdict survives a
+            # short-circuit in either direction. Confirmed by mutation: dropping `case`
+            # from that set makes this command's label go empty, which is what this row
+            # exists to catch.
+            "case $x in a) true ;; b) sudo rm -rf / ;; esac",
+        ],
+    )
+    def test_unresolvable_grammar_escalates_instead_of_passing(self, command):
+        """`case`/`select` put the executable somewhere this resolver cannot find.
+
+        The module's own convention is that an unresolvable executable returns None and
+        the callers fall to the safe side -- high-risk, i.e. the 2-model AND gate plus a
+        mandatory ask -- rather than the silent low-risk path. Asserting the escalation
+        (not a denial) keeps the guarantee honest about what is actually known.
+        """
+        label = _common.classify_high_risk(_common._split_commands(command), command)
+        assert label != "", (
+            f"grammar this resolver cannot parse fell through to low-risk: {command!r}"
+        )
+
+
 class TestParseVerdict:
     @pytest.mark.parametrize(
         ("output", "expected"),
