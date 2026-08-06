@@ -583,6 +583,49 @@ class TestCreateSymlinks:
         for name in ("settings.json", "keybindings.json"):
             assert (vscode_user / name).is_symlink()
 
+    def test_links_vscode_configs_on_windows(self, shell_env):
+        """detect_os yields "windows" for msys/cygwin, and that branch was missing.
+
+        VS Code on Windows reads user settings from %APPDATA%\\Code\\User. The function
+        only distinguished macOS from "everything else", so a Git Bash install landed
+        them under $HOME/.config/Code/User, where the Windows build never looks -- the
+        symlinks were created and had no effect. Not verified against a real Windows VS
+        Code from here; this pins the path the branch is supposed to produce.
+        """
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        appdata = home / "AppData/Roaming"
+        appdata.mkdir(parents=True)
+        env = dict(shell_env.env)
+        env["OS"] = "windows"
+        env["APPDATA"] = str(appdata)
+
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+
+        vscode_user = appdata / "Code/User"
+        for name in ("settings.json", "keybindings.json"):
+            assert (vscode_user / name).is_symlink(), (
+                f"{name} was not linked under %APPDATA%/Code/User"
+            )
+
+    def test_windows_without_appdata_falls_back_rather_than_failing(self, shell_env):
+        """Git Bash normally exports APPDATA, but a bare msys shell may not.
+
+        Falling back to the Linux-style path keeps the installer from aborting under
+        `set -u`; it is the same place the pre-fix code always used, so this is a
+        degradation, not a regression.
+        """
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        env = dict(shell_env.env)
+        env["OS"] = "windows"
+        env.pop("APPDATA", None)
+
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+        assert (home / ".config/Code/User/settings.json").is_symlink()
+
 
 class TestInstallAiTools:
     def test_skips_prompt_when_non_interactive(self, shell_env):

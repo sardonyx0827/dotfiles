@@ -1047,9 +1047,23 @@ _link_editor_configs() {
   # $HOME/.config on macOS). Symlink individual files (not the whole User/
   # dir) so editor runtime state (globalStorage, workspaceStorage, etc.)
   # never ends up in the repo.
+  #
+  # Three locations, not two. detect_os yields "windows" for msys/cygwin (Git
+  # Bash), where VS Code reads %APPDATA%\Code\User -- the branch was missing, so
+  # a Windows install linked into $HOME/.config/Code/User, which that build never
+  # reads. The symlinks were created and simply had no effect, which is the
+  # quietest way for this to be wrong. APPDATA is a Windows-only variable, so it
+  # cannot mislead the other two branches.
+  #
+  # Falls back to the Linux path when APPDATA is unset (a bare msys shell rather
+  # than Git Bash). That is where the pre-fix code always pointed, so the fallback
+  # is the old behaviour rather than a new failure mode -- and `set -u` makes an
+  # unguarded expansion abort the whole installer.
   local vscode_user_dir
   if [[ "$OS" == "macos" ]]; then
     vscode_user_dir="$HOME/Library/Application Support/Code/User"
+  elif [[ "$OS" == "windows" && -n "${APPDATA:-}" ]]; then
+    vscode_user_dir="$APPDATA/Code/User"
   else
     vscode_user_dir="$HOME/.config/Code/User"
   fi
