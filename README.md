@@ -187,14 +187,15 @@ npm install -g @github/copilot
 
 用途別に分割した詳細ドキュメントです。
 
-| ドキュメント                                         | 内容                                                                                                  |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| [docs/setup.md](docs/setup.md)                       | 手動インストール手順・バックアップと復旧・トラブルシューティング                                      |
-| [docs/configuration.md](docs/configuration.md)       | Zsh / Vim / Neovim / tmux / WezTerm / Git / AI 各ツールの設定、ユーティリティスクリプト、カスタマイズ |
-| [docs/testing.md](docs/testing.md)                   | pytest スイート・カバレッジゲート・静的解析（ruff / bandit / shellcheck / mypy / luacheck）           |
-| [docs/ai-integration.md](docs/ai-integration.md)     | 複数 LLM 連携・Bash 安全ゲート（bash-review）・Neovim のエディタ内 AI の構成                          |
-| [.claude/hooks/README.md](.claude/hooks/README.md)   | フックシステムの設計根拠と脅威モデル                                                                  |
-| [.claude/agents/README.md](.claude/agents/README.md) | カスタムサブエージェントの解説                                                                        |
+| ドキュメント                                               | 内容                                                                                                  |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [docs/setup.md](docs/setup.md)                             | 手動インストール手順・バックアップと復旧・トラブルシューティング                                      |
+| [docs/configuration.md](docs/configuration.md)             | Zsh / Vim / Neovim / tmux / WezTerm / Git / AI 各ツールの設定、ユーティリティスクリプト、カスタマイズ |
+| [docs/testing.md](docs/testing.md)                         | pytest スイート・カバレッジゲート・静的解析（ruff / bandit / shellcheck / mypy / luacheck）           |
+| [docs/ai-integration.md](docs/ai-integration.md)           | 複数 LLM 連携・Bash 安全ゲート（bash-review）・Neovim のエディタ内 AI の構成                          |
+| [docs/claude-architecture.md](docs/claude-architecture.md) | `.claude/` の agents / skills / hooks / commands / rules の配線マップ                                 |
+| [.claude/hooks/README.md](.claude/hooks/README.md)         | フックシステムの設計根拠と脅威モデル                                                                  |
+| [.claude/agents/README.md](.claude/agents/README.md)       | カスタムサブエージェントの解説                                                                        |
 
 ## 参考リンク
 
