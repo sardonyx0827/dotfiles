@@ -832,9 +832,18 @@ install_vim_plug() {
   if [ ! -f "$HOME/.vim/autoload/plug.vim" ]; then
     # Guarded: a failed download must not abort the run. Report the real state
     # rather than printing success unconditionally.
+    #
+    # The rm is the load-bearing half. `curl -o` streams into its target, so a
+    # connection dropped mid-transfer leaves a partial plug.vim rather than
+    # nothing -- and a partial file satisfies both the existence check below
+    # (which would print success over a corpse) and the `[ ! -f ]` guard above
+    # (which would make every future run skip the download). Without this the
+    # corruption is permanent: no rerun of install.sh can ever repair it.
     curl -fLo "$HOME/.vim/autoload/plug.vim" --create-dirs \
-      "https://raw.githubusercontent.com/junegunn/vim-plug/$VIM_PLUG_REF/plug.vim" ||
+      "https://raw.githubusercontent.com/junegunn/vim-plug/$VIM_PLUG_REF/plug.vim" || {
+      rm -f "$HOME/.vim/autoload/plug.vim"
       print_warning "Failed to download vim-plug (continuing)"
+    }
   fi
 
   if [ -f "$HOME/.vim/autoload/plug.vim" ]; then

@@ -639,6 +639,72 @@ class TestInstallVimPlugins:
         assert "Vim plugins installed" in res.stdout
 
 
+# `curl -o` streams into its target, so a connection dropped mid-transfer leaves a
+# partial plug.vim behind rather than nothing. That is the whole bug: the existence
+# check below the download then reports success over the corpse, and -- worse -- the
+# `[ ! -f ]` guard above it makes every future run skip the download entirely, so no
+# rerun of install.sh ever repairs it. fetch_and_run (used for every other download in
+# this file) already refuses truncated and empty bodies; install_vim_plug never got that
+# treatment, and had no test of any kind.
+_CURL_TRUNCATED = """
+for arg in "$@"; do
+  if [ "$prev" = "-fLo" ]; then mkdir -p "$(dirname "$arg")"; printf 'partial' > "$arg"; fi
+  prev="$arg"
+done
+exit 1
+"""
+
+
+class TestInstallVimPlug:
+    def test_truncated_download_is_not_reported_as_success(self, shell_env):
+        shell_env.stub("curl", body=_CURL_TRUNCATED)
+        res = run_sourced('install_vim_plug; echo "AFTER"', shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "AFTER" in res.stdout
+        assert "[WARNING]" in res.stdout
+        assert "vim-plug installed" not in res.stdout, (
+            "a failed download printed success because the partial file exists"
+        )
+
+    def test_a_failed_download_leaves_nothing_behind_so_a_rerun_retries(
+        self, shell_env
+    ):
+        """The sticky half: a corpse on disk disables the retry path forever."""
+        shell_env.stub("curl", body=_CURL_TRUNCATED)
+        run_sourced("install_vim_plug", shell_env.env)
+        plug = shell_env.home / ".vim/autoload/plug.vim"
+        assert not plug.exists(), (
+            "a failed download left a partial plug.vim, so `[ ! -f ]` will skip "
+            "the download on every future run and the corruption is permanent"
+        )
+
+    def test_a_successful_download_is_kept_and_reported(self, shell_env):
+        shell_env.stub(
+            "curl",
+            body=(
+                'for arg in "$@"; do\n'
+                '  if [ "$prev" = "-fLo" ]; then mkdir -p "$(dirname "$arg")"; '
+                'printf \'" real plug.vim\\n\' > "$arg"; fi\n'
+                '  prev="$arg"\n'
+                "done\n"
+            ),
+        )
+        res = run_sourced("install_vim_plug", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "vim-plug installed" in res.stdout
+        assert (shell_env.home / ".vim/autoload/plug.vim").exists()
+
+    def test_an_existing_plug_vim_is_not_redownloaded(self, shell_env):
+        plug = shell_env.home / ".vim/autoload/plug.vim"
+        plug.parent.mkdir(parents=True)
+        plug.write_text('" already here\n', encoding="utf-8")
+        shell_env.stub("curl", exit_code=1)
+        res = run_sourced("install_vim_plug", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "vim-plug installed" in res.stdout
+        assert plug.read_text(encoding="utf-8") == '" already here\n'
+
+
 class TestStrictMode:
     def test_pipefail_enabled(self, shell_env):
         # Pipelines like `curl ... | sudo tee` must not swallow curl's exit
