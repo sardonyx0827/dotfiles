@@ -471,7 +471,9 @@ def test_the_test_seam_exposes_exactly_what_these_tests_use(tmp_path):
         env={"PATH": str(binroot), "HOME": str(home)},
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == "build_cli_cmd,cli_failure_reason,scan_payload"
+    assert proc.stdout.strip() == (
+        "build_cli_cmd,cli_failure_reason,ollama_failure_reason,scan_payload"
+    )
 
 
 def test_nvim_l_does_not_load_the_user_config(tmp_path):
@@ -551,9 +553,56 @@ class TestCliFailureReason:
     def test_truncation_does_not_split_a_multibyte_character(self, tmp_path):
         # CLIs localise their errors. Cutting the quote at a byte offset lands
         # mid-character for anything outside ASCII and emits invalid UTF-8.
-        r = self.reason(tmp_path, 1, ["\u30a8\u30e9\u30fc" * 400])
-        assert "\ufffd" not in r, "truncated mid-character"
+        r = self.reason(tmp_path, 1, ["エラー" * 400])
+        assert "�" not in r, "truncated mid-character"
         assert r.endswith("...")
+
+
+class TestOllamaFailureReason:
+    """run_ollama never got the fix run_cli did, so its reason was always wrong.
+
+    `done(false, {}, err or exit_code)` prefers the parse error, and parse_ollama
+    returns a non-nil error for any unusable body -- including the empty string an
+    unreachable server produces. The exit_code branch was therefore unreachable, and
+    "could not connect to Ollama" always surfaced as "invalid JSON response". run_ollama
+    also registered no on_stderr at all, so the transport's own diagnosis was discarded.
+
+    Routed through the same cli_failure_reason run_cli uses, so both backends describe a
+    failure the same way: the transport's exit code and stderr when the transport failed,
+    the parse error only when it genuinely succeeded and returned something unusable.
+    """
+
+    def reason(self, tmp_path, exit_code, stderr, parse_err):
+        return backend_call(
+            "_internal.ollama_failure_reason",
+            exit_code,
+            stderr,
+            parse_err,
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+        ).only
+
+    def test_transport_failure_reports_the_exit_code_not_the_parse_error(
+        self, tmp_path
+    ):
+        r = self.reason(tmp_path, 7, [], "invalid JSON response")
+        assert "7" in r, r
+        assert "invalid JSON" not in r, (
+            "a failed transport still reported the downstream parse error"
+        )
+
+    def test_transport_stderr_reaches_the_reason(self, tmp_path):
+        r = self.reason(
+            tmp_path, 7, ["curl: (7) Failed to connect"], "invalid JSON response"
+        )
+        assert "Failed to connect" in r, r
+
+    def test_parse_error_survives_when_the_transport_succeeded(self, tmp_path):
+        r = self.reason(tmp_path, 0, [], "invalid JSON response")
+        assert "invalid JSON response" in r, r
+
+    def test_success_with_no_parse_error_still_says_something(self, tmp_path):
+        assert self.reason(tmp_path, 0, [], None).strip() != ""
 
 
 class TestFailureMessageReachesTheBuffer:

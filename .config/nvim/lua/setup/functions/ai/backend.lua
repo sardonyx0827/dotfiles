@@ -199,6 +199,29 @@ local function cli_failure_reason(exit_code, stderr)
   return string.format("exit code %d", exit_code)
 end
 
+--- Why a failed Ollama request failed.
+---
+--- `err or ("exit code %d"):format(code)` looked right and was unreachable in the
+--- branch that mattered: parse_ollama returns a non-nil error for ANY unusable body,
+--- and an unreachable server yields an empty body, so the parse error always won and
+--- "could not connect" surfaced as "invalid JSON response". Transport first, parse
+--- error only once the transport actually succeeded.
+---
+--- Delegates to cli_failure_reason so both backends phrase a failure identically
+--- (stderr folded in, exit 0 never stated as the cause, truncation by characters).
+---
+--- @param exit_code integer
+--- @param stderr string[]|nil captured stderr lines
+--- @param parse_err string|nil parse_ollama's complaint about the body
+--- @return string
+local function ollama_failure_reason(exit_code, stderr, parse_err)
+  if exit_code ~= 0 then
+    return cli_failure_reason(exit_code, stderr)
+  end
+  -- Transport fine, body unusable: the parse error is the informative half.
+  return parse_err or cli_failure_reason(exit_code, stderr)
+end
+
 --- Run a CLI tool: write `input` to a temp file, pipe it into the tool, and
 --- return the cleaned stdout lines. Returns the job id (or <=0 on failure).
 local function run_cli(tool, model, instruction, input, skip_git_check, done)
@@ -273,11 +296,18 @@ local function run_ollama(model, system, input, done)
     vim.fn.shellescape(tmpfile))
 
   local stdout = {}
+  local stderr = {}
   local job_id = vim.fn.jobstart({ "sh", "-c", cmd }, {
     stdout_buffered = true,
+    stderr_buffered = true,
     on_stdout = function(_, data)
       if data then
         stdout = data
+      end
+    end,
+    on_stderr = function(_, data)
+      if data then
+        stderr = data
       end
     end,
     on_exit = function(_, exit_code)
@@ -287,7 +317,7 @@ local function run_ollama(model, system, input, done)
         if exit_code == 0 and lines and #lines > 0 then
           done(true, lines, nil)
         else
-          done(false, {}, err or string.format("exit code %d", exit_code))
+          done(false, {}, ollama_failure_reason(exit_code, stderr, err))
         end
       end)
     end,
@@ -405,6 +435,7 @@ M._internal = {
   scan_payload = scan_payload,
   build_cli_cmd = build_cli_cmd,
   cli_failure_reason = cli_failure_reason,
+  ollama_failure_reason = ollama_failure_reason,
 }
 
 return M

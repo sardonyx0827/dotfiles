@@ -12,7 +12,10 @@ malformed shapes so they stay meaningful rather than merely present.
 """
 
 import re
+import shutil
+import subprocess
 
+import pytest
 from conftest import REPO_ROOT
 
 TOGGLETERM_SPEC = REPO_ROOT / ".config/nvim/lua/setup/plugins/utilities/toggleterm.lua"
@@ -74,3 +77,170 @@ def test_copilot_sensitive_guard_rechecks_after_a_buffer_rename():
         "fires BufFilePre/BufFilePost, so without one of those a buffer that becomes "
         f"sensitive keeps Copilot enabled for the rest of the session: {guard_events}"
     )
+
+
+# The vim AI replace path is an independent port of the Neovim one, and it was left
+# behind when 59cfcf9 fixed how a failed run is reported. job_start() registered out_cb
+# but no err_cb, so the tool's own stderr -- the part that says WHY, e.g. "command not
+# found" or a connection error -- was discarded, and every failure was rendered as a bare
+# `[<tool> failed (exit code N)]`, including exit code 0 (ran fine, printed nothing),
+# which states a success as the cause of a failure.
+def test_vim_ai_jobs_capture_stderr():
+    text = VIM_AI_RC.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    # Vimscript comments start with `"`; the file discusses job_start in prose too.
+    starts = [
+        n
+        for n, line in enumerate(lines, 1)
+        if "job_start(" in line and not line.lstrip().startswith('"')
+    ]
+    assert starts, "70-ai.vim no longer starts any AI job"
+    for start in starts:
+        # The options dict is a line-continued block; read to its closing brace.
+        block = []
+        for line in lines[start - 1 :]:
+            block.append(line)
+            if line.rstrip().endswith("})"):
+                break
+        joined = " ".join(block)
+        assert "err_cb" in joined or "err_io" in joined, (
+            f"the job_start at 70-ai.vim:{start} captures stdout but drops stderr, so a "
+            f"failure is reported as a bare exit code with no reason: {joined.strip()}"
+        )
+
+
+def test_vim_ai_failure_message_can_carry_a_reason():
+    """A bare `(exit code %d)` format string cannot say anything but the number."""
+    text = VIM_AI_RC.read_text(encoding="utf-8")
+    bare = [
+        f"{n}: {line.strip()}"
+        for n, line in enumerate(text.splitlines(), 1)
+        if "failed (exit code %d)" in line
+    ]
+    assert not bare, (
+        "the failure message has no room for the captured stderr, so the reader still "
+        f"sees only a number (and 'exit code 0' when the tool merely printed nothing): "
+        f"{bare}"
+    )
+
+
+def _real_vim() -> str | None:
+    """Path to a genuine Vim, or None.
+
+    `vim` on PATH is commonly Neovim (this repo aliases it, and 70-ai.vim is guarded by
+    `if !has('nvim')`), in which case the whole file is skipped and nothing under test is
+    even defined. Probe for a binary that reports has('nvim') == 0.
+    """
+    for candidate in ("/usr/bin/vim", shutil.which("vim")):
+        if not candidate:
+            continue
+        try:
+            res = subprocess.run(  # noqa: S603
+                [candidate, "-es", "-u", "NONE", "-N", "--cmd", "qa!"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if res.returncode != 0:
+            continue
+        probe = subprocess.run(  # noqa: S603
+            [candidate, "-es", "-u", "NONE", "-N", "--cmd", "qa!"],
+            input="",
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if probe.returncode == 0 and _vim_has_nvim(candidate) == 0:
+            return candidate
+    return None
+
+
+def _vim_has_nvim(binary: str) -> int:
+    script = "call writefile([has('nvim')], $PROBE_OUT)\nqa!\n"
+    return int(_run_vim_script(binary, script, extra_source=None).strip() or "1")
+
+
+def _run_vim_script(binary: str, script: str, extra_source: str | None) -> str:
+    """Run `script` under `binary`, optionally with 70-ai.vim prepended.
+
+    Prepended rather than sourced: `s:` is per-script scope, so a separate file cannot
+    reach 70-ai.vim's script-local functions at all.
+    """
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        combined = os.path.join(tmp, "probe.vim")
+        out = os.path.join(tmp, "probe.out")
+        body = (extra_source + "\n" if extra_source else "") + script
+        with open(combined, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        subprocess.run(  # noqa: S603
+            [binary, "-es", "-u", "NONE", "-N", "-S", combined],
+            env={**os.environ, "PROBE_OUT": out},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        try:
+            with open(out, encoding="utf-8") as fh:
+                return fh.read()
+        except FileNotFoundError:
+            return ""
+
+
+class TestVimOllamaFailureOrdering:
+    """The transport's exit code must win over the response-body parse error.
+
+    The vim AI path is an independent port of the Neovim one and carried the same
+    precedence bug: the parse error was preferred unconditionally, and a body that never
+    arrived fails to parse just as surely as a malformed one, so "could not reach the
+    server" always surfaced as a parse complaint. The nvim side has this pinned by
+    TestOllamaFailureReason; the vim port originally got the fix with no test at all --
+    reverting the ordering left every test green.
+
+    Driven through a real Vim rather than asserted as source text, because the shape of
+    the condition is not the behaviour: what matters is which reason comes out.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        binary = _real_vim()
+        if binary is None:
+            pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+        return binary
+
+    def reason(self, vim, status, errbuf, parse_err):
+        source = VIM_AI_RC.read_text(encoding="utf-8")
+        err_literal = "v:null" if parse_err is None else f"'{parse_err}'"
+        script = (
+            "let s:r = s:AI_OllamaFailureReason('gemma', {status}, {errbuf}, {err})\n"
+            "call writefile([s:r], $PROBE_OUT)\nqa!\n"
+        ).format(
+            status=status,
+            errbuf=repr(list(errbuf)).replace("'", "'"),
+            err=err_literal,
+        )
+        return _run_vim_script(vim, script, extra_source=source).strip()
+
+    def test_transport_failure_beats_the_parse_error(self, vim):
+        out = self.reason(vim, 7, ["curl: (7) Failed to connect"], "invalid JSON")
+        assert "7" in out, out
+        assert "invalid JSON" not in out, (
+            "a failed transport still reported the downstream parse error"
+        )
+
+    def test_transport_stderr_reaches_the_reason(self, vim):
+        out = self.reason(vim, 7, ["curl: (7) Failed to connect"], "invalid JSON")
+        assert "Failed to connect" in out, out
+
+    def test_parse_error_survives_when_the_transport_succeeded(self, vim):
+        out = self.reason(vim, 0, [], "invalid JSON")
+        assert "invalid JSON" in out, out
+
+    def test_exit_zero_is_never_stated_as_the_cause(self, vim):
+        out = self.reason(vim, 0, [], None)
+        assert "exit 0" not in out, out
+        assert out.strip() != ""

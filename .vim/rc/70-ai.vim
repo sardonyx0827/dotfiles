@@ -232,6 +232,56 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     call add(a:buffer, a:msg)
   endfunction
 
+  " stderr は out_cb とは別のバッファに溜める。捨てると失敗理由が「番号だけ」に
+  " なる: 未インストールなら exit 127 + stderr "command not found" が本題で、
+  " 127 という数字だけ見せられても読み手は何も判断できない。
+  function! s:AI_JobErr(buffer, ch, msg) abort
+    call add(a:buffer, a:msg)
+  endfunction
+
+  " 失敗の理由文を組み立てる。nvim 側 (ai/backend.lua の cli_failure_reason,
+  " 59cfcf9) と同じ方針で、こちらは独立実装なのでその修正が届いていなかった。
+  "
+  " - exit 0 を「原因」として出さない。ツールは正常終了して何も出さなかっただけで、
+  "   `(exit code 0)` は成功を失敗の理由として述べていることになる。
+  " - stderr があれば畳み込む。長いトレースバックは先頭だけ残す。
+  " - 切り詰めは文字単位。CLI はエラーを各国語で出すので、バイト位置で切ると
+  "   マルチバイト文字の途中で割れて不正な UTF-8 がバッファに入る。
+  " Ollama 経路の失敗理由。トランスポートの失敗を先に見る。
+  "
+  " 以前は l:err (レスポンス本文のパースエラー) を無条件に優先していたが、
+  " 接続できなければ本文は空で、パースは必ず失敗する。つまり exit code を見る枝に
+  " 到達できず、「サーバに繋がらない」が常にパースエラーとして表示されていた。
+  "
+  " 呼び出し側にインラインで書くと退行を検知できない (実際、この修正を入れた直後は
+  " 条件を元に戻しても全テストが緑のままだった)。nvim 側 ai/backend.lua の
+  " ollama_failure_reason と同じ形に切り出し、両実装の構造を揃えて単体で叩けるようにする。
+  function! s:AI_OllamaFailureReason(tool, status, errbuf, parse_err) abort
+    if a:status != 0
+      return s:AI_FailureReason(a:tool, a:status, a:errbuf)
+    endif
+    " トランスポートは成功、本文が使えない: パースエラーの方が情報量がある。
+    if type(a:parse_err) == v:t_string && a:parse_err !=# ''
+      return printf('[%s error: %s]', a:tool, a:parse_err)
+    endif
+    return s:AI_FailureReason(a:tool, a:status, a:errbuf)
+  endfunction
+
+  function! s:AI_FailureReason(tool, status, errbuf) abort
+    let l:detail = trim(join(a:errbuf, "\n"))
+    if strchars(l:detail) > 200
+      let l:detail = strcharpart(l:detail, 0, 200) . '...'
+    endif
+    if a:status == 0
+      return l:detail !=# ''
+            \ ? printf('[%s returned nothing: %s]', a:tool, l:detail)
+            \ : printf('[%s returned nothing]', a:tool)
+    endif
+    return l:detail !=# ''
+          \ ? printf('[%s failed (exit %d): %s]', a:tool, a:status, l:detail)
+          \ : printf('[%s failed (exit %d)]', a:tool, a:status)
+  endfunction
+
   " ---- shared close / focus / apply ---------------------------------------
   function! s:AI_Close(...) abort
     let l:s = a:0 ? a:1 : get(b:, 'ai_state', {})
@@ -344,7 +394,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       else
         let l:s.status = 'failed'
         call s:AI_SetBufAll(l:s.resp_buf,
-              \ [printf('[%s failed (exit code %d)]', l:s.tool, a:status)])
+              \ [s:AI_FailureReason(l:s.tool, a:status, get(l:s, 'errout', []))])
         call setbufvar(l:s.resp_buf, '&modifiable', 0)
       endif
     endif
@@ -388,7 +438,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ 'changedtick': a:ctx.changedtick,
           \ 'orig_buf': l:orig_buf, 'orig_win': l:orig_win,
           \ 'resp_buf': l:resp_buf, 'resp_win': l:resp_win,
-          \ 'status': 'pending', 'output': [], 'closed': 0, 'tmpfile': a:tmpfile,
+          \ 'status': 'pending', 'output': [], 'errout': [],
+          \ 'closed': 0, 'tmpfile': a:tmpfile,
           \ }
     call setbufvar(l:orig_buf, 'ai_state', l:state)
     call setbufvar(l:resp_buf, 'ai_state', l:state)
@@ -397,6 +448,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:state.job = job_start(['sh', '-c', a:cmd], {
           \ 'out_cb': function('s:AI_JobOut', [l:state.output]),
           \ 'out_mode': 'nl',
+          \ 'err_cb': function('s:AI_JobErr', [l:state.errout]),
+          \ 'err_mode': 'nl',
           \ 'exit_cb': function(a:exit_cb, [l:state]),
           \ })
   endfunction
@@ -510,7 +563,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     else
       let l:s.status[a:idx] = 'failed'
       call s:AI_SetBufAll(l:buf,
-            \ [printf('[%s failed (exit code %d)]', l:s.tools[a:idx - 1], a:status)])
+            \ [s:AI_FailureReason(l:s.tools[a:idx - 1], a:status,
+            \                     get(get(l:s, 'errout', {}), a:idx, []))])
       call setbufvar(l:buf, '&modifiable', 0)
     endif
     call s:AI_AllStatus(l:s)
@@ -539,6 +593,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:bufs = {}
     let l:status = {}
     let l:output = {}
+    let l:errout = {}
     let l:idx = 1
     let l:first = 1
     for l:t in l:tools
@@ -553,6 +608,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       let l:bufs[l:idx] = bufnr('%')
       let l:status[l:idx] = 'pending'
       let l:output[l:idx] = []
+      let l:errout[l:idx] = []
       let l:first = 0
       let l:idx += 1
     endfor
@@ -563,7 +619,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ 'target_buf': a:ctx.target_buf, 'start': a:ctx.start, 'end': a:ctx.end,
           \ 'changedtick': a:ctx.changedtick,
           \ 'orig_buf': l:orig_buf, 'orig_win': l:orig_win, 'resp_win': l:resp_win,
-          \ 'bufs': l:bufs, 'status': l:status, 'output': l:output, 'jobs': {},
+          \ 'bufs': l:bufs, 'status': l:status, 'output': l:output,
+          \ 'errout': l:errout, 'jobs': {},
           \ 'active': 1, 'pending': len(l:tools), 'closed': 0, 'tmpfile': a:tmpfile,
           \ }
     call setbufvar(l:orig_buf, 'ai_state', l:state)
@@ -596,6 +653,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
         let l:state.jobs[l:i] = job_start(['sh', '-c', l:cmd], {
               \ 'out_cb': function('s:AI_JobOut', [l:state.output[l:i]]),
               \ 'out_mode': 'nl',
+              \ 'err_cb': function('s:AI_JobErr', [l:state.errout[l:i]]),
+              \ 'err_mode': 'nl',
               \ 'exit_cb': function('s:AI_AllExit', [l:state, l:i]),
               \ })
       endif
@@ -650,10 +709,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
         call s:AI_SetBufAll(l:s.resp_buf, l:result)
       else
         let l:s.status = 'failed'
-        let l:msg = printf('[%s failed (exit code %d)]', l:s.tool, a:status)
-        if l:err !=# ''
-          let l:msg = printf('[%s error: %s]', l:s.tool, l:err)
-        endif
+        let l:msg = s:AI_OllamaFailureReason(
+              \ l:s.tool, a:status, get(l:s, 'errout', []), l:err)
         call s:AI_SetBufAll(l:s.resp_buf, [l:msg])
         call setbufvar(l:s.resp_buf, '&modifiable', 0)
       endif
