@@ -247,6 +247,11 @@ return {
       renderer = {
         group_empty = true,
         icons = {
+          show = {
+            -- hide the >/v chevron in front of directories; the folder glyph
+            -- itself already shows open/closed state
+            folder_arrow = false,
+          },
           glyphs = {
             git = {
               unstaged = "!",
