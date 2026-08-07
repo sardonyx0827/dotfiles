@@ -1,8 +1,8 @@
 return {
   'romgrk/barbar.nvim',
   dependencies = {
-    'lewis6991/gitsigns.nvim',       -- OPTIONAL: for git status
-    'nvim-tree/nvim-web-devicons',   -- OPTIONAL: for file icons
+    'lewis6991/gitsigns.nvim',     -- OPTIONAL: for git status
+    'nvim-tree/nvim-web-devicons', -- OPTIONAL: for file icons
   },
   init = function() vim.g.barbar_auto_setup = false end,
   -- barbar renders the buffer tabline, so it must load eagerly (no lazy trigger).
@@ -14,6 +14,9 @@ return {
       -- insert_at_start = true,
       -- …etc.
       insert_at_end = true,
+      icons = {
+        button = ''
+      }
     })
 
     -- formerly after/plugin/barbar.lua
@@ -26,5 +29,5 @@ return {
     vim.keymap.set("n", "<leader>br", "<cmd>BufferCloseBuffersRight<cr>",
       { noremap = true, silent = true, desc = "Close Buffers to Right" })
   end,
-  version = '^1.0.0',   -- optional: only update when a new 1.x version is released
+  version = '^1.0.0', -- optional: only update when a new 1.x version is released
 }
