@@ -93,6 +93,7 @@ jobs:
           python -m pytest -q
           --cov=.claude/hooks
           --cov=.claude/mcp-servers
+          --cov=.claude/skills
           --cov=.codex/hooks
           --cov=scripts
           --cov-report=term-missing
@@ -172,11 +173,11 @@ jobs:
         run: python -m pip install --upgrade pip "ruff==0.15.6" "bandit==1.9.4" "mypy==1.19.1"
       # スコープは自作 Python のみ（.codex/skills/.system 配下の vendored スクリプトは除外）
       - name: ruff check
-        run: ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
+        run: ruff check .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
       - name: ruff format --check
-        run: ruff format --check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
+        run: ruff format --check .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
       - name: bandit (security, medium+ severity)
-        run: bandit -ll -q -r .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
+        run: bandit -ll -q -r .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
       # フックには元から型注釈が付いていたが検証する仕組みが無く、実装と注釈が
       # 無言で乖離し得た。設定ファイルは置かない: 既定値で緑になり、唯一の例外
       # (Windows 専用の任意依存 win10toast) は import 箇所の inline ignore で
@@ -196,7 +197,7 @@ jobs:
       # 要る。守れない厳しさを掲げるより、本番コードを確実に縛る方を採る。
       - name: mypy (type check)
         run: |
-          mypy .claude/hooks .claude/mcp-servers scripts
+          mypy .claude/hooks .claude/mcp-servers .claude/skills scripts
           MYPYPATH=.claude/hooks mypy .codex/hooks
 
   shellcheck:
