@@ -922,6 +922,24 @@ class TestCodexAutoFormat:
         assert res.returncode == 0
         assert any(c.startswith("shfmt -i 2 -w") for c in shell_env.calls)
 
+    def test_editor_oneshot_formats_nothing(self, shell_env, git_repo):
+        # Same worktree as test_formats_modified_tracked_file, audited under the
+        # marker the editors' AI wrappers set. Reformatting there is not a
+        # borderline call: a commit-message run edits no files at all, so every
+        # candidate this hook finds is the user's own uncommitted work, and the
+        # rewrite lands AFTER the diff the message was generated from. Measured
+        # through a real `codex exec`: app.ts came back with semicolons prettier
+        # had added during a run that only asked for text.
+        shell_env.stub("shfmt")
+        (git_repo / "x.sh").write_text("echo hi\n", encoding="utf-8")
+        run_git(git_repo, "add", "x.sh")
+        run_git(git_repo, "commit", "-q", "-m", "add x.sh")
+        (git_repo / "x.sh").write_text("echo    hi\n", encoding="utf-8")
+        shell_env.env["EDITOR_AI_ONESHOT"] = "1"
+        res = shell_env.run(CODEX_FORMAT, stdin="{}", cwd=git_repo)
+        assert res.returncode == 0
+        assert shell_env.calls == [], "a generation-only call rewrote the worktree"
+
     def test_formats_untracked_file(self, shell_env, git_repo):
         # apply_patch creates files as well as editing them, so new files must
         # be picked up even though git diff alone would miss them.

@@ -129,6 +129,25 @@ local MAX_CMD_BYTES = 256 * 1024
 -- traceback would otherwise push it out of view.
 local MAX_STDERR_CHARS = 500
 
+-- Marks the child as an editor-driven, generation-only invocation. Read by the
+-- Stop hooks (.claude/hooks/stop-audit.sh and its .codex sibling), which skip
+-- their debug-statement audit when it is set.
+--
+-- Without it the audit fires on a `<leader>cm` run and blocks with "remove
+-- console.log / debugger": the agent takes that as an instruction, EDITS THE
+-- USER'S WORKING TREE, and returns "removed the debug statement" as the commit
+-- message. Both halves are wrong -- the generated text is destroyed and changes
+-- nobody asked for land in the repo. The audit belongs to interactive sessions,
+-- where the agent wrote the code it is being asked to clean up; here it is
+-- auditing the user's own uncommitted work, which is exactly what a commit
+-- message is FOR.
+--
+-- Prefixed onto the command string rather than passed through jobstart's `env`
+-- so the whole contract lives in one testable string, and so .vim/rc/70-ai.vim
+-- can carry the identical shape without depending on Vim's job env semantics.
+-- Only claude and codex get it; gemini and copilot run no such hook.
+local ONESHOT_ENV = "EDITOR_AI_ONESHOT=1"
+
 --- Build the shell command for a CLI tool. Most tools read the payload from
 --- `tmpfile` over stdin; copilot inlines `input` into the prompt instead.
 --- `skip_git_check` adds codex's --skip-git-repo-check (used by the replace
@@ -138,8 +157,19 @@ local function build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_
   local esc_prompt = vim.fn.shellescape(instruction)
   if tool == "codex" then
     local skip = skip_git_check and "--skip-git-repo-check " or ""
-    return string.format("cat %s | codex exec %s%s",
-      esc_file, skip, esc_prompt)
+    -- --sandbox read-only for the same reason the claude branch takes its tools
+    -- away: nothing here needs to write. It is the flag .claude/hooks/
+    -- _bash_review_common.py's _call_codex already uses for its own untrusted
+    -- one-shot, so the repo has one answer to this question rather than two.
+    --
+    -- Weaker than the claude branch, and knowingly so: the sandbox governs
+    -- model-run shell commands, not tools a configured MCP server provides --
+    -- and an MCP tool is exactly what got through on the claude side. codex has
+    -- no --strict-mcp-config equivalent that has been verified here, so the
+    -- Stop-hook marker above is the load-bearing guard for codex and this is
+    -- the backstop, not the reverse.
+    return string.format("cat %s | %s codex exec --sandbox read-only %s%s",
+      esc_file, ONESHOT_ENV, skip, esc_prompt)
   elseif tool == "gemini" then
     return string.format("cat %s | gemini -m %s -p %s",
       esc_file, vim.fn.shellescape(model), esc_prompt)
@@ -164,8 +194,20 @@ local function build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_
     return string.format("copilot --model %s -s -p %s",
       vim.fn.shellescape(model), vim.fn.shellescape(copilot_prompt))
   else -- claude
-    return string.format("cat %s | claude --model %s -p %s",
-      esc_file, vim.fn.shellescape(model), esc_prompt)
+    -- ツールを一切与えない。ここの呼び出しは全部「テキストを受け取ってテキスト
+    -- を返す」だけで、リポジトリを触る必要がない。
+    --
+    -- 二つのフラグで一組。片方だけでは書き込み経路が残る:
+    --   --tools ''            落とせるのは *組み込み* ツールだけ。
+    --   --strict-mcp-config   --mcp-config を伴わないので MCP サーバが 0 個になる。
+    -- 実測 (claude 2.1.228): `--tools ''` だけを付けた状態で Stop フックの
+    -- ブロックを受けた claude が、生き残っていた mcp__serena__replace_content
+    -- 経由で作業ツリーのファイルを書き換えた。組み込みだけ塞いでも意味がない。
+    --
+    -- MCP を落とすのは安全側の副作用も持つ: 一発の生成にサーバ群を起動しない。
+    return string.format(
+      "cat %s | %s claude --model %s --tools '' --strict-mcp-config -p %s",
+      esc_file, ONESHOT_ENV, vim.fn.shellescape(model), esc_prompt)
   end
 end
 

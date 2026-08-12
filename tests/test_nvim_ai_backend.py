@@ -309,13 +309,31 @@ class TestBuildCliCmd:
 
     def test_codex_pipes_the_tempfile_in(self, tmp_path):
         cmd = self.build(tmp_path, "codex", None, "INSTR")
-        assert cmd == f"cat '{self.payload_file(tmp_path)}' | codex exec 'INSTR'"
+        assert cmd == (
+            f"cat '{self.payload_file(tmp_path)}' "
+            "| EDITOR_AI_ONESHOT=1 codex exec --sandbox read-only 'INSTR'"
+        )
 
     def test_codex_skip_git_check_is_opt_in(self, tmp_path):
         off = self.build(tmp_path, "codex", None, "I", skip_git=False)
         on = self.build(tmp_path, "codex", None, "I", skip_git=True)
         assert "--skip-git-repo-check" not in off
-        assert "codex exec --skip-git-repo-check 'I'" in on
+        assert "--skip-git-repo-check 'I'" in on
+
+    def test_codex_never_gets_a_writable_sandbox(self, tmp_path):
+        """The backstop behind the Stop-hook marker, for both skip_git modes.
+
+        Weaker than the claude branch's `--tools '' --strict-mcp-config`: the
+        sandbox governs model-run shell commands, not MCP-provided tools, and an
+        MCP tool is what got through when only the built-ins were taken away.
+        Asserted anyway because losing it would leave codex with no second layer
+        at all.
+        """
+        for skip_git in (False, True):
+            cmd = self.build(tmp_path, "codex", None, "I", skip_git=skip_git)
+            assert "codex exec --sandbox read-only" in cmd, cmd
+            assert "workspace-write" not in cmd
+            assert "danger-full-access" not in cmd
 
     def test_gemini_carries_the_model(self, tmp_path):
         cmd = self.build(tmp_path, "gemini", "flash", "INSTR")
@@ -326,9 +344,76 @@ class TestBuildCliCmd:
     def test_claude_is_the_default_branch(self, tmp_path):
         cmd = self.build(tmp_path, "claude", "sonnet", "INSTR")
         expected = (
-            f"cat '{self.payload_file(tmp_path)}' | claude --model 'sonnet' -p 'INSTR'"
+            f"cat '{self.payload_file(tmp_path)}' | EDITOR_AI_ONESHOT=1 "
+            "claude --model 'sonnet' --tools '' --strict-mcp-config -p 'INSTR'"
         )
         assert cmd == expected
+
+    def test_claude_gets_no_tools_from_either_source(self, tmp_path):
+        """Both halves, or the write path stays open.
+
+        `--tools ''` drops only the BUILT-IN tools. Measured against claude
+        2.1.228: with that flag alone, a run whose Stop hook blocked went on to
+        edit the working tree through mcp__serena__replace_content -- an MCP
+        tool, untouched by --tools. --strict-mcp-config with no --mcp-config
+        alongside it leaves the session zero MCP servers, which is the other
+        half. A future edit that keeps one and drops the other reads as a
+        harmless simplification and silently reopens the hole, so pin both.
+        """
+        cmd = self.build(tmp_path, "claude", "haiku", "I")
+        assert "--tools ''" in cmd, "built-in tools still available"
+        assert "--strict-mcp-config" in cmd, "MCP tools still available"
+
+    def test_only_the_hooked_tools_are_marked_as_editor_oneshot(self, tmp_path):
+        """gemini and copilot run no Stop hook, so the marker would be noise."""
+        for tool, model in (("claude", "sonnet"), ("codex", None)):
+            assert "EDITOR_AI_ONESHOT=1" in self.build(tmp_path, tool, model, "I")
+        for tool, model in (("gemini", "flash"), ("copilot", "gpt-5-mini")):
+            assert "EDITOR_AI_ONESHOT" not in self.build(
+                tmp_path, tool, model, "I", inp="X"
+            )
+
+    @pytest.mark.parametrize("tool,model", [("claude", "sonnet"), ("codex", None)])
+    def test_the_marker_reaches_the_tool_and_not_the_pipe_head(
+        self, tmp_path, tool, model
+    ):
+        """Run the built string through a real `sh -c` and ask the tool itself.
+
+        Containing the right substring is not the property that matters; the
+        property is that the AGENT's process has the variable, because that is
+        what its Stop hook inherits. The two come apart under an edit that reads
+        as pure tidying -- hoisting the assignment to the front of the pipeline
+        (`EDITOR_AI_ONESHOT=1 cat X | claude ...`) marks `cat` and leaves the
+        agent unmarked, and every substring assertion above still passes.
+        """
+        binroot = make_bin(tmp_path, "shbin")
+        marker = tmp_path / "seen-env"
+        stub = binroot / tool
+        stub.write_text(
+            f'#!/bin/sh\nprintf "%s" "${{EDITOR_AI_ONESHOT-unset}}" > "{marker}"\n',
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+        # A real sh, not make_bin's no-op stand-in: the pipeline has to run.
+        real_sh = shutil.which("sh")
+        assert real_sh
+        (binroot / "sh").write_text(
+            f'#!/bin/sh\nexec "{real_sh}" "$@"\n', encoding="utf-8"
+        )
+        (binroot / "sh").chmod(0o755)
+        (tmp_path / "payload").write_text("payload", encoding="utf-8")
+
+        cmd = self.build(tmp_path, tool, model, "INSTR")
+        subprocess.run(  # noqa: S603
+            ["sh", "-c", cmd],
+            env={"PATH": str(binroot)},
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        assert marker.read_text(encoding="utf-8") == "1", (
+            f"{tool} did not receive EDITOR_AI_ONESHOT; its Stop hook will audit"
+        )
 
     def test_an_unknown_tool_falls_through_to_claude(self, tmp_path):
         """Documenting the `else` branch: it is not a rejection path.
@@ -338,7 +423,9 @@ class TestBuildCliCmd:
         it silently runs as claude.
         """
         cmd = self.build(tmp_path, "brand-new", "m", "I")
-        assert cmd.startswith(f"cat '{self.payload_file(tmp_path)}' | claude ")
+        assert cmd.startswith(
+            f"cat '{self.payload_file(tmp_path)}' | EDITOR_AI_ONESHOT=1 claude "
+        )
 
     def test_copilot_inlines_the_payload_instead_of_piping_it(self, tmp_path):
         cmd = self.build(tmp_path, "copilot", "gpt", "INSTR", inp="SEL")

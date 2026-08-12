@@ -124,6 +124,24 @@ class TestClaudeVariant:
         assert "app.ts" in result["reason"]
         assert "console.log" in result["reason"]
 
+    def test_editor_oneshot_is_exempt(self, shell_env, git_repo):
+        # A worktree that WOULD block (same setup as
+        # test_console_log_in_untracked_ts_blocks), audited under the flag the
+        # editors' AI features set. Blocking here is not a false positive about
+        # the code -- the finding is real -- it is a false positive about WHOSE
+        # code it is: a `<leader>cm` run is generating a commit message for the
+        # user's own uncommitted work, not finishing a turn of its own. The
+        # observed cost of blocking it was that claude took the reason as an
+        # instruction, edited app.ts, and returned "removed the debug
+        # statement" as the commit message.
+        (git_repo / "app.ts").write_text(
+            'const x = 1\nconsole.log("debug")\n', encoding="utf-8"
+        )
+        shell_env.env["EDITOR_AI_ONESHOT"] = "1"
+        res = shell_env.run(CLAUDE_HOOK, stdin="{}", cwd=git_repo)
+        assert res.returncode == 0
+        assert res.stdout == ""
+
 
 class TestCodexVariant:
     def test_debug_statement_blocks_with_exit_two(self, shell_env, git_repo):
@@ -163,6 +181,16 @@ class TestCodexVariant:
         assert res.returncode == 2
         assert "app.ts" in res.stderr
         assert "console.log" in res.stderr
+
+    def test_editor_oneshot_is_exempt(self, shell_env, git_repo):
+        # Same exemption as the claude variant; `<leader>cx` reaches this copy.
+        # The signal differs (exit 2 + stderr rather than a JSON block), so the
+        # assertion has to check both: a silent exit 2 would still fail the run.
+        (git_repo / "app.ts").write_text('console.log("x")\n', encoding="utf-8")
+        shell_env.env["EDITOR_AI_ONESHOT"] = "1"
+        res = shell_env.run(CODEX_HOOK, stdin="{}", cwd=git_repo)
+        assert res.returncode == 0
+        assert res.stderr == ""
 
 
 # --- Debug-scan parity across BOTH variants ----------------------------------

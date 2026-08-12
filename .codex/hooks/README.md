@@ -45,9 +45,17 @@ Matcher: `Write|Edit|MultiEdit`
    作業ツリーの変更ファイルにフォーマッターを実行する。ログは
    `~/.codex/logs/format.log`。
    **Claude 版と違い PostToolUse ではなく Stop に置いている**(理由は後述)。
+   `EDITOR_AI_ONESHOT` が立っていれば何もしない — 対象を git 差分から決める
+   以上、1 ファイルも編集しない生成専用の呼び出しでは整形候補が全部ユーザの
+   未コミットの変更になる(実測で prettier がセミコロンを足した)。
 2. **stop-audit** (`hooks/stop-audit.sh`):
    デバッグ文(`console.log` / `debugger` / `breakpoint()` 等)の残留を監査し、
    見つかれば exit 2 でブロックする。`stop_hook_active` で無限ループを防ぐ。
+   `EDITOR_AI_ONESHOT` が立っていれば監査そのものを飛ばす — vim / nvim の AI
+   機能が `codex exec` / `claude -p` を叩くときに付ける目印。あれは生成専用の
+   一発呼び出しで、監査対象はエージェントが書いたコードではなくユーザ自身の
+   未コミットの変更なので、ブロックすると作業ツリーを勝手に直したうえで生成物
+   の代わりに「削除しました」という文章が返ってくる。
 
 ## なぜ `.claude/hooks` と別実装なのか
 

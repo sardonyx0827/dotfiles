@@ -107,7 +107,7 @@ flowchart TB
 | `PreToolUse`  | `Bash`                   | `bash-review-launcher.sh` → `bash-review.py` | Bash コマンドの多層セーフティゲート。判定不能時は `ask` にフェイルセーフ                      |
 | `PreToolUse`  | `Bash`                   | `git-push-review.sh`                         | `git push` を検出して確認プロンプトを強制（`rules/git-workflow.md` の push 前確認だけを実装） |
 | `PostToolUse` | `Write\|Edit\|MultiEdit` | `auto-format.sh` → `lint.sh`                 | 整形してから静的解析。lint は exit 2 で Claude に差し戻す                                     |
-| `Stop`        | —                        | `stop-audit.sh`                              | ターン終了時にデバッグ文の消し忘れを検出してブロック                                          |
+| `Stop`        | —                        | `stop-audit.sh`                              | ターン終了時にデバッグ文の消し忘れを検出してブロック（`EDITOR_AI_ONESHOT` 時は監査しない）    |
 
 `_` 始まりの 4 ファイル（`_hook_common.sh` `_lint_common.sh` `_format_common.sh`
 `_bash_review_common.py`）はフックではなく**共有ライブラリ**で、Claude 側と Codex 側の

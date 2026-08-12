@@ -69,6 +69,16 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " copilot has no stdin path, so its payload rides in argv; see s:AI_BuildCmd.
   let s:ai_copilot_model = 'gpt-5-mini'
 
+  " Marks the child as an editor-driven, generation-only invocation. The Stop
+  " hooks (.claude/hooks/stop-audit.sh and its .codex sibling) skip their
+  " debug-statement audit when it is set. Without it the audit fires on a
+  " commit-message run and blocks with "remove console.log / debugger": the
+  " agent reads that as an instruction, edits the user's working tree, and
+  " returns "removed the debug statement" instead of the message. Mirrors
+  " ONESHOT_ENV in .config/nvim/lua/setup/functions/ai/backend.lua, where the
+  " reasoning is written out in full.
+  let s:ai_oneshot_env = 'EDITOR_AI_ONESHOT=1'
+
   " Upper bound on the `sh -c` string handed to job_start(). The whole command
   " is one argv entry and counts against ARG_MAX (argv + envp, ~1 MB here), so a
   " tool that inlines the payload can push it past the limit and exec fails with
@@ -204,7 +214,12 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " selection from `tmpfile` over stdin; copilot takes it in `selected`.
   function! s:AI_BuildCmd(tool, tmpfile, sys, selected) abort
     if a:tool ==# 'codex'
-      return 'cat ' . shellescape(a:tmpfile) . ' | codex exec --skip-git-repo-check ' . shellescape(a:sys)
+      " --sandbox read-only: nothing here needs to write. Backstop only -- the
+      " sandbox governs model-run shell commands, not MCP-provided tools. See
+      " the same branch in ai/backend.lua for why that distinction matters.
+      return 'cat ' . shellescape(a:tmpfile) . ' | ' . s:ai_oneshot_env
+            \ . ' codex exec --sandbox read-only --skip-git-repo-check '
+            \ . shellescape(a:sys)
     elseif a:tool ==# 'gemini'
       return 'cat ' . shellescape(a:tmpfile) . ' | gemini -m gemini-flash-lite-latest -p ' . shellescape(a:sys)
     elseif a:tool ==# 'copilot'
@@ -224,7 +239,13 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       return 'copilot --model ' . shellescape(s:ai_copilot_model)
             \ . ' -s -p ' . shellescape(l:prompt)
     else
-      return 'cat ' . shellescape(a:tmpfile) . ' | claude --model sonnet -p ' . shellescape(a:sys)
+      " ツールを一切与えない。ここの呼び出しは「テキストを受け取ってテキストを
+      " 返す」だけで、リポジトリを触る必要がない。二つで一組: `--tools ''` が
+      " 落とすのは組み込みツールだけで、MCP 由来のツールは生き残る
+      " (--mcp-config を伴わない --strict-mcp-config でサーバを 0 個にする)。
+      " 詳細は ai/backend.lua の同じ分岐のコメントを参照。
+      return 'cat ' . shellescape(a:tmpfile) . ' | ' . s:ai_oneshot_env
+            \ . ' claude --model sonnet --tools '''' --strict-mcp-config -p ' . shellescape(a:sys)
     endif
   endfunction
 

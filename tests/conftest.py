@@ -301,6 +301,13 @@ def shell_env(tmp_path):
     env["PATH"] = f"{stub_bin}:{env['PATH']}"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_SYSTEM"] = os.devnull
+    # stop-audit.sh exits before it scans anything when this is set. It is only
+    # ever exported per-command by the editors' AI wrappers, so a developer
+    # shell should never carry it -- but the env here is inherited from the
+    # host, and if one ever did, every stop-audit test would pass by never
+    # running. A vacuous green is the one failure mode a gate's own tests must
+    # not have.
+    env.pop("EDITOR_AI_ONESHOT", None)
 
     se = ShellEnv(home=home, stub_bin=stub_bin, calls_file=calls_file, env=env)
     # Backstop: no test may ever fire a real desktop notification.

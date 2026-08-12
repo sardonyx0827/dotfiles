@@ -75,6 +75,12 @@ Matcher: `Write|Edit|MultiEdit` (runs in order):
   `debugger` in JS/TS, `breakpoint()` / `pdb.set_trace()` in Python)
   and blocks once with the findings so Claude removes them.
   `stop_hook_active` guards against infinite loops.
+  Skipped entirely when `EDITOR_AI_ONESHOT` is set — the marker the vim /
+  nvim AI features put on their `claude -p` and `codex exec` calls. Those are
+  generation-only (commit message, buffer check, hints) and audit the user's
+  own uncommitted work rather than anything the agent wrote, so a block there
+  made the agent edit the working tree and return "removed the debug
+  statement" in place of the generated text.
 
 ## Shared libraries (`_`-prefixed, not hooks themselves)
 

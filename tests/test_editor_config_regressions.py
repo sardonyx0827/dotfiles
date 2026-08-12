@@ -236,3 +236,53 @@ class TestVimOllamaFailureOrdering:
         out = self.reason(vim, 0, [], None)
         assert "exit 0" not in out, out
         assert out.strip() != ""
+
+
+class TestVimOneShotInvocationShape:
+    """The vim port must not hand the agent a way to edit the repository.
+
+    Its Neovim twin is pinned by TestBuildCliCmd in test_nvim_ai_backend.py; the
+    same three properties are re-checked here because the two builders are
+    independent ports, and this one expresses the empty tool list as `''''`
+    inside a single-quoted Vimscript string -- a quoting form that is correct
+    but easy to "tidy" into `''`, which would pass `-p` itself as the tool list.
+
+    Driven through a real Vim rather than grepped out of the source: what
+    matters is the string that reaches `sh -c`, and that is exactly what the
+    quoting question is about.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        binary = _real_vim()
+        if binary is None:
+            pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+        return binary
+
+    def build(self, vim, tool):
+        source = VIM_AI_RC.read_text(encoding="utf-8")
+        script = (
+            f"let s:c = s:AI_BuildCmd('{tool}', '/tmp/payload', 'SYS', ['x'])\n"  # nosec B108
+            "call writefile([s:c], $PROBE_OUT)\nqa!\n"
+        )
+        return _run_vim_script(vim, script, extra_source=source).strip()
+
+    def test_claude_gets_no_tools_from_either_source(self, vim):
+        # --tools drops the built-in set only; MCP-provided tools survive it and
+        # are just as able to write. Both flags or neither is worth having.
+        cmd = self.build(vim, "claude")
+        assert "--tools ''" in cmd, cmd
+        assert "--strict-mcp-config" in cmd, cmd
+
+    def test_the_hooked_tools_are_marked_as_editor_oneshot(self, vim):
+        assert "EDITOR_AI_ONESHOT=1 claude" in self.build(vim, "claude")
+        assert "EDITOR_AI_ONESHOT=1 codex" in self.build(vim, "codex")
+
+    def test_codex_never_gets_a_writable_sandbox(self, vim):
+        cmd = self.build(vim, "codex")
+        assert "codex exec --sandbox read-only" in cmd, cmd
+
+    def test_the_unhooked_tools_are_not_marked(self, vim):
+        # gemini and copilot run no Stop hook; marking them would be cargo cult.
+        assert "EDITOR_AI_ONESHOT" not in self.build(vim, "gemini")
+        assert "EDITOR_AI_ONESHOT" not in self.build(vim, "copilot")
