@@ -540,11 +540,13 @@ function M.run_with_fallback(specs, done)
         -- "[gemini failed: gemini: exit code 2: ...]".
         detail = failures[1].err
       else
-        local parts = {}
+        -- Not `parts`: that name belongs to the scan-gate payload list above,
+        -- and this closure is an upvalue away from it (luacheck W431).
+        local reasons = {}
         for j, f in ipairs(failures) do
-          parts[j] = string.format("%s: %s", f.tool, f.err)
+          reasons[j] = string.format("%s: %s", f.tool, f.err)
         end
-        detail = table.concat(parts, " | ")
+        detail = table.concat(reasons, " | ")
       end
       done(false, {}, detail, spec.tool)
     end, true)
