@@ -52,8 +52,9 @@ endif
 "" [AI solution] Ask AI and replace selection
 "*****************************************************************************
 " Select a range, type an instruction in a prompt split, send the selection to
-" an AI CLI (claude / codex / gemini) over stdin, preview the result in a diff
-" tab, then replace the original selection. <C-o> hits a local Ollama model.
+" an AI tool over stdin, preview the result in a diff tab, then replace the
+" original selection. claude / codex / copilot are CLIs; gemini goes to the
+" REST API through scripts/gemini_api.py; <C-o> hits a local Ollama model.
 if !has('nvim') && has('job') && has('channel') && has('timers')
 
   " Map a short tool alias to the actual Ollama model tag.
@@ -113,8 +114,16 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " GUI vim without the shell PATH -- is worse than the risk it guards).
   " This file is sourced by its real repo path (see .vimrc's resolve()), so step
   " up from .vim/rc/70-ai.vim to the repo root to find scripts/.
-  let s:ai_secret_scanner =
-        \ fnamemodify(resolve(expand('<sfile>:p')), ':h:h:h') . '/scripts/secret_scan.py'
+  let s:ai_scripts_dir =
+        \ fnamemodify(resolve(expand('<sfile>:p')), ':h:h:h') . '/scripts'
+  let s:ai_secret_scanner = s:ai_scripts_dir . '/secret_scan.py'
+
+  " The other shared python helper: gemini talks to the REST API through this
+  " rather than through the `gemini` CLI. Same file the Neovim side resolves in
+  " ai/backend.lua (repo_script), so the retry policy, the response parsing and
+  " the MAX_TOKENS truncation guard exist once instead of being ported into
+  " VimScript as well.
+  let s:ai_gemini_helper = s:ai_scripts_dir . '/gemini_api.py'
 
   " Returns [status, label]: 'clean' | 'secret',<label> | 'unavailable'.
   function! s:AI_ScanPayload(text) abort
@@ -221,7 +230,21 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
             \ . ' codex exec --sandbox read-only --skip-git-repo-check '
             \ . shellescape(a:sys)
     elseif a:tool ==# 'gemini'
-      return 'cat ' . shellescape(a:tmpfile) . ' | gemini -m gemini-flash-lite-latest -p ' . shellescape(a:sys)
+      " The REST API, not the `gemini` CLI. The payload still arrives on stdin,
+      " so everything downstream (job handling, stderr capture, s:AI_FailureReason)
+      " is unchanged -- only the far end of the pipe moved.
+      "
+      " No -m/--model here, unlike the Neovim branch: the helper resolves
+      " $GEMINI_MODEL itself, and Neovim passes it explicitly only because it
+      " DISPLAYS the model in a report header. Naming the default again in
+      " VimScript would create a third copy of that literal with nothing to
+      " catch a drift between them.
+      "
+      " GEMINI_API_KEY is read by the child out of its own environment. It is
+      " never placed on argv -- so unlike copilot's payload it cannot be read
+      " out of `ps aux` -- and never written to disk.
+      return 'cat ' . shellescape(a:tmpfile) . ' | python3 '
+            \ . shellescape(s:ai_gemini_helper) . ' --system ' . shellescape(a:sys)
     elseif a:tool ==# 'copilot'
       " copilot CLI does not read stdin as context, so the payload is inlined
       " into the prompt. `-s` keeps stdout to the agent response only.
@@ -288,10 +311,22 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     return s:AI_FailureReason(a:tool, a:status, a:errbuf)
   endfunction
 
+  " How much of a failing tool's stderr to quote. Raised from 200 to match the
+  " Neovim side's MAX_STDERR_CHARS (ai/backend.lua): the two ports clipped at
+  " different lengths, which cost nothing while every message was a short
+  " "command not found" and started to matter once gemini began surfacing
+  " Google's own error text. Its most common one -- "models/X is not found for
+  " API version v1beta, or is not supported for generateContent. Call
+  " ModelService.ListModels ..." -- is ~190 characters before the model name is
+  " even substituted, so 200 truncated the half that says what to do.
+  " Measured in CHARACTERS, not bytes: these messages are localised, and cutting
+  " at a byte offset lands mid-character and puts invalid UTF-8 in the buffer.
+  let s:ai_max_stderr_chars = 500
+
   function! s:AI_FailureReason(tool, status, errbuf) abort
     let l:detail = trim(join(a:errbuf, "\n"))
-    if strchars(l:detail) > 200
-      let l:detail = strcharpart(l:detail, 0, 200) . '...'
+    if strchars(l:detail) > s:ai_max_stderr_chars
+      let l:detail = strcharpart(l:detail, 0, s:ai_max_stderr_chars) . '...'
     endif
     if a:status == 0
       return l:detail !=# ''

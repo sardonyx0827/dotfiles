@@ -286,3 +286,172 @@ class TestVimOneShotInvocationShape:
         # gemini and copilot run no Stop hook; marking them would be cargo cult.
         assert "EDITOR_AI_ONESHOT" not in self.build(vim, "gemini")
         assert "EDITOR_AI_ONESHOT" not in self.build(vim, "copilot")
+
+
+class TestFailureDetailClipParity:
+    """Both ports must quote the same amount of a failing tool's stderr.
+
+    They did not: Neovim allowed 500 characters and classic Vim 200. That cost
+    nothing while every message was a short "command not found", and started to
+    matter once gemini began surfacing Google's own error text -- its "models/X
+    is not found for API version v1beta ..." runs past 200 characters, so one
+    editor showed the half that says what to do and the other did not.
+
+    Compared mechanically rather than by reading both constants, because the
+    two are independent ports and the numbers are what drifted. The markers make
+    the boundary observable through the different wrappers each side adds.
+    """
+
+    LIMIT = 500
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        binary = _real_vim()
+        if binary is None:
+            pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+        return binary
+
+    def detail(self):
+        # "B" sits at the last kept index; "C" is the first that must be cut.
+        return "A" * (self.LIMIT - 1) + "B" + "C" * 50
+
+    def test_both_editors_cut_at_the_same_character(self, vim, tmp_path):
+        from test_nvim_ai_backend import NVIM, backend_call, make_bin
+
+        if NVIM is None:
+            pytest.skip("nvim not installed")
+        detail = self.detail()
+
+        nvim_out = backend_call(
+            "_internal.cli_failure_reason",
+            1,
+            [detail],
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+        ).only
+
+        source = VIM_AI_RC.read_text(encoding="utf-8")
+        script = (
+            f"let s:r = s:AI_FailureReason('t', 1, ['{detail}'])\n"
+            "call writefile([s:r], $PROBE_OUT)\nqa!\n"
+        )
+        vim_out = _run_vim_script(vim, script, extra_source=source).strip()
+
+        for label, out in (("nvim", nvim_out), ("vim", vim_out)):
+            assert "B" in out, f"{label} cut before the shared limit: {len(out)}"
+            assert "C" not in out, f"{label} kept more than the shared limit"
+
+
+class TestVimGeminiApiShape:
+    """Gemini reaches the REST API through the shared helper, not the CLI.
+
+    Its Neovim twin is pinned by TestGeminiApiPath in test_nvim_ai_backend.py.
+    Re-checked here because the two command builders are independent ports and
+    have drifted before: the failure-message formatting was fixed on the Neovim
+    side and the identical bug sat in this file for another two commits.
+
+    Driven through a real Vim rather than grepped out of the source, because
+    what matters is the string that reaches `sh -c`.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        binary = _real_vim()
+        if binary is None:
+            pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+        return binary
+
+    def build(self, vim, tool):
+        source = VIM_AI_RC.read_text(encoding="utf-8")
+        script = (
+            f"let s:c = s:AI_BuildCmd('{tool}', '/tmp/payload', 'SYS', ['x'])\n"  # nosec B108
+            "call writefile([s:c], $PROBE_OUT)\nqa!\n"
+        )
+        return _run_vim_script(vim, script, extra_source=source).strip()
+
+    def test_the_gemini_cli_is_no_longer_invoked(self, vim):
+        cmd = self.build(vim, "gemini")
+        assert " gemini -m " not in cmd, cmd
+        assert " gemini -p " not in cmd, cmd
+
+    def test_the_payload_still_arrives_on_stdin(self, vim):
+        """The property everything downstream rests on.
+
+        s:AI_RunAll hands ONE tmpfile to every tool in the 'all' list, and the
+        ARG_MAX refusal in s:AI_CmdTooLarge assumes gemini keeps the command
+        short however large the selection is. Inlining the payload the way
+        copilot has to would break both at once.
+        """
+        cmd = self.build(vim, "gemini")
+        assert cmd.startswith("cat '/tmp/payload' | python3 '"), cmd  # nosec B108
+        assert cmd.endswith("/scripts/gemini_api.py' --system 'SYS'"), cmd
+
+    def test_the_api_key_never_appears_in_the_command(self, vim):
+        """The reason the request goes through a child process at all.
+
+        The command is handed to `sh -c`, so a key interpolated into it -- the
+        obvious `curl -H "x-goog-api-key: $GEMINI_API_KEY"` rewrite -- would be
+        expanded into curl's argv and readable by every process on the machine
+        through `ps aux`. The helper reads the variable from its own
+        environment instead, so it must not be named here.
+        """
+        cmd = self.build(vim, "gemini")
+        assert "GEMINI_API_KEY" not in cmd, cmd
+        assert "x-goog-api-key" not in cmd, cmd
+
+    def test_the_helper_path_resolves_to_the_repo_scripts_dir(self, vim, tmp_path):
+        """Three `:h` up from .vim/rc/70-ai.vim must land on the repo root.
+
+        Every other test in this class PREPENDS the rc to a probe in a temp
+        directory, where `<sfile>` is the probe rather than the rc -- so they
+        pin the command SHAPE while proving nothing about where the helper is
+        looked for, and would pass just as happily against
+        `/nonexistent/scripts/gemini_api.py`.
+
+        Run the real file from a repo-shaped location instead. A wrong step
+        count aims both python helpers at a path that does not exist (the
+        credential scanner shares the expression), and the only symptom is
+        every gemini request failing with "No such file or directory" while
+        the scanner silently degrades to its fail-open branch.
+        """
+        import os
+
+        root = tmp_path / "fakerepo"
+        rc = root / ".vim/rc/70-ai.vim"
+        rc.parent.mkdir(parents=True)
+        # Appended to the rc itself rather than sourced from a sibling: `s:` is
+        # per-script scope, so nothing outside this file can read the variables.
+        rc.write_text(
+            VIM_AI_RC.read_text(encoding="utf-8")
+            + "\ncall writefile([s:ai_gemini_helper, s:ai_secret_scanner], $PROBE_OUT)"
+            + "\nqa!\n",
+            encoding="utf-8",
+        )
+        out = tmp_path / "probe.out"
+        subprocess.run(  # noqa: S603
+            [vim, "-es", "-u", "NONE", "-N", "-S", str(rc)],
+            env={**os.environ, "PROBE_OUT": str(out)},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        scripts = (root / "scripts").resolve()
+        assert out.read_text(encoding="utf-8").splitlines() == [
+            str(scripts / "gemini_api.py"),
+            str(scripts / "secret_scan.py"),
+        ]
+
+    def test_the_instruction_is_still_shell_escaped(self, vim):
+        """An unescaped instruction is a command injection into `sh -c`.
+
+        The user types it into the prompt window, so a quote that closes early
+        would turn the rest of their own text into commands.
+        """
+        source = VIM_AI_RC.read_text(encoding="utf-8")
+        script = (
+            "let s:c = s:AI_BuildCmd('gemini', '/tmp/payload', \"it's; rm -rf /\", ['x'])\n"  # nosec B108
+            "call writefile([s:c], $PROBE_OUT)\nqa!\n"
+        )
+        cmd = _run_vim_script(vim, script, extra_source=source).strip()
+        assert "it'\\''s" in cmd, cmd
+        assert "it's" not in cmd, cmd

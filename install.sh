@@ -1709,7 +1709,10 @@ main() {
   print_info "Secrets / credentials still required (cannot be installed):"
   echo "  Put the exports in ~/.zsh_secrets (sourced by .zshrc, outside the checkout)."
   echo "  Never in ~/.zshrc itself -- it is a symlink into the repo, so git tracks it."
-  echo "  - GEMINI_API_KEY : the gemini-api bash-review hook and the gemini-consultant MCP server"
+  echo "  - GEMINI_API_KEY : the gemini-api bash-review hook, the gemini-consultant MCP"
+  echo "                     server, and the Vim/Neovim AI features' Gemini calls"
+  echo "                     (scripts/gemini_api.py). Without it those editor keymaps"
+  echo "                     fail with an explicit message rather than falling back."
   echo "  - GITHUB_ACCESS_TOKEN : the GitHub MCP server (.gemini/settings.json resolves \${GITHUB_ACCESS_TOKEN})"
   echo "  - gh auth login   : authenticate GitHub CLI (used by .gitconfig credential helper)"
   echo

@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 
+import gemini_api
 import pytest
 from conftest import REPO_ROOT
 
@@ -140,8 +141,15 @@ def fake_repo(tmp_path, scanner_body=None):
     return root
 
 
-def backend_call(fn, *args, binroot, tmp_path, xdg=None, module=BACKEND_MODULE):
-    """Call `ai.<module>.<fn>` (dotted paths allowed) in a sealed headless nvim."""
+def backend_call(
+    fn, *args, binroot, tmp_path, xdg=None, module=BACKEND_MODULE, extra_env=None
+):
+    """Call `ai.<module>.<fn>` (dotted paths allowed) in a sealed headless nvim.
+
+    `extra_env` adds variables the module under test reads through vim.env
+    (GEMINI_MODEL). The base environment stays deliberately bare -- the point of
+    this harness is that nothing leaks in from the developer's shell.
+    """
     request = {
         "module": module,
         "fn": fn,
@@ -160,6 +168,7 @@ def backend_call(fn, *args, binroot, tmp_path, xdg=None, module=BACKEND_MODULE):
     }
     if xdg is not None:
         env["XDG_CONFIG_HOME"] = str(xdg)
+    env.update(extra_env or {})
     proc = subprocess.run(
         [NVIM, "-l", str(HARNESS), str(REPO_ROOT)],
         input=json.dumps(request),
@@ -288,7 +297,14 @@ class TestScanPayloadAgainstTheRealScanner:
 
 
 class TestBuildCliCmd:
-    """What each tool is actually handed. Pure apart from vim.fn.shellescape."""
+    """What each tool is actually handed.
+
+    Pure apart from vim.fn.shellescape and, for gemini, repo_script -- which
+    reads stdpath("config") to find the shared python helper. That is why the
+    gemini cases resolve their expected path through repo_script rather than
+    rebuilding it: the harness runs nvim with HOME under tmp_path, so a
+    hardcoded expectation would be asserting against the developer's machine.
+    """
 
     def payload_file(self, tmp_path):
         """Stand-in for run_cli's vim.fn.tempname(); only its text matters here."""
@@ -335,11 +351,63 @@ class TestBuildCliCmd:
             assert "workspace-write" not in cmd
             assert "danger-full-access" not in cmd
 
-    def test_gemini_carries_the_model(self, tmp_path):
-        cmd = self.build(tmp_path, "gemini", "flash", "INSTR")
-        assert (
-            cmd == f"cat '{self.payload_file(tmp_path)}' | gemini -m 'flash' -p 'INSTR'"
+    def helper_path(self, tmp_path, name):
+        """Where backend.lua will look for a shared python helper.
+
+        Derived through the module's own repo_script rather than rebuilt here,
+        so this pins the COMMAND shape without also re-deriving (and possibly
+        disagreeing about) the path resolution it depends on.
+        """
+        return backend_call(
+            "_internal.repo_script",
+            name,
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+        ).only
+
+    def test_gemini_goes_through_the_shared_api_helper_not_the_cli(self, tmp_path):
+        """The `gemini` CLI is gone; the REST API is reached via a helper.
+
+        Pinned as a whole string because the property that matters is
+        positional: the payload still arrives on STDIN, which is what lets the
+        API path keep run_cli's job handling, stderr capture and ARG_MAX guard
+        unchanged.
+        """
+        helper = self.helper_path(tmp_path, "gemini_api.py")
+        cmd = self.build(tmp_path, "gemini", None, "INSTR")
+        assert cmd == (
+            f"cat '{self.payload_file(tmp_path)}' | python3 '{helper}' --system 'INSTR'"
         )
+
+    def test_an_unpinned_gemini_model_leaves_the_flag_off_entirely(self, tmp_path):
+        """The helper must be free to read $GEMINI_MODEL at request time.
+
+        Passing a model resolved when backend.lua was `require`d would freeze
+        that variable at startup AND split the two editors -- the VimScript port
+        pins no model at all, so the command for the one feature they share must
+        come out the same. A `--model ''` would be worse than useless: an empty
+        id is not a model, and the helper would have to special-case it.
+        """
+        assert "--model" not in self.build(tmp_path, "gemini", None, "INSTR")
+
+    def test_a_pinned_gemini_model_still_reaches_the_helper(self, tmp_path):
+        """The nvim-only flows (check / fix / hint) may still pin one."""
+        cmd = self.build(tmp_path, "gemini", "gemini-pro-latest", "INSTR")
+        assert "--model 'gemini-pro-latest' --system 'INSTR'" in cmd
+
+    def test_the_api_key_never_appears_in_the_gemini_command(self, tmp_path):
+        """The whole reason the request goes through a child process.
+
+        The command string is handed to `sh -c`, so a key interpolated into it
+        -- `curl -H "x-goog-api-key: $GEMINI_API_KEY"` being the obvious
+        rewrite -- would be expanded into curl's argv and readable by every
+        process on the machine via `ps aux` for the life of the request. The
+        helper reads GEMINI_API_KEY out of its OWN environment instead, so the
+        variable must not be named here at all.
+        """
+        cmd = self.build(tmp_path, "gemini", "flash", "INSTR")
+        assert "GEMINI_API_KEY" not in cmd
+        assert "x-goog-api-key" not in cmd
 
     def test_claude_is_the_default_branch(self, tmp_path):
         cmd = self.build(tmp_path, "claude", "sonnet", "INSTR")
@@ -464,6 +532,146 @@ class TestBuildCliCmd:
         assert "pay';" not in cmd
 
 
+class TestGeminiApiPath:
+    """Gemini reaches Google over HTTPS now, not through the `gemini` CLI.
+
+    Three properties survive that move and none of them is visible in the
+    command string alone: the helper is found next to the config symlink, the
+    model comes from the same variable the rest of the repo uses, and the
+    payload is still scanned for credentials before it leaves the editor.
+    """
+
+    def probe(self, tmp_path, fn, *args, xdg=None, extra_env=None, tools=("sh",)):
+        return backend_call(
+            fn,
+            *args,
+            binroot=make_bin(tmp_path, "bin", tools),
+            tmp_path=tmp_path,
+            xdg=xdg,
+            extra_env=extra_env,
+        )
+
+    def test_helpers_resolve_next_to_the_config_symlink(self, tmp_path):
+        """~/.config/nvim is a symlink into the repo; step up two levels.
+
+        Same resolution scan_payload has always relied on, now shared with the
+        Gemini helper -- so a broken lookup takes out both, and pinning it once
+        covers both.
+        """
+        root = fake_repo(tmp_path)
+        got = self.probe(
+            tmp_path,
+            "_internal.repo_script",
+            "gemini_api.py",
+            xdg=make_xdg(tmp_path, root / ".config/nvim"),
+        ).only
+        assert got == str(root / "scripts" / "gemini_api.py")
+
+    def test_the_registry_pins_no_gemini_model(self, tmp_path):
+        """Resolution belongs to the helper, at request time.
+
+        A model captured when backend.lua was `require`d would ignore a
+        $GEMINI_MODEL set later in the session -- and the VimScript port, which
+        pins nothing, would then be using a different model than Neovim for the
+        same keystroke.
+        """
+        assert self.probe(tmp_path, "gemini_model").only == gemini_api.DEFAULT_MODEL
+        probe = tmp_path / "registry.lua"
+        probe.write_text(
+            f'package.path = "{REPO_ROOT}/.config/nvim/lua/?.lua;"\n'
+            f'  .. "{REPO_ROOT}/.config/nvim/lua/?/init.lua;" .. package.path\n'
+            'local tools = require("setup.functions.ai.backend").TOOLS\n'
+            'io.stdout:write(tostring(tools.gemini.default_model), "\\n")\n',
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+        proc = subprocess.run(  # noqa: S603
+            [NVIM, "-l", str(probe)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={"PATH": str(make_bin(tmp_path, "bin")), "HOME": str(home)},
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == "nil"
+
+    def test_the_reported_default_matches_the_python_helper(self, tmp_path):
+        """The one literal that is deliberately written down twice.
+
+        backend.lua repeats it only so ai/init.lua can DISPLAY the model in a
+        report header -- "(default)" is not something a reader can act on --
+        while scripts/gemini_api.py owns the value the request actually uses.
+        Nothing else would notice the two drifting apart, and the symptom would
+        be a header confidently naming the wrong model.
+        """
+        assert self.probe(tmp_path, "gemini_model").only == gemini_api.DEFAULT_MODEL
+
+    def test_gemini_model_env_var_is_read_on_every_call(self, tmp_path):
+        got = self.probe(
+            tmp_path, "gemini_model", extra_env={"GEMINI_MODEL": "  pro  "}
+        ).only
+        assert got == "pro", "surrounding whitespace must not reach the request path"
+
+    def test_an_empty_gemini_model_falls_back_to_the_default(self, tmp_path):
+        """`export GEMINI_MODEL=` is a common shell accident, not a model id."""
+        got = self.probe(
+            tmp_path, "gemini_model", extra_env={"GEMINI_MODEL": "   "}
+        ).only
+        assert got == gemini_api.DEFAULT_MODEL
+
+    def test_the_registry_entry_is_not_the_local_transport(self, tmp_path):
+        """The distinction the credential gate keys off.
+
+        M.run exempts `kind == "ollama"` from the pre-send scan because Ollama
+        is localhost. Gemini talks to Google, so it must not share that kind --
+        an edit that folded the two "non-CLI" transports together would send
+        buffers out unscanned while every command-shape test stayed green.
+        """
+        probe = tmp_path / "kinds.lua"
+        probe.write_text(
+            f'package.path = "{REPO_ROOT}/.config/nvim/lua/?.lua;"\n'
+            f'  .. "{REPO_ROOT}/.config/nvim/lua/?/init.lua;" .. package.path\n'
+            'local tools = require("setup.functions.ai.backend").TOOLS\n'
+            'io.stdout:write(tools.gemini.kind, ",", tools.gemma.kind, "\\n")\n',
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+        proc = subprocess.run(  # noqa: S603
+            [NVIM, "-l", str(probe)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={"PATH": str(make_bin(tmp_path, "bin")), "HOME": str(home)},
+        )
+        assert proc.returncode == 0, proc.stderr
+        gemini_kind, gemma_kind = proc.stdout.strip().split(",")
+        assert gemma_kind == "ollama"
+        assert gemini_kind != "ollama"
+
+    def test_a_credential_in_a_gemini_payload_is_refused_before_any_job(self, tmp_path):
+        """The gate stays armed for gemini after the transport change.
+
+        Driven through the public M.run with the real scanner, so this fails if
+        the exemption is ever widened from "the local transport" to "anything
+        that is not a CLI" -- the shape of edit that reads as tidying and
+        quietly ships buffers to Google unscanned.
+        """
+        res = backend_call(
+            "run",
+            {"tool": "gemini", "prompt": "I", "input": f"aws_key = {FAKE_AWS_KEY}"},
+            CALLBACK,
+            binroot=make_bin(tmp_path, "bin", ("sh", "python3")),
+            tmp_path=tmp_path,
+            xdg=make_xdg(tmp_path, REPO_ROOT / ".config/nvim"),
+        )
+        assert res.only is None, "a refused request must not return a job id"
+        assert res.calls == [
+            [False, [], "credential detected in payload; not sent to AI"]
+        ]
+
+
 class TestPayloadSizeRefusal:
     """The ARG_MAX guard, exercised through the public M.run.
 
@@ -529,6 +737,61 @@ class TestPayloadSizeRefusal:
         assert res.calls == [[False, [], "unknown tool: nope"]]
 
 
+class TestRunWithFallbackReporting:
+    """When every tool in a chain fails, the report must name every reason.
+
+    Keeping only the LAST error was survivable while gemini was a CLI that
+    usually worked. It stopped being so once gemini can fail for a reason of its
+    own that says nothing about the request: with GEMINI_API_KEY unset -- the
+    normal state of a GUI-launched editor -- every claude outage in the
+    claude -> gemini chains (`<leader>qf`, `<leader>qh`) surfaced as
+    "GEMINI_API_KEY is not set" and threw away what claude had said.
+
+    Driven with unknown tool names because M.run rejects those SYNCHRONOUSLY:
+    `nvim -l` never runs the event loop, so a chain of real tools would park in
+    jobstart and report nothing at all.
+    """
+
+    def chain(self, tmp_path, *tools):
+        specs = [{"tool": t, "prompt": "I", "input": "x"} for t in tools]
+        return backend_call(
+            "run_with_fallback",
+            specs,
+            CALLBACK,
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+        )
+
+    def test_every_attempt_is_named_when_the_whole_chain_fails(self, tmp_path):
+        res = self.chain(tmp_path, "no-such-a", "no-such-b")
+        assert len(res.calls) == 1, "the caller must be told exactly once"
+        ok, lines, err, tool = res.calls[0]
+        assert (ok, lines) == (False, [])
+        assert "no-such-a: unknown tool: no-such-a" in err
+        assert "no-such-b: unknown tool: no-such-b" in err
+        assert tool == "no-such-b", "the reported tool is still the last tried"
+
+    def test_a_single_step_chain_is_not_prefixed_with_its_own_name(self, tmp_path):
+        """ui.failure_lines already renders "[<tool> failed: <err>]".
+
+        Prefixing here too would produce "[gemini failed: gemini: ...]", so the
+        one-attempt case has to keep the bare reason it always had.
+        """
+        res = self.chain(tmp_path, "no-such-a")
+        _, _, err, _ = res.calls[0]
+        assert err == "unknown tool: no-such-a"
+
+    def test_a_later_success_still_reports_no_error(self, tmp_path):
+        """Accumulating failures must not leak into a successful run.
+
+        claude failing and gemini answering is the chain working as designed;
+        the collected reason belongs nowhere near that callback.
+        """
+        res = self.chain(tmp_path, "no-such-a", "claude")
+        assert res.calls == [], "claude reaches jobstart, whose callback is deferred"
+        assert res.only is not None, "the handle must track the in-flight attempt"
+
+
 def test_the_test_seam_exposes_exactly_what_these_tests_use(tmp_path):
     """Keep M._internal from growing into a second public API.
 
@@ -559,7 +822,8 @@ def test_the_test_seam_exposes_exactly_what_these_tests_use(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == (
-        "build_cli_cmd,cli_failure_reason,ollama_failure_reason,scan_payload"
+        "build_cli_cmd,cli_failure_reason,ollama_failure_reason,repo_script,"
+        "scan_payload"
     )
 
 

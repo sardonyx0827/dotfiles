@@ -1,25 +1,81 @@
 ---------------------------------------------------------
 -- ai.backend
 -- Unified AI invocation. Knows how to run each tool (CLI tools over stdin,
--- Ollama over its local HTTP API), manages the temp file and job lifecycle,
--- and reports the result through a single `done(ok, lines, err)` callback.
+-- Gemini over its REST API through scripts/gemini_api.py, Ollama over its local
+-- HTTP API), manages the temp file and job lifecycle, and reports the result
+-- through a single `done(ok, lines, err)` callback.
 -- The UI layer never talks to a tool directly; it only drives `run`.
 ---------------------------------------------------------
 local prompt = require("setup.functions.ai.prompt")
 
 local M = {}
 
+--- Path to a helper in the dotfiles repo's scripts/ directory.
+--- ~/.config/nvim is a symlink into the repo, so resolve it and step up to the
+--- repo root.
+---
+--- Deliberately NOT gated on filereadable(): callers here build a command
+--- string, and a missing helper has to surface as python3's own "No such file
+--- or directory" on the job's stderr -- which cli_failure_reason quotes -- and
+--- not as a silently different command. The one caller that DOES need the
+--- distinction (scan_payload, which must fail open) checks readability itself.
+--- @param name string basename under scripts/
+--- @return string absolute path
+local function repo_script(name)
+  local cfg = vim.fn.resolve(vim.fn.stdpath("config"))
+  return vim.fn.fnamemodify(cfg, ":h:h") .. "/scripts/" .. name
+end
+
+--- Which Gemini model a request will use.
+---
+--- Same variable and same default as the bash-review hooks
+--- (.claude/hooks/bash-review.py) and scripts/gemini_api.py, so the repository
+--- has ONE answer to "which Gemini model".
+---
+--- This is a REPORTING helper, not the decision: nothing here passes the result
+--- to the request. scripts/gemini_api.py resolves $GEMINI_MODEL itself when the
+--- child runs, which is what lets a value set mid-session take effect and what
+--- keeps this side answering identically to the VimScript port (which pins no
+--- model at all). The literal is repeated because ai/init.lua DISPLAYS the model
+--- in a report header, and "(default)" is not something a reader can act on;
+--- tests/test_gemini_api_cli.py pins the two copies together.
+---
+--- Read on every call rather than captured at load: a value frozen at `require`
+--- time would make the header name a model the request never used.
+--- @return string
+local function gemini_model()
+  local env = vim.env.GEMINI_MODEL
+  if env and vim.trim(env) ~= "" then
+    return vim.trim(env)
+  end
+  return "gemini-flash-lite-latest"
+end
+
 -- Tool registry. `kind` selects the transport; `default_model` is used when the
 -- caller does not pass an explicit model in the spec.
+--
+-- "api" and "cli" share a transport (spawn a process, pipe the payload in on
+-- stdin, read the reply off stdout) and differ only in what is on the other end
+-- of the pipe: gemini reaches Google over HTTPS through a local helper rather
+-- than through the `gemini` CLI. They are kept apart because the credential
+-- gate in M.run keys off `kind`, and folding gemini in with the LOCAL "ollama"
+-- transport is exactly the mistake that would send buffers to Google unscanned.
 local TOOLS = {
   claude  = { kind = "cli", default_model = "sonnet" },
   codex   = { kind = "cli", default_model = nil },
-  gemini  = { kind = "cli", default_model = "gemini-flash-lite-latest" },
+  -- No default_model: the helper resolves $GEMINI_MODEL when the child runs.
+  -- Pinning one here would freeze it at `require` time and, worse, put the two
+  -- editors on different answers -- the VimScript port has no such table.
+  gemini  = { kind = "api", default_model = nil },
   copilot = { kind = "cli", default_model = "gpt-5-mini" },
   gemma   = { kind = "ollama", default_model = "gemma4:e4b" },
 }
 
 M.TOOLS = TOOLS
+
+--- Which Gemini model a request will use, for display in a report header.
+--- See the local of the same name; public because ai/init.lua does the display.
+M.gemini_model = gemini_model
 
 ---------------------------------------------------------
 -- Pre-send credential scan.
@@ -33,27 +89,18 @@ M.TOOLS = TOOLS
 -- so this is the single choke point.
 ---------------------------------------------------------
 
--- Locate scripts/secret_scan.py relative to this (symlinked) config dir.
--- ~/.config/nvim is a symlink into the dotfiles repo; resolve it and step up to
--- the repo root. Returns nil when not found (treated as unavailable -> fail-open).
-local function secret_scanner_path()
-  local cfg = vim.fn.resolve(vim.fn.stdpath("config"))
-  local scanner = vim.fn.fnamemodify(cfg, ":h:h") .. "/scripts/secret_scan.py"
-  if vim.fn.filereadable(scanner) == 1 then
-    return scanner
-  end
-  return nil
-end
-
 -- Scan `text`. Returns "clean" | "secret",<label> | "unavailable".
 local function scan_payload(text)
-  local scanner = secret_scanner_path()
+  -- Unlike the other repo_script callers this one checks readability: a missing
+  -- scanner has to degrade to "unavailable" (fail open with a warning), never
+  -- to a python3 error that the caller would read as a failed scan.
+  local scanner = repo_script("secret_scan.py")
   -- Fail OPEN when python3 is absent (e.g. a GUI-launched nvim that did not
   -- inherit the shell's PATH). executable() must be checked FIRST: vim.fn.system
   -- with a LIST arg raises E475 (not a v:shell_error) when the binary is
   -- missing, so a bare call would throw past this guard instead of degrading to
   -- "unavailable". pcall wraps the call as a further backstop.
-  if not scanner or vim.fn.executable("python3") ~= 1 then
+  if vim.fn.filereadable(scanner) ~= 1 or vim.fn.executable("python3") ~= 1 then
     return "unavailable"
   end
   -- Payload on stdin, never argv (argv would leak the secret via `ps`).
@@ -171,8 +218,27 @@ local function build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_
     return string.format("cat %s | %s codex exec --sandbox read-only %s%s",
       esc_file, ONESHOT_ENV, skip, esc_prompt)
   elseif tool == "gemini" then
-    return string.format("cat %s | gemini -m %s -p %s",
-      esc_file, vim.fn.shellescape(model), esc_prompt)
+    -- The REST API, not the `gemini` CLI. scripts/gemini_api.py POSTs to
+    -- generateContent and is shared with .vim/rc/70-ai.vim, so the retry
+    -- policy, the response parsing and the MAX_TOKENS truncation guard exist
+    -- once instead of being ported into Lua and VimScript separately.
+    --
+    -- Still a `cat ... |` pipeline, and that is the point: the helper reads the
+    -- payload on stdin exactly as the CLIs do, so it inherits run_cli's job
+    -- handling, stderr capture and failure phrasing unchanged. GEMINI_API_KEY
+    -- is read by the child out of its own environment -- never passed here,
+    -- which is what keeps it off argv (and out of `ps aux`) and off disk.
+    --
+    -- `--model` appears only when a caller pinned one. Left off, the helper
+    -- resolves $GEMINI_MODEL at request time, so the command for the one
+    -- feature both editors share -- replace a selection, which pins nothing --
+    -- comes out byte-identical to the VimScript port's. Passing a frozen
+    -- default here instead would put the two editors on different answers the
+    -- moment that variable changed.
+    local with_model = model and (" --model " .. vim.fn.shellescape(model)) or ""
+    return string.format("cat %s | python3 %s%s --system %s",
+      esc_file, vim.fn.shellescape(repo_script("gemini_api.py")),
+      with_model, esc_prompt)
   elseif tool == "copilot" then
     -- copilot CLI does not read stdin as context, so inline the payload into the
     -- prompt. `instruction` already carries the task/language context; `-s` keeps
@@ -393,8 +459,10 @@ function M.run(spec, done, _skip_scan)
   --
   -- Local Ollama (hardcoded to http://localhost:11434) never leaves the machine,
   -- so the *external*-send gate does not apply -- prompting there is friction
-  -- with no matching benefit. Only the cloud CLIs are scanned. (Re-enable this
-  -- if run_ollama is ever pointed at a remote host.)
+  -- with no matching benefit. Every other kind is scanned, "api" included:
+  -- gemini reaching Google directly rather than through its CLI does not make
+  -- the payload any less external, and an exemption written as
+  -- `kind ~= "cli"` would have quietly granted it one.
   if not _skip_scan and def.kind ~= "ollama"
     and not confirm_send((spec.input or "") .. "\n" .. (spec.prompt or "")) then
     done(false, {}, "credential detected in payload; not sent to AI")
@@ -445,16 +513,40 @@ function M.run_with_fallback(specs, done)
     return nil
   end
   local handle = { job = nil }
+  -- Every attempt's reason is kept, not just the last one. Reporting only the
+  -- final failure was survivable while gemini was a CLI that usually worked;
+  -- it stopped being so once gemini can fail for a reason of its own that has
+  -- nothing to do with the request. With GEMINI_API_KEY unset -- the normal
+  -- state of a GUI-launched editor -- EVERY claude outage came out as
+  -- "exit code 2: GEMINI_API_KEY is not set", discarding what the tool the user
+  -- actually asked for had said and pointing the reader at the wrong problem.
+  local failures = {}
   local function attempt(i)
     local spec = specs[i]
     handle.job = M.run(spec, function(ok, lines, err)
       if ok then
         done(true, lines, nil, spec.tool)
-      elseif specs[i + 1] then
-        attempt(i + 1)
-      else
-        done(false, {}, err, spec.tool)
+        return
       end
+      failures[#failures + 1] = { tool = spec.tool, err = err or "failed" }
+      if specs[i + 1] then
+        attempt(i + 1)
+        return
+      end
+      local detail
+      if #failures == 1 then
+        -- A one-step chain is a request with nothing to fall back to, and the
+        -- UI already names the tool: prefixing it here would render as
+        -- "[gemini failed: gemini: exit code 2: ...]".
+        detail = failures[1].err
+      else
+        local parts = {}
+        for j, f in ipairs(failures) do
+          parts[j] = string.format("%s: %s", f.tool, f.err)
+        end
+        detail = table.concat(parts, " | ")
+      end
+      done(false, {}, detail, spec.tool)
     end, true)
   end
   attempt(1)
@@ -478,6 +570,11 @@ M._internal = {
   build_cli_cmd = build_cli_cmd,
   cli_failure_reason = cli_failure_reason,
   ollama_failure_reason = ollama_failure_reason,
+  -- Where the shared python helpers are looked up. Load-bearing for the API
+  -- path and not observable from outside: it decides whether gemini_api.py is
+  -- found at all. (gemini_model is not here -- it is public on M, because
+  -- ai/init.lua needs it for report headers.)
+  repo_script = repo_script,
 }
 
 return M

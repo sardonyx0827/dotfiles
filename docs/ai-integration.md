@@ -46,14 +46,38 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 - **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`context` = カーソル位置の構文単位の解決、`backend` = ツール起動、`ui` = フローティングウィンドウ）
 - インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES · 機密パスは `should_attach` で除外）
 
+#### ツールごとの経路（`backend.lua` の `TOOLS.kind`）
+
+| ツール                   | `kind`   | 経路                                                                           |
+| ------------------------ | -------- | ------------------------------------------------------------------------------ |
+| Claude / Codex / Copilot | `cli`    | 各 CLI を `sh -c` で起動し、ペイロードは stdin（Copilot だけ argv）            |
+| Gemini                   | `api`    | [`scripts/gemini_api.py`](../scripts/gemini_api.py) 経由で REST API を直接叩く |
+| Gemma                    | `ollama` | ローカルの `http://localhost:11434/api/generate`                               |
+
+**Gemini は `gemini` CLI を経由しません**。bash-review フックや gemini-consultant MCP サーバーと同じ
+`generateContent` エンドポイントを、両エディタ共有の CLI [`scripts/gemini_api.py`](../scripts/gemini_api.py)
+から叩きます（`secret_scan.py` と同じ流儀の小さな終了コード契約: `0` = 応答あり / `1` = 応答なし /
+`2` = `GEMINI_API_KEY` 未設定）。Lua と VimScript へ二重移植せず Python 側に一本化しているのは、
+リトライ方針・レスポンス解析・**打ち切り検知**をひとつのテスト対象に閉じ込めるためです。
+
+打ち切り検知が要になります。出力上限に当たった応答は HTTP 200 + `finishReason: "MAX_TOKENS"` +
+**切り詰められた本文**として返るので、素直に受け取ると「断片向けに書かれた応答を選択範囲やバッファ
+全体へ適用する」ことになります。ARG_MAX を超える送信を拒否するのと同じ判断で、これは失敗として扱います。
+
+モデルは `$GEMINI_MODEL`（既定 `gemini-flash-lite-latest`）で、bash-review フックと同じ変数・同じ既定値です。
+`GEMINI_API_KEY` が無い場合は **CLI へ暗黙にフォールバックせず**、変数名を明示したエラーをレポートに出します
+（GUI 起動でシェルの環境を引き継いでいない Neovim がまさにこれに当たるため、原因が読めることを優先します）。
+なお `generationConfig` は送りません — `maxOutputTokens` は上の打ち切りを自作することになり、
+`thinkingLevel: "minimal"` は既定モデル以外では HTTP 400 になることを実測で確認しています。
+
 ### カーソル文脈ヒント (`<leader>qh` / `<leader>qg`)
 
 バッファ全体を見る `<leader>qf`（校正 → 修正）に対して、この 2 つは **カーソル直下の 1 単位だけ**を対象にします。treesitter で「囲っている定義（関数 / クラス / 型など）」まで遡り、**その直上にあるコメント / docstring を範囲に取り込んで**から送ります。コメントと実装のズレを指摘させるのが目的なので、両方を同時に渡さないと成立しません。カーソルがコメント塊の中にあり、その直後に定義が続く場合も同じ範囲になります（単独のコメント塊ならコメントだけ）。
 
-| キー         | 問い合わせ先                                                  |
-| ------------ | ------------------------------------------------------------- |
-| `<leader>qh` | Claude (sonnet) → 失敗時 Gemini (flash-lite) へフォールバック |
-| `<leader>qg` | Gemini (flash-lite) 直接。**フォールバックしません**          |
+| キー         | 問い合わせ先                                                       |
+| ------------ | ------------------------------------------------------------------ |
+| `<leader>qh` | Claude (sonnet) → 失敗時 Gemini (`$GEMINI_MODEL`) へフォールバック |
+| `<leader>qg` | Gemini (`$GEMINI_MODEL`) 直接。**フォールバックしません**          |
 
 `<leader>qg` が claude に落ちないのは意図的です。ベンダーを明示的に選んだのに、今しがた選ばなかった方が黙って答えたのでは 2 つ目のキーを持つ意味が無くなるためで、`<leader>cg`（コミット生成）や `<C-g>`（選択リライト）と同じ規則です。送るペイロードはどちらのキーでも同一です。
 

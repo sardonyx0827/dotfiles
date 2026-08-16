@@ -16,7 +16,9 @@ local ui = require("setup.functions.ai.ui")
 local map = vim.keymap.set
 
 -- Commit messages favour cheap/fast models; everything else uses backend
--- defaults (claude=sonnet, gemini=flash-lite, codex=default, gemma=ollama).
+-- defaults (claude=sonnet, codex=default, gemma=ollama). gemini is not in that
+-- list: it pins no default at all, because scripts/gemini_api.py resolves
+-- $GEMINI_MODEL when the request runs.
 local COMMIT_MODELS = { claude = "haiku" }
 
 -- Upper bound on the diff sent for commit generation. Past this we fall back to
@@ -97,9 +99,27 @@ map("n", "<leader><leader>a", copy_all_lsp_diagnostics,
 ---------------------------------------------------------
 -- Check the current buffer for typos / syntax errors (claude -> gemini)
 ---------------------------------------------------------
-local CHECK_MODELS = { claude = "sonnet", gemini = "gemini-flash-lite-latest" }
+-- gemini is deliberately absent from these tables. It now goes through the REST
+-- API (scripts/gemini_api.py), which resolves $GEMINI_MODEL itself when the
+-- child runs -- so pinning a model here would freeze that variable at startup
+-- and leave it dead for the three flows that actually use gemini.
+local CHECK_MODELS = { claude = "sonnet" }
 -- Same tiers as the check: claude first, gemini as the fallback.
-local FIX_MODELS = { claude = "sonnet", gemini = "gemini-flash-lite-latest" }
+local FIX_MODELS = { claude = "sonnet" }
+
+-- What a report header should print for the model. `pinned` is whatever the
+-- caller's table held, which is nil for gemini; ask the backend for the value
+-- that request will actually have used rather than printing "default" at the
+-- one reader who wanted to know which model answered.
+local function model_label(tool, pinned)
+  if pinned then
+    return pinned
+  end
+  if tool == "gemini" then
+    return backend.gemini_model()
+  end
+  return "default"
+end
 
 local function check_current_buffer()
   local buf = vim.api.nvim_get_current_buf()
@@ -180,7 +200,8 @@ local function check_current_buffer()
         -- claude first; on error fall back to gemini (same order as the check).
         return backend.run_with_fallback({
           { tool = "claude", prompt = fix_system, input = fix_input, model = FIX_MODELS.claude },
-          { tool = "gemini", prompt = fix_system, input = fix_input, model = FIX_MODELS.gemini },
+          -- No model: scripts/gemini_api.py reads $GEMINI_MODEL when it runs.
+          { tool = "gemini", prompt = fix_system, input = fix_input },
         }, function(ok, result, err, tool)
           if not ok then
             done(false, {}, err)
@@ -252,7 +273,8 @@ local function check_current_buffer()
       -- claude first; on error fall back to gemini (see backend.run_with_fallback).
       return backend.run_with_fallback({
         { tool = "claude", prompt = system, input = input, model = CHECK_MODELS.claude },
-        { tool = "gemini", prompt = system, input = input, model = CHECK_MODELS.gemini },
+        -- No model: scripts/gemini_api.py reads $GEMINI_MODEL when it runs.
+        { tool = "gemini", prompt = system, input = input },
       }, function(ok, result, err, tool)
         if not ok then
           done(false, {}, err)
@@ -263,7 +285,8 @@ local function check_current_buffer()
         end
         -- Prepend a source line so it is clear which tool/model answered.
         local out = {
-          string.format("> Checked with **%s** (%s)", tool, CHECK_MODELS[tool] or "default"),
+          string.format("> Checked with **%s** (%s)", tool,
+            model_label(tool, CHECK_MODELS[tool])),
           "",
         }
         vim.list_extend(out, result)
@@ -292,13 +315,16 @@ map("n", "<leader>qf", check_current_buffer,
 -- back to claude -- silently answering with the tool the user just declined
 -- would defeat the point of having a second key. Same rule as <leader>cg and
 -- <C-g>, which are direct too.
+--
+-- gemini carries no `model` for the same reason CHECK_MODELS omits it: the
+-- helper reads $GEMINI_MODEL when the request runs.
 local HINT_CHAINS = {
   claude = {
     { tool = "claude", model = "sonnet" },
-    { tool = "gemini", model = "gemini-flash-lite-latest" },
+    { tool = "gemini" },
   },
   gemini = {
-    { tool = "gemini", model = "gemini-flash-lite-latest" },
+    { tool = "gemini" },
   },
 }
 
@@ -381,7 +407,7 @@ local function hint_at_cursor(tool)
         local out = {
           string.format("> %s — %s", filepath, label),
           string.format("> Hinted with **%s** (%s)",
-            answered, models[answered] or "default"),
+            answered, model_label(answered, models[answered])),
           "",
         }
         vim.list_extend(out, result)
