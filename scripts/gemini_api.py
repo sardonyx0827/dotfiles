@@ -27,7 +27,9 @@ Contract (kept small on purpose so editor glue stays trivial):
 
     exit 0  -> a usable reply is on stdout
     exit 1  -> no usable reply: HTTP error, transport failure, an unparseable
-               body, or a response the model did not finish (see extract_text)
+               body, a GEMINI_API_KEY that cannot be sent as an HTTP header
+               (see GeminiKeyError), or a response the model did not finish
+               (see extract_text)
     exit 2  -> GEMINI_API_KEY is not set. Split out from 1 because it is the
                one failure the reader can act on directly, and because a
                GUI-launched editor that never inherited the shell's environment
@@ -49,7 +51,10 @@ variable and same default as the bash-review hooks.
 The API key is read from the environment only. It is never accepted on argv and
 never written to disk: the editors spawn this process, and the child picks the
 key out of its own environment, so it cannot show up in `ps aux` the way the
-payload does for the one tool that has no stdin path (copilot). Nothing about
+payload does for the one tool that has no stdin path (copilot). It is also
+checked before it can become a header — see _reject_unusable_api_key, which
+exists because http.client reports a header value it refuses by quoting the
+raw value, and stderr here is rendered into an editor buffer. Nothing about
 the request is logged either — unlike the gemini-consultant MCP server, which
 records whole prompts under ~/.claude/logs. A consultation question is a
 sentence the user wrote; these payloads are whatever happens to be in the
@@ -103,6 +108,60 @@ MAX_DETAIL = 400
 
 class GeminiError(Exception):
     """A request that produced no usable reply; the message reaches stderr."""
+
+
+class GeminiKeyError(GeminiError):
+    """GEMINI_API_KEY is set to something that cannot be sent as a header.
+
+    Deliberately NOT a ValueError subclass, which is the whole reason it is a
+    type of its own. As a bare ValueError it would be indistinguishable from
+    json.JSONDecodeError (a ValueError subclass) and from the value-carrying
+    ValueError http.client raises for a header it refuses -- and it was exactly
+    that collision, one arm catching all three, that leaked the key. The
+    gemini-consultant MCP server made the same split for the same reason.
+
+    It IS a GeminiError, so main's existing handler reports it as the single
+    stderr line the contract promises. Exit 1 rather than the 2 an UNSET key
+    gets: 2 is documented as "the variable is not exported", and a key that is
+    exported but malformed is a different sentence even though both are fixed
+    in the same file.
+    """
+
+
+def _reject_unusable_api_key(api_key: str) -> None:
+    """Refuse a key that cannot travel in a header, without ever quoting it.
+
+    http.client validates header values LOCALLY -- inside putheader, before any
+    socket is opened -- and reports a bad one as
+    `ValueError("Invalid header value %r")`, with the RAW value in the message.
+    So anything that catches that ValueError and formats it is a credential
+    leak, and the editors render this process's stderr straight into a report
+    window: the key would land in a buffer the user is looking at.
+
+    The trigger is not exotic. A ~/.zsh_secrets written with CRLF endings
+    leaves a trailing "\r" on the value. main() strips the ends, which covers
+    that one; strip() cannot reach a newline in the MIDDLE, so the value is
+    checked here too -- at build_request, the point where it actually becomes a
+    header, so a caller reaching request_generate directly is covered as well.
+
+    latin-1 is what putheader encodes header values as, hence the second check.
+    `from None` on it: UnicodeEncodeError carries the whole offending string on
+    `.object`, so chaining would hand the key back out through the traceback
+    that this message is careful not to print.
+    """
+    if "\r" in api_key or "\n" in api_key:
+        raise GeminiKeyError(
+            "GEMINI_API_KEY contains a newline, which cannot be sent in an HTTP "
+            "header (a CRLF-terminated secrets file is the usual cause); "
+            "the value is withheld here on purpose"
+        )
+    try:
+        api_key.encode("latin-1")
+    except UnicodeEncodeError:
+        raise GeminiKeyError(
+            "GEMINI_API_KEY contains characters that cannot be sent in an HTTP "
+            "header; the value is withheld here on purpose"
+        ) from None
 
 
 def _emit(stream: Any, text: str) -> None:
@@ -178,6 +237,10 @@ def build_request(
       it would make an override of the default silently break the feature. The
       hooks get away with it because they pin their own model and fall back.
     """
+    # Before anything else: this is the single point where the key becomes a
+    # header value, so checking it here covers every caller, including one that
+    # uses request_generate directly rather than going through main().
+    _reject_unusable_api_key(api_key)
     body = json.dumps(
         {
             "systemInstruction": {"parts": [{"text": system}]},
@@ -299,9 +362,23 @@ def request_generate(
             # connection reset raised while reading the body; one clause covers
             # every transport failure worth retrying.
             last = f"{type(exc).__name__}: {exc}"
-        except ValueError as exc:
+        except json.JSONDecodeError as exc:
             # A body that is not JSON is not a transport hiccup — retrying it
             # just asks the same broken endpoint the same question again.
+            #
+            # Deliberately NOT `except ValueError`, which is what it used to be
+            # and which is a far wider net than the intent. http.client raises
+            # ValueError("Invalid header value b'<key>'") for a header value it
+            # refuses, so this arm caught a credential-carrying exception and
+            # formatted the credential into a message bound for stderr. The
+            # guard in build_request stops such a key from reaching putheader at
+            # all; narrowing here is the second half, so neither the guard nor
+            # this arm has to hold alone.
+            #
+            # JSONDecodeError is the only ValueError this try can produce: the
+            # decode above passes errors="replace", so UnicodeDecodeError cannot
+            # happen, and anything else is by definition not the case this arm
+            # is here to explain.
             raise GeminiError(f"invalid JSON response: {exc}") from exc
         if attempt < attempts - 1:
             sleep(2**attempt)
@@ -337,6 +414,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
+        # Also before stdin is touched, and for the same reason as the check
+        # above: a key that cannot be sent is a problem with the shell, not with
+        # the payload. build_request checks again at the point the value becomes
+        # a header; this one exists so the report arrives without having read a
+        # buffer first.
+        _reject_unusable_api_key(api_key)
         model = _resolve_model(args.model)
         # Decoded explicitly rather than through sys.stdin's text layer, whose
         # error handler follows the ambient locale — the same trap
@@ -362,6 +445,16 @@ def main(argv: list[str] | None = None) -> int:
         # closed because the user pressed `q` on the diff tab. The exception text
         # says which; the caller could not act differently either way.
         return _fail(f"i/o error: {exc}")
+    except ValueError as exc:
+        # The TYPE only, never the text. http.client's "Invalid header value %r"
+        # is a ValueError that embeds the value it refused, so an unforeseen one
+        # arriving here would carry the API key into the report window that
+        # renders stderr — the very leak the guard above closes upstream. This
+        # arm must stay AHEAD of the one below, which does interpolate {exc}.
+        return _fail(
+            f"unexpected failure: {type(exc).__name__} "
+            "(details withheld to avoid leaking credentials)"
+        )
     except Exception as exc:  # noqa: BLE001 - the contract is one line, always
         # The editors render whatever lands on stderr straight into a report
         # window, so an unforeseen exception must not arrive there as a

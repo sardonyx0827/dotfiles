@@ -15,6 +15,7 @@ apply an answer written for a fragment to the entire range, so it has to read
 as a failure — see TestExtractText.
 """
 
+import http.client
 import io
 import json
 import os
@@ -526,6 +527,208 @@ class TestMain:
         assert gemini_api.main(["--system", "S"]) == 0
         sent = json.loads(calls[0][0].data.decode("utf-8"))
         assert "print(1)" in sent["contents"][0]["parts"][0]["text"]
+
+
+SENTINEL_KEY = "AIzaSySENTINELKEYMUSTNEVERAPPEAR0123456789"
+
+# Shapes strip() DOES remove. The realistic trigger: a ~/.zsh_secrets written
+# with CRLF endings leaves a trailing "\r" on every value.
+_TRAILING = [
+    ("trailing CR (CRLF secrets file)", SENTINEL_KEY + "\r"),
+    ("trailing LF", SENTINEL_KEY + "\n"),
+    ("trailing CRLF", SENTINEL_KEY + "\r\n"),
+]
+
+# Shapes strip() CANNOT remove, which is why a guard is needed at all. Split at
+# 8 so a fragment of the sentinel survives on either side of the break.
+_INTERIOR = [
+    ("interior CR", SENTINEL_KEY[:8] + "\r" + SENTINEL_KEY[8:]),
+    ("interior LF", SENTINEL_KEY[:8] + "\n" + SENTINEL_KEY[8:]),
+    ("interior CRLF", SENTINEL_KEY[:8] + "\r\n" + SENTINEL_KEY[8:]),
+]
+
+# putheader encodes header values as latin-1, so this one fails at the encode
+# rather than at the CR/LF check -- a different code path to the same leak.
+_NON_LATIN1 = [("non-latin1", "キー" + SENTINEL_KEY)]
+
+_UNSTRIPPABLE = _INTERIOR + _NON_LATIN1
+
+
+def _assert_no_sentinel(text: str, where: str, label: str) -> None:
+    """Assert on FRAGMENTS of the sentinel rather than on the whole string.
+
+    An interior newline splits the value, so `SENTINEL_KEY not in text` would
+    pass vacuously for exactly the shape that is hardest to fix. Checking the
+    head and the tail separately means a leak is caught whichever side of the
+    break it lands on.
+    """
+    for fragment in (SENTINEL_KEY[:8], SENTINEL_KEY[-8:]):
+        assert fragment not in text, (
+            f"the API key leaked into {where} ({label}): {text!r}"
+        )
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Keep the REAL urlopen, but make reaching the network impossible.
+
+    Every other test here stubs `urllib.request.urlopen`, and that is exactly
+    what these tests must NOT do: the exception under test comes from
+    `http.client.putheader`, which a stubbed urlopen never calls, so the leak
+    assertions would pass against unfixed code. The transport is cut one layer
+    lower instead -- at connect() -- so header validation still runs for real.
+
+    Every attempt is recorded rather than silently swallowed, so a regression
+    that gets past the guard fails loudly here instead of dialling out. Nothing
+    should ever reach it: putheader validates before send() calls connect(),
+    and once the key is checked up front it never reaches putheader either.
+    """
+    attempts = []
+
+    def _connect(self):
+        attempts.append(self.host)
+        raise AssertionError("a request reached the network")
+
+    monkeypatch.setattr(http.client.HTTPSConnection, "connect", _connect)
+    return attempts
+
+
+class TestApiKeyNeverLeaks:
+    """The credential must not reach stderr, on any path.
+
+    `http.client.putheader` refuses a header value containing CR or LF and
+    raises `ValueError("Invalid header value %r" % value)` -- with the RAW
+    value in the message, and LOCALLY, before any socket is opened.
+    `request_generate` used to end its retry loop with a catch-all
+    `except ValueError` meant for a body that is not JSON, so that exception
+    was caught and re-raised as `GeminiError(f"invalid JSON response: {exc}")`
+    -- key and all. main() then hands that string to _fail(), which writes it
+    to stderr, which is the channel the editors render straight into a report
+    window. The key therefore ended up in a buffer the user is looking at.
+
+    Same class of failure the gemini-consultant MCP server fixed in 12bb5b3,
+    and the same remedy: refuse the value up front, name the problem and never
+    the value, and narrow the arm that used to swallow it.
+    """
+
+    def _generate(self, key):
+        return gemini_api.request_generate(
+            "m", "sys", "payload", key, attempts=1, sleep=lambda _s: None
+        )
+
+    def _run_main(self, monkeypatch, capsys, key):
+        monkeypatch.setenv("GEMINI_API_KEY", key)
+        monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"payload")))
+        rc = gemini_api.main(["--system", "S"])
+        captured = capsys.readouterr()
+        return rc, captured.out, captured.err
+
+    def test_the_key_error_type_is_told_apart_from_a_value_error(self):
+        """It is its own type so three unrelated failures stop sharing an arm.
+
+        As a bare ValueError it would be indistinguishable from
+        json.JSONDecodeError (a ValueError subclass) and from putheader's
+        value-carrying ValueError -- which is how the leak survived. It IS a
+        GeminiError, so main's existing handler reports it as the one stderr
+        line the contract promises rather than as a traceback.
+        """
+        assert not issubclass(gemini_api.GeminiKeyError, ValueError)
+        assert issubclass(gemini_api.GeminiKeyError, gemini_api.GeminiError)
+
+    @pytest.mark.parametrize(("label", "key"), _TRAILING + _INTERIOR + _NON_LATIN1)
+    def test_an_unusable_key_is_refused_without_quoting_it(
+        self, no_network, label, key
+    ):
+        with pytest.raises(gemini_api.GeminiError) as excinfo:
+            self._generate(key)
+        _assert_no_sentinel(str(excinfo.value), "the exception message", label)
+        # Not chained. UnicodeEncodeError carries the whole offending string on
+        # .object, so `raise ... from exc` would hand the key back out through
+        # the traceback the message was careful not to print -- and for the
+        # non-latin1 shape that is the ONLY thing this test can catch, since
+        # the encode error's own message names the codec and not the value.
+        assert excinfo.value.__cause__ is None, (
+            f"chaining re-exposes the value ({label})"
+        )
+        assert isinstance(excinfo.value, gemini_api.GeminiKeyError)
+        assert no_network == [], f"the request went out anyway ({label})"
+
+    @pytest.mark.parametrize(("label", "key"), _UNSTRIPPABLE)
+    def test_an_unusable_key_never_reaches_stderr(
+        self, monkeypatch, capsys, no_network, label, key
+    ):
+        """The CLI half: stderr is what the editors put in front of the user."""
+        rc, out, err = self._run_main(monkeypatch, capsys, key)
+        assert rc != 0
+        assert out == ""
+        _assert_no_sentinel(err, "stderr", label)
+        assert "GEMINI_API_KEY" in err, f"the report must name the variable: {err!r}"
+        assert err.count("\n") == 1, f"the contract is one line: {err!r}"
+        assert no_network == [], f"the request went out anyway ({label})"
+
+    @pytest.mark.parametrize(("label", "key"), _TRAILING)
+    def test_a_trailing_newline_is_trimmed_rather_than_refused(
+        self, monkeypatch, capsys, label, key
+    ):
+        """The common case must keep WORKING, not merely stop leaking.
+
+        strip() already removes what a CRLF-terminated secrets file leaves
+        behind, so refusing that key would trade a leak for an outage. Pinned
+        so the guard cannot be widened into rejecting a usable value.
+        """
+        calls = []
+        monkeypatch.setattr(
+            "urllib.request.urlopen", _fake_urlopen(_ok_body("ok"), calls=calls)
+        )
+        rc, out, err = self._run_main(monkeypatch, capsys, key)
+        assert (rc, out, err) == (0, "ok\n", "")
+        assert calls[0][0].get_header("X-goog-api-key") == SENTINEL_KEY
+
+    def test_a_value_carrying_transport_error_is_not_formatted_into_a_message(
+        self, monkeypatch
+    ):
+        """The narrowed arm, tested directly.
+
+        The catch-all `except ValueError` was the leak path itself: it turned a
+        credential-carrying exception into a GeminiError message. Nothing that
+        is not a JSON parse failure may be converted here, whatever the guard
+        upstream does -- the two halves have to hold independently.
+        """
+
+        def boom(*_a, **_k):
+            raise ValueError(f"Invalid header value b'{SENTINEL_KEY}'")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        with pytest.raises(ValueError) as excinfo:
+            self._generate("k")
+        assert not isinstance(excinfo.value, gemini_api.GeminiError), (
+            "a header error was reworded as a response-parsing failure"
+        )
+
+    def test_an_unforeseen_value_error_reaches_stderr_without_its_text(
+        self, monkeypatch, capsys
+    ):
+        """The backstop: main's last-resort arm interpolates {exc}.
+
+        `unexpected failure: {type}: {exc}` is a second leak sink for exactly
+        the type that embeds the value it refused. A ValueError must be
+        reported by TYPE with its message dropped.
+        """
+
+        def boom(*_a, **_k):
+            raise ValueError(f"Invalid header value b'{SENTINEL_KEY}'")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        rc, out, err = self._run_main(monkeypatch, capsys, "k")
+        assert (rc, out) == (1, "")
+        _assert_no_sentinel(err, "stderr", "a raw ValueError from the transport")
+        assert "ValueError" in err, f"the type still has to be stated: {err!r}"
+
+    def test_a_non_json_body_is_still_reported_as_one(self, monkeypatch):
+        """Narrowing must not cost the message it was there to produce."""
+        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen(b"<html>"))
+        with pytest.raises(gemini_api.GeminiError, match="invalid JSON"):
+            self._generate("k")
 
 
 class TestCliSubprocess:
