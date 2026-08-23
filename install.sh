@@ -1093,9 +1093,16 @@ _link_claude_config() {
     "rules"
     "skills"
   )
+  # `[ -e ] && link_entry` ではなく if/fi なのは、`&&` 形だと最後の要素が
+  # 欠けたときに for ループの終了ステータスが 1 になり、それが関数の最終
+  # コマンドである以上 関数自体が 1 を返すため。`set -eo pipefail` の下では
+  # そこでスクリプトごと落ち、main() は何のメッセージも出さずに exit 1 する
+  # (欠落を許容するための [ -e ] ガードが、最後の 1 要素にだけ効かなかった)。
+  # if/fi なら link_entry 本体の失敗はこれまで通り伝播する。
   for entry in "${claude_entries[@]}"; do
-    [ -e "$DOTFILES_DIR/.claude/$entry" ] &&
+    if [ -e "$DOTFILES_DIR/.claude/$entry" ]; then
       link_entry "$DOTFILES_DIR/.claude/$entry" "$HOME/.claude/$entry"
+    fi
   done
 }
 
@@ -1130,9 +1137,16 @@ _link_codex_config() {
     "agents"
     "skills"
   )
+  # `[ -e ] && link_entry` ではなく if/fi なのは、`&&` 形だと最後の要素が
+  # 欠けたときに for ループの終了ステータスが 1 になり、それが関数の最終
+  # コマンドである以上 関数自体が 1 を返すため。`set -eo pipefail` の下では
+  # そこでスクリプトごと落ち、main() は何のメッセージも出さずに exit 1 する
+  # (欠落を許容するための [ -e ] ガードが、最後の 1 要素にだけ効かなかった)。
+  # if/fi なら link_entry 本体の失敗はこれまで通り伝播する。
   for entry in "${codex_link_entries[@]}"; do
-    [ -e "$DOTFILES_DIR/.codex/$entry" ] &&
+    if [ -e "$DOTFILES_DIR/.codex/$entry" ]; then
       link_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
+    fi
   done
 
   # config.toml is deliberately NOT symlinked. Codex owns this file at runtime:
@@ -1211,9 +1225,16 @@ _link_gemini_config() {
     "GEMINI.md"
     "settings.json"
   )
+  # `[ -e ] && link_entry` ではなく if/fi なのは、`&&` 形だと最後の要素が
+  # 欠けたときに for ループの終了ステータスが 1 になり、それが関数の最終
+  # コマンドである以上 関数自体が 1 を返すため。`set -eo pipefail` の下では
+  # そこでスクリプトごと落ち、main() は何のメッセージも出さずに exit 1 する
+  # (欠落を許容するための [ -e ] ガードが、最後の 1 要素にだけ効かなかった)。
+  # if/fi なら link_entry 本体の失敗はこれまで通り伝播する。
   for entry in "${gemini_entries[@]}"; do
-    [ -e "$DOTFILES_DIR/.gemini/$entry" ] &&
+    if [ -e "$DOTFILES_DIR/.gemini/$entry" ]; then
       link_entry "$DOTFILES_DIR/.gemini/$entry" "$HOME/.gemini/$entry"
+    fi
   done
 }
 

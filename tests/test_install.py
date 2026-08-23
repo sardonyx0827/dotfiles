@@ -946,6 +946,91 @@ class TestInstallVimPlug:
         assert plug.read_text(encoding="utf-8") == '" already here\n'
 
 
+class TestOptionalEntryLoopsDoNotAbortTheInstaller:
+    """A missing OPTIONAL entry must not take the whole installer down.
+
+    Each `_link_*_config` walks an array and links the entries that exist:
+
+        for entry in "${entries[@]}"; do
+          [ -e "$DOTFILES_DIR/.x/$entry" ] && link_entry ...
+        done
+
+    The `[ -e ]` guard is there precisely to tolerate an absent entry -- and it
+    does, for every element except the LAST. When the final element is missing,
+    `&&` short-circuits, the for-loop's exit status is that of the failed test,
+    and because the loop is the function's last command the function returns 1.
+    Under `set -eo pipefail` (install.sh:14) that kills the run, and main()
+    exits 1 having printed NO error at all: a silent, unexplained failure in the
+    middle of an install.
+
+    Reachable from a sparse/partial clone, a zip export, a user who deleted the
+    Gemini config -- or simply from someone appending a new optional entry to
+    one of these arrays later.
+    """
+
+    @pytest.mark.parametrize(
+        ("fn", "subdir", "entries"),
+        [
+            ("_link_claude_config", ".claude", ["CLAUDE.md", "skills"]),
+            ("_link_codex_config", ".codex", ["AGENTS.md", "skills"]),
+            ("_link_gemini_config", ".gemini", ["GEMINI.md", "settings.json"]),
+        ],
+    )
+    def test_missing_last_entry_still_returns_success(
+        self, shell_env, tmp_path, fn, subdir, entries
+    ):
+        # A checkout that has the FIRST entry but not the LAST.
+        fake_repo = tmp_path / "fake-dotfiles"
+        (fake_repo / subdir).mkdir(parents=True)
+        (fake_repo / subdir / entries[0]).write_text("x\n", encoding="utf-8")
+        assert not (fake_repo / subdir / entries[-1]).exists()
+
+        env = {**shell_env.env, "DRY_RUN": "0"}
+        res = run_sourced(
+            f'DOTFILES_DIR="{fake_repo}"; {fn}; echo "RC=$?"; echo REACHED_NEXT_LINE',
+            env,
+        )
+
+        assert "RC=0" in res.stdout, (
+            f"{fn} returned non-zero because its last optional entry was "
+            f"missing:\nstdout={res.stdout!r}\nstderr={res.stderr!r}"
+        )
+        assert "REACHED_NEXT_LINE" in res.stdout, (
+            f"set -e killed the script after {fn} -- silently, with no error "
+            f"message:\nstdout={res.stdout!r}\nstderr={res.stderr!r}"
+        )
+        # The entry that IS present must still have been linked.
+        assert (shell_env.home / subdir / entries[0]).is_symlink()
+
+    @pytest.mark.parametrize(
+        ("fn", "subdir", "entry"),
+        [
+            ("_link_claude_config", ".claude", "CLAUDE.md"),
+            ("_link_codex_config", ".codex", "AGENTS.md"),
+            ("_link_gemini_config", ".gemini", "GEMINI.md"),
+        ],
+    )
+    def test_a_real_link_failure_still_propagates(
+        self, shell_env, tmp_path, fn, subdir, entry
+    ):
+        # The fix must not turn into a blanket `|| true`: if link_entry itself
+        # fails, that is a genuine error and has to keep aborting.
+        fake_repo = tmp_path / "fake-dotfiles"
+        (fake_repo / subdir).mkdir(parents=True)
+        (fake_repo / subdir / entry).write_text("x\n", encoding="utf-8")
+
+        env = {**shell_env.env, "DRY_RUN": "0"}
+        res = run_sourced(
+            f'DOTFILES_DIR="{fake_repo}"\n'
+            "link_entry() { return 3; }\n"
+            f'{fn}; echo "RC=$?"',
+            env,
+        )
+        assert "RC=0" not in res.stdout, (
+            f"{fn} swallowed a real link_entry failure: {res.stdout!r}"
+        )
+
+
 class TestStrictMode:
     def test_pipefail_enabled(self, shell_env):
         # Pipelines like `curl ... | sudo tee` must not swallow curl's exit
