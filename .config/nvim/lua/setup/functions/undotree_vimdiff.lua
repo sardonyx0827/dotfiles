@@ -142,8 +142,12 @@ function M.open_vimdiff()
   local diff_tab = vim.api.nvim_get_current_tabpage()
   local cleaning_up = false -- re-entrancy guard
 
-  --- Close the entire diff tab and clean up
-  local function close_diff_tab()
+  --- Unwind the diff state.
+  ---   close_tab    : the diff tab still needs closing (false when it is
+  ---                  already gone and we are only cleaning up after it).
+  ---   from_wipeout : we were entered from `old_buf`'s own BufWipeout, so that
+  ---                  buffer is mid-wipe and must not be touched again.
+  local function cleanup_diff(close_tab, from_wipeout)
     if cleaning_up then return end
     cleaning_up = true
 
@@ -164,16 +168,55 @@ function M.open_vimdiff()
     pcall(vim.keymap.del, "n", "<C-w>q", { buf = target_buf })
     pcall(vim.keymap.del, "n", "<C-w><C-q>", { buf = target_buf })
 
-    -- Explicitly wipe the scratch buffer
-    if vim.api.nvim_buf_is_valid(old_buf) then
+    -- Explicitly wipe the scratch buffer -- unless its own BufWipeout is what
+    -- brought us here, in which case it is already being wiped.
+    --
+    -- Deleting it from inside that handler is not merely redundant, it breaks
+    -- the close: nvim_buf_delete fails with "Failed to unload buffer" (E937,
+    -- the buffer is in use), and although the pcall catches the Lua error, the
+    -- autocmd has still raised a Vim error, which makes the COMMAND THAT
+    -- TRIGGERED IT fail. So `:tabclose` in the diff tab reported
+    -- `E937: Attempt to delete a buffer that is in use` to the user -- on the
+    -- documented way out. (`<C-w>q` routed around it and looked fine, which is
+    -- why this survived.) Verified with a standalone bufhidden=wipe repro:
+    -- skipping the delete makes the outer close succeed.
+    if not from_wipeout and vim.api.nvim_buf_is_valid(old_buf) then
       pcall(vim.api.nvim_buf_delete, old_buf, { force = true })
     end
 
-    -- Close the diff tab if it still exists
-    if vim.api.nvim_tabpage_is_valid(diff_tab)
-       and #vim.api.nvim_list_tabpages() > 1 then
-      pcall(vim.cmd, "tabclose")
+    -- Close the diff tab if it still exists.
+    --
+    -- BY NUMBER, not a bare `:tabclose`. A bare tabclose closes whatever tab is
+    -- CURRENT, and the only guard here used to be that diff_tab is *valid* --
+    -- never that it is the tab we are standing in. Combined with the
+    -- patternless TabClosed autocmd below, closing any unrelated tab ran this
+    -- code from some other tab and took that tab out instead: with the user
+    -- sitting in their own working tab, that tab is what disappeared.
+    --
+    -- Deferred through vim.schedule, and that is load-bearing rather than
+    -- defensive. One caller is BufWipeout: when the scratch buffer is wiped on
+    -- its own (`:bwipeout`), the diff tab is still open and genuinely needs
+    -- closing -- but a `:tabclose` issued from inside that handler fails while
+    -- the wipe is still unwinding, the pcall swallows it, and the user is left
+    -- with a stranded half-diffed tab. Measured: without the schedule that
+    -- scenario ends with diff_tab still valid.
+    -- Running after the wipe completes also lets the validity check mean
+    -- something: if the tab was what closed in the first place (`:tabclose` in
+    -- the diff tab, which wipes the buffer as a side effect), diff_tab is
+    -- already invalid by then and this is correctly a no-op.
+    if close_tab then
+      vim.schedule(function()
+        if vim.api.nvim_tabpage_is_valid(diff_tab)
+           and #vim.api.nvim_list_tabpages() > 1 then
+          pcall(vim.cmd, "tabclose " .. vim.api.nvim_tabpage_get_number(diff_tab))
+        end
+      end)
     end
+  end
+
+  --- Close the diff tab and clean up (the keymap / BufWipeout entry point).
+  local function close_diff_tab()
+    cleanup_diff(true)
   end
 
   -- Left side (scratch buffer): simple mapping
@@ -202,18 +245,44 @@ function M.open_vimdiff()
     desc = "undotree vimdiff: close diff tab",
   })
 
-  -- Clean up if the scratch buffer is wiped by other means
+  -- Clean up if the scratch buffer is wiped by other means.
+  -- from_wipeout = true: old_buf is mid-wipe right now, so cleanup_diff must
+  -- not try to delete it again (see the comment at that branch -- doing so
+  -- fails the very command that triggered this autocmd).
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = augroup,
     buffer = old_buf,
-    callback = close_diff_tab,
+    callback = function()
+      cleanup_diff(true, true)
+    end,
   })
 
-  -- Clean up diffoff when the tab is closed
+  -- Clean up diffoff when the diff tab is closed by other means (:tabclose,
+  -- :q on both windows).
+  --
+  -- TabClosed cannot be narrowed with `pattern`: it fires for EVERY tab close
+  -- in the session and its <amatch> is a tab NUMBER, which shifts as tabs come
+  -- and go, so it never reliably identifies this tab. Identify by handle
+  -- instead -- if diff_tab is no longer valid, the tab that just closed was
+  -- ours and the diff state needs unwinding. Any other tab closing is none of
+  -- our business, and returning early is the whole point: without this check
+  -- the callback ran on every tab close and its `:tabclose` destroyed whatever
+  -- tab the user happened to be in.
+  --
+  -- `once` is deliberately NOT set. The callback now no-ops for unrelated
+  -- closes, so it has to stay armed until our own tab actually goes; with
+  -- `once` the first unrelated close would consume it and the real cleanup
+  -- would never run. It still self-removes, because cleanup_diff deletes the
+  -- augroup on the pass that matters.
   vim.api.nvim_create_autocmd("TabClosed", {
     group = augroup,
-    callback = close_diff_tab,
-    once = true,
+    callback = function()
+      if vim.api.nvim_tabpage_is_valid(diff_tab) then
+        return
+      end
+      -- Our tab is already gone: clean up, but do not close another one.
+      cleanup_diff(false)
+    end,
   })
 
   vim.notify(
