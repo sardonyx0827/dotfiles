@@ -58,6 +58,14 @@ class TestMainInProcess:
             # A credential inside otherwise ordinary buffer content (the editor
             # sends selections / diffs, not shell commands).
             "const client = new S3({\n  secretAccessKey: 'AKIAIOSFODNN7EXAMPLE',\n})",
+            # A quote between the key and its separator -- the JSON literal an
+            # editor buffer is full of. The scanner missed this shape entirely,
+            # so a config file selection went to the AI tool with the value in
+            # it.
+            '{"password": "abc12345XYZ"}',
+            '{\n  "api_key": "abcdef1234567890"\n}',
+            # The bare-positional shape of the secret-setting CLIs.
+            "aws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123",
         ],
     )
     def test_credential_exits_1_with_generic_label(self, monkeypatch, capsys, text):

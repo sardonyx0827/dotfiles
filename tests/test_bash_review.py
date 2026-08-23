@@ -2387,6 +2387,22 @@ class TestSecretScanUnit:
             # python -c one-liner — the secret must be caught before the
             # command reaches any LLM path (fast or high-risk gated).
             "python3 -c \"h={'Authorization': 'Bearer opaqueTok3nValue1'}\"",
+            # A quote sits between the KEY and its separator -- the JSON/dict
+            # literal shape, which is how an agent most often materializes a
+            # config blob on the command line. The "bearer credential" row
+            # above already tolerates that quote; the assignment row did not,
+            # so `{"password": "..."}` sailed straight through to the API.
+            'printf \'{"password": "abc12345XYZ"}\' > cfg.json',
+            "echo \"{'client_secret': 'Sup3rSecretValue1'}\" > cfg.json",
+            'jq -n \'{"api_key": "abcdef1234567890"}\'',
+            # No separator at all: the mainstream secret-setting CLIs take the
+            # value as a bare positional argument, so neither the `=`/`:`
+            # assignment shape nor the `--flag value` shape fires.
+            "aws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123",
+            "vault kv put secret/app password s3cr3tP4ssw0rd123",
+            "heroku config:set SECRET_KEY_BASE abcdef0123456789abcdef",
+            "wrangler secret put API_TOKEN abcdef0123456789",
+            "gh secret set DEPLOY_TOKEN abcdef0123456789",
         ],
     )
     def test_harder_credential_values_are_detected(self, hook_fns, command):
@@ -2402,11 +2418,38 @@ class TestSecretScanUnit:
             "git commit -m 'Basic understanding of the token flow'",  # prose
             "deploy --message this-is-a-long-message",  # non-secret long flag
             "grep -r secret ./src",  # keyword present but no assigned value
+            # The secret-setting CLI verbs, used for something that is not a
+            # secret. The verb alone must never be enough -- a credential
+            # keyword has to sit in the argument the value follows.
+            "aws configure set region us-east-1",
+            "aws configure set output json",
+            "heroku config:set LOG_LEVEL debugverbose",
+            "vault kv get secret/app",
+            # The keyword and a long word, with no secret-setting verb in
+            # front: prose about credentials is not a credential. Allowing a
+            # bare `\s+` separator in the assignment pattern would flag this.
+            "echo access_key rotation procedure",
+            "git log --grep 'rotate the client secret quarterly'",
+            # A variable reference is not a value, in the positional shape too.
+            "aws configure set aws_secret_access_key $AWS_SECRET",
         ],
     )
     def test_harder_benign_commands_are_not_flagged(self, hook_fns, command):
         found, _ = hook_fns["scan_secrets"](command, {"command": command})
         assert found is False, f"false positive on: {command}"
+
+    def test_cli_verb_and_keyword_from_separate_fields_do_not_combine(self, hook_fns):
+        """scan_secrets also matches json.dumps(tool_input), so a gap between
+        the CLI verb and the credential keyword that is allowed to grow without
+        bound lets the two halves come from DIFFERENT fields and refuse a
+        command that carries no secret at all. This scanner blocks commands, so
+        that false positive costs real work."""
+        tool_input = {
+            "command": "aws configure set region us-east-1",
+            "description": "rotate the access_key procedure eventually",
+        }
+        found, label = hook_fns["scan_secrets"](tool_input["command"], tool_input)
+        assert found is False, f"cross-field halves combined into {label!r}"
 
 
 class TestSecretPreScanGuard:

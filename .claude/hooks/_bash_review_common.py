@@ -1583,12 +1583,24 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     # 値は空白まで 1 トークンとして受ける (\S{8,})。記号を含む値 (P@ss!w0rd 等) や
     # base64 (+/=) で途中打ち切りにならないよう、狭い許可リストではなく非空白を
     # 使う。値先頭が $ の変数参照 ((?!\$)) は「値そのもの」ではないので除外する。
+    #
+    # キーワードと区切り記号の間のクォート ([\"']?) を許すのは、JSON / dict
+    # リテラル (`{"password": "..."}`) がこの層で最も多い形だから。上の bearer /
+    # basic が既に同じ形 (authorization[\"']?\s*:) を許しており、代入側にだけ
+    # 無いせいで `{"password": "..."}` が丸ごと素通りしていた。
+    #
+    # 長さ下限について: 非クォート枝 (\S{8,}) は「次の空白まで」なので、値に
+    # 隣接する記号 (JSON の閉じクォート/波括弧、tool_input を json.dumps した
+    # ときの `"}`) も 8 文字に算入される。つまり `{"password": "abc123"}` の
+    # ように短い値でも周辺の記号込みで 8 文字に達すれば一致する。クォート枝
+    # ([^\"\n]{8,}) が閉じクォートで止まるのと非対称だが、外部送信を止める側
+    # (フェイルクローズ) に倒れるので厳しい方向の非対称として受け入れる。
     (
         "secret assignment",
         re.compile(
             r"(?i)(?:password|passwd|passphrase|secret|token|credential"
             r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
-            r"[A-Za-z0-9_]*\s*[=:]\s*"
+            r"[A-Za-z0-9_]*[\"']?\s*[=:]\s*"
             # 値: クォートで開いた場合は閉じクォートまで (空白入りパスワードも
             # 1 値として拾う)、非クォートなら次の空白までを 1 トークンとして拾う。
             r"(?:\"(?!\$)[^\"\n]{8,}|'(?!\$)[^'\n]{8,}|(?!\$)\S{8,})"
@@ -1605,6 +1617,40 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
             r"(?i)--(?:password|passwd|passphrase|token|secret|credential"
             r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
             r"\s+(?![-$])\S{6,}"
+        ),
+    ),
+    # 区切り記号を一切持たない形。主要な「秘密を設定する CLI」は値を裸の位置
+    # 引数で取る (`aws configure set <key> <value>`) ため、上の代入形 (`=` / `:`)
+    # にもフラグ形 (`--key value`) にも当たらず素通りしていた。
+    #
+    # ここで `\s+` を上の "secret assignment" 側の一般的な区切りに足さないのは
+    # 意図的: `access_key rotation procedure` のような散文が全部一致してしまう。
+    # 短縮フラグを対象外にした割り切りと同じ理由で、誤検知はこのスキャナでは
+    # コマンドの拒否 = 実作業の停止を意味する。そこで「既知の設定動詞」を
+    # 前置条件にして、動詞が無ければ裸の空白区切りは一切見ない別パターンにする。
+    #
+    # 動詞とキーワードの間隔は最大 2 語に制限し、語にクォートを含めない
+    # ([^\s;|&\"']+): scan_secrets は json.dumps(tool_input) も照合するため、
+    # 間隔が無制限だと動詞が command フィールド・キーワードが description
+    # フィールドから拾われて結合し、秘密の無いコマンドを拒否してしまう。
+    # クォートを語から除くことで JSON の文字列境界を越えられない。
+    #
+    # キーワードは語中一致にする ([A-Za-z0-9_]*? を前置): `aws_secret_access_key`
+    # には secret の直前に語境界が無く、\b を付けると本命の形を取りこぼす。
+    (
+        "secret CLI argument",
+        re.compile(
+            r"(?i)\b(?:aws\s+configure\s+set"
+            r"|vault\s+kv\s+(?:put|patch)"
+            r"|heroku\s+config:set"
+            r"|wrangler\s+secret\s+put"
+            r"|gh\s+secret\s+set"
+            r"|fly(?:ctl)?\s+secrets\s+set)"
+            r"(?:\s+[^\s;|&\"']+){0,2}"
+            r"\s+[A-Za-z0-9_]*?"
+            r"(?:password|passwd|passphrase|secret|token|credential"
+            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
+            r"[A-Za-z0-9_]*\s+(?![-$])\S{8,}"
         ),
     ),
 ]
