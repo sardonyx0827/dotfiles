@@ -1386,6 +1386,62 @@ class TestAptAliasSymlinks:
         assert stale.resolve().name == "fdfind"
 
 
+class TestInstallHomebrew:
+    """The Homebrew bootstrap was the last unguarded fetch_and_run in the file.
+
+    Under `set -eo pipefail` a bare `fetch_and_run <homebrew installer>` took
+    the whole run down the moment the download failed: main() entered
+    install_os_packages and never came back, so every later step (WezTerm,
+    fonts, Node, gh, pyenv, uv, glow, Docker, MCP, linters, Oh My Zsh,
+    vim-plug, tmux plugins, AI tools, the shell change) was silently skipped
+    with no completion message. The arm is macOS-only, so the ubuntu-latest
+    CI never executed it.
+    """
+
+    # conftest's shell_env installs a backstop `brew` stub, so
+    # `command_exists brew` is TRUE by default and a test premised on brew
+    # being absent would take the already-installed branch and pass
+    # vacuously. Shadow the probe for brew only, leaving the real lookup in
+    # place for everything else.
+    _BREW_ABSENT = (
+        'command_exists() { case "$1" in brew) return 1 ;; '
+        '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+    )
+
+    def test_bootstrap_failure_returns_nonzero_and_warns(self, shell_env):
+        # `if` rather than a bare call: after the fix the non-zero return is
+        # the contract, and a bare call would trip the harness's own `set -e`
+        # before the assertions could read the status.
+        res = run_sourced(
+            self._BREW_ABSENT + "fetch_and_run() { return 1; }; "
+            'if install_homebrew; then echo "RC=0"; else echo "RC=$?"; fi',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        # Proves the bootstrap branch was actually entered, not the
+        # already-installed one.
+        assert "Installing Homebrew..." in res.stdout
+        assert "RC=1" in res.stdout
+        assert "skipping Homebrew packages" in res.stdout
+
+    def test_bootstrap_failure_does_not_claim_success(self, shell_env):
+        res = run_sourced(
+            self._BREW_ABSENT + "fetch_and_run() { return 1; }; "
+            "install_homebrew || true",
+            shell_env.env,
+        )
+        assert "Homebrew installed" not in res.stdout
+
+    def test_already_installed_still_succeeds_quietly(self, shell_env):
+        # shell_env's backstop brew stub IS the "already present" condition;
+        # the guard must not cost this path its success return or its message.
+        res = run_sourced('install_homebrew; echo "AFTER_HOMEBREW"', shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "Homebrew already installed" in res.stdout
+        assert "AFTER_HOMEBREW" in res.stdout
+        assert "[WARNING]" not in res.stdout
+
+
 class TestInstallOsPackages:
     """OS-specific package installation, extracted from main()'s inline
     case so the dispatch is unit-testable on its own. A bash `case` with no
@@ -1420,6 +1476,21 @@ class TestInstallOsPackages:
         assert res.returncode == 0, res.stderr
         assert "CALLED_HOMEBREW" in res.stdout
         assert "CALLED_BREW_PACKAGES" in res.stdout
+
+    def test_macos_skips_brew_packages_when_homebrew_bootstrap_fails(self, shell_env):
+        # install_brew_packages needs `brew` on PATH, so running it after a
+        # failed bootstrap would only produce a second wave of failures. The
+        # `if` form is also what keeps `set -e` from aborting this arm on
+        # install_homebrew's non-zero return.
+        res = run_sourced(
+            "install_homebrew() { return 1; }; "
+            "install_brew_packages() { echo CALLED_BREW_PACKAGES; }; "
+            'OS=macos install_os_packages; echo "AFTER_OS_PACKAGES"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_OS_PACKAGES" in res.stdout
+        assert "CALLED_BREW_PACKAGES" not in res.stdout
 
     def test_windows_still_warns(self, shell_env):
         res = run_sourced("OS=windows install_os_packages", shell_env.env)

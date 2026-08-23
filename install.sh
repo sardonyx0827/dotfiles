@@ -221,7 +221,23 @@ install_homebrew() {
     print_info "Installing Homebrew..."
     # Download-then-run (not `bash -c "$(curl ...)"`) so a truncated download
     # can't execute a partial installer -- see fetch_and_run's header.
-    fetch_and_run "https://raw.githubusercontent.com/Homebrew/install/$HOMEBREW_INSTALL_REF/install.sh" /bin/bash
+    #
+    # Guarded, and unlike every other optional installer here this one does
+    # NOT warn-and-continue. This fetch_and_run was the last unguarded one in
+    # the file: under `set -eo pipefail` a transient network failure aborted
+    # main() outright at install_os_packages, so everything after it (WezTerm,
+    # fonts, Node, pyenv, Docker, MCP, Oh My Zsh, vim-plug, tmux plugins, the
+    # shell change) silently never ran -- the same bug already fixed in
+    # install_oh_my_zsh, see the note in create_symlinks. Merely continuing
+    # would be wrong too: install_os_packages runs install_brew_packages next
+    # and that needs `brew` to exist, so a warn-and-continue would only buy a
+    # second wave of failures. Return non-zero instead and let the caller skip
+    # the brew packages. Bail before the Apple-Silicon PATH block (pointless
+    # with no brew to source) and before print_success (which would be a lie).
+    if ! fetch_and_run "https://raw.githubusercontent.com/Homebrew/install/$HOMEBREW_INSTALL_REF/install.sh" /bin/bash; then
+      print_warning "Homebrew bootstrap failed; skipping Homebrew packages"
+      return 1
+    fi
 
     # Add Homebrew to PATH for Apple Silicon
     if [[ -d "/opt/homebrew/bin" ]]; then
@@ -1582,8 +1598,13 @@ change_shell() {
 install_os_packages() {
   case "$OS" in
   macos)
-    install_homebrew
-    install_brew_packages
+    # `if` and not a bare pair: install_brew_packages needs `brew` on PATH, so
+    # it must not run when the bootstrap failed. Calling install_homebrew as
+    # the condition is also what stops `set -e` from aborting the whole
+    # installer on its non-zero return.
+    if install_homebrew; then
+      install_brew_packages
+    fi
     ;;
   ubuntu)
     install_apt_packages
