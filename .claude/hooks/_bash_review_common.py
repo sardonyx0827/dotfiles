@@ -406,8 +406,13 @@ _UNRESOLVABLE_GRAMMAR = frozenset({"case", "select", "esac"})
 # 演算子単独形 (`> out cmd`) は次のトークンがリダイレクト先なので 2 つ読み飛ばす。
 # 密着形 (`>out`, `2>&1`) は 1 つでよい。両者を取り違えると、前者でリダイレクト先
 # (`out`) が実行体に化けて後続の危険コマンドが素通りする。
-_REDIRECT_ALONE = re.compile(r"^\d*(?:>>|>&|>\||>|<<<|<<|<&|<)$")
-_REDIRECT_GLUED = re.compile(r"^\d*(?:>>|>&|>\||>|<<<|<<|<&|<)\S")
+# `&>` / `&>>` (stdout+stderr をまとめて送る結合演算子) は fd 番号を取らないので
+# `^\d*` の枝には決して乗らない。別の枝として先に並べる。落とすと `&>out curl url`
+# が丸ごと 1 セグメントのまま残り、実行体が `&` に解決されて curl の静的 DENY
+# すら外れる。`&` を `\d*` の側に足さないのは、`2&>x` のような非文法を演算子と
+# 認めてしまわないため。
+_REDIRECT_ALONE = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))$")
+_REDIRECT_GLUED = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))\S")
 
 
 def _tokenize(cmd: str) -> list[str]:
@@ -505,6 +510,34 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
             continue
         if _REDIRECT_GLUED.match(tok):
             i += 1
+            continue
+        # 実行体へリダイレクトが右から密着した形 (`rm>x`, `wget>/dev/null`)。
+        # shlex は空白が無ければ 1 トークンのまま返すので、上の 2 つ (先頭が
+        # 演算子) のどちらにも一致せず、パスと同じく basename 化されて
+        # リダイレクト先が実行体に化けていた (`wget>/dev/null` → `null`)。
+        # DENY と高リスクの両層が同時に盲目になり、しかもリダイレクト先を
+        # `/usr/bin/git` にすれば解決後の名前まで攻撃者が選べる。演算子より
+        # 左が実行体なので、そこまでを切り出して同じトークンを読み直す
+        # (ラッパー/パス/大小畳みの解決を通すため `(curl` と同じく再ループ)。
+        #
+        # 判定は「最初の `>` / `<` が先頭以外にある」だけに絞り、fd 番号の
+        # `\d*` は見ない: `wget2>x` は bash では `wget2` の実行なので、数字まで
+        # 演算子側に含めると別の実行体に取り違える。
+        # 位置 0 を除外するので prefix が空になる形 (`>out`) はここへ来ない。
+        # 数字のみの prefix (`2>&1` の `2`) も上の密着形で落ちるが、上の 2 つを
+        # 将来緩めたときに fd 番号が実行体へ化けないよう明示的に弾く。
+        cut = min((p for p in (tok.find(">"), tok.find("<")) if p > 0), default=-1)
+        # `&>` / `&>>` では `&` が演算子の一部なので、`>` だけで切ると実行体側に
+        # `&` が残る。`rm&>x -rf /` が `rm&` に解決され、DENY_COMMANDS の複数語
+        # 前方一致 (`rm -rf /`) と高リスクの引数照合が同時に外れていた。
+        # `_split_commands` の `&` 分割が素の `rm` を別セグメントとして拾うため
+        # 単語 1 つの DENY だけは偶然助かるが、その分割はフラグを切り離すので
+        # フラグ依存の規則 (rm -rf / git --force / docker --privileged) は救えない。
+        # cut > 1 を条件にするのは、減算後も prefix が空にならないことを保証するため。
+        if cut > 1 and tok[cut - 1] == "&":
+            cut -= 1
+        if cut > 0 and not tok[:cut].isdigit():
+            tokens = [*tokens[:i], tok[:cut], *tokens[i + 1 :]]
             continue
         # ラッパー名も case-insensitive な FS では解決するので畳む (`ENV sudo` は
         # 本当に env 経由で sudo を走らせる)。剥がしはこの関数で起きるため、
