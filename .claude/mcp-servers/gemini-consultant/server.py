@@ -208,15 +208,104 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
 # -------------------------------------------------------------------
 # Gemini API 呼び出し（リトライ付き）
 # -------------------------------------------------------------------
+class GeminiKeyError(Exception):
+    """GEMINI_API_KEY が未設定、または HTTP ヘッダ値として使えない。
+
+    ValueError の *サブクラスにしない* のが要点。以前はこの条件を素の ValueError で
+    表していたため、ツール側の `except ValueError` が
+    (a) 本来の「キー未設定」
+    (b) json.JSONDecodeError (ValueError のサブクラス)
+    (c) putheader が送出する「値つき」ValueError
+    の 3 つを同じ腕で捕まえていた。結果、JSON パース失敗にまで
+    「APIキー未設定」と通知し、下の except に並ぶ JSONDecodeError は到達不能な
+    死んだエントリになり、(c) では API キーそのものを戻り値とログへ流していた。
+    独立した型にすることで 3 つを別々の腕へ分けられる。
+    """
+
+
+def _reject_unusable_api_key(api_key: str) -> None:
+    """ヘッダ値として送れないキーを、値を一切明かさずに拒否する。
+
+    http.client は不正なヘッダ値を `Invalid header value %r` として送出する
+    ため、putheader まで到達させた時点でキーが例外メッセージに載る。ここで
+    先回りして弾き、理由だけを述べる。latin-1 を見るのは putheader の
+    エンコード先がそれだから。
+    """
+    if "\r" in api_key or "\n" in api_key:
+        raise GeminiKeyError(
+            "GEMINI_API_KEY contains a newline, which is illegal in an HTTP "
+            "header (a CRLF-terminated .env is the usual cause); "
+            "the value is withheld here on purpose"
+        )
+    try:
+        api_key.encode("latin-1")
+    except UnicodeEncodeError:
+        # from None: 元の例外のメッセージには問題の文字が載るため連鎖させない。
+        raise GeminiKeyError(
+            "GEMINI_API_KEY contains characters that cannot be sent in an HTTP "
+            "header; the value is withheld here on purpose"
+        ) from None
+
+
+def _extract_text(body: dict) -> str:
+    """レスポンス本文をテキスト化し、途中で打ち切られていればそれを明示する。
+
+    以前は `body.get("candidates", [{}])[0]` から parts を連結して返すだけで、
+    `finishReason` を一度も見ていなかった。maxOutputTokens=8192 を送っておいて
+    MAX_TOKENS の切り詰めを「完全な回答」として返すのは、設計相談ツールとしては
+    最悪の壊れ方になる (呼び出し側が途中までの論を完結したものとして採用する)。
+
+    `candidates` が「キーは在るが空リスト」の場合も既定値 [{}] は効かないため
+    [0] が IndexError になり、`list index out of range` という何も説明しない
+    文字列だけが返っていた。プロンプト段階のブロックはこの形で来る。
+    """
+    candidates = body.get("candidates") or []
+    if not candidates:
+        blocked = (body.get("promptFeedback") or {}).get("blockReason")
+        if blocked:
+            return f"[Gemini はプロンプトをブロックしました: blockReason={blocked}]"
+        return "[Gemini から候補が返りませんでした]"
+
+    candidate = candidates[0] or {}
+    parts = (candidate.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts)
+
+    # STOP が正常完了。それ以外 (MAX_TOKENS / SAFETY / RECITATION 等) は
+    # answer が途中で切れているので、部分テキストは活かしつつ理由を添える。
+    reason = candidate.get("finishReason") or ""
+    if reason and reason not in ("STOP", "FINISH_REASON_UNSPECIFIED"):
+        note = f"[Gemini の応答は完結していません: finishReason={reason}]"
+        return f"{text}\n\n{note}" if text else note
+    # 正常終了でも本文が空なら、それは「言うことが無かった」ではなく異常。
+    # 空文字をそのまま返すと呼び出し側は前者として読むので、finishReason ではなく
+    # 空であること自体を条件にして明示する (SAFETY 枝と同じ壊れ方の一般形)。
+    if not text:
+        return (
+            f"[Gemini がテキストを返しませんでした: finishReason={reason or '(なし)'}]"
+        )
+    return text
+
+
 def call_gemini(
     prompt: str,
     max_tokens: int = 8192,
     model: str | None = None,
     max_retries: int = 3,
 ) -> str:
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+    # strip() は体裁ではなくセキュリティ上の措置。CRLF 改行の .env を source すると
+    # 値の末尾に "\r" が残るが、http.client.putheader は CR/LF を含むヘッダ値を
+    # 拒否し、その ValueError のメッセージに *生の値* を埋め込む
+    # (`Invalid header value b'AIza...\r'`)。call_gemini の内側 except は
+    # (URLError, TimeoutError) しか捕まえないため、その例外はツール側の
+    # except まで抜け、str(e) が戻り値と _log_quietly の両方へ渡っていた。
+    # 結果、API キーが会話トランスクリプトと ~/.claude/logs の双方に残る。
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not set")
+        raise GeminiKeyError("GEMINI_API_KEY not set")
+    # strip() が落とせるのは前後だけなので、値の内部に混じった CR/LF や
+    # latin-1 で送れない文字はここで自前に弾く。例外メッセージには理由だけを
+    # 載せ、値は決して載せない (putheader に到達させたら値が漏れる)。
+    _reject_unusable_api_key(api_key)
 
     resolved_model = model or DEEP_MODEL
 
@@ -252,10 +341,7 @@ def call_gemini(
         try:
             with urllib.request.urlopen(req, timeout=90) as resp:  # nosec: B310
                 body = json.loads(resp.read().decode("utf-8"))
-                parts = (
-                    body.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                )
-                return "".join(p.get("text", "") for p in parts)
+                return _extract_text(body)
         except (urllib.error.URLError, TimeoutError) as e:
             last_error = e
             # 最終試行の失敗後は再試行しないので待つ意味がない
@@ -289,10 +375,13 @@ def consult_gemini(question: str) -> str:
         _log_quietly("consult_gemini", "OK", prompt, result)
         notify("Gemini Consultant", f"設計相談完了: {question[:40]}", 4)
         return result
-    except ValueError as e:
+    except GeminiKeyError as e:
         _log_quietly("consult_gemini", "ERROR", prompt, str(e))
-        notify("Gemini Consultant", "APIキー未設定", 8)
+        notify("Gemini Consultant", "APIキーの問題", 8)
         return f"Gemini API error: {e}"
+    # JSONDecodeError は ValueError のサブクラスなので、この腕は必ず下の
+    # `except ValueError` より前に置くこと。順序を入れ替えると、以前と同じく
+    # ここが死んで JSON パース失敗が「予期しないエラー」に化ける。
     except (
         urllib.error.URLError,
         TimeoutError,
@@ -303,6 +392,18 @@ def consult_gemini(question: str) -> str:
         _log_quietly("consult_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIエラーが発生しました", 10)
         return f"Gemini API error: {e}"
+    except ValueError as e:
+        # 想定外の ValueError。メッセージを外へ出さないのが要点: http.client の
+        # `Invalid header value %r` のように、値そのものを埋め込む例外が
+        # この経路に来うる。型名だけを記録し、本文は捨てる。
+        _log_quietly(
+            "consult_gemini", "ERROR", prompt, f"unexpected {type(e).__name__}"
+        )
+        notify("Gemini Consultant", "APIエラーが発生しました", 10)
+        return (
+            "Gemini API error: unexpected "
+            f"{type(e).__name__} (details withheld to avoid leaking credentials)"
+        )
 
 
 @mcp.tool()
@@ -325,10 +426,13 @@ def review_gemini(question: str) -> str:
         _log_quietly("review_gemini", "OK", prompt, result)
         notify("Gemini Consultant", f"レビュー完了: {question[:40]}", 4)
         return result
-    except ValueError as e:
+    except GeminiKeyError as e:
         _log_quietly("review_gemini", "ERROR", prompt, str(e))
-        notify("Gemini Consultant", "APIキー未設定", 8)
+        notify("Gemini Consultant", "APIキーの問題", 8)
         return f"Gemini API error: {e}"
+    # JSONDecodeError は ValueError のサブクラスなので、この腕は必ず下の
+    # `except ValueError` より前に置くこと。順序を入れ替えると、以前と同じく
+    # ここが死んで JSON パース失敗が「予期しないエラー」に化ける。
     except (
         urllib.error.URLError,
         TimeoutError,
@@ -339,6 +443,16 @@ def review_gemini(question: str) -> str:
         _log_quietly("review_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIエラーが発生しました", 10)
         return f"Gemini API error: {e}"
+    except ValueError as e:
+        # 想定外の ValueError。メッセージを外へ出さないのが要点: http.client の
+        # `Invalid header value %r` のように、値そのものを埋め込む例外が
+        # この経路に来うる。型名だけを記録し、本文は捨てる。
+        _log_quietly("review_gemini", "ERROR", prompt, f"unexpected {type(e).__name__}")
+        notify("Gemini Consultant", "APIエラーが発生しました", 10)
+        return (
+            "Gemini API error: unexpected "
+            f"{type(e).__name__} (details withheld to avoid leaking credentials)"
+        )
 
 
 if __name__ == "__main__":

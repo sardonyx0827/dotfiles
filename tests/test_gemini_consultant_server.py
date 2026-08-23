@@ -59,9 +59,46 @@ def server(monkeypatch, tmp_path):
 
 class TestCallGemini:
     def test_missing_api_key_raises(self, server, monkeypatch):
+        # GeminiKeyError, deliberately NOT a ValueError subclass: the tools used
+        # to route key problems, json.JSONDecodeError and putheader's
+        # value-carrying ValueError through one `except ValueError` arm. That
+        # made the JSONDecodeError entry below it dead and leaked the key. The
+        # distinct type is what lets the three be told apart, so pin the type.
         monkeypatch.delenv("GEMINI_API_KEY")
-        with pytest.raises(ValueError, match="GEMINI_API_KEY not set"):
+        with pytest.raises(server.GeminiKeyError, match="GEMINI_API_KEY not set"):
             server.call_gemini("question")
+        assert not issubclass(server.GeminiKeyError, ValueError)
+
+    def test_blank_api_key_is_treated_as_missing(self, server, monkeypatch):
+        # strip() makes a whitespace-only key indistinguishable from unset,
+        # which is the honest reading of a `GEMINI_API_KEY=` line in a .env.
+        monkeypatch.setenv("GEMINI_API_KEY", "   \r\n")
+        with pytest.raises(server.GeminiKeyError, match="GEMINI_API_KEY not set"):
+            server.call_gemini("question")
+
+    def test_json_decode_error_is_not_reported_as_a_key_problem(
+        self, server, monkeypatch
+    ):
+        # A 200 with a non-JSON body (proxy / captive portal) used to be caught
+        # by `except ValueError` and announced as "APIキー未設定".
+        class Resp:
+            def read(self):
+                return b"<html>captive portal</html>"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: Resp())
+        notices = []
+        monkeypatch.setattr(server, "notify", lambda t, m, s=5: notices.append(m))
+        result = server.consult_gemini("anything")
+        assert result.startswith("Gemini API error:")
+        assert not any("APIキー" in m for m in notices), (
+            f"a JSON parse failure was announced as a key problem: {notices}"
+        )
 
     def test_concatenates_all_response_parts(self, server, monkeypatch):
         body = json.dumps(
@@ -153,6 +190,192 @@ class TestTools:
         monkeypatch.setattr(urllib.request, "urlopen", fake_gemini(URLError("boom")))
         result = server.review_gemini("anything")
         assert result.startswith("Gemini API error:")
+
+
+SENTINEL_KEY = "SENTINELKEYVALUEMUSTNEVERAPPEAR"
+
+
+class TestApiKeyNeverLeaks:
+    """The credential must not reach the caller or the log, on any path.
+
+    `http.client.putheader` refuses a header value containing CR/LF and raises
+    `ValueError("Invalid header value %r" % value)` -- with the RAW value in the
+    message. `call_gemini`'s inner handler only catches (URLError, TimeoutError),
+    so that ValueError reaches the tools' `except ValueError` clause, which puts
+    `str(e)` into BOTH the returned string and `_log_quietly`. The key then sits
+    in the conversation transcript and on disk in ~/.claude/logs.
+
+    The realistic trigger is not exotic: a `.env` written with CRLF endings
+    yields a trailing "\\r" on the value, and the module never strips it.
+    No socket is involved -- putheader raises before connect -- so these run
+    fully offline against the real urlopen.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "key"),
+        [
+            ("trailing CR (CRLF .env)", SENTINEL_KEY + "\r"),
+            ("trailing LF", SENTINEL_KEY + "\n"),
+            ("interior newline", SENTINEL_KEY[:8] + "\n" + SENTINEL_KEY[8:]),
+        ],
+    )
+    @pytest.mark.parametrize("tool", ["consult_gemini", "review_gemini"])
+    def test_illegal_header_key_is_not_echoed(
+        self, server, monkeypatch, label, key, tool
+    ):
+        monkeypatch.setenv("GEMINI_API_KEY", key)
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+
+        result = getattr(server, tool)(f"prompt for {label}")
+        log_text = open(server.log_file, encoding="utf-8").read()
+
+        # Check FRAGMENTS, not the whole key: an interior newline splits the
+        # value, so asserting on the contiguous sentinel would pass vacuously
+        # for exactly the case that is hardest to fix.
+        for sink, text in (("returned to the caller", result), ("the log", log_text)):
+            for fragment in (SENTINEL_KEY[:8], SENTINEL_KEY[-8:]):
+                assert fragment not in text, (
+                    f"{tool} leaked the API key into {sink} ({label}): {text!r}"
+                )
+
+    def test_non_latin1_key_is_rejected_without_quoting_it(self, server, monkeypatch):
+        # putheader encodes header values as latin-1, so a key carrying (say) a
+        # full-width character raises UnicodeEncodeError -- whose message names
+        # the offending character. Reject it here instead, and do not chain the
+        # original (`from None`) so nothing derived from the value escapes.
+        monkeypatch.setenv("GEMINI_API_KEY", "キー" + SENTINEL_KEY)
+        with pytest.raises(server.GeminiKeyError) as excinfo:
+            server.call_gemini("question")
+        assert SENTINEL_KEY not in str(excinfo.value)
+        assert excinfo.value.__cause__ is None, (
+            "chaining re-exposes the value through the original exception"
+        )
+
+    @pytest.mark.parametrize("tool", ["consult_gemini", "review_gemini"])
+    def test_unexpected_value_error_is_reported_without_its_message(
+        self, server, monkeypatch, tool
+    ):
+        # Backstop for anything that still reaches putheader-shaped territory:
+        # the last-resort ValueError arm must name the TYPE and drop the text.
+        def boom(prompt, **kwargs):
+            raise ValueError(f"Invalid header value b'{SENTINEL_KEY}'")
+
+        monkeypatch.setattr(server, "call_gemini", boom)
+        result = getattr(server, tool)("anything")
+        assert SENTINEL_KEY not in result, result
+        assert "ValueError" in result
+        log_text = open(server.log_file, encoding="utf-8").read()
+        assert SENTINEL_KEY not in log_text
+
+    def test_surrounding_whitespace_in_the_key_is_tolerated(self, server, monkeypatch):
+        # Stripping is what removes the CRLF-.env trigger entirely, so pin that
+        # a padded key still authenticates rather than merely failing quietly.
+        calls = []
+        monkeypatch.setenv("GEMINI_API_KEY", "  padded-key\r\n")
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini("ok", calls=calls))
+        assert server.call_gemini("hi") == "ok"
+        assert calls[0].get_header("X-goog-api-key") == "padded-key"
+
+
+class TestTruncatedResponses:
+    """A response cut short by the token budget must not read as a finished one.
+
+    `call_gemini` sends maxOutputTokens=8192 and then joins `parts` without ever
+    looking at `finishReason`, so a MAX_TOKENS truncation is returned as if it
+    were the whole answer. For a design-consultation tool that is the worst
+    shape of wrong: the caller acts on half an argument believing it complete.
+    """
+
+    def _resp(self, monkeypatch, body):
+        class Resp:
+            def read(self):
+                return json.dumps(body).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: Resp())
+
+    def test_max_tokens_truncation_is_flagged(self, server, monkeypatch):
+        self._resp(
+            monkeypatch,
+            {
+                "candidates": [
+                    {
+                        "finishReason": "MAX_TOKENS",
+                        "content": {"parts": [{"text": "Here are the steps: 1) sta"}]},
+                    }
+                ]
+            },
+        )
+        result = server.consult_gemini("anything")
+        assert "Here are the steps: 1) sta" in result, (
+            "the partial text is still useful"
+        )
+        assert "MAX_TOKENS" in result or "truncat" in result.lower(), (
+            f"truncation was not disclosed to the caller: {result!r}"
+        )
+
+    def test_safety_block_is_not_silent_empty(self, server, monkeypatch):
+        self._resp(
+            monkeypatch,
+            {"candidates": [{"finishReason": "SAFETY", "content": {}}]},
+        )
+        result = server.consult_gemini("anything")
+        assert result.strip(), "a SAFETY block returned an empty string"
+        assert "SAFETY" in result
+
+    def test_empty_candidates_list_does_not_index_error(self, server, monkeypatch):
+        # `.get("candidates", [{}])` does not defend a key that is PRESENT and
+        # empty, so [0] raised IndexError and surfaced as an opaque
+        # "list index out of range".
+        self._resp(
+            monkeypatch,
+            {"candidates": [], "promptFeedback": {"blockReason": "SAFETY"}},
+        )
+        result = server.consult_gemini("anything")
+        assert "list index out of range" not in result, (
+            f"raw IndexError leaked to the caller: {result!r}"
+        )
+        assert result.strip()
+
+    def test_no_candidates_and_no_block_reason_still_says_something(
+        self, server, monkeypatch
+    ):
+        # The shape with neither candidates nor promptFeedback: still must not
+        # come back as an empty string the caller reads as "Gemini had nothing
+        # to say".
+        self._resp(monkeypatch, {})
+        result = server.consult_gemini("anything")
+        assert result.strip()
+
+    def test_stop_with_no_text_is_not_a_silent_empty_string(self, server, monkeypatch):
+        # A "successful" finish that carries no text is the same failure shape
+        # as the SAFETY branch: the caller gets "" and reads it as "Gemini had
+        # nothing to say" rather than "something went wrong". finishReason alone
+        # cannot be the test -- the emptiness has to be.
+        self._resp(
+            monkeypatch,
+            {"candidates": [{"finishReason": "STOP", "content": {}}]},
+        )
+        result = server.consult_gemini("anything")
+        assert result.strip(), "a STOP with no parts returned an empty string"
+
+    def test_normal_stop_is_returned_verbatim(self, server, monkeypatch):
+        # The disclosure must not fire on the happy path: a STOP finish is a
+        # complete answer and gets no annotation.
+        self._resp(
+            monkeypatch,
+            {
+                "candidates": [
+                    {"finishReason": "STOP", "content": {"parts": [{"text": "done"}]}}
+                ]
+            },
+        )
+        assert server.consult_gemini("anything") == "done"
 
 
 class TestLogRotation:
