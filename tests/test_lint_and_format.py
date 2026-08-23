@@ -227,6 +227,64 @@ def _env_hiding(shell_env, *names: str) -> dict | None:
     return {**shell_env.env, "PATH": f"{shell_env.stub_bin}{os.pathsep}{path}"}
 
 
+# `go` stub bodies.
+#
+# Before running anything the go arm asks ONE positive question of the
+# toolchain: "is there a Go package here that you can actually analyse?", via
+#     go list -e -f '{{len .GoFiles}}{{len .TestGoFiles}}{{len .XTestGoFiles}}' .
+# Counts derived from real go1.27 output:
+#   normal package        -> "100" (rc 0)      analyse
+#   two-file package      -> "200" (rc 0)      analyse
+#   GOPATH mode           -> "100" (rc 0)      analyse  (GO111MODULE=off)
+#   build-constrained dir -> "000" (rc 0)      skip
+#   dir with a space      -> "000" (rc 0)      skip     (malformed import path)
+#   outside any module    -> ""    (rc 1)      skip
+# The last three are all "go vet would fail for a reason that is not a finding",
+# which is exactly what must never reach the agent as something to fix.
+_GO_STUB_ANALYZABLE = """\
+if [ "$1" = "list" ]; then echo 100; exit 0; fi
+"""
+
+# In a module and analysable, but vet reports a REAL finding whose text quotes a
+# phrase that an output-grepping probe would misread as "cannot check".
+_GO_STUB_ANALYZABLE_WITH_FINDING = """\
+if [ "$1" = "list" ]; then echo 100; exit 0; fi
+echo 'vet: ./main.go:4:14: cannot use "matched no packages" \
+(untyped string constant) as int value' >&2
+exit 1
+"""
+
+# No .go file the toolchain will look at: build constraints exclude them all, or
+# the import path is malformed. `go list -e` still succeeds; the counts are what
+# say there is nothing here.
+_GO_STUB_NO_ANALYZABLE_FILES = """\
+if [ "$1" = "list" ]; then echo 000; exit 0; fi
+echo "package goreg/winonly: build constraints exclude all Go files in ." >&2
+exit 1
+"""
+
+# Not inside a module at all: `go list` itself fails.
+_GO_STUB_OUTSIDE_MODULE = """\
+if [ "$1" = "list" ]; then exit 1; fi
+echo "go: go.mod file not found in current directory or any parent directory" >&2
+exit 1
+"""
+
+
+def _stub_linter(shell_env, tool: str, body: str = "", exit_code: int = 0):
+    """Stub a linter, teaching `go` to answer the hook's module probe.
+
+    The go arm asks `go list -e` whether there is an analysable package here
+    before running anything -- a positive check, so that "the toolchain cannot
+    look at this" is never reported as "your code is wrong". A bare `go` stub
+    answers that probe with an empty string and a non-zero status, i.e. "nothing
+    here", and every go row would then skip analysis and pass vacuously.
+    """
+    if tool == "go":
+        body = _GO_STUB_ANALYZABLE + body
+    return shell_env.stub(tool, body=body, exit_code=exit_code)
+
+
 # (extension, tool under test, expected argv prefix, error tag, companions).
 # `companions` are the other tools the same branch invokes; they get neutral
 # stubs so a real one on the developer's machine cannot decide the outcome.
@@ -333,7 +391,7 @@ class TestLintLanguageMatrix:
     def test_exit_code_linter_failure_blocks(
         self, LINT, shell_env, tmp_path, ext, tool, argv_prefix, tag, companions
     ):
-        shell_env.stub(tool, body='echo "problem found"', exit_code=1)
+        _stub_linter(shell_env, tool, body='echo "problem found"', exit_code=1)
         for companion in companions:
             shell_env.stub(companion)
         target = tmp_path / f"x.{ext}"
@@ -356,7 +414,7 @@ class TestLintLanguageMatrix:
     def test_exit_code_linter_success_passes(
         self, LINT, shell_env, tmp_path, ext, tool, argv_prefix, tag, companions
     ):
-        shell_env.stub(tool)
+        _stub_linter(shell_env, tool)
         for companion in companions:
             shell_env.stub(companion)
         target = tmp_path / f"x.{ext}"
@@ -575,6 +633,143 @@ echo "$out"
         assert any(c.startswith("phpstan analyse ") for c in shell_env.calls)
         assert not any(c.startswith("php -l") for c in shell_env.calls), (
             "php -l is a fallback and must not run when phpstan is available"
+        )
+
+    def test_go_vet_targets_the_package_not_the_single_file(
+        self, LINT, shell_env, tmp_path
+    ):
+        # Go resolves identifiers per PACKAGE, never per file. Handing `go vet`
+        # one file makes every identifier defined in a sibling file of the same
+        # package read as `undefined`, so the hook exits 2 and tells the agent
+        # to fix code that is already correct -- and the compile failure also
+        # MASKS whatever real diagnostic vet would have reported. Every Go
+        # package with more than one file is affected, i.e. essentially all of
+        # them. The invocation has to name the package directory.
+        shell_env.stub("go", body=_GO_STUB_ANALYZABLE)
+        # staticcheck is invoked as a bare `staticcheck .` from inside the
+        # package directory, so its ARGV carries no evidence of which package it
+        # analysed -- and the shared stub records only `name $*`. Asserting on
+        # argv alone is vacuous here: deleting the `cd "$GO_PKG_DIR" &&` from the
+        # hook (i.e. linting whatever directory the agent happened to be in)
+        # leaves the recorded call byte-identical. Record the cwd so the
+        # assertion has something that can actually fail.
+        shell_env.stub(
+            "staticcheck",
+            body=f'echo "staticcheck-cwd $(pwd -P)" >> "{shell_env.calls_file}"',
+        )
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        target = pkg / "main.go"
+        target.write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+        (pkg / "helper.go").write_text("package main\n", encoding="utf-8")
+
+        shell_env.run(LINT, stdin=payload(target))
+
+        vet = [c for c in shell_env.calls if c.startswith("go vet")]
+        assert vet, "go vet did not run"
+        assert not any(c.endswith("main.go") for c in vet), (
+            f"go vet was handed a single file, not its package: {vet}"
+        )
+        assert any(str(pkg) in c for c in vet), (
+            f"go vet must name the package directory {pkg}: {vet}"
+        )
+
+        sc = [c for c in shell_env.calls if c.startswith("staticcheck ")]
+        assert sc, "staticcheck did not run"
+        assert not any(c.endswith("main.go") for c in sc), (
+            f"staticcheck was handed a single file, not its package: {sc}"
+        )
+        # `pwd -P` resolves symlinks, and pytest's tmp_path is behind one on
+        # macOS (/tmp -> /private/tmp), so compare resolved against resolved.
+        cwds = [
+            c.split(" ", 1)[1]
+            for c in shell_env.calls
+            if c.startswith("staticcheck-cwd ")
+        ]
+        assert cwds == [str(pkg.resolve())], (
+            f"staticcheck must run from the package dir {pkg.resolve()}: {cwds}"
+        )
+
+    def test_a_real_finding_quoting_the_skip_phrase_is_not_swallowed(
+        self, LINT, shell_env, tmp_path
+    ):
+        # Regression guard for the module-detection mechanism itself. Deciding
+        # "cannot check" by substring-matching the tool's OUTPUT means a genuine
+        # diagnostic that happens to QUOTE one of those phrases -- e.g.
+        # `var x int = "matched no packages"` -- is silently reclassified as a
+        # skip, and the hook reports a clean bill of health for a file that does
+        # not compile. That is the same "found a problem but returned green"
+        # failure this file's header calls the worst one available, so module
+        # membership has to be established independently of the diagnostics.
+        shell_env.stub("go", body=_GO_STUB_ANALYZABLE_WITH_FINDING, exit_code=0)
+        shell_env.stub("staticcheck")
+        target = tmp_path / "main.go"
+        target.write_text("package main\n", encoding="utf-8")
+
+        res = shell_env.run(LINT, stdin=payload(target))
+
+        assert res.returncode == 2, (
+            "a real vet finding was swallowed because its text quoted a "
+            f"module-resolution phrase: {res.stdout!r} {res.stderr!r}"
+        )
+
+    def test_go_tools_skipped_outside_a_module(self, LINT, shell_env, tmp_path):
+        # A stray .go file with no go.mod anywhere above it makes the go tool
+        # fail with a module-resolution error rather than a vet diagnostic.
+        # Reporting that as a lint finding would recreate the very bug this
+        # pair of tests exists to close: exit 2 over code that is not wrong.
+        shell_env.stub("go", body=_GO_STUB_OUTSIDE_MODULE)
+        shell_env.stub("staticcheck")
+        target = tmp_path / "stray.go"
+        target.write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+
+        res = shell_env.run(LINT, stdin=payload(target))
+
+        # Neither analyser may run at all: the probe decides this BEFORE either
+        # is invoked, so "returncode 0" alone would also pass if they ran and
+        # happened to say nothing. Asserting they were never called is what
+        # pins the ordering.
+        assert not any(c.startswith("go vet") for c in shell_env.calls), (
+            f"go vet ran outside a module: {shell_env.calls}"
+        )
+        assert not any(c.startswith("staticcheck ") for c in shell_env.calls), (
+            f"staticcheck ran outside a module: {shell_env.calls}"
+        )
+        assert res.returncode == 0, (
+            "a module-resolution failure is 'cannot check', not a lint finding"
+        )
+
+    def test_go_tools_skipped_when_no_file_is_analyzable(
+        self, LINT, shell_env, tmp_path
+    ):
+        # Moving from single-file to package scope introduced a NEW way to
+        # report correct code as broken -- the same defect in a new costume.
+        # A package whose files are all excluded by build constraints on this
+        # GOOS is the common case: the `tools/tools.go` + `//go:build tools`
+        # idiom, `//go:build integration` helpers, platform-only subpackages.
+        # Measured on real go1.27 with a `//go:build windows` package:
+        #   old `go vet <file>`      -> rc 0
+        #   new `go vet -C <dir> .`  -> rc 1, "build constraints exclude all Go
+        #                               files in ."
+        # so the hook would exit 2 and tell the agent to fix a file that is
+        # exactly right. A directory below the module root whose name contains a
+        # space fails the same way ("malformed import path"), and `go list -e`
+        # reports 0 files for both, which is why one probe covers them.
+        shell_env.stub("go", body=_GO_STUB_NO_ANALYZABLE_FILES)
+        shell_env.stub("staticcheck")
+        target = tmp_path / "w.go"
+        target.write_text("//go:build windows\n\npackage w\n", encoding="utf-8")
+
+        res = shell_env.run(LINT, stdin=payload(target))
+
+        assert not any(c.startswith("go vet") for c in shell_env.calls), (
+            f"go vet ran on a package with no analysable files: {shell_env.calls}"
+        )
+        assert not any(c.startswith("staticcheck ") for c in shell_env.calls), (
+            f"staticcheck ran on a package with no analysable files: {shell_env.calls}"
+        )
+        assert res.returncode == 0, (
+            "'the toolchain has nothing to look at here' is not a lint finding"
         )
 
     def test_clippy_skipped_without_cargo_toml(self, LINT, shell_env, git_repo):

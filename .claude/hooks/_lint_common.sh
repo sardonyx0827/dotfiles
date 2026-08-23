@@ -42,6 +42,50 @@
 # 既に正しく扱えるケースだけを固定していたためで、カバレッジは何の防波堤にも
 # ならなかった。スタブはツールの実出力から起こすこと。
 
+# _go_dir_has_analyzable_package <dir>
+#
+# <dir> に「go ツールチェインが実際に解析できる Go パッケージ」があるかを、
+# ツールチェイン自身に 1 つの肯定的な質問で尋ねる。解析できない理由は
+# 「コードが間違っている」ではないので、区別せずに指摘として報告してはいけない。
+#
+# ツールの出力を grep して判定してはならない。診断メッセージ本文にその語が
+# 含まれる本物のエラー — 例えば
+#     var x int = "matched no packages"
+#   → vet: ./main.go:4:14: cannot use "matched no packages" ... as int value
+# — まで「検査できなかった」と誤分類し、コンパイルの通らないファイルに対して
+# lint が緑を返す。実際にそう作り込んで security review で検出された。
+#
+# `go env GOMOD` も使わない。GOPATH モード (GO111MODULE=off) では空を返すのに
+# `go vet .` は正常に動くため、「空なら skip」にすると *全ファイルの検査が
+# 黙って消える*。モジュール判定は、本当に知りたいこと (解析できるか) の
+# 代理としてそもそも不正確だった。
+#
+# 実測した go1.27 の応答 (files = GoFiles/TestGoFiles/XTestGoFiles の個数):
+#   通常のパッケージ          files=1/0/0  rc=0  vet rc=0  → 解析する
+#   複数ファイルのパッケージ  files=2/0/0  rc=0  vet rc=0  → 解析する
+#   GOPATH モード             files=1/0/0  rc=0  vet rc=0  → 解析する
+#   build 制約で全除外        files=0/0/0  rc=0  vet rc=1  → skip
+#   名前に空白を含むディレクトリ files=0/0/0 rc=0 vet rc=1 → skip (malformed import path)
+#   モジュール外              files=(空)   rc=1  vet rc=1  → skip
+# 下 3 つはいずれも「vet は失敗するが、それは指摘ではない」ケース。
+# 単一ファイル検査だった頃はどれも rc=0 で素通りしていたので、ここを取り違えると
+# `//go:build tools` や `//go:build integration` のような普通の書き方に対して
+# 「存在しないエラーを直せ」とエージェントに指示することになる。
+#
+# cd -P で物理解決する: bash の論理 cd だと symlink 経由のパスのまま go に渡り、
+# 判定と実行で見ているディレクトリがずれる。
+_go_dir_has_analyzable_package() {
+  command -v go >/dev/null 2>&1 || return 1
+  local counts
+  counts=$(cd -P "$1" 2>/dev/null &&
+    go list -e -f '{{len .GoFiles}}{{len .TestGoFiles}}{{len .XTestGoFiles}}' . 2>/dev/null) ||
+    return 1
+  case "$counts" in
+  "" | 000) return 1 ;;
+  *) return 0 ;;
+  esac
+}
+
 # hook_lint_file <file> <errors_var_name> <log_file>
 #
 # 1 ファイルを解析する。問題があれば errors_var_name で指定された変数に生の
@@ -61,6 +105,7 @@ hook_lint_file() {
   BASENAME=$(basename "$FILE_PATH")
   local LINT_ERRORS=""
   local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
+  local GO_PKG_DIR
 
   # 出力変数名がこの関数の local と衝突すると、printf -v は local を書き換えて
   # しまい呼び出し元には何も返らない。黙って通るより落とす。
@@ -204,26 +249,58 @@ hook_lint_file() {
     ;;
 
   # Go
+  #
+  # 検査対象はファイルではなく「そのファイルが属するパッケージ」= 親ディレクトリ。
+  # Go は識別子をパッケージ単位でしか解決できないため、単一ファイルを渡すと
+  # 同一パッケージの兄弟ファイルで定義された識別子が軒並み `undefined` になる。
+  # 実測: main.go が helper.go の helper() を呼ぶ 2 ファイル構成で
+  #   go vet main.go -> exit 1 "undefined: helper"
+  #   go vet -C <dir> . -> exit 0
+  # つまり正しいコードに対して exit 2 を返し、エージェントに存在しないエラーの
+  # 修正を指示していた。さらに悪いことに、コンパイル失敗が先に立つので vet 本来の
+  # 指摘 (Printf の型不一致など) は表に出ないまま握り潰されていた。
+  # 1 ファイルだけのパッケージ以外、事実上あらゆる Go プロジェクトで発症する。
+  #
+  # 副作用として、main.go を編集すると helper.go 由来の既存の指摘も出るように
+  # なる。パッケージ単位の解析としては正しい挙動だが、単一ファイル時代とは
+  # 見え方が変わる点は意図的なもの。
   go)
-    if command -v go >/dev/null 2>&1; then
+    GO_PKG_DIR=$(dirname "$FILE_PATH")
+    # 解析可能かの判定は両ツールより先に、かつ一度だけ。「ツールチェインが
+    # このディレクトリを見られない」と「見た結果 指摘が出た」を、出力の文言では
+    # なくこの分岐で切り分ける。staticcheck も go ツールチェインを必要とする
+    # (go 不在では `err: go command required, not found` を出すだけ) ので、
+    # 両方まとめてここで止める。
+    if ! command -v go >/dev/null 2>&1; then
+      echo "  go vet / staticcheck skipped (go not found)"
+    elif ! _go_dir_has_analyzable_package "$GO_PKG_DIR"; then
+      echo "  go vet / staticcheck skipped (no Go package here that the toolchain can analyse)"
+    else
       echo "  Running go vet..."
-      if ! OUTPUT=$(go vet "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[go vet]\n${OUTPUT}\n"
+      # -C はツール自身に chdir させるので、このフックの cwd を汚さない。
+      if ! OUTPUT=$(go vet -C "$GO_PKG_DIR" . 2>&1); then
+        # -C 配下の出力はパッケージ相対 (main.go:6:14) になるため、
+        # 受け取ったエージェントがファイルへ辿れるようディレクトリを添える。
+        LINT_ERRORS="${LINT_ERRORS}[go vet] (in ${GO_PKG_DIR})\n${OUTPUT}\n"
       else
         echo "  go vet passed"
       fi
-    fi
 
-    # staticcheck: go vet より高度な解析
-    if command -v staticcheck >/dev/null 2>&1; then
-      echo "  Running staticcheck..."
-      if ! OUTPUT=$(staticcheck "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[staticcheck]\n${OUTPUT}\n"
+      # staticcheck: go vet より高度な解析
+      # staticcheck に -C は無いのでサブシェルで cd する (親シェルの cwd は不変)。
+      # -P は判定側と揃えるため必須: 論理 cd だと symlink 経由のディレクトリで
+      # staticcheck が `warning: "." matched no packages` を出して rc=0 で返り、
+      # 何も解析していないのに緑になる。
+      if command -v staticcheck >/dev/null 2>&1; then
+        echo "  Running staticcheck..."
+        if ! OUTPUT=$(cd -P "$GO_PKG_DIR" && staticcheck . 2>&1); then
+          LINT_ERRORS="${LINT_ERRORS}[staticcheck] (in ${GO_PKG_DIR})\n${OUTPUT}\n"
+        else
+          echo "  staticcheck passed"
+        fi
       else
-        echo "  staticcheck passed"
+        echo "  staticcheck not found (optional)"
       fi
-    else
-      echo "  staticcheck not found (optional)"
     fi
     ;;
 
