@@ -1079,6 +1079,63 @@ class TestCommandHelpers:
             ("git log HEAD~5..HEAD", True),
             ("cat src/my-component/index.js", True),
             ("grep -r foo my-dir", True),
+            # A bare `..` argument is parent traversal exactly like `../`, but
+            # the guard only anchored on `/..` and `../`, so `grep -rn . ..`
+            # reached the safe-skip fast path and was auto-allowed with no AI
+            # review at all -- the one spelling in the whole gate where no
+            # layer engages. `..` is only traversal when it is a *whole token*:
+            # embedded `..` is a git revision range or a regex, not a path.
+            ("grep -rn . ..", False),
+            ("rg -uu '' ..", False),
+            ("ls ..", False),
+            ("cat ..", False),
+            ("tree ..", False),
+            ("git -C .. status", False),
+            ('ls ".."', False),  # quote-split spelling of the same token
+            ("grep -r foo .. && ls", False),  # terminator, not end-of-string
+            # A glob suffix expands to the same traversal but leaves `..`
+            # followed by a metacharacter, so a terminator-anchored check missed
+            # it entirely: `bash -c 'echo ..*'` prints `..`. `*` also survives
+            # the quote/escape normalization, so raw and normalized both failed.
+            # Anchoring on the START of the token instead covers the whole
+            # family without loosening what stays fast.
+            ("grep -rn . ..*", False),
+            ("ls ..*", False),
+            ("tree ..?", False),
+            # Branch 1 accepts `=` before an absolute/home path (`--file=/etc`);
+            # parent traversal reaches out of the tree exactly the same way.
+            ("grep -rn x --directory=..", False),
+            # Expansion that PRODUCES an out-of-tree path without ever spelling
+            # one. Anchoring on the literal characters misses these entirely,
+            # because the shell writes the dangerous text, not the user:
+            #   `echo .*`                 -> `. .. .git`   (parent traversal)
+            #   `echo {/proc/self,.}/environ` -> `/proc/self/environ ./environ`
+            # The second is the exact target this module's own comment names as
+            # the motivating threat (it leaks the hook's own GEMINI_API_KEY),
+            # and it defeats the absolute-path branch too, not just the `..`
+            # one -- a leading `{` means no `/` ever appears at a token start.
+            ("grep -rn . .*", False),
+            ("ls .*", False),
+            ("cat .?", False),
+            ("cat {/proc/self,.}/environ", False),
+            ("cat {/,}etc/passwd", False),
+            ("ls {.,..}", False),
+            ("ls .{.,}", False),
+            # ...but `..` inside a token must stay fast: these are the forms
+            # that make the tight anchoring necessary in the first place.
+            ("git log HEAD..main", True),
+            ("git diff main..feature", True),
+            ("rg 'a..b' src", True),
+            ("ls foo..bar", True),
+            # ...and the expansion branch is anchored at the token start for the
+            # same reason: a brace or dot in the MIDDLE of a token is an
+            # ordinary regex or filename, not an expansion that escapes the
+            # tree. Widening it would send everyday searches to LLM review.
+            ("rg 'a{2,3}' src", True),
+            ("grep -E 'x{1,2}' file.txt", True),
+            ("ls .venv", True),
+            ("cat .github/workflows/ci.yml", True),
+            ("rg foo .config", True),
         ],
     )
     def test_is_safe_command(self, hook_fns, command, expected):
