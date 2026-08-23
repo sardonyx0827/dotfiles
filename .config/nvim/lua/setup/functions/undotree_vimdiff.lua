@@ -138,7 +138,26 @@ function M.open_vimdiff()
   -- Focus on the right side (real buffer)
   -- so that do (obtain) is immediately usable
 
-  local augroup = vim.api.nvim_create_augroup("UndotreeVimdiffCleanup", { clear = true })
+  -- The group name is per-invocation, and the suffix is the whole point.
+  --
+  -- `clear = true` on a FIXED name is what made this matter: a second undo-diff
+  -- recreating "UndotreeVimdiffCleanup" DELETED the first tab's BufWipeout and
+  -- TabClosed handlers, leaving a diff that was still open with nothing armed
+  -- to unwind it. Wiping that tab's scratch buffer then took the scratch window
+  -- and stopped there -- the tab stayed standing, showing the user's real
+  -- buffer still in diff mode, with no handler left to close it. Measured:
+  -- after the second open, the first call's two autocmds were simply gone.
+  --
+  -- Keyed on old_buf rather than a module-level counter, and that is not a
+  -- style preference. A counter lives in this module's table, so re-sourcing
+  -- the file (:Lazy reload, :luafile) restarts it at 1 while a diff opened
+  -- under the previous table is still open -- and the next open_vimdiff then
+  -- recreates THAT tab's group name with clear = true, which is the original
+  -- bug with extra steps. Buffer handles come from nvim, not from us: they are
+  -- never reused within a session (verified -- wiping a buffer does not hand
+  -- its number back), so old_buf stays unique across a reload.
+  local augroup = vim.api.nvim_create_augroup(
+    "UndotreeVimdiffCleanup_" .. old_buf, { clear = true })
   local diff_tab = vim.api.nvim_get_current_tabpage()
   local cleaning_up = false -- re-entrancy guard
 
@@ -151,7 +170,14 @@ function M.open_vimdiff()
     if cleaning_up then return end
     cleaning_up = true
 
-    -- Remove the augroup first to prevent recursive triggers
+    -- Remove the augroup first to prevent recursive triggers.
+    --
+    -- Now that the names are per-invocation this also has to happen for its own
+    -- sake, on every exit path: no later call will ever reclaim this name by
+    -- recreating it, so an invocation that did not delete its group would leave
+    -- it behind -- with its autocmds still armed on a diff that no longer
+    -- exists -- for the rest of the session. By id, so it is unambiguously
+    -- OURS and not whatever currently answers to that name.
     pcall(vim.api.nvim_del_augroup_by_id, augroup)
 
     -- Run diffoff on all windows showing the target buffer

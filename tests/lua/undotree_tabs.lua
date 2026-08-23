@@ -37,6 +37,37 @@ local function emit(value)
   io.stdout:write(vim.json.encode(value), "\n")
 end
 
+-- Ids of the cleanup autocmds currently registered by the module.
+--
+-- Matched on the group-name PREFIX and reported as ids, not counts, because
+-- both halves of the bug this catches are invisible to a name lookup. The
+-- group name is per-invocation, so `{ group = "UndotreeVimdiffCleanup" }`
+-- raises once the name carries a suffix; and back when the name was a fixed
+-- literal, a second open_vimdiff registered its autocmds under that SAME name,
+-- so a by-name query returned two entries either way -- the first call's, or
+-- the second call's standing on their grave. Ids are unique per autocmd and
+-- never reused, so "are call 1's still there" is only answerable through them.
+local function cleanup_autocmd_ids()
+  local ids = {}
+  for _, ac in ipairs(vim.api.nvim_get_autocmds({ event = { "BufWipeout", "TabClosed" } })) do
+    if type(ac.group_name) == "string" and ac.group_name:find("UndotreeVimdiffCleanup", 1, true) == 1 then
+      table.insert(ids, ac.id)
+    end
+  end
+  return ids
+end
+
+--- The scratch (past-state) buffer of a diff tab: the one that is not `target`.
+local function find_scratch(tab, target)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    local b = vim.api.nvim_win_get_buf(win)
+    if b ~= target then
+      return b
+    end
+  end
+  return nil
+end
+
 -- A buffer with two distinct undo states, so open_vimdiff has something to diff.
 -- Two nvim_buf_set_lines calls land in ONE undo block under `-l` (there is no
 -- keystroke to break the sequence), which would make seq_cur == 1 and the
@@ -59,6 +90,7 @@ local target = make_target()
 local user_tab = vim.api.nvim_get_current_tabpage()
 M.open_vimdiff()
 local diff_tab = vim.api.nvim_get_current_tabpage()
+local first_call_autocmds = cleanup_autocmd_ids()
 
 if diff_tab == user_tab then
   emit({ ok = false, err = "open_vimdiff did not create a diff tab" })
@@ -66,6 +98,8 @@ if diff_tab == user_tab then
 end
 
 local other_tab
+local second_diff_tab
+local second_call_autocmds
 
 -- The user's own :tabclose must not raise. Capture rather than propagate: the
 -- buggy version could surface E937 out of the cascade it set off (its own
@@ -132,6 +166,46 @@ elseif scenario == "wipe_the_scratch_buffer" then
     os.exit(0)
   end
   close("bwipeout! " .. scratch)
+elseif scenario == "close_first_diff_after_second_open"
+    or scenario == "wipe_first_scratch_after_second_open" then
+  -- TWO diffs open at once, which no other scenario builds -- and that is the
+  -- whole point. The cleanup augroup used to be a fixed literal created with
+  -- `clear = true`, so opening a second undo-diff DELETED the first tab's
+  -- BufWipeout and TabClosed handlers. Every scenario above calls open_vimdiff
+  -- exactly once, so all of them pass with that defect in place.
+  --
+  -- The second call is driven from the user's tab because that is where the
+  -- undotree panel lives: find_target_buf() scans the CURRENT tab, and the
+  -- cursor has to sit on a line whose first number is a seq that differs from
+  -- seq_cur (see make_target).
+  local scratch1 = find_scratch(diff_tab, target)
+  if not scratch1 then
+    emit({ ok = false, err = "could not find the first scratch buffer" })
+    os.exit(0)
+  end
+  vim.api.nvim_set_current_tabpage(user_tab)
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  M.open_vimdiff()
+  second_diff_tab = vim.api.nvim_get_current_tabpage()
+  if second_diff_tab == user_tab or second_diff_tab == diff_tab then
+    emit({ ok = false, err = "the second open_vimdiff did not create its own tab" })
+    os.exit(0)
+  end
+  second_call_autocmds = cleanup_autocmd_ids()
+
+  if scenario == "close_first_diff_after_second_open" then
+    -- The documented way out of the FIRST diff, taken while the second is open.
+    vim.api.nvim_set_current_tabpage(diff_tab)
+    close("tabclose")
+  else
+    -- The first diff's scratch buffer is wiped while its tab is still open --
+    -- the case BufWipeout exists for, now aimed at the invocation whose
+    -- handlers the second call used to erase. Without them nothing closes that
+    -- tab: the wipe takes the scratch window with it and leaves the first diff
+    -- tab standing, showing the real buffer still in diff mode.
+    vim.api.nvim_set_current_tabpage(user_tab)
+    close("bwipeout! " .. scratch1)
+  end
 else
   emit({ ok = false, err = "unknown scenario: " .. scenario })
   os.exit(0)
@@ -159,4 +233,17 @@ emit({
   other_tab_valid = other_tab ~= nil and vim.api.nvim_tabpage_is_valid(other_tab) or false,
   target_buf_valid = vim.api.nvim_buf_is_valid(target),
   target_still_in_diff_mode = diffs,
+  second_diff_tab_valid = second_diff_tab ~= nil
+    and vim.api.nvim_tabpage_is_valid(second_diff_tab) or false,
+  first_call_autocmd_count = #first_call_autocmds,
+  first_call_autocmds_survived = second_call_autocmds ~= nil
+    and (function()
+      local alive = {}
+      for _, id in ipairs(second_call_autocmds) do alive[id] = true end
+      local n = 0
+      for _, id in ipairs(first_call_autocmds) do
+        if alive[id] then n = n + 1 end
+      end
+      return n
+    end)() or vim.NIL,
 })

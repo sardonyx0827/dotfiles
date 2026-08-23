@@ -15,6 +15,14 @@ current tab. With the user sitting in their own working tab, that tab is what
 disappeared. Buffer contents survive (nothing is unsaved-lost), but the window
 layout the user built is gone and there is no undo for that.
 
+A third defect outlived that fix and is covered here too: the cleanup augroup
+was a fixed literal created with `clear = true`, so opening a SECOND undo-diff
+deleted the first tab's BufWipeout and TabClosed handlers. The first diff was
+then unarmed -- wiping its scratch buffer closed that buffer's window and left
+the tab standing, showing the real buffer still in diff mode, with nothing left
+to close it. Every scenario predating this called open_vimdiff exactly once,
+which is why a green suite never noticed.
+
 These run the module for real under `nvim -l` (no init.lua, so no plugin
 manager) via tests/lua/undotree_tabs.lua, because the behaviour under test is a
 side effect on other tabs rather than a return value.
@@ -139,3 +147,67 @@ class TestClosingTheDiffTabStillCleansUp:
         )
         assert not res["diff_tab_valid"], "the diff tab was left open"
         assert res["target_buf_valid"]
+
+
+class TestASecondDiffDoesNotDisarmTheFirst:
+    def test_the_first_diffs_cleanup_autocmds_survive_a_second_diff(self):
+        # The defect itself, measured directly. Both handlers of call 1 have to
+        # still be registered once call 2 has opened its own diff -- by autocmd
+        # id, since the old fixed group name made the two calls' entries
+        # indistinguishable by name (see cleanup_autocmd_ids in the harness).
+        for name in (
+            "close_first_diff_after_second_open",
+            "wipe_first_scratch_after_second_open",
+        ):
+            res = scenario(name)
+            # Shape check on the HARNESS, not on the fix: this reads 2 with the
+            # bug present or absent, because the defect deletes call 1's entries
+            # only once call 2 has registered its own two under the same name.
+            # It is here so a harness that silently stopped seeing any cleanup
+            # autocmds cannot make the real assertion below vacuously true.
+            assert res["first_call_autocmd_count"] == 2, (
+                f"{name}: the first open registered "
+                f"{res['first_call_autocmd_count']} cleanup autocmds, expected 2"
+            )
+            assert res["first_call_autocmds_survived"] == 2, (
+                f"{name}: opening a second diff deleted the first one's cleanup "
+                f"autocmds ({res['first_call_autocmds_survived']}/2 survived)"
+            )
+
+    def test_wiping_the_first_scratch_buffer_still_closes_its_tab(self):
+        # The harm, stated without reference to the mechanism: with its
+        # BufWipeout handler erased, nothing closes the first diff tab when its
+        # scratch buffer goes. The wipe takes the scratch window with it and
+        # strands the tab -- one window, the user's real buffer, diff still on,
+        # and no `<C-w>q` mapping left that knows how to unwind it.
+        #
+        # This is the load-bearing assertion of the pair. Its sibling below
+        # turns on the diffoff sweep, which reaches windows in OTHER tabs;
+        # `diff_tab_valid` does not, so it keeps pinning the augroup fix even if
+        # that sweep is ever narrowed.
+        res = scenario("wipe_first_scratch_after_second_open")
+        assert not res["close_err"], f"the wipe raised: {res['close_err']}"
+        assert not res["diff_tab_valid"], (
+            "the first diff tab was left stranded after its scratch buffer was wiped"
+        )
+        assert res["second_diff_tab_valid"], (
+            "wiping the first diff's scratch buffer closed the second diff's tab"
+        )
+        assert res["user_tab_valid"]
+        assert res["target_buf_valid"]
+
+    def test_closing_the_first_diff_tab_still_unwinds_diff_mode(self):
+        # The documented way out of the first diff, taken while the second is
+        # open. Its TabClosed handler has to survive to run diffoff; with the
+        # shared group it did not, and a window showing the real buffer was left
+        # in diff mode.
+        res = scenario("close_first_diff_after_second_open")
+        assert not res["close_err"], (
+            f"closing the first diff tab raised: {res['close_err']}"
+        )
+        assert not res["diff_tab_valid"]
+        assert res["user_tab_valid"]
+        assert not any(res["target_still_in_diff_mode"]), (
+            "a window showing the target buffer stayed in diff mode after the "
+            "first diff tab closed"
+        )
