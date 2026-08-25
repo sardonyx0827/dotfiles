@@ -393,10 +393,11 @@ end
 --- Apply structured edits (from M.parse_edits) to `lines`, returning a brand-new
 --- line array. Edits are validated and sorted by start; an edit is SKIPPED
 --- (never misapplied) when it is malformed, out of range, overlaps an
---- already-applied edit, or its `original` does not match the buffer. Because the
---- result is built left-to-right into a fresh array, multi-line edits and edits
---- that change the line count cannot shift the positions of later edits. The
---- caller's `lines` is not mutated.
+--- already-applied edit, its `original` does not match the buffer, or its
+--- `fixed` carries a line the editor cannot write. Because the result is built
+--- left-to-right into a fresh array, multi-line edits and edits that change the
+--- line count cannot shift the positions of later edits. The caller's `lines` is
+--- not mutated.
 --- @param lines string[] current buffer lines (snapshot)
 --- @param edits table[] normalised edits { start, stop, original, fixed }
 --- @return string[] patched, integer applied, table[] skipped (each { edit, reason })
@@ -411,6 +412,37 @@ function M.apply_edits(lines, edits)
 
   local function is_int(n)
     return type(n) == "number" and n == math.floor(n)
+  end
+
+  --- Reject a `fixed` array holding anything nvim_buf_set_lines will not take.
+  ---
+  --- `fixed` is the ONLY model-supplied value that reaches the buffer verbatim,
+  --- and that API refuses a non-string item ("expected String, got Integer")
+  --- and a string with an embedded newline ("'replacement string' item contains
+  --- newlines"). Checking only `type(fixed) == "table"`, as this did, let both
+  --- shapes through to ai.ui, where the write happens inside a job callback: the
+  --- throw was swallowed, the response pane kept its loading placeholder, and
+  --- the tab had already been marked done -- so `y` fed that placeholder to
+  --- on_accept and replaced the user's whole buffer with it. ai.ui now writes
+  --- the status only after a successful render, and this is the other half.
+  ---
+  --- Skipped rather than repaired (splitting the string, coercing the value):
+  --- M.fix_buffer_system defines `fixed` as an array of lines, so either shape
+  --- is the model breaking the contract, and this function's job is to reject a
+  --- malformed edit -- never to guess at what it meant and write the guess.
+  --- @param fixed table
+  --- @return string|nil reason, nil when every line is writable
+  local function unwritable(fixed)
+    for i = 1, #fixed do
+      local line = fixed[i]
+      if type(line) ~= "string" then
+        return "non-string fixed line"
+      end
+      if line:find("\n", 1, true) then
+        return "fixed line contains newlines"
+      end
+    end
+    return nil
   end
 
   local out, skipped, applied = {}, {}, 0
@@ -428,10 +460,13 @@ function M.apply_edits(lines, edits)
     elseif e.start < cursor then
       reason = "overlapping range"
     else
-      for i = 1, #e.original do
-        if lines[e.start + i - 1] ~= e.original[i] then
-          reason = "original does not match buffer"
-          break
+      reason = unwritable(e.fixed)
+      if not reason then
+        for i = 1, #e.original do
+          if lines[e.start + i - 1] ~= e.original[i] then
+            reason = "original does not match buffer"
+            break
+          end
         end
       end
     end

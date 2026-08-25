@@ -21,6 +21,18 @@ Mechanism: `tests/lua/nvim_call.lua` under `nvim -l`, one process per call
 same way when the interpreter is absent. Lua is deliberately left out of the
 coverage gates in .coveragerc / ci.yml: luacov would be a second toolchain for
 marginal signal over a module this size.
+
+A second, heavier mechanism lives at the bottom of this file. `apply_edits`
+handing back a line the editor cannot write is not a defect any return value
+shows -- it becomes one only once `ai.ui` has tried to render those lines and
+the user has pressed `y`. Those cases therefore drive `ui.run_multi` /
+`ui.open_report` for real (windows, buffers and keymaps, still under `nvim -l`)
+from a scenario script the test writes to a tmp dir -- the shape
+test_nvim_ai_backend.py's `_lua_probe` uses, copied rather than imported
+because that helper is private there and drags its PATH-sealing fixtures along.
+They stay in this file because the input under test is the model's edit JSON,
+which is prompt.lua's contract; ui.lua is only what turns a violation of it
+into a destroyed buffer.
 """
 
 import json
@@ -219,6 +231,35 @@ class TestApplyEdits:
                 "original does not match buffer",
                 id="stale-original",
             ),
+            # `fixed` is the only value that reaches nvim_buf_set_lines
+            # verbatim, and it rejects both of these shapes -- inside a job
+            # callback, where the throw is swallowed. See
+            # TestFixFlowNeverAcceptsTheLoadingPlaceholder for what that cost.
+            pytest.param(
+                edit(1, 1, ["one"], ["X\nY"]),
+                "fixed line contains newlines",
+                id="newline-inside-a-fixed-line",
+            ),
+            pytest.param(
+                edit(1, 1, ["one"], ["fine", "still fine\nnot"]),
+                "fixed line contains newlines",
+                id="newline-in-a-later-fixed-line",
+            ),
+            pytest.param(
+                edit(1, 1, ["one"], [42]),
+                "non-string fixed line",
+                id="number-as-a-fixed-line",
+            ),
+            pytest.param(
+                edit(1, 1, ["one"], [None]),
+                "non-string fixed line",
+                id="null-as-a-fixed-line",
+            ),
+            pytest.param(
+                edit(1, 1, ["one"], [["X"]]),
+                "non-string fixed line",
+                id="nested-array-as-a-fixed-line",
+            ),
         ],
     )
     def test_bad_edit_is_skipped_with_its_reason(self, bad, reason):
@@ -226,6 +267,37 @@ class TestApplyEdits:
         assert patched == self.LINES, "a rejected edit must not touch the buffer"
         assert applied == 0
         assert [s["reason"] for s in skipped] == [reason]
+
+    def test_an_unwritable_fixed_line_does_not_poison_the_batch(self):
+        """Same rule as every other skip reason: reject that edit, not the run."""
+        patched, applied, skipped = prompt_call(
+            "apply_edits",
+            self.LINES,
+            [
+                edit(1, 1, ["one"], ["ONE"]),
+                edit(2, 2, ["two"], ["TWO\nEXTRA"]),
+                edit(3, 3, ["three"], ["THREE"]),
+            ],
+        )
+        assert patched == ["ONE", "two", "THREE"]
+        assert applied == 2
+        assert [s["reason"] for s in skipped] == ["fixed line contains newlines"]
+
+    def test_ordinary_text_is_not_caught_by_the_unwritable_line_guard(self):
+        """The guard is about what nvim_buf_set_lines refuses, nothing wider.
+
+        A tab, a lone carriage return and non-ASCII text are all writable, so
+        a fix carrying them must still apply -- a guard that rejected them
+        would quietly disable the feature for most real source lines.
+        """
+        patched, applied, skipped = prompt_call(
+            "apply_edits",
+            self.LINES,
+            [edit(2, 2, ["two"], ["\tニ 🎌", "carriage\rreturn", ""])],
+        )
+        assert patched == ["one", "\tニ 🎌", "carriage\rreturn", "", "three"]
+        assert applied == 1
+        assert skipped == []
 
     def test_overlapping_edit_is_skipped_after_the_first_applies(self):
         patched, applied, skipped = prompt_call(
@@ -768,3 +840,294 @@ class TestReplaceSystemStaysInStepWithVim:
         (from_nvim,) = prompt_call("replace_system", self.LANG, self.REQUEST)
         assert "stdin" not in from_nvim.lower()
         assert "stdin" not in vim_replace_system(self.LANG, self.REQUEST).lower()
+
+
+# --------------------------------------------------------------------------
+# The fix flow, end to end: model reply -> parse_edits -> apply_edits -> the
+# result window -> `y`. See the module docstring for why this mechanism exists
+# alongside nvim_call.lua.
+# --------------------------------------------------------------------------
+
+# The text ai.ui pre-fills every response buffer with. If this string ever
+# reaches on_accept, init.lua's apply_fix overwrites the user's ENTIRE buffer
+# with it -- the whole file replaced by one line of UI chrome.
+LOADING_PLACEHOLDER = "[claude: waiting for response...]"
+
+# Raw string: the Lua below writes real "\n" escapes that Python must not eat.
+UI_SCENARIO_LUA = r"""
+-- Drive ai.ui's result window for real and report what an accept keypress
+-- hands back to the caller. Run as `nvim -l <this> <repo-root>` with a request
+-- object on stdin; see test_nvim_ai_prompt.py, the only caller.
+--
+-- Request: { "mode": "fix",    "original": [...], "raw": "<model reply>" }
+--       or { "mode": "direct", "original": [...], "lines": [...] }
+--       or { "mode": "report", "lines": [...] }
+-- Reply:   { "accepted": [...]|null,  -- what on_accept received, if it fired
+--            "response": [...],       -- the response pane, before the keypress
+--            "thrown": "<err>"|null,  -- what done() threw, if anything
+--            "status": "<st>"|null,   -- report mode: the status `f` read
+--            "notified": "<joined>" } -- every vim.notify message
+local root = arg[1]
+package.path = table.concat({
+  root .. "/.config/nvim/lua/?.lua",
+  root .. "/.config/nvim/lua/?/init.lua",
+  package.path,
+}, ";")
+
+local prompt = require("setup.functions.ai.prompt")
+local ui = require("setup.functions.ai.ui")
+
+local req = vim.json.decode(io.read("*a"))
+
+-- active_lines() refuses a tab that is not "done" through vim.notify, so these
+-- messages are the only user-visible proof of the status it read.
+local notified = {}
+vim.notify = function(msg)
+  notified[#notified + 1] = tostring(msg)
+end
+
+local out = {
+  accepted = vim.NIL,
+  response = vim.NIL,
+  thrown = vim.NIL,
+  status = vim.NIL,
+}
+
+-- The real done() runs inside a job callback, so a throw there is swallowed by
+-- the event loop and the window is left standing -- which is the entire defect.
+-- pcall reproduces that instead of tearing the scenario down at the throw.
+local function deliver(done, ok, lines, err)
+  local called, thrown = pcall(done, ok, lines, err)
+  if not called then
+    out.thrown = tostring(thrown)
+  end
+end
+
+-- Mirrors init.lua's start_fix: parse the model's reply, splice it against the
+-- snapshot, and hand the patched buffer to the UI.
+local function start_fix(_, done)
+  local edits, perr = prompt.parse_edits(req.raw)
+  if not edits then
+    deliver(done, false, {}, "修正の解析に失敗しました: " .. tostring(perr))
+  elseif #edits == 0 then
+    deliver(done, false, {}, "適用できる修正がありませんでした。")
+  else
+    local patched, applied = prompt.apply_edits(req.original, edits)
+    if applied == 0 then
+      deliver(done, false, {}, "修正を安全に適用できませんでした（行が一致しません）。")
+    else
+      deliver(done, true, patched, nil)
+    end
+  end
+  return 0
+end
+
+-- Invoke a buffer-local mapping the way the user's keypress would.
+local function press(buf, key)
+  for _, m in ipairs(vim.api.nvim_buf_get_keymap(buf, "n")) do
+    if m.lhs == key and m.callback then
+      m.callback()
+      return
+    end
+  end
+  error("no '" .. key .. "' mapping on the result buffer")
+end
+
+if req.mode == "report" then
+  local handle = ui.open_report({
+    name = "[AI Buffer Check]",
+    keymaps = {
+      {
+        key = "f",
+        desc = "Fix issues with AI",
+        fn = function(ctx) out.status = ctx.status end,
+      },
+    },
+    start = function(done)
+      deliver(done, true, req.lines, nil)
+      return 0
+    end,
+  })
+  out.response = vim.api.nvim_buf_get_lines(handle.buf, 0, -1, false)
+  press(handle.buf, "f")
+else
+  ui.run_multi({
+    mode = "diff",
+    tools = { "claude" },
+    original = req.original,
+    footer = " y:apply fix  Y:merged  q:cancel ",
+    start = req.mode == "fix" and start_fix or function(_, done)
+      deliver(done, true, req.lines, nil)
+      return 0
+    end,
+    on_accept = function(_, lines) out.accepted = lines end,
+  })
+  -- run_multi focuses the response pane, and accepting wipes its buffer, so
+  -- snapshot what the user is looking at before pressing anything.
+  local buf = vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win())
+  out.response = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  press(buf, "y")
+end
+
+-- Joined rather than an array: vim.json.encode renders an empty Lua table as
+-- `{}`, and "no notifications" is a normal outcome here.
+out.notified = table.concat(notified, "\n")
+io.stdout:write(vim.json.encode(out), "\n")
+"""
+
+
+def ui_scenario(tmp_path, **request):
+    """Run one UI_SCENARIO_LUA scenario and return its decoded reply."""
+    script = tmp_path / "ai_ui_scenario.lua"
+    script.write_text(UI_SCENARIO_LUA, encoding="utf-8")
+    proc = subprocess.run(
+        ["nvim", "-l", str(script), str(REPO_ROOT)],
+        input=json.dumps(request),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, (
+        f"scenario {request.get('mode')!r} exited {proc.returncode}\n"
+        f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    # nvim writes "Shell cwd was reset" and friends to stderr, but pick the
+    # reply defensively rather than trusting stdout to hold nothing else.
+    replies = [ln for ln in proc.stdout.splitlines() if ln.strip().startswith("{")]
+    assert replies, f"scenario emitted no reply\nstderr: {proc.stderr}"
+    return json.loads(replies[-1])
+
+
+def fix_reply(fixed, start=2, stop=2, original=("two",)):
+    """A model reply in the shape fix_buffer_system asks for."""
+    return json.dumps(
+        [{"start": start, "end": stop, "original": list(original), "fixed": fixed}]
+    )
+
+
+class TestFixFlowNeverAcceptsTheLoadingPlaceholder:
+    """The worst outcome this tree can produce, and it needed two bugs.
+
+    `fixed` is the only model-supplied value that reaches nvim_buf_set_lines
+    verbatim, and that API refuses an item that is not a string or that carries
+    a newline. apply_edits checked `fixed` was a table and never looked
+    inside it, so `{"fixed": ["TWO\\nEXTRA"]}` sailed through into ui.run_multi's
+    done callback -- which flipped the tab's status to "done" BEFORE the render,
+    then threw. The throw was swallowed by the job callback it runs in, leaving
+    the window open, the response pane still showing its loading placeholder,
+    and the tab claiming to be done. Pressing `y` there passed active_lines'
+    status check and handed that one line of UI chrome to on_accept, whose
+    apply_fix replaces the whole buffer with what it is given.
+
+    Both halves are pinned here: element validation (so the throw stops
+    happening) and the status ordering (so the next throw, for whatever reason,
+    is a display bug rather than a destroyed file).
+    """
+
+    LINES = ["one", "two", "three"]
+
+    def test_a_newline_inside_a_fixed_line_never_reaches_on_accept(self, tmp_path):
+        got = ui_scenario(
+            tmp_path, mode="fix", original=self.LINES, raw=fix_reply(["TWO\nEXTRA"])
+        )
+        assert got["accepted"] is None, (
+            f"`y` handed {got['accepted']!r} to the buffer-overwrite path"
+        )
+        assert LOADING_PLACEHOLDER not in (got["accepted"] or [])
+
+    def test_a_non_string_fixed_line_never_reaches_on_accept(self, tmp_path):
+        got = ui_scenario(
+            tmp_path, mode="fix", original=self.LINES, raw=fix_reply([42])
+        )
+        assert got["accepted"] is None, (
+            f"`y` handed {got['accepted']!r} to the buffer-overwrite path"
+        )
+        assert LOADING_PLACEHOLDER not in (got["accepted"] or [])
+
+    def test_a_rejected_fix_leaves_the_tab_unacceptable(self, tmp_path):
+        """The status `y` consults must not say "done" for a fix that is not.
+
+        Asserting on_accept stayed silent is not enough on its own: the tab has
+        to be visibly not-done, or the same hole reopens the moment anything
+        else in this path throws.
+        """
+        got = ui_scenario(
+            tmp_path, mode="fix", original=self.LINES, raw=fix_reply(["TWO\nEXTRA"])
+        )
+        assert "not available" in got["notified"], got["notified"]
+        assert got["response"] != [LOADING_PLACEHOLDER], (
+            "the pane still shows the placeholder while the tab reports success"
+        )
+
+    def test_a_clean_fix_still_applies_end_to_end(self, tmp_path):
+        """The regression guard for both fixes at once.
+
+        An over-broad element check, or a status that is never written, would
+        pass every assertion above by breaking the feature outright.
+        """
+        got = ui_scenario(
+            tmp_path, mode="fix", original=self.LINES, raw=fix_reply(["TWO"])
+        )
+        assert got["thrown"] is None, got["thrown"]
+        assert got["accepted"] == ["one", "TWO", "three"]
+        assert got["response"] == ["one", "TWO", "three"]
+
+    def test_the_writable_half_of_a_mixed_batch_still_reaches_the_buffer(
+        self, tmp_path
+    ):
+        """The case only apply_edits' half can carry.
+
+        Every other scenario here is satisfied by the status ordering alone --
+        it turns the throw into a visible failure, and a failed tab is not
+        acceptable. This one asks for more: one bad edit among good ones must
+        cost the user only that edit. Without the element check the batch still
+        carries the unwritable line into the render, the render throws, and the
+        good edit dies with it.
+        """
+        raw = json.dumps(
+            [
+                {"start": 1, "end": 1, "original": ["one"], "fixed": ["ONE"]},
+                {"start": 2, "end": 2, "original": ["two"], "fixed": ["TWO\nEXTRA"]},
+            ]
+        )
+        got = ui_scenario(tmp_path, mode="fix", original=self.LINES, raw=raw)
+        assert got["thrown"] is None, got["thrown"]
+        assert got["accepted"] == ["ONE", "two", "three"]
+
+    def test_an_unwritable_response_line_is_reported_as_a_failure(self, tmp_path):
+        """ui.lua's own half, with apply_edits out of the picture.
+
+        Nothing in the fix flow can produce these lines any more, which is
+        exactly why this drives run_multi directly: the ordering fix exists to
+        keep the NEXT source of a throw from costing the user their buffer.
+        """
+        got = ui_scenario(tmp_path, mode="direct", original=self.LINES, lines=["a\nb"])
+        assert got["accepted"] is None, (
+            f"`y` handed {got['accepted']!r} to the buffer-overwrite path"
+        )
+        assert "not available" in got["notified"], got["notified"]
+        assert got["response"] != [LOADING_PLACEHOLDER]
+        assert "failed" in got["response"][0], got["response"]
+
+    def test_a_writable_response_is_still_accepted(self, tmp_path):
+        got = ui_scenario(
+            tmp_path, mode="direct", original=self.LINES, lines=["x", "y"]
+        )
+        assert got["accepted"] == ["x", "y"]
+        assert got["notified"] == ""
+
+    def test_open_report_does_not_call_a_failed_render_done(self, tmp_path):
+        """The same ordering, in the driver behind the buffer-check report.
+
+        `f` there reads ctx.status and then sends the report buffer off to be
+        fixed; a status of "done" over an unrendered pane would feed the AI its
+        own placeholder.
+        """
+        got = ui_scenario(tmp_path, mode="report", lines=["a\nb"])
+        assert got["status"] == "failed", got
+        assert "failed" in got["response"][0], got["response"]
+
+    def test_open_report_still_calls_a_good_render_done(self, tmp_path):
+        got = ui_scenario(tmp_path, mode="report", lines=["# report", "body"])
+        assert got["status"] == "done"
+        assert got["response"] == ["# report", "body"]

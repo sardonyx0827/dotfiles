@@ -445,11 +445,32 @@ function M.run_multi(opts)
       if not vim.api.nvim_buf_is_valid(buf) then return end
 
       vim.bo[buf].modifiable = true
+      -- The status is what `y` consults (see active_lines), so it must not
+      -- claim "done" until the lines are actually IN the buffer.
+      -- nvim_buf_set_lines throws on an item that is not a string or that
+      -- contains a newline, and this callback runs inside a job handler where
+      -- such a throw is swallowed: the window stays open on its loading
+      -- placeholder. With the status flipped first, `y` then passed
+      -- active_lines' check and handed that placeholder to on_accept -- which,
+      -- for the fix flow, overwrites the user's entire buffer with it.
+      -- ai.prompt.apply_edits now rejects the lines that caused it; writing the
+      -- status only after a successful render is what keeps the NEXT throw here
+      -- a display bug rather than a destroyed file.
+      local rendered = false
       if ok and lines and #lines > 0 then
-        state.status[current] = "done"
-        vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-      else
+        local set_ok, set_err =
+          pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, lines)
+        if set_ok then
+          state.status[current] = "done"
+          rendered = true
+        else
+          err = tostring(set_err)
+        end
+      end
+      if not rendered then
         state.status[current] = "failed"
+        -- failure_lines splits on newlines, so this fallback cannot throw in
+        -- turn -- see its own comment.
         vim.api.nvim_buf_set_lines(buf, 0, -1, false, failure_lines(current, err))
         vim.bo[buf].modifiable = false
       end
@@ -559,10 +580,23 @@ function M.open_report(opts)
   state.job = opts.start(function(ok, lines, err)
     if state.closed or not vim.api.nvim_buf_is_valid(buf) then return end
     vim.bo[buf].modifiable = true
+    -- Same ordering as run_multi's, for the same reason: `status` is handed to
+    -- every caller-supplied keymap, and the buffer-check report's `f` uses it
+    -- to decide whether the report is worth sending off to be fixed. A "done"
+    -- written before a render that threw would send the AI this buffer's own
+    -- pending placeholder.
+    local rendered = false
     if ok and lines and #lines > 0 then
-      state.status = "done"
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    else
+      local set_ok, set_err =
+        pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, lines)
+      if set_ok then
+        state.status = "done"
+        rendered = true
+      else
+        err = tostring(set_err)
+      end
+    end
+    if not rendered then
       state.status = "failed"
       vim.api.nvim_buf_set_lines(buf, 0, -1, false,
         failure_lines(opts.fail_label or "check", err))
