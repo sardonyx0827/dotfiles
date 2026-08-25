@@ -15,7 +15,6 @@ apply an answer written for a fragment to the entire range, so it has to read
 as a failure — see TestExtractText.
 """
 
-import http.client
 import io
 import json
 import os
@@ -566,31 +565,6 @@ def _assert_no_sentinel(text: str, where: str, label: str) -> None:
         assert fragment not in text, (
             f"the API key leaked into {where} ({label}): {text!r}"
         )
-
-
-@pytest.fixture
-def no_network(monkeypatch):
-    """Keep the REAL urlopen, but make reaching the network impossible.
-
-    Every other test here stubs `urllib.request.urlopen`, and that is exactly
-    what these tests must NOT do: the exception under test comes from
-    `http.client.putheader`, which a stubbed urlopen never calls, so the leak
-    assertions would pass against unfixed code. The transport is cut one layer
-    lower instead -- at connect() -- so header validation still runs for real.
-
-    Every attempt is recorded rather than silently swallowed, so a regression
-    that gets past the guard fails loudly here instead of dialling out. Nothing
-    should ever reach it: putheader validates before send() calls connect(),
-    and once the key is checked up front it never reaches putheader either.
-    """
-    attempts = []
-
-    def _connect(self):
-        attempts.append(self.host)
-        raise AssertionError("a request reached the network")
-
-    monkeypatch.setattr(http.client.HTTPSConnection, "connect", _connect)
-    return attempts
 
 
 class TestApiKeyNeverLeaks:

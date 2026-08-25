@@ -19,6 +19,7 @@ temp dir and a stub bin directory prepended to PATH (fake tmux,
 terminal-notifier, ruff, ...) so tests stay hermetic.
 """
 
+import http.client
 import io
 import json
 import os
@@ -124,6 +125,32 @@ def fake_run(
         return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
 
     return _run
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Keep the REAL urlopen, but make reaching the network impossible.
+
+    Shared by test_gemini_api_cli.py and test_gemini_consultant_server.py:
+    both drive an unusable-API-key path where the exception under test comes
+    from `http.client.putheader`, which a stubbed urlopen never calls -- so
+    the leak assertions in those tests would pass against unfixed code if
+    urlopen were mocked as usual. The transport is cut one layer lower
+    instead -- at connect() -- so header validation still runs for real.
+
+    Every attempt is recorded rather than silently swallowed, so a regression
+    that gets past the guard fails loudly here instead of dialling out. Nothing
+    should ever reach it: putheader validates before send() calls connect(),
+    and once the key is checked up front it never reaches putheader either.
+    """
+    attempts = []
+
+    def _connect(self):
+        attempts.append(self.host)
+        raise AssertionError("a request reached the network")
+
+    monkeypatch.setattr(http.client.HTTPSConnection, "connect", _connect)
+    return attempts
 
 
 @pytest.fixture

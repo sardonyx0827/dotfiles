@@ -205,29 +205,67 @@ class TestApiKeyNeverLeaks:
     `str(e)` into BOTH the returned string and `_log_quietly`. The key then sits
     in the conversation transcript and on disk in ~/.claude/logs.
 
-    The realistic trigger is not exotic: a `.env` written with CRLF endings
-    yields a trailing "\\r" on the value, and the module never strips it.
-    No socket is involved -- putheader raises before connect -- so these run
-    fully offline against the real urlopen.
+    `call_gemini` strips the key before anything else (server.py:302), and only
+    THEN hands it to `_reject_unusable_api_key` (server.py:308). That ordering
+    splits "illegal" into two shapes that behave nothing alike:
+
+    - A CR/LF INTERIOR to the value survives strip() and reaches the guard,
+      which raises before a `Request` is ever built -- no socket is involved,
+      which is why those cases run under `no_network` rather than a mocked
+      `urlopen`.
+    - A CR/LF at the EDGE of the value is removed BY strip() before the guard
+      ever sees it. The result is a legitimate key and the call is expected to
+      SUCCEED -- so those cases are tested as tolerated, with `urlopen` mocked
+      the same way every passing-case test elsewhere in this file mocks it.
+      Treating an edge case as though it must also be "rejected" would assert
+      against correct behavior; treating it as "offline because no socket is
+      involved" would silently let it dial the real API instead, which is
+      exactly the bug this class used to have.
     """
 
-    @pytest.mark.parametrize(
-        ("label", "key"),
-        [
-            ("trailing CR (CRLF .env)", SENTINEL_KEY + "\r"),
-            ("trailing LF", SENTINEL_KEY + "\n"),
-            ("interior newline", SENTINEL_KEY[:8] + "\n" + SENTINEL_KEY[8:]),
-        ],
-    )
+    # Shapes strip() CANNOT remove. Split at 8 so a fragment of the sentinel
+    # survives on either side of the break for the leak assertion below.
+    _INTERIOR = [
+        ("interior newline", SENTINEL_KEY[:8] + "\n" + SENTINEL_KEY[8:]),
+        ("interior CR", SENTINEL_KEY[:8] + "\r" + SENTINEL_KEY[8:]),
+        ("interior CRLF", SENTINEL_KEY[:8] + "\r\n" + SENTINEL_KEY[8:]),
+    ]
+
+    # Shapes strip() DOES remove. The realistic trigger: a `.env` written with
+    # CRLF endings leaves a trailing "\r" on the value.
+    _TRAILING = [
+        ("trailing CR (CRLF .env)", SENTINEL_KEY + "\r"),
+        ("trailing LF", SENTINEL_KEY + "\n"),
+    ]
+
+    @pytest.mark.parametrize(("label", "key"), _INTERIOR)
     @pytest.mark.parametrize("tool", ["consult_gemini", "review_gemini"])
-    def test_illegal_header_key_is_not_echoed(
-        self, server, monkeypatch, label, key, tool
+    def test_interior_newline_key_is_rejected_and_never_reaches_the_network(
+        self, server, monkeypatch, no_network, label, key, tool
     ):
         monkeypatch.setenv("GEMINI_API_KEY", key)
         monkeypatch.setattr(time, "sleep", lambda s: None)
 
         result = getattr(server, tool)(f"prompt for {label}")
         log_text = open(server.log_file, encoding="utf-8").read()
+
+        # Naming the guard's OWN wording -- not just "no leak" -- is what tells
+        # "the guard rejected this" apart from "something else happened to not
+        # leak it". A leak-only assertion would stay green even with
+        # `_reject_unusable_api_key` deleted: the unguarded path (raw value ->
+        # putheader -> ValueError) is caught by the tools' last-resort
+        # `except ValueError` arm, which drops the message too, so it would
+        # ALSO produce a leak-free string -- just not this one.
+        assert result.startswith("Gemini API error:"), result
+        assert "GEMINI_API_KEY" in result, (
+            f"{tool} did not name the variable ({label}): {result!r}"
+        )
+        assert "illegal in an HTTP header" in result, (
+            f"{tool} did not report the guard's own reason ({label}): {result!r}"
+        )
+        assert "illegal in an HTTP header" in log_text, (
+            f"the guard's reason did not reach the log ({label}): {log_text!r}"
+        )
 
         # Check FRAGMENTS, not the whole key: an interior newline splits the
         # value, so asserting on the contiguous sentinel would pass vacuously
@@ -237,6 +275,32 @@ class TestApiKeyNeverLeaks:
                 assert fragment not in text, (
                     f"{tool} leaked the API key into {sink} ({label}): {text!r}"
                 )
+
+        assert no_network == [], (
+            f"{tool} reached the network with an unusable key ({label}): {no_network}"
+        )
+
+    @pytest.mark.parametrize(("label", "key"), _TRAILING)
+    @pytest.mark.parametrize("tool", ["consult_gemini", "review_gemini"])
+    def test_trailing_newline_key_is_stripped_and_still_authenticates(
+        self, server, monkeypatch, label, key, tool
+    ):
+        # strip() is what removes the CRLF-.env trigger in the first place, so
+        # this shape must keep WORKING, not merely fail to leak -- trading a
+        # leak for an outage would be no fix at all. Asserting the header
+        # carries the bare sentinel (no trailing CR/LF) is the
+        # security-relevant check here: it proves the newline was gone BEFORE
+        # the header was ever built, rather than "happened not to matter".
+        calls = []
+        monkeypatch.setenv("GEMINI_API_KEY", key)
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini("ok", calls=calls))
+
+        result = getattr(server, tool)(f"prompt for {label}")
+
+        assert result == "ok", f"{tool} treated a tolerable key as an error ({label})"
+        assert calls[0].get_header("X-goog-api-key") == SENTINEL_KEY, (
+            f"the stripped key did not reach the request header ({label})"
+        )
 
     def test_non_latin1_key_is_rejected_without_quoting_it(self, server, monkeypatch):
         # putheader encodes header values as latin-1, so a key carrying (say) a
