@@ -414,6 +414,74 @@ _UNRESOLVABLE_GRAMMAR = frozenset({"case", "select", "esac"})
 _REDIRECT_ALONE = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))$")
 _REDIRECT_GLUED = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))\S")
 
+# ラッパーを剥がした先の「実行体名ではあり得ない」トークン。1 語のまま空白や
+# シェル演算子を含められるのはクォートされた塊だけで、それは実行体+引数を
+# シェルが解釈する前の生文字列である。
+#
+# `watch 'sudo rm -rf /'` は shlex では `watch` + `sudo rm -rf /` の 2 語で、
+# 後者を実行体名として返すと下流が同時に盲目化する: _resolve_executable の
+# `rsplit("/", 1)[-1]` が空文字 (や末尾の断片) に化けて DENY_EXECUTABLES が
+# 外れ、_high_risk_label は「解決できた未知の実行体」として "" を返し、
+# _is_deny_command は空白入りトークンから正規化候補を作らない。結果、裸の
+# `sudo rm -rf /` は即拒否されるのに、クォートで包むだけで単独モデルの
+# fast path (Gemini 単独 ALLOW で自動実行) まで格下げされていた。
+#
+# 実際に塊を走らせるのは引数を `sh -c` に渡す watch だけで、他のラッパーは
+# literal を execvp して失敗する。それでも個別バイナリを外さずここで倒すのは、
+# watch を集合から外す修正が、正しく DENY できている非クォート形
+# `watch sudo rm -rf /` を巻き添えに退行させるため。
+#
+# 将来 `sh -c` 相当のラッパーを _WRAPPER_EXECUTABLES に足した場合の保証は
+# **条件付き**である。無条件の「同じ穴を継承しない」とは書けない:
+#   * 保証される: 塊が空白か `;` / `|` / `&` を含む形。この判定がループ先頭に
+#     あるため、どのラッパーを足しても剥がした直後に None へ倒れる。
+#   * 保証されない: 下の residual に挙げた「この文字クラスに載らない塊」。
+#     ラッパーを足せばその形はそのまま継承される。
+#
+# 判定は既存の「実行体を確定できない → None → 呼び出し側でフェイルクローズ」
+# 経路へ合流させるだけで、新しい分類は作らない。`env -u X ...` や
+# `watch -n 2 ...` が既に通っている経路と同じ扱いになる。
+#
+# `;` / `|` / `&` も入れるのは、空白を持たない塊 (`watch 'curl;wget'`) が同型の
+# 抜け道になるため。_iter_top_level はクォート内を割らないので、これらは分割
+# されないまま 1 語で届く。`$` / `` ` `` は _UNRESOLVABLE_EXPANSION が先に None を
+# 返すので重複させない。
+#
+# この判定をループ先頭に置くことで塞がった形 (いずれも実測済み)。共通するのは
+# 「下の剥がし規則がトークンを書き換える or 食い尽くす」点で、書き換え後は
+# 無害な語 (`ls`) に、食い尽くした後は `[]` に化けていた。`[]` は `None` と違い
+# 「実行体が無い」の意味で _high_risk_label が "" に写すため、フェイルオープン
+# 側に倒れる — つまり最も危険な化け方だった:
+#
+#   * `VAR=` 形 (_ENV_ASSIGNMENT が塊ごと消費 → `[]`):
+#     `watch 'A=1 sudo rm -rf /'` / `watch 'IFS=x;sudo rm -rf /'`
+#   * 先頭リダイレクト形 (_REDIRECT_ALONE / _REDIRECT_GLUED が消費 → `[]`):
+#     `watch '>/tmp/x sudo rm -rf /'` / `watch '2>x sudo rm -rf /'`
+#   * 末尾 `)` 形 (case アーム規則が消費 → `[]`):
+#     `watch 'sudo rm -rf /)'` / `watch 'sudo rm -rf / && (true)'`
+#   * 右密着リダイレクト形 (`cut` が塊を切り詰め → `['ls']`):
+#     `watch 'ls>/dev/null;sudo rm -rf /'` / `watch 'ls</dev/null;sudo ...'`
+#
+# 残る residual (いずれも実測済み、本修正の射程外)。この文字クラスに載らない
+# 「空白もこの 3 演算子も持たない塊」は、ループ先頭で判定しても素通りする。
+# 境界はループ内の順序ではなく、この文字クラスそのものである:
+#
+#   * `watch 'ls>/etc/passwd'` / `watch 'ls<x'` /
+#     `watch 'ls>~/.ssh/authorized_keys'` → `ls` に解決される。リダイレクト
+#     切り出しの枝が塊を `ls` へ切り詰めて読み直すため。
+#   * `watch '(sudo)'` → `sudo` に解決される (文法記号の剥がし)。この形は
+#     たまたま実挙動と一致する: `sh -c "(sudo)"` は本当に sudo を走らせる。
+#   * `watch '{sudo,rm,-rf,/}'` → ブレース展開。`{` の剥がしで
+#     `sudo,rm,-rf,/` になり、どの層にも一致しない。
+#
+# これらの枝はフェイルクローズではなく「切り詰めて読み直す」設計で、それ自体は
+# 裸のコマンド (`ls>out`) に対して正しい。塊と区別するには文字クラスを `<>(){},`
+# へ広げるか枝の順序を変える必要があり、既存の解決規則を広く動かすので別の変更と
+# して扱う。いずれも本修正の前後で判定は変わらない (緩和方向ではない)。
+# tests/test_bash_review.py の TestWrapperQuotedBlobResolution が、塞がった形と
+# 残った形の両方を pin している。
+_NOT_EXECUTABLE_WORD = re.compile(r"[\s;|&]")
+
 
 def _tokenize(cmd: str) -> list[str]:
     """シェルの語分割規則でトークン列に分解する。
@@ -455,13 +523,54 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
     - ラッパーの値付き/未知フラグ (`env -u X rm -rf /`, `exec -a NAME cmd`)
     - 実行体位置の展開トークン (_UNRESOLVABLE_EXPANSION)
     - 実行体位置を特定できない文法 (_UNRESOLVABLE_GRAMMAR): `case` / `select` / `esac`
+    - ラッパーを剥がした先のクォートされた塊 (_NOT_EXECUTABLE_WORD):
+      `watch 'sudo rm -rf /'` の `sudo rm -rf /`
 
     全トークンが剥がし対象だった場合は空リストを返す (None とは別物で、
     こちらは「実行体が無い」= 判定対象なしを意味する)。
     """
     i = 0
+    # ラッパーを 1 つでも剥がしたか。ラッパー抜きの形を対象にしないのは、
+    # `'/opt/my dir/tool' --flag` のように空白入りパスの実行体を直接書いた形まで
+    # 判定不能に倒さないため。ラッパーを挟むと同じ形も倒れる
+    # (`timeout 5 '/Applications/Google Chrome.app/.../Google Chrome'` は強制 ask)
+    # が、それは下の「塊と区別できない」の帰結として受け入れているコスト。
+    wrapper_stripped = False
     while i < len(tokens):
         tok = tokens[i]
+        # 塊の判定はループ先頭で、他のどの剥がし規則よりも先に行う。
+        #
+        # 下の剥がし規則 (_ENV_ASSIGNMENT / _REDIRECT_GLUED / 末尾 `)` など) は
+        # いずれも「トークンの先頭 (または末尾) だけを見て、トークン全体を消費
+        # する」形をしている。塊の頭がたまたまその形をしていると、規則が塊ごと
+        # 食い尽くして走査がトークン列の末尾へ抜け、`None` ではなく `[]` が返る。
+        # `[]` は「実行体が無い」の意味で _high_risk_label が "" に写すため、
+        # エスカレートしない唯一の「解決できなかった」答えになってしまう:
+        # `watch 'A=1 sudo rm -rf /'` / `watch 'X=1;sudo rm -rf /'` /
+        # `watch '>/tmp/x sudo rm -rf /'` / `watch 'sudo rm -rf /)'` は
+        # いずれも塊の頭に 1 語足すだけでこの穴を再現していた (実測済み)。
+        #
+        # ラッパーを剥がした後は、どの規則が食う形をしていようと、語になり得ない
+        # トークンは実行体を確定できないものとして扱う方が一貫している。
+        #
+        # 受け入れているコスト (意図的。緩めないこと): ラッパーの後ろに置いた
+        # 「値に空白を含むクォート代入」も倒れる。
+        #
+        #   env 'FOO=a b' make build   → 強制 ask (従来は make に解決)
+        #   env PATH='/a b:/c' ls      → 強制 ask (従来は ls に解決)
+        #   env FOO='a b' sudo whoami  → 強制 ask (従来は決定論的 DENY)
+        #
+        # `FOO=a b` と `A=1 sudo rm -rf /` は shlex 後どちらも
+        # `^[A-Za-z_]\w*=` + 空白という同じ語形で、**静的に区別する規則が書けない**。
+        # 片方だけ残す条件を足すと、そのまま `watch 'A=1 sudo rm -rf /'` の
+        # バイパスが復活する。「過検知が多いから緩めよう」と読んだ人がここを
+        # 触ると穴が開き直るため、明示しておく。
+        #
+        # 走査位置の判定なので、影響するのは「ラッパー配下の実行体位置」だけ。
+        # ラッパー無しの `FOO='a b' sudo whoami` は従来どおり DENY で、引数側の
+        # 空白 (`xargs -0 grep 'foo bar'`) は走査対象外なので一切変わらない。
+        if wrapper_stripped and _NOT_EXECUTABLE_WORD.search(tok):
+            return None
         if _ENV_ASSIGNMENT.match(tok):
             i += 1
             continue
@@ -572,6 +681,7 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
             # 実行体を確定できないものとして安全側に倒す。
             if positionals and i < len(tokens) and tokens[i].startswith("-"):
                 return None
+            wrapper_stripped = True
             continue
         return tokens[i:]
     return []
@@ -993,6 +1103,59 @@ def _has_tmux_format_exec(cmd: str) -> bool:
     )
 
 
+# tmux は `;` を「自分の」コマンド区切りとして解釈する
+# (man tmux: "Multiple commands may be specified together as part of a command
+# sequence ... separated by semicolons")。つまり `tmux ls ';' run-shell <任意>`
+# は 1 つのシェルコマンドのまま 2 つの tmux コマンドを走らせる形であり、
+# SAFE_COMMANDS のコメントが「限定した」と宣言している run-shell / new-window /
+# send-keys による任意コード実行がそのまま復活する。
+#
+# この `;` はシェルの区切りではない (クォート/エスケープされているため) ので、
+# _iter_top_level も COMPLEX_SHELL_SYNTAX も分割・拒否しない。そして
+# _is_safe_command 末尾の照合は「生文字列への前方一致」なので `tmux ls ...` に
+# 一致し、AI レビューを一度も経ずに allow が出る。本フックで唯一「無審査で
+# allow を発行する」経路がここで開く。
+#
+# 判定は「`;` を含む文字列を弾く」部分一致にしない。それは今回のバグと同じ
+# 「広すぎる部分一致」の再生産で、コマンドを実行せず言及しているだけの文字列を
+# 巻き込む。代わりに構造で見る: tmux の argv (シェルの語分割・クォート解決を
+# 経たもの) を走査し、区切りの後ろに中身が残っていれば「2 つ目の tmux コマンドが
+# ある」= 読み取り系サブコマンドとその引数だけの形ではない、と判定する。区切りの
+# 綴り (`;` / `\;` / `';'` / `";"`) は _tokenize (shlex) がシェルと同じ規則で
+# 1 つの `;` に畳むため、綴りの列挙は不要 (列挙漏れがそのままバイパスになる
+# 構造を作らない)。
+#
+# tmux 自身の引数分割規則 (語末の `;` だけを区切りとするのか、語中の `;` も
+# 区切りになるのか) には意図的に依存せず、語のどこに現れても区切り候補として
+# 扱う。取り違えたときの被害が非対称だからである: 緩く見れば無審査 allow の
+# バイパスが残り、厳しく見ても AI レビューに回ってレイテンシが増えるだけ。
+# _has_tmux_format_exec が正規化文字列でも照合しているのと同じ割り切り。
+_TMUX_COMMAND_SEPARATOR = ";"
+
+
+def _has_tmux_extra_command(cmd: str) -> bool:
+    """tmux コマンドが区切りの後ろに 2 つ目のコマンドを持つか判定する。
+
+    セーフスキップを許すのは「読み取り系サブコマンド + その引数」だけの形に
+    限る、という条件の否定側 (上の定義参照)。区切りより後ろに空でない中身が
+    あれば、それは位置的に tmux の次のコマンド名であり、読み取り系である保証は
+    どこにもない。
+    """
+    if _resolve_executable(cmd) != "tmux":
+        return False
+    # _resolve_executable が "tmux" を返した時点で _split_prefix は非空リストを
+    # 返しているが、戻り値型 (list[str] | None) を絞るために or [] で受ける。
+    tokens = _split_prefix(_tokenize(cmd)) or []
+    for i, tok in enumerate(tokens):
+        _, sep, tail = tok.partition(_TMUX_COMMAND_SEPARATOR)
+        if not sep:
+            continue
+        # 最初の区切りだけ見れば足りる: 後続の区切りより後ろの中身は、
+        # いずれもこの区切りより後ろにあるので tokens[i + 1 :] が拾う。
+        return bool(tail.strip() or any(t.strip() for t in tokens[i + 1 :]))
+    return False
+
+
 # SAFE_COMMANDS に「読み取り専用」として載せたコマンドでも、出力先ファイルを
 # 指定するフラグを持つものがある。実際 `git log --output=FILE --format=format:X`
 # は任意パスへ任意内容を書き込めるが、DENY 層にも高リスク層にも一致せず、
@@ -1055,6 +1218,10 @@ def _is_safe_command(cmd: str) -> bool:
         return False
     # tmux のフォーマット経由コマンド実行 `#(...)` も同様 (上の定義参照)
     if _has_tmux_format_exec(cmd):
+        return False
+    # tmux 自身の `;` 区切りで 2 つ目のコマンド (run-shell 等) を連結した形も
+    # 読み取り系ではないのでセーフスキップさせない (上の定義参照)
+    if _has_tmux_extra_command(cmd):
         return False
     # 出力先ファイル指定フラグ (git --output / tree -o) を持つ「読み取り系」も
     # 書き込みになるためセーフスキップさせない (上の定義参照)

@@ -40,6 +40,16 @@ class TestAllowPaths:
         assert res.stdout == ""
         assert res.stderr == ""
 
+    def test_read_only_tmux_command_exits_zero_silently(self, run_hook):
+        # Regression guard for the tmux separator fix below: the legitimate
+        # read-only invocations must keep their safe-skip fast path. No
+        # urlopen/run fakes, so any review call would raise AssertionError --
+        # exit 0 here proves the command was skipped, not reviewed.
+        res = run_hook(HOOK, hook_payload("tmux ls -F '#{session_name}'"))
+        assert res.exit_code == 0
+        assert res.stdout == ""
+        assert res.stderr == ""
+
     def test_gemini_allow_exits_zero_silently(self, run_hook):
         res = run_hook(HOOK, hook_payload("make build"), urlopen=fake_gemini("ALLOW"))
         assert res.exit_code == 0
@@ -79,6 +89,47 @@ class TestBlockingPaths:
         res = run_hook(HOOK, hook_payload("sudo reboot"))
         assert res.exit_code == 2
         assert "sudo" in res.stderr
+
+    def test_unquoted_wrapper_form_stays_pre_denied(self, run_hook):
+        # Parity with the claude variant: the fix for the QUOTED blob below
+        # must not cost the unquoted wrapper form its deterministic denial.
+        # No urlopen/run fakes, so exit 2 here proves no model was consulted.
+        res = run_hook(HOOK, hook_payload("watch sudo rm -rf /"))
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "sudo" in res.stderr
+
+    def test_tmux_chained_second_command_reaches_review(self, run_hook):
+        # `;` is tmux's OWN command separator, so `tmux ls ';' run-shell true`
+        # runs a second tmux command -- run-shell takes an arbitrary shell
+        # command. The shell never splits on the quoted `;`, so the safe-skip
+        # prefix match read `tmux ls ...` and exited 0 silently with no review.
+        # Safe-skip and a reviewed ALLOW are indistinguishable in this variant
+        # (both exit 0, both silent), so the verdicts are set to ASK: exit 2
+        # can only mean review actually ran.
+        res = run_hook(
+            HOOK,
+            hook_payload("tmux ls ';' run-shell true"),
+            urlopen=fake_gemini("ASK"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "Codex requires confirmation" in res.stderr
+
+    def test_tmux_escaped_separator_reaches_review(self, run_hook):
+        # `\;` is the same tmux separator with the shell's escape instead of
+        # quotes -- the shell hands tmux an identical argv, so it must not be
+        # safe-skipped either.
+        res = run_hook(
+            HOOK,
+            hook_payload("tmux ls \\; run-shell true"),
+            urlopen=fake_gemini("ASK"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "Codex requires confirmation" in res.stderr
 
     def test_codex_ask_blocks_with_stderr(self, run_hook):
         res = run_hook(
@@ -169,6 +220,43 @@ class TestHighRisk:
         assert res.stdout == ""
         assert "High-risk" in res.stderr
         assert "stdin into bash" in res.stderr
+
+    def test_wrapper_quoted_blob_is_high_risk(self, run_hook):
+        # `watch 'sudo rm -rf /'` passes the quoted string to `sh -c`, but the
+        # resolver used to hand the whole blob back as an executable name: the
+        # deterministic deny tier and the high-risk tier both went blind and the
+        # command dropped to the single-model fast path, where this very Gemini
+        # ALLOW exits 0 silently. Exit 2 with both verdicts proves the AND-gate
+        # runs in this variant too.
+        res = run_hook(
+            HOOK,
+            hook_payload("watch 'sudo rm -rf /'"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "High-risk" in res.stderr
+        assert "wrapped command" in res.stderr
+        assert "Gemini=ALLOW" in res.stderr
+        assert "Codex=ASK" in res.stderr
+
+    def test_prefix_shaped_blob_is_high_risk(self, run_hook):
+        # Parity with the claude variant: `A=1 ` in front of the payload made
+        # the assignment rule swallow the whole blob token, so the resolver
+        # returned [] ("nothing here") instead of None ("cannot tell") and the
+        # command dropped back to the single-model fast path, where this Gemini
+        # ALLOW exits 0 silently.
+        res = run_hook(
+            HOOK,
+            hook_payload("watch 'A=1 sudo rm -rf /'"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "High-risk" in res.stderr
+        assert "wrapped command" in res.stderr
 
     def test_unanimous_deny_blocks(self, run_hook):
         res = run_hook(
