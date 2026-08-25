@@ -1238,6 +1238,184 @@ class TestOhMyZshFreshInstallOrdering:
         assert not (home / ".oh-my-zsh").exists()
 
 
+class TestOhMyZshFetchFailureIsRecoverable:
+    """A failed Oh My Zsh download must stay recoverable on the next run.
+
+    Bug: install_oh_my_zsh warned and continued past a failed fetch_and_run
+    (correct -- one optional component must not stop the run), but everything
+    after the failure branch treated $ZSH as if it existed:
+    `mkdir -p ~/.oh-my-zsh/custom`, the two plugin clones under it, and the
+    `mkdir -p ~/.oh-my-zsh/custom/themes` that main() reaches later via
+    link_oh_my_zsh_theme. Any one of them materialises $HOME/.oh-my-zsh.
+
+    Oh My Zsh's own installer refuses to run when $ZSH already exists (see
+    _OMZ_OFFICIAL_INSTALLER_STUB), so that leftover directory made the
+    failure permanent: every later ./install.sh reprinted the same warning
+    and never installed. change_shell has meanwhile made zsh the login shell,
+    so `source $ZSH/oh-my-zsh.sh` in .zshrc fails on every login -- no theme,
+    no plugins, no completions -- and only `rm -rf ~/.oh-my-zsh` repairs it.
+    """
+
+    def _stub_git_clone(self, shell_env):
+        body = 'if [ "$1" = "clone" ]; then\n  mkdir -p "${@: -1}"\nfi'
+        shell_env.stub("git", body=body)
+
+    def test_failed_fetch_leaves_nothing_behind_so_a_later_run_installs(
+        self, shell_env
+    ):
+        """The two-stage regression: fail, then retry in the SAME $HOME.
+
+        Stage 2 is the half that matters. Asserting only "mkdir was not
+        called" would miss link_oh_my_zsh_theme's own mkdir; asserting that a
+        subsequent honest run actually installs Oh My Zsh cannot be satisfied
+        by any path that left $ZSH behind.
+        """
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+
+        # Stage 1: the download fails (transient network / DNS / proxy).
+        shell_env.stub("curl", exit_code=1)
+        first = run_sourced("install_oh_my_zsh; link_oh_my_zsh_theme", shell_env.env)
+        assert first.returncode == 0, first.stdout + first.stderr
+        assert "[WARNING]" in first.stdout
+        assert not (home / ".oh-my-zsh").exists(), (
+            "a failed download left $HOME/.oh-my-zsh behind; Oh My Zsh's "
+            "installer refuses to run when $ZSH exists, so no later run can "
+            "ever install it"
+        )
+
+        # Stage 2: same machine, same $HOME, network back.
+        shell_env.stub("curl", body=_OMZ_OFFICIAL_INSTALLER_STUB)
+        second = run_sourced("install_oh_my_zsh; link_oh_my_zsh_theme", shell_env.env)
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert (home / ".oh-my-zsh/oh-my-zsh.sh").is_file(), (
+            "the retry did not install Oh My Zsh: the first failure is permanent"
+        )
+        assert "Oh My Zsh installed" in second.stdout
+        assert (home / ".oh-my-zsh/custom/plugins/zsh-autosuggestions").is_dir()
+        assert (home / ".oh-my-zsh/custom/plugins/zsh-syntax-highlighting").is_dir()
+        theme_link = home / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme"
+        assert theme_link.is_symlink()
+        assert (
+            theme_link.resolve()
+            == (REPO_ROOT / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme").resolve()
+        )
+
+    def test_main_call_order_after_a_failed_fetch_creates_no_oh_my_zsh_dir(
+        self, shell_env
+    ):
+        """main() runs link_oh_my_zsh_theme after install_oh_my_zsh.
+
+        Sequenced with `;`, not `&&`: the theme link must still be attempted
+        after the failure (that is main()'s real order), and `&&` would skip
+        it and pass for the wrong reason. The AFTER_* markers prove both
+        functions actually ran.
+        """
+        self._stub_git_clone(shell_env)
+        shell_env.stub("curl", exit_code=1)
+        home = shell_env.home
+
+        res = run_sourced(
+            "install_oh_my_zsh; echo AFTER_OMZ; link_oh_my_zsh_theme; echo AFTER_THEME",
+            shell_env.env,
+        )
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "AFTER_OMZ" in res.stdout
+        assert "AFTER_THEME" in res.stdout
+        assert not (home / ".oh-my-zsh").exists(), (
+            "link_oh_my_zsh_theme materialised $HOME/.oh-my-zsh after "
+            "install_oh_my_zsh had already failed"
+        )
+
+    def test_failed_fetch_clones_no_plugins_and_claims_no_plugin_success(
+        self, shell_env
+    ):
+        # Cloning into $ZSH is one of the ways the directory gets created, and
+        # a plugin under a non-existent Oh My Zsh is dead weight either way.
+        self._stub_git_clone(shell_env)
+        shell_env.stub("curl", exit_code=1)
+
+        res = run_sourced('install_oh_my_zsh; echo "AFTER_OMZ"', shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        # Still the house rule: one optional component must not stop the run.
+        assert "AFTER_OMZ" in res.stdout
+        assert [c for c in shell_env.calls if c.startswith("git clone")] == []
+        assert "zsh plugins installed" not in res.stdout
+
+    def test_half_made_zsh_dir_is_left_alone_and_gains_no_plugins(self, shell_env):
+        """A $ZSH directory with no entry point is "not installed" -- and not
+        ours to delete.
+
+        This is the state machines poisoned by the old bug are already in, and
+        it is also what an installer killed mid-run leaves. install_oh_my_zsh
+        must treat it as absent (no plugin clones, no success claim) so the
+        next run still sees work to do, while leaving whatever the user has
+        under it untouched: recovering by `rm -rf`-ing a directory that may
+        hold their own custom/ files is the user's call, not the script's.
+        """
+        self._stub_git_clone(shell_env)
+        shell_env.stub("curl", exit_code=1)
+        home = shell_env.home
+        (home / ".oh-my-zsh/custom").mkdir(parents=True)
+        mine = home / ".oh-my-zsh/custom/mine.zsh"
+        mine.write_text("# hand-written\n", encoding="utf-8")
+
+        res = run_sourced('install_oh_my_zsh; echo "AFTER_OMZ"', shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "AFTER_OMZ" in res.stdout
+        assert "zsh plugins installed" not in res.stdout
+        assert [c for c in shell_env.calls if c.startswith("git clone")] == []
+        assert mine.read_text(encoding="utf-8") == "# hand-written\n"
+
+    def test_successful_fetch_still_creates_custom_plugins_and_themes(self, shell_env):
+        # Regression guard on the happy path: the new guards must not skip the
+        # work they are guarding when Oh My Zsh really did install.
+        self._stub_git_clone(shell_env)
+        shell_env.stub("curl", body=_OMZ_OFFICIAL_INSTALLER_STUB)
+        home = shell_env.home
+
+        res = run_sourced("install_oh_my_zsh; link_oh_my_zsh_theme", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "zsh plugins installed" in res.stdout
+        assert (home / ".oh-my-zsh/custom/plugins/zsh-autosuggestions").is_dir()
+        assert (home / ".oh-my-zsh/custom/plugins/zsh-syntax-highlighting").is_dir()
+        assert (home / ".oh-my-zsh/custom/themes").is_dir()
+        assert not (home / ".oh-my-zsh/custom").is_symlink()
+
+    def test_theme_link_still_runs_when_oh_my_zsh_was_already_installed(
+        self, shell_env
+    ):
+        # The guard keys on the directory, not on this run's outcome: a
+        # machine that already had Oh My Zsh must keep getting its theme.
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+
+        res = run_sourced("link_oh_my_zsh_theme", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        theme_link = home / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme"
+        assert theme_link.is_symlink()
+
+    def test_dry_run_theme_preview_is_unchanged_on_a_machine_without_omz(
+        self, shell_env
+    ):
+        # link_oh_my_zsh_theme's guard is deliberately gated on DRY_RUN=0:
+        # dry-run writes nothing, so it can never materialise $ZSH, and the
+        # preview must keep listing the theme it would link.
+        home = shell_env.home
+
+        res = run_sourced("DRY_RUN=1 link_oh_my_zsh_theme", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "[DRY-RUN] would link" in res.stdout
+        assert "px-rose-pine.zsh-theme" in res.stdout
+        assert not (home / ".oh-my-zsh").exists()
+
+
 class TestRegisterClaudeMcpServers:
     def test_gemini_consultant_uses_resolved_python3(self, shell_env):
         # `claude mcp get NAME` must fail so add_mcp proceeds to register.

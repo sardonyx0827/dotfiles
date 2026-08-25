@@ -773,10 +773,36 @@ install_oh_my_zsh() {
     if fetch_and_run "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/$OHMYZSH_INSTALL_REF/tools/install.sh" sh -- --unattended --keep-zshrc; then
       print_success "Oh My Zsh installed"
     else
-      print_warning "Failed to install Oh My Zsh (continuing; the zsh theme and plugins below may be incomplete)"
+      print_warning "Failed to install Oh My Zsh (continuing; the zsh plugins and theme below are skipped, not partially applied)"
     fi
   else
     print_success "Oh My Zsh already installed"
+  fi
+
+  # Everything below this point writes INTO $ZSH, so none of it may run when
+  # the block above did not leave one. Unguarded, the `mkdir -p
+  # "$HOME/.oh-my-zsh/custom"` and the plugin clones below created
+  # $HOME/.oh-my-zsh as a real directory even on the failure branch -- and Oh
+  # My Zsh's own installer exits 1 when $ZSH already exists. That turned a
+  # transient network failure into a permanent one: every later ./install.sh
+  # reprinted the same warning and never installed, while change_shell had
+  # already made zsh the login shell, so .zshrc's `source $ZSH/oh-my-zsh.sh`
+  # failed on every login. Only `rm -rf ~/.oh-my-zsh` repaired it.
+  #
+  # Retested via the entry point rather than fetch_and_run's exit status, for
+  # the same reason the "already installed?" test at the top of this function
+  # uses it: it also rejects a half-made $ZSH (a directory with no
+  # oh-my-zsh.sh), which is the state that must stay visible to the next run
+  # as "not installed yet".
+  #
+  # `return 0`, never non-zero: main() calls this bare under `set -eo
+  # pipefail`, so returning a failure here would abort the whole run -- the
+  # exact outcome the guard on fetch_and_run above exists to prevent.
+  # link_oh_my_zsh_theme carries the matching guard; main() calls it later, so
+  # fixing only this side would let it recreate $ZSH anyway.
+  if [ ! -f "$HOME/.oh-my-zsh/oh-my-zsh.sh" ]; then
+    print_warning "Oh My Zsh is not installed; skipping the zsh plugins (continuing). Re-run ./install.sh once the network is back."
+    return 0
   fi
 
   # Self-heal: older installs symlinked $HOME/.oh-my-zsh/custom straight to
@@ -820,6 +846,27 @@ install_oh_my_zsh() {
 # Depends on link_entry, which is now a top-level function (it used to be
 # nested inside create_symlinks, making this call order load-bearing).
 link_oh_my_zsh_theme() {
+  # Refuse to create $ZSH from nothing. The `mkdir -p
+  # "$HOME/.oh-my-zsh/custom/themes"` below creates $HOME/.oh-my-zsh itself
+  # when it is absent, and Oh My Zsh's own installer exits 1 when $ZSH already
+  # exists -- so on a run whose Oh My Zsh download failed, this function alone
+  # is enough to make the failure permanent. install_oh_my_zsh carries the
+  # matching guard; both are required, since main() reaches this one after it.
+  #
+  # Deliberately keyed on the DIRECTORY, where install_oh_my_zsh's guard is
+  # keyed on the oh-my-zsh.sh entry point -- do not "simplify" the two into
+  # one condition. All this one needs to know is whether the mkdir would
+  # conjure $ZSH out of nothing; a machine whose $ZSH exists for any other
+  # reason (a partial install, a hand-made dir) should still get its theme.
+  #
+  # Gated on DRY_RUN=0 so the preview is byte-identical: a dry run writes
+  # nothing, hence can never materialise $ZSH, and it must keep listing the
+  # theme it would link even on a machine with no Oh My Zsh yet.
+  if [ "$DRY_RUN" -eq 0 ] && [ ! -d "$HOME/.oh-my-zsh" ]; then
+    print_warning "Skipping the Oh My Zsh theme link: $HOME/.oh-my-zsh does not exist (continuing)"
+    return 0
+  fi
+
   # Oh My Zsh custom: keep a REAL directory (install_oh_my_zsh clones plugins
   # into custom/plugins/) and symlink only the theme file(s) tracked in the
   # repo. Symlinking the whole custom/ dir would destroy cloned plugins on
