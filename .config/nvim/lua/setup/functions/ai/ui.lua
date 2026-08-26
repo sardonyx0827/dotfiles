@@ -54,15 +54,36 @@ local function close_window(win)
   end
 end
 
+-- Call off whatever `opts.start` returned. Returns true when a job was really
+-- stopped, which is what the callers use to decide whether the tab is worth
+-- relabelling "cancelled".
+--
 -- `opts.start` may return either a plain job id (backend.run) or a mutable
--- handle table `{ job = <id> }` (backend.run_with_fallback), whose `.job`
--- field tracks whichever fallback attempt is currently in flight. Resolve
--- either shape to the job id currently worth cancelling.
-local function resolve_job(job)
+-- handle table `{ job = <id>, cancelled = <bool> }` (backend.run_with_fallback),
+-- whose `.job` field tracks whichever fallback attempt is currently in flight.
+--
+-- For the handle, stopping the job is only half of cancelling. jobstop's SIGTERM
+-- reaches run_with_fallback as an ordinary failed attempt ("exit code 143"), and
+-- the chain answered that by starting the NEXT tool -- after the window whose
+-- close triggered this was already gone. Raising `cancelled` FIRST is what tells
+-- the two apart there; without it a cancelled claude quietly turned into a live
+-- gemini request to Google (see backend.run_with_fallback).
+--
+-- Marked even when there is no job id left to stop: between attempts `.job` can
+-- be stale or nil while the chain is still very much alive, and that is exactly
+-- the case that must not advance. A plain job id has nowhere to carry the flag
+-- and needs none -- backend.run starts one process and never chains.
+local function cancel_job(job)
+  local jid = job
   if type(job) == "table" then
-    return job.job
+    job.cancelled = true
+    jid = job.job
   end
-  return job
+  if jid and jid > 0 then
+    pcall(vim.fn.jobstop, jid)
+    return true
+  end
+  return false
 end
 
 -- Copy text to clipboard (and the tmux buffer when running inside tmux).
@@ -268,9 +289,12 @@ function M.run_multi(opts)
     state.closed = true
     pcall(vim.api.nvim_del_augroup_by_id, group)
     for t, job in pairs(state.jobs) do
-      local jid = resolve_job(job)
-      if state.status[t] == "pending" and jid and jid > 0 then
-        pcall(vim.fn.jobstop, jid)
+      -- Only pending tools are called off -- one that already answered has
+      -- nothing left in flight and no chain left to advance. The label still
+      -- follows cancel_job's return rather than the attempt: it reads
+      -- "cancelled" for a job that was really stopped, which is what that tab
+      -- has always meant by the word.
+      if state.status[t] == "pending" and cancel_job(job) then
         state.status[t] = "cancelled"
       end
     end
@@ -539,9 +563,8 @@ function M.open_report(opts)
     if state.closed then return end
     state.closed = true
     pcall(vim.api.nvim_del_augroup_by_id, group)
-    local jid = resolve_job(state.job)
-    if state.status == "pending" and jid and jid > 0 then
-      pcall(vim.fn.jobstop, jid)
+    if state.status == "pending" then
+      cancel_job(state.job)
     end
     close_window(win) -- buffer is bufhidden=wipe, so it goes with the window
   end

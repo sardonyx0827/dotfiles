@@ -479,14 +479,21 @@ end
 --- first success. On success `done` fires with that spec's tool; if every spec
 --- fails it fires with the last error and the last tool tried.
 ---
---- Returns a mutable handle `{ job = <id> }` instead of a plain job id: `.job`
---- is updated to whichever attempt is currently in flight, so a canceller that
---- holds onto the handle (see ui.lua's resolve_job) can still stop a fallback
---- attempt after the first one has already failed -- a plain job id would go
---- stale the moment the fallback starts and jobstop on it would be a no-op.
+--- Returns a mutable handle `{ job = <id>, cancelled = <bool> }` instead of a
+--- plain job id: `.job` is updated to whichever attempt is currently in flight,
+--- so a canceller that holds onto the handle (see ui.lua's cancel_job) can still
+--- stop a fallback attempt after the first one has already failed -- a plain job
+--- id would go stale the moment the fallback starts and jobstop on it would be a
+--- no-op.
+---
+--- `.cancelled` is the other half of that contract and belongs to the canceller:
+--- it says "this request was called off", which jobstop alone cannot express.
+--- The branch below is where it is read; see the comment there for what went
+--- wrong without it.
 --- @param specs table[] list of run specs (see M.run), tried in order
 --- @param done fun(ok: boolean, lines: string[], err: string|nil, tool: string|nil)
---- @return table|nil handle { job: integer|nil } tracking the in-flight attempt
+--- @return table|nil handle { job: integer|nil, cancelled: boolean }
+--- tracking the in-flight attempt
 function M.run_with_fallback(specs, done)
   if not specs or #specs == 0 then
     done(false, {}, "no tools specified", nil)
@@ -512,7 +519,10 @@ function M.run_with_fallback(specs, done)
     done(false, {}, "credential detected in payload; not sent to AI", nil)
     return nil
   end
-  local handle = { job = nil }
+  -- `cancelled` starts false and is only ever raised from outside (ui.lua's
+  -- cancel_job). Defaulting it the other way would turn every ordinary failure
+  -- into a cancellation and kill the fallback this function exists for.
+  local handle = { job = nil, cancelled = false }
   -- Every attempt's reason is kept, not just the last one. Reporting only the
   -- final failure was survivable while gemini was a CLI that usually worked;
   -- it stopped being so once gemini can fail for a reason of its own that has
@@ -529,7 +539,23 @@ function M.run_with_fallback(specs, done)
         return
       end
       failures[#failures + 1] = { tool = spec.tool, err = err or "failed" }
-      if specs[i + 1] then
+      -- A cancelled request is not a failed one, and only the flag can tell
+      -- them apart. Cancelling IS vim.fn.jobstop (ui.lua's close / close_all,
+      -- i.e. the user closing the window), and the stopped job's on_exit lands
+      -- right here reporting SIGTERM as "exit code 143" -- byte for byte what a
+      -- tool killed for any other reason reports, so the exit code decides
+      -- nothing. Read as a failure, it advanced the chain: measured as
+      -- `done ok=false tool=gemini err=claude: exit code 143 | gemini: exit
+      -- code 1`, i.e. the NEXT tool's subprocess started after the window was
+      -- already gone. For gemini that subprocess is scripts/gemini_api.py -- a
+      -- live request to Google, fired by a user action that meant "stop", with
+      -- no window left to show the answer and nothing tracking it to stop.
+      --
+      -- Only the ADVANCE is skipped; the failure is still reported through
+      -- `done` below. A caller is never left waiting for a callback that never
+      -- comes, and both ui.lua close paths set their `closed` flag before they
+      -- cancel, so that report lands in a driver that already ignores it.
+      if specs[i + 1] and not handle.cancelled then
         attempt(i + 1)
         return
       end

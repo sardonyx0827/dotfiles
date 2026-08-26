@@ -63,13 +63,18 @@ class LuaResult:
 CALLBACK = {"__callback": True}
 
 
-def _lua_probe(tmp_path, body):
+def _lua_probe(tmp_path, body, binroot=None):
     """Run `body` in a bare `nvim -l` with the repo's lua tree on package.path.
 
     For invariants that only nvim itself can decide (does this API accept these
     arguments?) rather than ones a returned value can show.
+
+    `binroot` overrides the PATH the probe runs under. The default one cannot
+    execute anything (see make_bin), which is right for every probe that only
+    asks nvim a question; a probe that has to let a job actually RUN passes its
+    own (see make_running_bin) and stays sealed by holding nothing else.
     """
-    binroot = make_bin(tmp_path, "probebin")
+    binroot = binroot or make_bin(tmp_path, "probebin")
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     probe = tmp_path / "probe.lua"
@@ -107,6 +112,45 @@ def make_bin(tmp_path, name, tools=("sh",)):
             assert real, f"{tool} is required by this test but is not installed"
             script.write_text(f'#!/bin/sh\nexec "{real}" "$@"\n', encoding="utf-8")
         script.chmod(0o755)
+    return binroot
+
+
+def make_running_bin(tmp_path, marker, lead="hang"):
+    """A PATH directory whose commands can actually RUN, unlike make_bin's.
+
+    make_bin's `sh` is a no-op on purpose -- those tests must never execute the
+    command they build. The cancellation defect only exists once a real
+    subprocess is in flight and then gets stopped, so here `sh` and `cat` are
+    wrappers around the real binaries and the two tools of the chain are stubs.
+
+    Sealed exactly the same way regardless: this directory is the WHOLE PATH, so
+    no real AI CLI is reachable however the chain behaves, and there is
+    deliberately no python3 -- the gemini transport (scripts/gemini_api.py)
+    could not run even if a future edit put gemini in the chain.
+
+    `lead` is the leading tool's stub. "hang" loops until it is stopped -- a
+    shell loop rather than a bare `sleep`, so SIGTERM is answered promptly and
+    no surviving child keeps the job's pipes open, which is what would otherwise
+    hold on_exit back past any timeout worth writing. "fail" exits non-zero at
+    once. The trailing tool records that it ran by creating `marker`, which is
+    the only way to tell "the chain advanced" apart from "the chain reported a
+    failure".
+    """
+    binroot = tmp_path / "chainbin"
+    binroot.mkdir(parents=True, exist_ok=True)
+    for tool in ("sh", "cat"):
+        real = shutil.which(tool)
+        assert real, f"{tool} is required by this test but is not installed"
+        (binroot / tool).write_text(
+            f'#!/bin/sh\nexec "{real}" "$@"\n', encoding="utf-8"
+        )
+    lead_body = {"hang": "while true; do sleep 0.2; done", "fail": "exit 1"}[lead]
+    (binroot / "claude").write_text(f"#!/bin/sh\n{lead_body}\n", encoding="utf-8")
+    (binroot / "copilot").write_text(
+        f'#!/bin/sh\necho ran > "{marker}"\nexit 1\n', encoding="utf-8"
+    )
+    for entry in binroot.iterdir():
+        entry.chmod(0o755)
     return binroot
 
 
@@ -790,6 +834,178 @@ class TestRunWithFallbackReporting:
         res = self.chain(tmp_path, "no-such-a", "claude")
         assert res.calls == [], "claude reaches jobstart, whose callback is deferred"
         assert res.only is not None, "the handle must track the in-flight attempt"
+
+
+# Drives one fallback chain through a REAL ui driver and reports what happened.
+#
+# __DRIVER__ picks which of ui.lua's two close paths cancels it ("report" ->
+# open_report's `close`, i.e. what `q` and WinClosed call; "multi" ->
+# run_multi's close_all, reached by closing the popup window). __CANCEL__ says
+# whether to cancel at all -- with it false the same probe pins the behaviour
+# the fix must NOT break: a genuine failure still falls back.
+CHAIN_PROBE = r"""
+local backend = require("setup.functions.ai.backend")
+local ui = require("setup.functions.ai.ui")
+
+-- Two "cli" tools, chosen only for what their stubs can do: claude leads and is
+-- the one stopped mid-flight, copilot trails and its stub is what records that
+-- the chain advanced.
+local SPECS = {
+  { tool = "claude", prompt = "I", input = "x" },
+  { tool = "copilot", prompt = "I", input = "x" },
+}
+
+local reported = {}
+local handle
+-- The chain reports through the UI driver's own `done`, exactly as ai/init.lua's
+-- callers wire it; this only tees off the tool name on the way past, so the
+-- driver still sees the callback it would see in production.
+local function track(done)
+  return function(ok, lines, err, tool)
+    reported[#reported + 1] = tostring(tool)
+    done(ok, lines, err)
+  end
+end
+
+local cancel
+if "__DRIVER__" == "report" then
+  local report = ui.open_report({
+    start = function(done)
+      handle = backend.run_with_fallback(SPECS, track(done))
+      return handle
+    end,
+  })
+  cancel = report.close
+else
+  ui.run_multi({
+    mode = "popup",
+    tools = { "claude" },
+    -- nvim_open_win rejects footer_pos without a footer, and run_multi always
+    -- passes footer_pos; every real caller supplies one.
+    footer = " q:cancel ",
+    start = function(_, done)
+      handle = backend.run_with_fallback(SPECS, track(done))
+      return handle
+    end,
+  })
+  -- run_multi opens its popup with enter = true, so it is the current window,
+  -- and closing a window is what fires the WinClosed autocmd close_all hangs
+  -- off. Going through the window rather than calling close_all directly is the
+  -- point: it is the path a user takes.
+  local win = vim.api.nvim_get_current_win()
+  cancel = function() vim.api.nvim_win_close(win, true) end
+end
+
+-- The first attempt has to be genuinely in flight before it can be cancelled.
+local started = vim.wait(10000, function()
+  return handle ~= nil and handle.job ~= nil and handle.job > 0
+end, 20)
+
+if __CANCEL__ then
+  cancel()
+end
+
+-- Wait for a POSITIVE settle signal -- the chain reported to its caller --
+-- rather than sampling the marker after a fixed sleep: "the fallback has not
+-- started yet" and "the fallback never runs" are the same picture to a timer.
+local settled = vim.wait(10000, function() return #reported > 0 end, 20)
+-- ...then a grace window, during which a chain that was still going to advance
+-- would have started its subprocess.
+vim.wait(500)
+
+io.stdout:write(vim.json.encode({
+  started = started,
+  settled = settled,
+  reported = reported,
+}), "\n")
+"""
+
+
+class TestCancellingStopsTheFallbackChain:
+    """A cancelled request must not go on to start the next tool in the chain.
+
+    `attempt`'s failure branch advanced to specs[i + 1] on ANY failure, and a
+    cancellation arrives as one: callers cancel with vim.fn.jobstop (ui.lua's
+    `close` and `close_all`, i.e. closing the window), and the stopped job's
+    on_exit reports SIGTERM as "exit code 143" -- which the chain read as
+    "claude failed, try the next one". Measured: `done ok=false tool=gemini
+    err=claude: exit code 143 | gemini: exit code 1`. The user had closed the
+    window; the next tool's subprocess started anyway and ran to completion, and
+    for gemini that subprocess is scripts/gemini_api.py -- a live request to
+    Google, fired after the cancellation, with no window left to show the answer
+    and nothing tracking it to stop.
+
+    Unlike every other test in this file these need the event loop. The defect
+    lives in a job callback, and `nvim -l` runs those only while something waits
+    (TestRunWithFallbackReporting is built the other way round -- on tools that
+    fail SYNCHRONOUSLY -- for exactly that reason), so these drive real
+    subprocesses under vim.wait. They also cancel the way production does,
+    through the ui driver's own close path rather than by calling jobstop here:
+    the wiring between the two files is half of what is being tested.
+    """
+
+    def probe(self, tmp_path, *, driver="report", cancel=True, lead="hang"):
+        marker = tmp_path / "fallback-ran"
+        out = _lua_probe(
+            tmp_path,
+            CHAIN_PROBE.replace("__DRIVER__", driver).replace(
+                "__CANCEL__", "true" if cancel else "false"
+            ),
+            binroot=make_running_bin(tmp_path, marker, lead),
+        )
+        payload = json.loads([ln for ln in out.splitlines() if ln.startswith("{")][-1])
+        # Both are premises, not results: a probe whose first attempt never
+        # started, or which never heard back at all, cannot say anything about
+        # what the chain did next -- and would otherwise report the absence of
+        # the marker as a pass.
+        assert payload["started"], "the leading attempt never reached jobstart"
+        assert payload["settled"], "the chain never reported back to its caller"
+        payload["fallback_ran"] = marker.exists()
+        return payload
+
+    def test_closing_the_report_window_does_not_start_the_next_tool(self, tmp_path):
+        res = self.probe(tmp_path, driver="report")
+        assert res["reported"] == ["claude"], (
+            "the cancelled chain advanced to the next tool and reported "
+            f"{res['reported']}"
+        )
+        # The corroborating half, and the one that says why this matters: the
+        # tool name shows the chain advanced, the marker shows a real subprocess
+        # ran after the user had closed the window.
+        assert not res["fallback_ran"], (
+            "the next tool's subprocess ran after the request was cancelled"
+        )
+
+    def test_closing_the_multi_window_does_not_start_the_next_tool(self, tmp_path):
+        """The other close path, which cancels every pending tool at once.
+
+        run_multi's close_all is a separate loop over state.jobs; both it and
+        open_report's `close` have to raise the cancel signal, so both are
+        driven here rather than trusting that they share a helper today.
+        """
+        res = self.probe(tmp_path, driver="multi")
+        assert res["reported"] == ["claude"], (
+            "the cancelled chain advanced to the next tool and reported "
+            f"{res['reported']}"
+        )
+        assert not res["fallback_ran"], (
+            "the next tool's subprocess ran after the window was closed"
+        )
+
+    def test_a_genuine_failure_still_falls_back(self, tmp_path):
+        """The invariant the fix must not break -- falling back IS the feature.
+
+        Same probe, nothing cancelled, leading tool failing on its own: the
+        chain has to advance, run the next tool for real, and report under that
+        tool's name. A `cancelled` flag that defaulted to true, or a cancel
+        signal raised on an ordinary failure, would pass the two tests above
+        and fail here.
+        """
+        res = self.probe(tmp_path, cancel=False, lead="fail")
+        assert res["reported"] == ["copilot"], (
+            f"the chain did not fall back; it reported {res['reported']}"
+        )
+        assert res["fallback_ran"], "the next tool never actually ran"
 
 
 def test_the_test_seam_exposes_exactly_what_these_tests_use(tmp_path):
