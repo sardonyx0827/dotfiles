@@ -573,13 +573,118 @@ install_tree_sitter_cli() {
   fi
 }
 
+# Clear the way for a re-clone into a directory an INTERRUPTED `git clone`
+# left behind, and report whether cloning may proceed (0 = go, 1 = skip).
+#
+# 通常の clone 失敗 (URL ミス、DNS 断、ネットワーク無し) は git 自身が後始末を
+# する -- 作ったディレクトリを消してから抜けるので、呼び出し側のガードには何も
+# 残らない。残るのは HARD な中断のときだけ: SIGKILL、OOM kill、fetch 中のスリープ。
+# git clone は最初に .git を書くので、書きかけの .git だけを抱えたディレクトリが
+# その場に残る。そしてその残骸こそが再実行を詰まらせる -- `git clone` は「存在
+# していて空でない」ディレクトリへの書き込みを拒否するからだ。
+#
+# 消すのは "$dir/.git" ただ一つ、しかも find が「$dir の下にはそれしか無い」と
+# 証明したときだけ。ここで扱う 3 つのプラグインはどれも実体のあるファイルを
+# トップレベルに持つので、中身のあるディレクトリは中断された clone ではありえず、
+# こちらが消してよいものでもない -- 5236098 が $ZSH に対して下したのと同じ判断
+# (「すでに中身のあるディレクトリはユーザーのもの」) をそのまま踏襲している。
+# ディレクトリ自体は残す: git clone は「存在する空ディレクトリ」なら受け入れる
+# ので、空にするだけで足りる。
+#
+# 修理できない / する必要がないものはすべて 1 を返す。呼び出し側はこれを「この
+# プラグインは飛ばす」として扱うこと。main() は `set -eo pipefail` の下でこれらを
+# 素で呼ぶので、致命的エラーとして伝播させると run 全体が落ちる。
+reclaim_aborted_clone() {
+  local dir="$1"
+  local label="$2"
+
+  # 何も邪魔していない: 新規インストール、あるいは git が自分で片付けた後。
+  # `-L` も見るのは、壊れた symlink が `-e` を false にするため -- そのまま
+  # clone に進むと git が EEXIST で死ぬ。
+  if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then
+    return 0
+  fi
+
+  # Containment. 以下で消すのは必ず $dir 配下の 1 パスだけで、呼び出し側は
+  # いずれも $HOME 直下のリテラルなプラグインパスを渡している。信用せず表明
+  # しておくことで、将来の呼び出し側が明らかによそ (/etc/... 等) を指した場合に
+  # 気付けるようにする。
+  #
+  # ただしこれは**文字列としての前置チェック**であって、物理パスの検査ではない。
+  # 途中の要素が symlink (例: ~/.tmux がよそへのリンク) だと、この判定は通った
+  # まま rm は物理的に $HOME の外へ着地する。実害が乗らないのは下の 2 つの検査
+  # のおかげで、削除対象は「中身が実ディレクトリの .git ただ一つだけ」に限られる
+  # -- 物理パスで検査したところで同じものを消す。この行に期待してよいのは
+  # 「取り違えに気付く」ところまでで、境界を張っているのは下の検査である。
+  if [ -z "$HOME" ] || [ "${dir#"$HOME"/}" = "$dir" ]; then
+    print_warning "Refusing to reclaim $label: $dir is not under \$HOME"
+    return 1
+  fi
+
+  # symlink はユーザーがそのプラグインを自分の置き場所に向けた印。`-d` は
+  # symlink を「通して」true になるので、無防備な修理はリンク先の中身を空に
+  # してしまう -- プラグインパスの外側を壊す唯一の経路。決して辿らない。
+  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    print_warning "Skipping $label: $dir exists but is not a plain directory; remove it by hand and re-run ./install.sh"
+    return 1
+  fi
+
+  # 手で空にされた、あるいは前回の修理のあと clone 自体が失敗した状態。
+  # git clone は空ディレクトリならそのまま書けるので、消すものは何も無い。
+  if [ -z "$(find "$dir" -mindepth 1 -maxdepth 1)" ]; then
+    return 0
+  fi
+
+  # .git 以外が有るなら中断された clone ではない -- entry point だけを失った
+  # checkout か、ユーザーが自分で置いたファイルか。どちらも自動修理の対象外だが、
+  # 黙って飛ばすのはここで直している不具合そのものなので、必ず声に出す。
+  # .git がディレクトリでない (gitfile / symlink) 場合も同じ扱い: worktree や
+  # submodule のポインタを rm -rf する筋合いは無い。
+  if [ -n "$(find "$dir" -mindepth 1 -maxdepth 1 ! -name '.git')" ] ||
+    [ -L "$dir/.git" ] || [ ! -d "$dir/.git" ]; then
+    print_warning "$label at $dir looks incomplete but is not an interrupted clone; inspect it, remove it by hand, then re-run ./install.sh"
+    return 1
+  fi
+
+  # main() は dry-run でここまで到達しない (パッケージ / ツール導入ブロックごと
+  # 飛ばされる) が、プレビュー実行に晒されうる `rm -rf` をリファクタ一回分の
+  # 距離に置いておく理由も無い。明示的に断る。
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_info "[DRY-RUN] would remove the interrupted clone leftover $dir/.git and re-clone $label"
+    return 1
+  fi
+
+  print_warning "$label was left half-cloned at $dir (interrupted clone); removing $dir/.git and cloning again"
+  # rm の失敗を握り潰さないこと。素の `rm -rf` を最後の文にすると、その終了
+  # ステータスがそのまま関数の戻り値になり、呼び出し側は「このプラグインは
+  # 飛ばす」と読む -- 直前に「消して clone し直す」と表示した後で、黙って
+  # 何もしないまま次へ進む。それは今ここで直している不具合そのもの
+  # (「進捗を報告しながら実際には詰まっている」) の再生産になる。
+  # 実際に起こりうる: sudo 配下で中断された clone や、復元したバックアップが
+  # 残した root 所有・書き込み不可の .git。
+  if ! rm -rf "${dir:?}/.git"; then
+    print_warning "Could not remove $dir/.git; remove it by hand and re-run ./install.sh"
+    return 1
+  fi
+}
+
 # Install tpm (Tmux Plugin Manager) — .tmux.conf declares plugins via @plugin
 # and runs ~/.tmux/plugins/tpm/tpm, but tpm does not bootstrap itself.
 install_tmux_plugins() {
-  if [ -d "$HOME/.tmux/plugins/tpm" ]; then
+  # Test for tpm's ENTRY POINT, not the directory -- 5236098 が $ZSH に対して
+  # oh-my-zsh.sh を見るようにしたのと同じ理由。`-d` は中断された clone が
+  # 残した「.git だけのディレクトリ」にも true を返すので、以降どの実行も
+  # "tpm already installed" と言って再取得せず、.tmux.conf 末尾の
+  # `run '~/.tmux/plugins/tpm/tpm'` は tmux 起動のたびに失敗し続けた。
+  # 手で `rm -rf ~/.tmux/plugins/tpm` する以外に直しようが無かった状態。
+  if [ -f "$HOME/.tmux/plugins/tpm/tpm" ]; then
     print_success "tpm already installed"
     return
   fi
+  # `return 0` であって素の `return` ではない: main() は `set -eo pipefail` の
+  # 下でこれを素で呼ぶので、素の `return` は直前に失敗したテストのステータスを
+  # そのまま返して run 全体を落とす。
+  reclaim_aborted_clone "$HOME/.tmux/plugins/tpm" tpm || return 0
   print_info "Installing tpm..."
   try_install tpm git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
   print_info "Launch tmux and press prefix + I to install the declared plugins."
@@ -820,14 +925,25 @@ install_oh_my_zsh() {
   print_info "Installing zsh plugins..."
 
   # Guarded like the tpm clone: a failed plugin clone must not abort the run.
+  #
+  # どちらのテストもディレクトリではなく ENTRY POINT (.zshrc の plugins=() を
+  # 経由して実際に source されるファイル) を見る。install_tmux_plugins と同じ
+  # 理由で、中断された clone は .git だけを抱えたディレクトリを残し、`-d` は
+  # それを「導入済み」と読んでしまう -- プラグインは二度と再取得されず、以後
+  # 対話シェルは毎回それ無しで起動し続けた。
+  # reclaim_aborted_clone はその残骸だけを (そしてそれだけを) 取り除いて再取得
+  # を通す。断られたときはこのプラグインを飛ばして次へ進む -- ここは早期
+  # return してはいけない。片方の残骸がもう片方の導入を巻き添えにする。
   # zsh-autosuggestions
-  if [ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ]; then
+  if [ ! -f "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ] &&
+    reclaim_aborted_clone "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" zsh-autosuggestions; then
     git clone https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ||
       print_warning "Failed to clone zsh-autosuggestions (continuing)"
   fi
 
   # zsh-syntax-highlighting
-  if [ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ]; then
+  if [ ! -f "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ] &&
+    reclaim_aborted_clone "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" zsh-syntax-highlighting; then
     git clone https://github.com/zsh-users/zsh-syntax-highlighting "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ||
       print_warning "Failed to clone zsh-syntax-highlighting (continuing)"
   fi

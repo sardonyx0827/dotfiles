@@ -1045,11 +1045,45 @@ class TestStrictMode:
         assert "RESULT=pipefail-detected" in res.stdout
 
 
+# Simulates `git clone URL DEST` closely enough for the rerun tests above and
+# below to mean anything. Two behaviours are copied from real git:
+#
+#   1. it REFUSES a DEST that already exists and is not empty -- "fatal:
+#      destination path ... already exists and is not an empty directory",
+#      exit 128. An existing but EMPTY DEST is accepted, which is why
+#      reclaim_aborted_clone only has to empty a directory, never remove it;
+#   2. a successful clone leaves the plugin's own files behind, not merely the
+#      directory. The earlier stub ran `mkdir -p DEST` and nothing else, so
+#      every test that re-ran an installer was asserting against a state no
+#      real clone ever produces -- which is exactly the blind spot that let a
+#      guard keyed on the DIRECTORY look idempotent in tests while wedging on
+#      a real machine.
+#
+# DEST's own basename plus a `.zsh` sibling covers all three clone sites
+# (tpm/tpm, zsh-autosuggestions/zsh-autosuggestions.zsh,
+# zsh-syntax-highlighting/zsh-syntax-highlighting.zsh); the one extra file per
+# site is inert. README.md stands in for "a checkout has top-level files", the
+# property that tells a real checkout apart from an interrupted clone.
+_GIT_CLONE_STUB = r"""
+if [ "$1" = "clone" ]; then
+  dest="${@: -1}"
+  if [ -d "$dest" ] && [ -n "$(find "$dest" -mindepth 1 -maxdepth 1)" ]; then
+    echo "fatal: destination path '$dest' already exists and is not an empty directory." >&2
+    exit 128
+  fi
+  mkdir -p "$dest/.git"
+  name="$(basename "$dest")"
+  : >"$dest/$name"
+  chmod +x "$dest/$name"
+  : >"$dest/$name.zsh"
+  : >"$dest/README.md"
+fi
+"""
+
+
 class TestInstallOhMyZsh:
     def _stub_git_clone(self, shell_env):
-        # Simulate `git clone URL DEST` by creating an empty DEST dir.
-        body = 'if [ "$1" = "clone" ]; then\n  mkdir -p "${@: -1}"\nfi'
-        shell_env.stub("git", body=body)
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
 
     def _mark_omz_installed(self, home):
         """Make install_oh_my_zsh consider Oh My Zsh already present.
@@ -1170,8 +1204,7 @@ class TestOhMyZshFreshInstallOrdering:
     """
 
     def _stub_git_clone(self, shell_env):
-        body = 'if [ "$1" = "clone" ]; then\n  mkdir -p "${@: -1}"\nfi'
-        shell_env.stub("git", body=body)
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
 
     def test_fresh_install_succeeds_and_still_links_the_theme(self, shell_env):
         shell_env.stub("curl", body=_OMZ_OFFICIAL_INSTALLER_STUB)
@@ -1257,8 +1290,7 @@ class TestOhMyZshFetchFailureIsRecoverable:
     """
 
     def _stub_git_clone(self, shell_env):
-        body = 'if [ "$1" = "clone" ]; then\n  mkdir -p "${@: -1}"\nfi'
-        shell_env.stub("git", body=body)
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
 
     def test_failed_fetch_leaves_nothing_behind_so_a_later_run_installs(
         self, shell_env
@@ -1414,6 +1446,256 @@ class TestOhMyZshFetchFailureIsRecoverable:
         assert "[DRY-RUN] would link" in res.stdout
         assert "px-rose-pine.zsh-theme" in res.stdout
         assert not (home / ".oh-my-zsh").exists()
+
+
+class TestInterruptedCloneIsRetried:
+    """A hard-interrupted `git clone` must not wedge every later run.
+
+    install.sh clones three plugins whose guards all tested the TARGET
+    DIRECTORY: tpm, zsh-autosuggestions, zsh-syntax-highlighting. An ordinary
+    clone failure (bad URL, no DNS) is invisible to such a guard, because git
+    removes the directory it created on its way out. A HARD interrupt does
+    not: SIGKILL, an OOM kill, or the laptop suspending mid-fetch leaves the
+    target behind holding nothing but the half-written `.git` that git lays
+    down first.
+
+    From then on `[ -d ... ]` reported "already installed" and the clone was
+    never retried, while `.tmux.conf`'s `run '~/.tmux/plugins/tpm/tpm'` and
+    .zshrc's plugin list kept sourcing files that were never fetched. Only a
+    manual `rm -rf` repaired it -- the same shape commit 5236098 fixed for Oh
+    My Zsh by keying the guard on the ENTRY POINT instead, which was never
+    propagated to these three siblings.
+
+    The load-bearing assertion here is that the entry point EXISTS after the
+    run, not merely that `git clone` was called: a guard-only fix still calls
+    clone, git refuses the non-empty directory (exit 128), and for tpm
+    try_install swallows that into a tidy warning -- leaving the machine just
+    as wedged with a greener-looking log.
+    """
+
+    TPM = ".tmux/plugins/tpm"
+    AUTOSUGGESTIONS = ".oh-my-zsh/custom/plugins/zsh-autosuggestions"
+    SYNTAX = ".oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+
+    def _stub_git_clone(self, shell_env):
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+
+    def _mark_omz_installed(self, home):
+        # The zsh plugin clones sit behind install_oh_my_zsh's own entry-point
+        # guard; short-circuit the download the way a machine that already has
+        # Oh My Zsh would, so these tests cover the plugin clones only.
+        omz = home / ".oh-my-zsh"
+        omz.mkdir(parents=True, exist_ok=True)
+        (omz / "oh-my-zsh.sh").write_text("# stub entry point\n", encoding="utf-8")
+
+    def _interrupted_clone(self, path: Path) -> Path:
+        """The exact on-disk state a SIGKILLed `git clone` leaves behind."""
+        git_dir = path / ".git"
+        (git_dir / "objects").mkdir(parents=True)
+        (git_dir / "config").write_text("[core]\n", encoding="utf-8")
+        assert [e.name for e in path.iterdir()] == [".git"]
+        return path
+
+    def _healthy_checkout(self, path: Path, entry_point: str) -> Path:
+        (path / ".git" / "objects").mkdir(parents=True)
+        (path / entry_point).write_text("# plugin\n", encoding="utf-8")
+        (path / "README.md").write_text("# upstream\n", encoding="utf-8")
+        return path
+
+    def _clone_calls(self, shell_env):
+        return [c for c in shell_env.calls if c.startswith("git clone")]
+
+    # --- the wedge itself ---------------------------------------------------
+
+    def test_interrupted_tpm_clone_is_retried_instead_of_reported_installed(
+        self, shell_env
+    ):
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        (home / self.TPM).mkdir(parents=True)
+        self._interrupted_clone(home / self.TPM)
+
+        res = run_sourced("install_tmux_plugins", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "tpm already installed" not in res.stdout, (
+            "a directory holding only .git was read as an installed tpm"
+        )
+        assert (home / self.TPM / "tpm").is_file(), (
+            "tpm was never re-cloned: .tmux.conf's `run '~/.tmux/plugins/tpm/tpm'` "
+            "stays broken on every tmux start until the directory is removed by hand"
+        )
+        assert len(self._clone_calls(shell_env)) == 1
+
+    @pytest.mark.parametrize(
+        "plugin",
+        ["zsh-autosuggestions", "zsh-syntax-highlighting"],
+    )
+    def test_interrupted_zsh_plugin_clone_is_retried(self, shell_env, plugin):
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        self._mark_omz_installed(home)
+        target = home / ".oh-my-zsh/custom/plugins" / plugin
+        target.mkdir(parents=True)
+        self._interrupted_clone(target)
+
+        res = run_sourced("install_oh_my_zsh", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert (target / f"{plugin}.zsh").is_file(), (
+            f"{plugin} was never re-cloned: every interactive shell keeps "
+            "starting without it"
+        )
+
+    def test_repaired_clone_is_not_repeated_on_the_next_run(self, shell_env):
+        # The repair must land in a state the guard then recognises, or the
+        # fix trades a permanent skip for a permanent re-clone.
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        (home / self.TPM).mkdir(parents=True)
+        self._interrupted_clone(home / self.TPM)
+
+        first = run_sourced("install_tmux_plugins", shell_env.env)
+        assert first.returncode == 0, first.stdout + first.stderr
+        assert len(self._clone_calls(shell_env)) == 1
+
+        second = run_sourced("install_tmux_plugins", shell_env.env)
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert "tpm already installed" in second.stdout
+        assert len(self._clone_calls(shell_env)) == 1
+
+    def test_empty_leftover_directory_needs_no_removal_to_be_cloned_into(
+        self, shell_env
+    ):
+        # `git clone` accepts an existing EMPTY directory, so this case must
+        # reach the clone without deleting anything -- it is also the state a
+        # repair leaves behind when the retry itself then fails.
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        (home / self.TPM).mkdir(parents=True)
+
+        res = run_sourced("install_tmux_plugins", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert (home / self.TPM / "tpm").is_file()
+
+    # --- what the repair must never touch -----------------------------------
+
+    def test_healthy_tpm_checkout_is_skipped_and_left_intact(self, shell_env):
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        (home / self.TPM).mkdir(parents=True)
+        self._healthy_checkout(home / self.TPM, "tpm")
+
+        res = run_sourced("install_tmux_plugins", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "tpm already installed" in res.stdout
+        assert self._clone_calls(shell_env) == []
+        assert (home / self.TPM / ".git").is_dir(), "a healthy checkout was gutted"
+        assert (home / self.TPM / "README.md").is_file()
+
+    @pytest.mark.parametrize(
+        "plugin",
+        ["zsh-autosuggestions", "zsh-syntax-highlighting"],
+    )
+    def test_healthy_zsh_plugin_checkout_is_skipped_and_left_intact(
+        self, shell_env, plugin
+    ):
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        self._mark_omz_installed(home)
+        target = home / ".oh-my-zsh/custom/plugins" / plugin
+        target.mkdir(parents=True)
+        self._healthy_checkout(target, f"{plugin}.zsh")
+
+        res = run_sourced("install_oh_my_zsh", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        # Only this plugin's clone must be skipped -- the sibling plugin is
+        # genuinely absent here and is expected to be cloned.
+        assert [c for c in self._clone_calls(shell_env) if plugin in c] == []
+        assert (target / ".git").is_dir()
+        assert (target / "README.md").is_file()
+
+    def test_populated_but_broken_directory_is_reported_never_deleted(self, shell_env):
+        """Files under the target mean it is not an interrupted clone.
+
+        A checkout that lost only its entry point, or a directory the user
+        put something of their own into, is out of scope for an automatic
+        repair -- 5236098 took the same stance on an already-populated $ZSH.
+        It must still be SAID out loud, because silence is the actual bug
+        being fixed here.
+        """
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        (home / self.TPM).mkdir(parents=True)
+        self._interrupted_clone(home / self.TPM)
+        mine = home / self.TPM / "notes.txt"
+        mine.write_text("mine\n", encoding="utf-8")
+
+        res = run_sourced("install_tmux_plugins", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert mine.read_text(encoding="utf-8") == "mine\n"
+        assert (home / self.TPM / ".git").is_dir()
+        assert "[WARNING]" in res.stdout
+        assert self._clone_calls(shell_env) == []
+
+    def test_symlinked_target_is_not_followed(self, shell_env, tmp_path):
+        # `-d` reports true THROUGH a symlink, so an unguarded repair would
+        # empty whatever is on the far end -- a path the user chose, outside
+        # the plugin directory entirely.
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        elsewhere = tmp_path / "my-own-tpm"
+        elsewhere.mkdir()
+        self._interrupted_clone(elsewhere)
+        (home / ".tmux/plugins").mkdir(parents=True)
+        (home / self.TPM).symlink_to(elsewhere)
+
+        res = run_sourced("install_tmux_plugins", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert (elsewhere / ".git").is_dir(), "the repair reached through a symlink"
+        assert (home / self.TPM).is_symlink()
+        assert "[WARNING]" in res.stdout
+        assert self._clone_calls(shell_env) == []
+
+    def test_a_target_outside_home_is_refused(self, shell_env, tmp_path):
+        # Containment. Every caller passes a literal plugin path under $HOME;
+        # the helper asserts that rather than trusting it, so no future caller
+        # can aim the `rm -rf` at anything outside those directories. Called
+        # directly because no caller can reach this branch today -- which is
+        # the point of pinning it now.
+        outside = tmp_path / "outside-home"
+        outside.mkdir()
+        self._interrupted_clone(outside)
+
+        res = run_sourced(
+            f'rc=0; reclaim_aborted_clone "{outside}" demo || rc=$?; echo "RC=$rc"',
+            shell_env.env,
+        )
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "RC=1" in res.stdout
+        assert "[WARNING]" in res.stdout
+        assert (outside / ".git").is_dir(), "the rm reached outside $HOME"
+
+    def test_dry_run_removes_nothing_and_clones_nothing(self, shell_env):
+        # main() never reaches install_tmux_plugins in dry-run today, but an
+        # `rm -rf` that a single refactor could expose to a preview run is
+        # worth pinning down rather than arguing about.
+        self._stub_git_clone(shell_env)
+        home = shell_env.home
+        (home / self.TPM).mkdir(parents=True)
+        self._interrupted_clone(home / self.TPM)
+
+        res = run_sourced("DRY_RUN=1 install_tmux_plugins", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert (home / self.TPM / ".git").is_dir()
+        assert self._clone_calls(shell_env) == []
 
 
 class TestRegisterClaudeMcpServers:
