@@ -2832,6 +2832,27 @@ class TestSecretScanUnit:
         assert found is True
 
     @pytest.mark.parametrize(
+        "description",
+        [
+            # json.dumps escapes these quotes once -> `password\": \"...`
+            '{"password": "abc12345XYZ"}',
+            # ...and doubles ones that were already escaped -> `password\\\": `.
+            # The raw-command haystack cannot rescue this shape: by construction
+            # the secret is in a field OTHER than `command`, so json.dumps is
+            # the only haystack it appears in. Pinning both depths is the point
+            # -- covering one and not the other leaves the class half-open.
+            '{\\"password\\":\\"abc12345XYZ\\"}',
+        ],
+    )
+    def test_json_escaped_secret_in_non_command_field_is_detected(
+        self, hook_fns, description
+    ):
+        tool_input = {"command": "run it", "description": description}
+        found, label = hook_fns["scan_secrets"]("run it", tool_input)
+        assert found is True, f"missed credential in description: {description}"
+        assert label
+
+    @pytest.mark.parametrize(
         "command",
         [
             # A symbol in the value must not truncate the match to below the
@@ -2866,6 +2887,26 @@ class TestSecretScanUnit:
             'printf \'{"password": "abc12345XYZ"}\' > cfg.json',
             "echo \"{'client_secret': 'Sup3rSecretValue1'}\" > cfg.json",
             'jq -n \'{"api_key": "abcdef1234567890"}\'',
+            # The same JSON literal, but ESCAPED -- the shape a JSON body
+            # unavoidably takes once it is embedded in an outer double-quoted
+            # shell string, which is how `curl -d` is written the vast majority
+            # of the time. 5e74f9f allowed ONE literal quote between the keyword
+            # and its separator, but `\"` is a backslash at that position, so
+            # `[=:]` never matched and the row missed the whole class -- every
+            # keyword alike, not just `password`.
+            'curl -d "{\\"password\\":\\"abc12345XYZ\\"}" https://api.example.com',
+            'curl -d "{\\"api_key\\": \\"abcdef1234567890\\"}" https://api.example.com',
+            'curl -d "{\\"secret\\":\\"Sup3rSecretValue1\\"}" https://api.example.com',
+            'curl -d "{\\"token\\":\\"abcdef0123456789\\"}" https://api.example.com',
+            # URL credentials whose USERNAME is itself an email address. The
+            # username character class excluded `@` on both sides, so the greedy
+            # username match stopped at the embedded `@`, the required `:` never
+            # followed, and the whole string failed to match -- leaking the
+            # password. SMTP-AUTH relay URLs are written this way as a matter of
+            # course (Mailgun / Postmark / generic relays all use the address as
+            # the account name).
+            "smtp://alerts@mycompany.com:hunter2Password123@smtp.example.com:587/",
+            "curl https://bob@corp.com:hunter2Password123@relay.example.com/",
             # No separator at all: the mainstream secret-setting CLIs take the
             # value as a bare positional argument, so neither the `=`/`:`
             # assignment shape nor the `--flag value` shape fires.
@@ -2903,6 +2944,14 @@ class TestSecretScanUnit:
             "git log --grep 'rotate the client secret quarterly'",
             # A variable reference is not a value, in the positional shape too.
             "aws configure set aws_secret_access_key $AWS_SECRET",
+            # Widening the URL-credential username class to admit `@` must not
+            # start flagging ordinary URLs. A `host:port` is the shape that gets
+            # closest -- it clears the `://<user>:` half -- so it is the control
+            # that actually pins the boundary: what stops it is the required
+            # trailing `@`, not the character class.
+            "curl https://example.com:8080/path",
+            "git clone https://github.com:443/a/b.git",
+            "psql postgres://db.internal:5432/appdb",
         ],
     )
     def test_harder_benign_commands_are_not_flagged(self, hook_fns, command):
