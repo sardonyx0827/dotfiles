@@ -208,20 +208,36 @@ class TestASecondDiffDoesNotDisarmTheFirst:
         assert res["user_tab_valid"]
         assert res["target_buf_valid"]
 
-    def test_closing_the_first_diff_tab_still_unwinds_diff_mode(self):
+    def test_closing_the_first_diff_tab_leaves_the_second_diff_intact(self):
         # The documented way out of the first diff, taken while the second is
-        # open. Its TabClosed handler has to survive to run diffoff; with the
-        # shared group it did not, and a window showing the real buffer was left
-        # in diff mode.
+        # open. Unwinding one diff must stop at its own tab.
+        #
+        # This assertion used to read `not any(target_still_in_diff_mode)`, from
+        # back when one diff at a time was the only case that worked. Closing
+        # the first tab destroys BOTH of its windows, so the only window that
+        # list could still be reporting on is the SECOND diff's -- meaning the
+        # old form required the first diff's cleanup to reach across tabs and
+        # switch off a diff that is still live, leaving that tab with its
+        # scratch side diffthis and its target side not: no highlighting on
+        # either. The sweep is now scoped to the closing diff's own tab.
+        #
+        # 862244b's regression (a shared augroup, so the first diff's TabClosed
+        # handler was deleted by the second open and its cleanup never ran) is
+        # still pinned, by `diff_tab_valid` in the sibling test above -- which
+        # that test's own comment calls out as independent of this sweep for
+        # exactly this reason.
         res = scenario("close_first_diff_after_second_open")
         assert not res["close_err"], (
             f"closing the first diff tab raised: {res['close_err']}"
         )
         assert not res["diff_tab_valid"]
         assert res["user_tab_valid"]
-        assert not any(res["target_still_in_diff_mode"]), (
-            "a window showing the target buffer stayed in diff mode after the "
-            "first diff tab closed"
+        assert res["second_diff_tab_valid"], (
+            "closing the first diff tab closed the second diff's tab"
+        )
+        assert res["second_diff_target_in_diff_mode"] is True, (
+            "closing the first diff tab switched off diff mode in the SECOND "
+            "diff's target window, leaving that tab half-diffed"
         )
 
 

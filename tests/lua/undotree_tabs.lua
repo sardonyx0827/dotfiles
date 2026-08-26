@@ -317,6 +317,21 @@ emit({
   target_still_in_diff_mode = diffs,
   second_diff_tab_valid = second_diff_tab ~= nil
     and vim.api.nvim_tabpage_is_valid(second_diff_tab) or false,
+  -- &diff on the SECOND diff's own target window, reported apart from the flat
+  -- list above. Unwinding one diff must not reach into another that is still
+  -- live: its scratch side stays diffthis, so turning its target side off
+  -- leaves that tab half-diffed with no diff highlighting at all.
+  second_diff_target_in_diff_mode = (function()
+    if second_diff_tab == nil or not vim.api.nvim_tabpage_is_valid(second_diff_tab) then
+      return vim.NIL
+    end
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(second_diff_tab)) do
+      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == target then
+        return vim.api.nvim_win_call(win, function() return vim.o.diff end)
+      end
+    end
+    return vim.NIL
+  end)(),
   -- Windows left in the first diff tab. 0 when it closed properly; the strand
   -- this catches leaves exactly one (the scratch window, still in diff mode),
   -- which is what makes a failure message say what actually happened.

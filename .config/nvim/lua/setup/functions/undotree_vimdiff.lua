@@ -225,8 +225,24 @@ function M.open_vimdiff()
     -- OURS and not whatever currently answers to that name.
     pcall(vim.api.nvim_del_augroup_by_id, augroup)
 
-    -- Run diffoff on all windows showing the target buffer
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
+    -- Run diffoff on the windows of THIS diff's tab that show the target
+    -- buffer -- not on every window in the session.
+    --
+    -- `diffthis` は window-local なので、この呼び出しが diff にしたのは自分の
+    -- タブの 2 枚だけ。にもかかわらず nvim_list_wins() で全タブを舐めていたため、
+    -- 同じファイルに 2 つ目の diff が開いていると、1 つ目を閉じた時点で 2 つ目の
+    -- target 側ウィンドウまで diffoff していた。相方の scratch 側は diffthis の
+    -- まま残るので、そのタブは「片側だけ diff」= どちらにも差分色が出ない状態に
+    -- なる。共有 target_buf 上のキーマップ削除を still_needed で守っているのと
+    -- 同じ「他の生きている diff に手を出さない」規則を、こちらにも適用する。
+    --
+    -- タブが既に無い経路 (TabClosed からの後始末) では列挙するものが無い。
+    -- ウィンドウごと消えており、window-local な &diff もそれで消えるので、
+    -- ここで何もしないのが正しい。
+    local wins = vim.api.nvim_tabpage_is_valid(diff_tab)
+      and vim.api.nvim_tabpage_list_wins(diff_tab)
+      or {}
+    for _, win in ipairs(wins) do
       if vim.api.nvim_win_is_valid(win)
          and vim.api.nvim_win_get_buf(win) == target_buf then
         vim.api.nvim_win_call(win, function()
