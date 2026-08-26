@@ -1105,3 +1105,108 @@ class TestDwc:
         args = record.read_text(encoding="utf-8")
         assert "-l 2" in args
         assert "https://example.com" in args
+
+
+@requires_zsh
+class TestMcCli:
+    """.zshrc の mc() cli) は素通し。`claude "$*"` は引数を 1 語に潰していた。
+
+    同じ .zshrc の補完定義が cli を「標準のClaudeコマンドを実行」と説明して
+    いるのに、`"$*"` は全引数を 1 語に連結する。結果 `mc cli mcp list` は
+    `claude "mcp list"` (argc=1) になり、claude CLI はそれをサブコマンドでは
+    なく 1 本のプロンプト文字列として受け取っていた。引数無しの `mc cli` も
+    同様で、空文字列を 1 個渡してしまい対話起動にならない。
+
+    兄弟の translate) / execute) が `"$*"` なのは正しい。あちらは日本語の
+    プロンプト文へ語を埋め込む用途なので、1 語に連結されるのが仕様そのもの。
+    「揃える」つもりで `"$@"` にするとバグを作り込むことになるため、下では
+    cli の修正と同時に兄弟が潰したままであることも固定する。
+    """
+
+    def _run(self, tmp_path, call):
+        bin_dir = tmp_path / "bin"
+        record = tmp_path / "claude-argv"
+        stub_bin(
+            bin_dir,
+            "claude",
+            '{ printf "argc=%s\\n" "$#"; for a; do printf "argv=[%s]\\n" "$a"; done; }'
+            f' >"{record}"',
+        )
+        # HOME must be redirected, and it is not cosmetic. `zsh -c` still reads
+        # ~/.zshenv, and this repo's own ~/.zshenv does
+        # `export PATH="$HOME/.local/bin:$PATH"` -- which lands AHEAD of the
+        # stub dir path_env() prepended. Without this the real `claude` CLI
+        # wins the lookup and every assertion below turns into a live API call
+        # that writes nothing to `record`.
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+        env = {**path_env(bin_dir), "HOME": str(home)}
+
+        # Backstop: resolve `claude` in the very shell the test is about to use
+        # and refuse to run mc() at all unless it is the stub. Reaching the
+        # real CLI is not a test failure this file can tolerate quietly.
+        probe = subprocess.run(
+            ["zsh", "-c", "command -v claude"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        assert probe.stdout.strip() == str(bin_dir / "claude"), (
+            "the claude stub lost the PATH lookup; mc() would have invoked the "
+            f"real CLI: {probe.stdout.strip()!r}"
+        )
+
+        res = subprocess.run(
+            ["zsh", "-c", f"{extract_zsh_function('mc')}\n{call}"],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            env=env,
+            timeout=30,
+        )
+        assert res.returncode == 0, res.stderr
+        assert record.exists(), f"claude was never invoked: {res.stderr}"
+        lines = record.read_text(encoding="utf-8").splitlines()
+        argc = int(lines[0].removeprefix("argc="))
+        argv = [line.removeprefix("argv=[").removesuffix("]") for line in lines[1:]]
+        return argc, argv
+
+    def test_cli_hands_every_word_to_claude_as_its_own_argument(self, tmp_path):
+        argc, argv = self._run(tmp_path, "mc cli mcp list")
+
+        assert (argc, argv) == (2, ["mcp", "list"]), (
+            "cli) is documented as a pass-through, but the words arrived joined "
+            "into one argument, which the claude CLI reads as a prompt string "
+            f"instead of the `mcp list` subcommand: argc={argc} argv={argv}"
+        )
+
+    def test_cli_with_no_arguments_passes_no_arguments(self, tmp_path):
+        argc, argv = self._run(tmp_path, "mc cli")
+
+        assert (argc, argv) == (0, []), (
+            "a bare `mc cli` must start claude interactively; passing one empty "
+            f"string instead makes it a prompt: argc={argc} argv={argv}"
+        )
+
+    def test_cli_keeps_a_quoted_argument_in_one_piece(self, tmp_path):
+        # The caller's own quoting has to survive too: "$*" flattened this to
+        # the single argument `-p do the thing`.
+        argc, argv = self._run(tmp_path, "mc cli -p 'do the thing'")
+
+        assert (argc, argv) == (2, ["-p", "do the thing"])
+
+    def test_translate_still_collapses_its_words_into_one_prompt(self, tmp_path):
+        # NOT a bug: translate) interpolates the words into a Japanese prompt
+        # sentence, so joining them is the whole point. Pinned so nobody
+        # "fixes" it to "$@" for symmetry with cli).
+        argc, argv = self._run(tmp_path, "mc translate hello world")
+
+        assert argc == 4, f"translate) must still pass one -p prompt: {argv}"
+        assert argv[:3] == ["--model", "haiku", "-p"]
+        assert argv[3].endswith("hello world")
+
+    def test_execute_still_collapses_its_words_into_one_prompt(self, tmp_path):
+        argc, argv = self._run(tmp_path, "mc execute do the thing")
+
+        assert (argc, argv) == (4, ["--model", "sonnet", "-p", "do the thing"])
