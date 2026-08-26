@@ -100,6 +100,7 @@ end
 local other_tab
 local second_diff_tab
 local second_call_autocmds
+local first_scratch
 
 -- The user's own :tabclose must not raise. Capture rather than propagate: the
 -- buggy version could surface E937 out of the cascade it set off (its own
@@ -111,6 +112,51 @@ local function close(cmd)
   if not ok then
     close_err = tostring(err)
   end
+end
+
+--- Press the buffer-local `<C-w>q` the module maps on the user's REAL buffer,
+--- standing in `tab` in the window that shows that buffer.
+---
+--- Through feedkeys, i.e. the key the user presses resolved by the mapping that
+--- is actually installed -- not the callback this harness could have looked up
+--- with maparg. Which invocation's callback occupies that one shared
+--- {buf, mode, lhs} slot IS the question these scenarios ask, and looking the
+--- callback up here would answer it on the module's behalf.
+---
+--- Mode "x" so the keys are consumed before this returns; note that an error
+--- raised inside the mapping's callback is swallowed there rather than reaching
+--- `close_err`, so these scenarios are judged on the layout they leave behind.
+local function press_close_in(tab, target_buf)
+  vim.api.nvim_set_current_tabpage(tab)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    if vim.api.nvim_win_get_buf(win) == target_buf then
+      vim.api.nvim_set_current_win(win)
+    end
+  end
+  local ok, err = pcall(vim.api.nvim_feedkeys,
+    vim.api.nvim_replace_termcodes("<C-w>q", true, false, true), "x", false)
+  if not ok then
+    close_err = tostring(err)
+  end
+end
+
+--- Open a SECOND diff on the same target while the first one is still open.
+---
+--- Driven from the user's tab because that is where the undotree panel lives:
+--- find_target_buf() scans the CURRENT tab, and the cursor has to sit on a line
+--- whose first number is a seq that differs from seq_cur (see make_target).
+--- Every caller depends on two diffs being open at once, so failing to get a
+--- tab of its own is reported here rather than surfacing as a puzzling result.
+local function open_second_diff()
+  vim.api.nvim_set_current_tabpage(user_tab)
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  M.open_vimdiff()
+  local tab = vim.api.nvim_get_current_tabpage()
+  if tab == user_tab or tab == diff_tab then
+    emit({ ok = false, err = "the second open_vimdiff did not create its own tab" })
+    os.exit(0)
+  end
+  return tab
 end
 
 if scenario == "close_unrelated_from_user_tab" then
@@ -178,19 +224,12 @@ elseif scenario == "close_first_diff_after_second_open"
   -- undotree panel lives: find_target_buf() scans the CURRENT tab, and the
   -- cursor has to sit on a line whose first number is a seq that differs from
   -- seq_cur (see make_target).
-  local scratch1 = find_scratch(diff_tab, target)
-  if not scratch1 then
+  first_scratch = find_scratch(diff_tab, target)
+  if not first_scratch then
     emit({ ok = false, err = "could not find the first scratch buffer" })
     os.exit(0)
   end
-  vim.api.nvim_set_current_tabpage(user_tab)
-  vim.api.nvim_win_set_cursor(0, { 1, 0 })
-  M.open_vimdiff()
-  second_diff_tab = vim.api.nvim_get_current_tabpage()
-  if second_diff_tab == user_tab or second_diff_tab == diff_tab then
-    emit({ ok = false, err = "the second open_vimdiff did not create its own tab" })
-    os.exit(0)
-  end
+  second_diff_tab = open_second_diff()
   second_call_autocmds = cleanup_autocmd_ids()
 
   if scenario == "close_first_diff_after_second_open" then
@@ -204,8 +243,51 @@ elseif scenario == "close_first_diff_after_second_open"
     -- tab: the wipe takes the scratch window with it and leaves the first diff
     -- tab standing, showing the real buffer still in diff mode.
     vim.api.nvim_set_current_tabpage(user_tab)
-    close("bwipeout! " .. scratch1)
+    close("bwipeout! " .. first_scratch)
   end
+elseif scenario == "close_first_diff_via_target_keymap_after_second_open"
+    or scenario == "close_both_diffs_via_target_keymap" then
+  -- `<C-w>q` pressed on the user's REAL buffer, in the FIRST diff tab, while a
+  -- second diff is open. Nothing before this ever pressed it: the two-diff
+  -- scenarios above leave through :tabclose or :bwipeout, and the mappings on
+  -- old_buf are not at risk because old_buf is a fresh scratch buffer per call.
+  --
+  -- That mapping is set with { buf = target_buf }, and target_buf is the user's
+  -- file buffer -- shared by every invocation. The second open re-registers the
+  -- same {buf, mode, lhs} slot and vim.keymap.set REPLACES what was there
+  -- (measured: one mapping on target_buf after two opens), so the surviving
+  -- callback belonged to the SECOND invocation and closed over ITS diff_tab.
+  -- Pressed in the first diff tab, that tab-identity check failed and the
+  -- handler fell through to the documented fallback, a bare `:quit`: one window
+  -- closed, the tab left standing half-diffed with its augroup and its
+  -- BufWipeout / TabClosed autocmds still armed.
+  first_scratch = find_scratch(diff_tab, target)
+  if not first_scratch then
+    emit({ ok = false, err = "could not find the first scratch buffer" })
+    os.exit(0)
+  end
+  second_diff_tab = open_second_diff()
+  second_call_autocmds = cleanup_autocmd_ids()
+  press_close_in(diff_tab, target)
+
+  if scenario == "close_both_diffs_via_target_keymap" then
+    -- The second diff now leaves the same documented way, which is what pins
+    -- the other half: the mapping lives on a buffer that is STILL hosting a
+    -- live diff, so the first cleanup must not delete it and strand this tab
+    -- with no documented way out. Sleep first, so the press lands in a settled
+    -- layout rather than mid-unwind (the first cleanup's tabclose is deferred
+    -- through vim.schedule).
+    vim.cmd("sleep 100m")
+    press_close_in(second_diff_tab, target)
+  end
+elseif scenario == "target_keymap_outside_a_diff_tab" then
+  -- The documented fallback, which per-diff dispatch must not eat: pressed
+  -- anywhere that is not a diff tab, `<C-w>q` stays an ordinary :quit. The
+  -- user's own tab is split first so there is a window to close without taking
+  -- the tab down with it -- `:quit` in a tab's last window closes the tab.
+  vim.api.nvim_set_current_tabpage(user_tab)
+  vim.cmd("split")
+  press_close_in(user_tab, target)
 else
   emit({ ok = false, err = "unknown scenario: " .. scenario })
   os.exit(0)
@@ -235,6 +317,15 @@ emit({
   target_still_in_diff_mode = diffs,
   second_diff_tab_valid = second_diff_tab ~= nil
     and vim.api.nvim_tabpage_is_valid(second_diff_tab) or false,
+  -- Windows left in the first diff tab. 0 when it closed properly; the strand
+  -- this catches leaves exactly one (the scratch window, still in diff mode),
+  -- which is what makes a failure message say what actually happened.
+  first_diff_win_count = vim.api.nvim_tabpage_is_valid(diff_tab)
+    and #vim.api.nvim_tabpage_list_wins(diff_tab) or 0,
+  first_scratch_valid = first_scratch ~= nil
+    and vim.api.nvim_buf_is_valid(first_scratch) or false,
+  user_tab_win_count = vim.api.nvim_tabpage_is_valid(user_tab)
+    and #vim.api.nvim_tabpage_list_wins(user_tab) or 0,
   first_call_autocmd_count = #first_call_autocmds,
   first_call_autocmds_survived = second_call_autocmds ~= nil
     and (function()

@@ -23,6 +23,18 @@ the tab standing, showing the real buffer still in diff mode, with nothing left
 to close it. Every scenario predating this called open_vimdiff exactly once,
 which is why a green suite never noticed.
 
+A fourth is the same defect class as that third one -- per-invocation state
+colliding on a shared handle -- reached through the keymap instead. The
+`<C-w>q` on the user's real buffer is registered with { buf = target_buf }, and
+target_buf is shared across invocations: a second undo-diff re-registers the
+same {buf, mode, lhs} slot and vim.keymap.set silently REPLACES the first
+mapping. Pressing the documented key in the FIRST diff tab then ran the SECOND
+invocation's callback, whose tab-identity check failed, so it took the
+"not in a diff tab" fallback and issued a bare `:quit` -- closing one window and
+leaving that tab standing, still in diff mode, with its cleanup autocmds armed
+for a diff nobody can reach any more. The mappings on the scratch buffer are not
+affected: that buffer is fresh on every call, so only the shared one collides.
+
 These run the module for real under `nvim -l` (no init.lua, so no plugin
 manager) via tests/lua/undotree_tabs.lua, because the behaviour under test is a
 side effect on other tabs rather than a return value.
@@ -211,3 +223,68 @@ class TestASecondDiffDoesNotDisarmTheFirst:
             "a window showing the target buffer stayed in diff mode after the "
             "first diff tab closed"
         )
+
+
+class TestTheSharedTargetBufferKeymapActsOnTheDiffYouAreIn:
+    """`<C-w>q` on the user's real buffer, with two diffs open on that buffer.
+
+    One buffer-local mapping slot, two live diffs: the second registration wins
+    and the first diff's documented way out ran the wrong invocation's callback.
+    The existing two-diff scenarios leave via :tabclose or :bwipeout, so none of
+    them touches the mapping -- which is why this survived a green suite.
+    """
+
+    def test_pressing_it_in_the_first_diff_tab_closes_that_diff(self):
+        # The defect, stated as the harm: the tab the key was pressed in has to
+        # be the tab that closes, whichever invocation registered the mapping
+        # that is currently installed.
+        res = scenario("close_first_diff_via_target_keymap_after_second_open")
+        assert not res["diff_tab_valid"], (
+            "<C-w>q in the first diff tab did not close it -- it was left "
+            f"standing with {res['first_diff_win_count']} window(s)"
+        )
+        assert not res["first_scratch_valid"], (
+            "the first diff's scratch buffer outlived its tab"
+        )
+        assert res["second_diff_tab_valid"], (
+            "closing the first diff took the second diff's tab with it"
+        )
+        assert res["user_tab_valid"]
+        assert res["target_buf_valid"]
+
+    def test_the_second_diff_can_still_be_closed_the_same_way(self):
+        # The other half, and the reason the cleanup cannot simply delete the
+        # mapping: it lives on a buffer that may still be hosting another live
+        # diff. Deleting it there leaves the second tab with no documented exit
+        # -- <C-w>q would fall back to its builtin meaning and close one window
+        # of a still-diffed tab.
+        res = scenario("close_both_diffs_via_target_keymap")
+        assert not res["diff_tab_valid"], "the first diff tab was left open"
+        assert not res["second_diff_tab_valid"], (
+            "<C-w>q did not close the second diff tab -- the first diff's "
+            "cleanup removed the mapping they share"
+        )
+        assert res["tab_count"] == 1, (
+            f"{res['tab_count']} tabs left; only the user's should remain"
+        )
+        assert res["user_tab_valid"]
+        assert res["target_buf_valid"]
+        assert not any(res["target_still_in_diff_mode"]), (
+            "the target buffer stayed in diff mode after both diffs closed"
+        )
+
+    def test_outside_a_diff_tab_it_is_still_an_ordinary_quit(self):
+        # The documented fallback, which per-diff dispatch must not eat: in the
+        # user's own tab the key closes a window and nothing else. A dispatch
+        # that guessed at "some live diff" instead of "the diff I am in" would
+        # close a diff tab from here.
+        res = scenario("target_keymap_outside_a_diff_tab")
+        assert res["user_tab_valid"], "the fallback :quit took the user's tab"
+        assert res["user_tab_win_count"] == 1, (
+            "the fallback did not close exactly one window "
+            f"({res['user_tab_win_count']} left of 2)"
+        )
+        assert res["diff_tab_valid"], (
+            "pressing <C-w>q outside the diff tab closed the diff tab"
+        )
+        assert res["tab_count"] == 2

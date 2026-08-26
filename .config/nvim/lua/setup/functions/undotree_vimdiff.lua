@@ -7,6 +7,39 @@
 
 local M = {}
 
+-- Live diffs, keyed by the handle of the tab each one owns:
+--   [diff_tab] = { close = <that invocation's cleanup entry point>,
+--                  target = <the user's real buffer it is diffing> }
+--
+-- This exists because the `<C-w>q` mapping on the RIGHT-hand side is registered
+-- with { buf = target_buf }, and target_buf is the user's file buffer -- shared
+-- by every invocation, unlike the scratch buffer on the left. A second undo-diff
+-- on the same file re-registers the same {buf, mode, lhs} slot and
+-- vim.keymap.set REPLACES what was there (measured: exactly one mapping on
+-- target_buf after two opens). The surviving callback used to close over the
+-- SECOND invocation's diff_tab, so pressing the documented key in the FIRST diff
+-- tab failed that tab-identity check and fell through to the bare `:quit`
+-- fallback: one window closed, and the tab was left standing in diff mode with
+-- its augroup and its BufWipeout / TabClosed autocmds still armed for a diff
+-- nobody could reach any more.
+--
+-- Keyed on the tab handle for the same reason 862244b keyed the augroup name on
+-- the buffer handle: handles come from nvim, not from us, and are never reused
+-- within a session -- so an entry means "this exact diff", not "whatever is
+-- currently the second tab". The mapping's callback and this table come from the
+-- same module instance, which is what makes it safe across a re-source
+-- (:Lazy reload, :luafile): a diff opened under the previous module table is
+-- still served by the mapping that closed over THAT table, where its entry
+-- lives.
+--
+-- The honest gap: after a re-source, the NEXT open_vimdiff replaces the shared
+-- mapping with one consulting the new table, and a diff from before the reload
+-- has no entry there -- so its `<C-w>q` falls back to `:quit`. That is exactly
+-- what a shared mapping slot costs and it is no worse than the behaviour this
+-- replaces; the tab is still closeable with :tabclose, and its TabClosed handler
+-- still unwinds the diff.
+local live_diffs = {}
+
 --- Extract the undo seq number from the current line in the undotree buffer.
 --- Supports both compact and legacy parsers of jiaoshijie/undotree.
 ---@return number|nil seq number, or nil if not found
@@ -170,6 +203,18 @@ function M.open_vimdiff()
     if cleaning_up then return end
     cleaning_up = true
 
+    -- Retire this diff from the dispatch table in the same breath as raising
+    -- the re-entrancy guard, before anything below can throw.
+    --
+    -- 下の後始末 (diffoff ループの nvim_win_call、scratch の wipe) は pcall で
+    -- 包まれていない。そこで例外が出るとこの関数は途中で抜け、エントリが
+    -- 残ったままになる。残ると二重に悪い: still_needed が「まだ使っている diff が
+    -- いる」と誤答して共有キーマップをセッション中ずっと消せなくなり、しかも
+    -- 残ったエントリの close は cleaning_up が既に true なので即 return する
+    -- no-op -- つまりそのタブの `<C-w>q` は :quit のフォールバックすら通らず、
+    -- 完全に無反応になる。ここへ置けば、どの経路で抜けても必ず外れる。
+    live_diffs[diff_tab] = nil
+
     -- Remove the augroup first to prevent recursive triggers.
     --
     -- Now that the names are per-invocation this also has to happen for its own
@@ -190,9 +235,24 @@ function M.open_vimdiff()
       end
     end
 
-    -- Remove temporary keymaps from the target buffer
-    pcall(vim.keymap.del, "n", "<C-w>q", { buf = target_buf })
-    pcall(vim.keymap.del, "n", "<C-w><C-q>", { buf = target_buf })
+    -- Remove the temporary keymaps from the target buffer -- but only once no
+    -- other diff on that buffer is still live. They live in one buffer-local
+    -- slot shared by every invocation, so deleting them here while a second
+    -- diff is still open would take away that diff's documented way out and
+    -- leave `<C-w>q` doing its builtin thing (close a window) in a tab that
+    -- needs unwinding. Scanning is fine: this table holds one entry per OPEN
+    -- undo-diff, which is a handful at worst.
+    local still_needed = false
+    for _, live in pairs(live_diffs) do
+      if live.target == target_buf then
+        still_needed = true
+        break
+      end
+    end
+    if not still_needed then
+      pcall(vim.keymap.del, "n", "<C-w>q", { buf = target_buf })
+      pcall(vim.keymap.del, "n", "<C-w><C-q>", { buf = target_buf })
+    end
 
     -- Explicitly wipe the scratch buffer -- unless its own BufWipeout is what
     -- brought us here, in which case it is already being wiped.
@@ -245,6 +305,11 @@ function M.open_vimdiff()
     cleanup_diff(true)
   end
 
+  -- Publish this invocation so the mapping shared on target_buf can reach it
+  -- whichever call registered that mapping last. cleanup_diff removes the entry
+  -- again on all three exit paths, so nothing here outlives its tab.
+  live_diffs[diff_tab] = { close = close_diff_tab, target = target_buf }
+
   -- Left side (scratch buffer): simple mapping
   vim.keymap.set("n", "<C-w>q", close_diff_tab, {
     buf = old_buf, silent = true, noremap = true,
@@ -255,11 +320,22 @@ function M.open_vimdiff()
     desc = "undotree vimdiff: close diff tab",
   })
 
-  -- Right side (real buffer): only act as tabclose when in the diff tab
-  -- (falls back to normal :quit in other tabs)
+  --- Right side (real buffer): act as tabclose when standing in a diff tab, and
+  --- fall back to a normal :quit anywhere else.
+  --
+  -- The diff is looked up by the CURRENT tab rather than compared against this
+  -- invocation's `diff_tab`, and that indirection is the fix: only ONE callback
+  -- can occupy this buffer's mapping slot, so it has to serve whichever diff the
+  -- user is standing in -- including diffs opened before it. Comparing against a
+  -- captured tab made the last registration the only one that worked and sent
+  -- every earlier diff down the `:quit` path (see live_diffs).
+  --
+  -- The fallback is unchanged in every case that used to take it: no entry for
+  -- this tab means no live diff owns it, which is precisely "not in a diff tab".
   local function close_if_in_diff_tab()
-    if vim.api.nvim_get_current_tabpage() == diff_tab then
-      close_diff_tab()
+    local live = live_diffs[vim.api.nvim_get_current_tabpage()]
+    if live then
+      live.close()
     else
       -- Fall back to normal behavior outside the diff tab
       vim.cmd("quit")
