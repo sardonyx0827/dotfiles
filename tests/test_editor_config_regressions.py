@@ -455,3 +455,365 @@ class TestVimGeminiApiShape:
         cmd = _run_vim_script(vim, script, extra_source=source).strip()
         assert "it'\\''s" in cmd, cmd
         assert "it's" not in cmd, cmd
+
+
+# --------------------------------------------------------------------------
+# The accept path, driven end to end: job exit -> the finish callback -> `y` ->
+# the user's own buffer. See the class docstring for why a text-level assertion
+# could not have caught this one.
+# --------------------------------------------------------------------------
+
+# Lines 2-3 are the "selection"; T1/T4/T5 are the bystanders that prove a
+# deletion happened rather than a replacement.
+TARGET_LINES = ["T1", "T2", "T3", "T4", "T5"]
+SELECTION = (2, 3)
+
+
+def _vim_list(items) -> str:
+    """Render a Python string sequence as a Vimscript single-quoted list literal."""
+    return "[" + ", ".join("'" + s.replace("'", "''") + "'" for s in items) + "]"
+
+
+def _probe_epilogue(accept: str | None) -> str:
+    """Press the accept key (when there is one) and record the user's buffer after."""
+    press = (
+        f"""
+let s:p_msg = ''
+try
+  let s:p_msg = execute('call {accept}()')
+catch
+  let s:p_msg = v:exception
+endtry
+call add(g:R, 'MESSAGE=' . substitute(s:p_msg, '[\\r\\n]\\+', ' ', 'g'))
+"""
+        if accept
+        else ""
+    )
+    return (
+        press
+        + """
+call add(g:R, 'TARGET_AFTER=' . string(getbufline(s:p_target, 1, '$')))
+"""
+    )
+
+
+def _single_scenario(
+    *,
+    tool: str = "claude",
+    output=("R1", "R2"),
+    finish: str = "s:AI_SingleFinish",
+    exit_status: int = 0,
+    vanish: str = "resp",
+    accept: str = "s:AI_SingleAccept",
+) -> str:
+    """Vim source driving one single-mode accept, from job exit to the keypress.
+
+    `vanish` names the window the user closes with a plain `<C-w>c` before the
+    job returns -- "resp", "orig", or "" for the healthy control. Both buffers
+    are `bufhidden=wipe`, so closing either takes its buffer with it while the
+    state dict keeps the now-dangling buffer number.
+    """
+    close = {
+        "resp": "call win_gotoid(s:p_resp_win)\nclose\ncall win_gotoid(s:p_orig_win)\n",
+        "orig": "call win_gotoid(s:p_orig_win)\nclose\ncall win_gotoid(s:p_resp_win)\n",
+        "": "call win_gotoid(s:p_orig_win)\n",
+    }[vanish]
+    return f"""
+call setline(1, {_vim_list(TARGET_LINES)})
+let s:p_target = bufnr('%')
+
+" The diff tab exactly as s:AI_RunJob builds it: an Original window holding the
+" selection, a response split, and b:ai_state (plus the maps) on both.
+tabnew
+setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted
+call setline(1, ['T2', 'T3'])
+let s:p_orig_buf = bufnr('%')
+let s:p_orig_win = win_getid()
+rightbelow vnew
+setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted
+call setline(1, ['[{tool}: waiting for response...]'])
+setlocal nomodifiable
+let s:p_resp_buf = bufnr('%')
+let s:p_resp_win = win_getid()
+let s:p_state = {{
+      \\ 'mode': 'single', 'tool': '{tool}',
+      \\ 'target_buf': s:p_target, 'start': {SELECTION[0]}, 'end': {SELECTION[1]},
+      \\ 'changedtick': getbufvar(s:p_target, 'changedtick'),
+      \\ 'orig_buf': s:p_orig_buf, 'orig_win': s:p_orig_win,
+      \\ 'resp_buf': s:p_resp_buf, 'resp_win': s:p_resp_win,
+      \\ 'status': 'pending', 'output': {_vim_list(output)}, 'errout': [],
+      \\ 'closed': 0, 'tmpfile': '/nonexistent/ai-probe-tmpfile',
+      \\ }}
+call setbufvar(s:p_orig_buf, 'ai_state', s:p_state)
+call setbufvar(s:p_resp_buf, 'ai_state', s:p_state)
+
+{close}
+call add(g:R, 'RESP_EXISTS=' . bufexists(s:p_resp_buf))
+" The plugin's own `q` sets this; an ordinary window close cannot, which is why
+" the `if l:s.closed | return` guard in every finish callback does not fire.
+call add(g:R, 'CLOSED_FLAG=' . s:p_state.closed)
+
+" The real callback runs from timer_start, where a throw is swallowed and the
+" tab is left standing; try/catch models that rather than aborting the scenario.
+let s:p_thrown = ''
+try
+  call {finish}(s:p_state, {exit_status}, 0)
+catch
+  let s:p_thrown = v:exception
+endtry
+call add(g:R, 'FINISH_THREW=' . s:p_thrown)
+call add(g:R, 'STATUS=' . s:p_state.status)
+{_probe_epilogue(accept)}"""
+
+
+def _all_scenario(
+    *,
+    output=("R1", "R2"),
+    vanish: str = "active",
+    finish_idx: int = 1,
+    accept: str | None = "s:AI_AllAccept",
+) -> str:
+    """The same drive for `all` mode, whose response buffers are bufhidden=hide.
+
+    A plain window close therefore leaves them alive; it takes an explicit
+    `:bwipeout` (or `:bd!`) to reach the same dangling-number state.
+
+    `vanish` picks which of the two tabs the user destroys: "active" (the one on
+    screen -- Vim closes the response window along with it, since every buffer
+    here is `nobuflisted` and none is eligible to take its place), "inactive"
+    (the window survives, so the tab list stays observable), or "" for the
+    healthy control.
+    """
+    kill = {
+        "active": "execute 'bwipeout! ' . s:p_buf1\n",
+        "inactive": "execute 'bwipeout! ' . s:p_buf2\n",
+        "": "",
+    }[vanish]
+    wiped = {"active": "s:p_buf1", "inactive": "s:p_buf2", "": "s:p_buf1"}[vanish]
+    # The reply belongs to whichever job is being finished; the other tab is
+    # left with nothing, which is a plain 'failed' and not what is under test.
+    outs = {i: _vim_list(output) if i == finish_idx else "[]" for i in (1, 2)}
+    return f"""
+call setline(1, {_vim_list(TARGET_LINES)})
+let s:p_target = bufnr('%')
+
+tabnew
+setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted
+call setline(1, ['T2', 'T3'])
+let s:p_orig_buf = bufnr('%')
+let s:p_orig_win = win_getid()
+rightbelow vnew
+let s:p_resp_win = win_getid()
+setlocal buftype=nofile bufhidden=hide noswapfile nobuflisted
+call setline(1, ['[claude: waiting for response...]'])
+setlocal nomodifiable
+let s:p_buf1 = bufnr('%')
+enew
+setlocal buftype=nofile bufhidden=hide noswapfile nobuflisted
+call setline(1, ['[codex: waiting for response...]'])
+setlocal nomodifiable
+let s:p_buf2 = bufnr('%')
+execute 'buffer ' . s:p_buf1
+
+let s:p_state = {{
+      \\ 'mode': 'all', 'tools': ['claude', 'codex'],
+      \\ 'target_buf': s:p_target, 'start': {SELECTION[0]}, 'end': {SELECTION[1]},
+      \\ 'changedtick': getbufvar(s:p_target, 'changedtick'),
+      \\ 'orig_buf': s:p_orig_buf, 'orig_win': s:p_orig_win,
+      \\ 'resp_win': s:p_resp_win,
+      \\ 'bufs': {{1: s:p_buf1, 2: s:p_buf2}},
+      \\ 'status': {{1: 'pending', 2: 'pending'}},
+      \\ 'output': {{1: {outs[1]}, 2: {outs[2]}}},
+      \\ 'errout': {{1: [], 2: []}}, 'jobs': {{}},
+      \\ 'active': 1, 'pending': 2, 'closed': 0,
+      \\ 'tmpfile': '/nonexistent/ai-probe-tmpfile',
+      \\ }}
+call setbufvar(s:p_orig_buf, 'ai_state', s:p_state)
+call setbufvar(s:p_buf1, 'ai_state', s:p_state)
+call setbufvar(s:p_buf2, 'ai_state', s:p_state)
+
+{kill}call win_gotoid(s:p_orig_win)
+call add(g:R, 'RESP_EXISTS=' . bufexists({wiped}))
+call add(g:R, 'CLOSED_FLAG=' . s:p_state.closed)
+
+let s:p_thrown = ''
+try
+  call s:AI_AllFinish(s:p_state, {finish_idx}, 0, 0)
+catch
+  let s:p_thrown = v:exception
+endtry
+call add(g:R, 'FINISH_THREW=' . s:p_thrown)
+call add(g:R, 'STATUS=' . s:p_state.status[{finish_idx}])
+" The tab list s:AI_AllStatus paints. Empty when the response window died with
+" the buffer inside it, which is what happens for vanish="active".
+call add(g:R, 'TABLINE=' . getwinvar(s:p_resp_win, '&statusline'))
+{_probe_epilogue(accept)}"""
+
+
+def _run_ai_scenario(vim: str, body: str) -> dict:
+    """Run one scenario against a real Vim and return its `KEY=value` probe lines."""
+    script = "let g:R = []\n" + body + "\ncall writefile(g:R, $PROBE_OUT)\nqa!\n"
+    raw = _run_vim_script(
+        vim, script, extra_source=VIM_AI_RC.read_text(encoding="utf-8")
+    )
+    got = {}
+    for line in raw.splitlines():
+        key, _, value = line.partition("=")
+        got[key] = value
+    assert "TARGET_AFTER" in got, f"scenario did not reach the end: {raw!r}"
+    return got
+
+
+UNTOUCHED = str(TARGET_LINES)
+
+
+class TestAcceptNeverDeletesTheSelection:
+    """`y` must never hand the apply path a buffer that is no longer there.
+
+    The response buffer is opened `bufhidden=wipe` (single/ollama) or
+    `bufhidden=hide` (all), so closing the split with an ordinary `<C-w>c`,
+    `:close` or `:q` -- rather than the plugin's own `q`, the only thing that
+    sets `closed` -- destroys the buffer while the state dict keeps its number.
+    Every write to that number then returns 1 (failure) and says nothing: no
+    exception, no message, and `setbufvar` will not even resurrect it.
+
+    Each finish callback wrote `status = 'done'` BEFORE rendering, so the render
+    no-oped and the tab still claimed success. `y` gates on `status ==# 'done'`
+    and nothing re-validates the buffer, so `getbufline()` on the dead number
+    returned `[]`, `s:AI_Apply` checked only `bufexists(target)` and
+    `changedtick`, and `s:AI_SetLines` took its `l:new < l:old` branch --
+    `deletebufline(target, start, end)`. The user's selected lines were deleted
+    with no replacement, and the command line said 'Selection replaced.'
+
+    Driven through a real Vim because not one step of that chain is visible in
+    the source text: it is entirely about which of two writes happens first and
+    what a silent return code means. This is the same ordering defect fb3fc08
+    fixed on the Neovim side (status written before the buffer write was known
+    to have landed); the two are independent ports and this one was missed.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        binary = _real_vim()
+        if binary is None:
+            pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+        return binary
+
+    # ---- single mode ----------------------------------------------------
+    def test_a_closed_response_split_does_not_delete_the_selection(self, vim):
+        """The whole point: the user loses a window, never their text."""
+        got = _run_ai_scenario(vim, _single_scenario())
+        assert got["RESP_EXISTS"] == "0", "the scenario did not wipe the buffer"
+        assert got["CLOSED_FLAG"] == "0", "an ordinary close must not set `closed`"
+        assert got["TARGET_AFTER"] == UNTOUCHED, (
+            "the selected lines were deleted with nothing put in their place"
+        )
+
+    def test_a_closed_response_split_is_not_reported_as_done(self, vim):
+        """Asserting on the buffer alone would let the same hole reopen.
+
+        `status` is what every accept path consults, so a 'done' written over a
+        render that never landed is the defect itself -- the deletion is only
+        its most expensive symptom.
+        """
+        got = _run_ai_scenario(vim, _single_scenario())
+        assert got["STATUS"] != "done", got
+
+    def test_an_empty_reply_stays_distinguishable_from_a_vanished_buffer(self, vim):
+        """Both refuse to apply; they must not refuse for the same stated reason.
+
+        A tool that ran fine and printed nothing is a failure of the tool. A
+        response window the user closed is not a failure at all. Collapsing the
+        two -- which any bare non-empty guard in s:AI_Apply would do -- leaves
+        the reader of the status line unable to tell a broken tool from their
+        own keypress.
+        """
+        vanished = _run_ai_scenario(vim, _single_scenario())
+        empty = _run_ai_scenario(vim, _single_scenario(output=(), vanish=""))
+        assert empty["STATUS"] == "failed", empty
+        assert vanished["STATUS"] != empty["STATUS"], (vanished, empty)
+        assert empty["TARGET_AFTER"] == UNTOUCHED, empty
+
+    def test_a_healthy_single_response_is_still_applied(self, vim):
+        """The regression guard. A fix that never writes 'done' passes everything
+        above by breaking the feature outright."""
+        got = _run_ai_scenario(vim, _single_scenario(vanish=""))
+        assert got["FINISH_THREW"] == "", got
+        assert got["STATUS"] == "done", got
+        assert got["TARGET_AFTER"] == str(["T1", "R1", "R2", "T4", "T5"]), got
+
+    def test_the_merged_accept_cannot_delete_the_selection_either(self, vim):
+        """`Y` reads orig_buf, which is `bufhidden=wipe` for the same reasons.
+
+        It has no status gate at all -- it hands whatever `getbufline` returns
+        straight to s:AI_Apply -- so the guard that covers it has to live in
+        s:AI_Apply, the one place all four accept paths pass through.
+        """
+        got = _run_ai_scenario(
+            vim, _single_scenario(vanish="orig", accept="s:AI_SingleAcceptMerged")
+        )
+        assert got["TARGET_AFTER"] == UNTOUCHED, got
+
+    # ---- ollama (shares the single-mode UI, accept and status machinery) --
+    def test_a_wiped_ollama_response_does_not_delete_the_selection(self, vim):
+        got = _run_ai_scenario(
+            vim,
+            _single_scenario(
+                tool="gemma",
+                output=('{"response": "R1\\nR2"}',),
+                finish="s:AI_OllamaFinish",
+            ),
+        )
+        assert got["STATUS"] != "done", got
+        assert got["TARGET_AFTER"] == UNTOUCHED, got
+
+    def test_a_healthy_ollama_response_is_still_applied(self, vim):
+        got = _run_ai_scenario(
+            vim,
+            _single_scenario(
+                tool="gemma",
+                output=('{"response": "R1\\nR2"}',),
+                finish="s:AI_OllamaFinish",
+                vanish="",
+            ),
+        )
+        assert got["STATUS"] == "done", got
+        assert got["TARGET_AFTER"] == str(["T1", "R1", "R2", "T4", "T5"]), got
+
+    # ---- all mode --------------------------------------------------------
+    def test_a_wiped_all_mode_response_does_not_delete_the_selection(self, vim):
+        got = _run_ai_scenario(vim, _all_scenario())
+        assert got["RESP_EXISTS"] == "0", "the scenario did not wipe the buffer"
+        assert got["STATUS"] != "done", got
+        assert got["TARGET_AFTER"] == UNTOUCHED, got
+
+    def test_a_wiped_all_mode_tab_is_not_painted_like_a_finished_one(self, vim):
+        """all mode is the only place the mislabel is actually on screen.
+
+        Wipe a tab that is NOT the one being displayed and the response window
+        survives, so s:AI_AllStatus keeps painting the tab list. A status it has
+        no marker for renders character-for-character like a finished tab, which
+        is how the user is invited to press `y` on it in the first place.
+
+        Compared against the healthy control rather than matched against a
+        marker string, so this pins that the two are TOLD APART and not the
+        particular word chosen to do it.
+        """
+        wiped = _run_ai_scenario(
+            vim, _all_scenario(vanish="inactive", finish_idx=2, accept=None)
+        )
+        healthy = _run_ai_scenario(
+            vim, _all_scenario(vanish="", finish_idx=2, accept=None)
+        )
+        assert wiped["RESP_EXISTS"] == "0", wiped
+        assert healthy["TABLINE"] != "", "the response window died; nothing was painted"
+        assert wiped["TABLINE"] != healthy["TABLINE"], (
+            f"a tab whose buffer is gone is painted exactly like a finished one: "
+            f"{wiped['TABLINE']!r}"
+        )
+
+    def test_a_healthy_all_mode_response_is_still_applied(self, vim):
+        got = _run_ai_scenario(vim, _all_scenario(vanish=""))
+        assert got["FINISH_THREW"] == "", got
+        assert got["STATUS"] == "done", got
+        assert got["TARGET_AFTER"] == str(["T1", "R1", "R2", "T4", "T5"]), got

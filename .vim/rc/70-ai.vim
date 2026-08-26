@@ -213,10 +213,32 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     endif
   endfunction
 
-  " Overwrite the whole buffer with a:lines.
+  " Overwrite the whole buffer with a:lines. Returns 1 when the lines actually
+  " landed in a:buf, and 0 when nothing was written.
+  "
+  " 戻り値を返すのは、ここでの書き込み失敗が完全に無音だから。応答バッファは
+  " bufhidden=wipe (single/ollama) / hide (all) で開くので、プラグインの `q` では
+  " なく素の <C-w>c・:close・:bwipeout でウィンドウを閉じられると、状態辞書には
+  " 消えたバッファ番号だけが残る (`closed` は立たないままなので各 Finish 冒頭の
+  " `if l:s.closed | return` も効かない)。その番号への deletebufline / setbufline
+  " は例外もメッセージも出さず「1 (失敗)」を返すだけで、直前の setbufvar すら
+  " 消えたバッファを復活させない。呼び出し側が戻り値を見ない限り、描画が一行も
+  " 入らなかったことを知る手段がこの経路には存在しない。
+  "
+  " catch が広いのは、'modifiable' が落ちていれば E21 が投げられるため。しかも
+  " この関数は timer_start 経由のコールバックから呼ばれ、そこでの例外は握り潰され
+  " てタブだけが残る。catch して 0 を返すことが、「見えない失敗」を呼び出し側の
+  " status という「見える失敗」に変える唯一の経路になる。nvim 側の同じ順序バグ
+  " (fb3fc08, ai/ui.lua) は pcall で同じことをしている。
   function! s:AI_SetBufAll(buf, lines) abort
-    call deletebufline(a:buf, 1, '$')
-    call setbufline(a:buf, 1, a:lines)
+    try
+      if deletebufline(a:buf, 1, '$') != 0
+        return 0
+      endif
+      return setbufline(a:buf, 1, a:lines) == 0
+    catch
+      return 0
+    endtry
   endfunction
 
   " Build the shell command for one tool. Every tool but copilot reads the
@@ -385,6 +407,21 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:start = a:state.start
     let l:end = a:state.end
     call s:AI_Close(a:state)
+    " 空リストは「AI が空を返した」ではなく「読み出し元のバッファがもう読めない」
+    " ことの印。生きているバッファは必ず 1 行以上を持ち、全消ししても [''] が返る
+    " ので、getbufline() が [] を返すのは wipe 済みか未ロードのバッファだけ。
+    " つまりこの門は正当な「選択範囲を空で置換 (= 削除)」を塞がない。
+    " 素通しすると s:AI_SetLines が l:new < l:old の枝に入り、置換のつもりで
+    " 選択範囲を削除する。y は status で止まるようになったが、Y
+    " (s:AI_SingleAcceptMerged / s:AI_AllAcceptMerged) は status を一切見ずに
+    " orig_buf を読み、その orig_buf も bufhidden=wipe なので同じ穴を持つ。
+    " 四つの accept 経路すべてが通るのはここだけなので、最後の砦はここに置く。
+    if empty(a:lines)
+      echohl ErrorMsg
+      echom 'AI response buffer is no longer readable; selection left untouched.'
+      echohl None
+      return
+    endif
     if !bufexists(l:target)
       echohl ErrorMsg | echom 'Target buffer no longer valid.' | echohl None
       return
@@ -405,8 +442,12 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " ---- single-tool mode ---------------------------------------------------
   function! s:AI_SingleStatus(state) abort
     let l:st = a:state.status
+    " 'lost' に印が要るのは、この三項の最後の枝 ('') が 'done' と同じ見た目に
+    " なるため。印を足さないと「バッファが消えたので何も出せなかった」タブが
+    " 「完了した」タブと一字も違わず並び、ユーザーはそこで y を押しに行く。
     let l:m = l:st ==# 'pending' ? ' (loading)'
           \ : l:st ==# 'failed' ? ' (failed)'
+          \ : l:st ==# 'lost' ? ' (lost)'
           \ : l:st ==# 'cancelled' ? ' (cancelled)' : ''
     call setwinvar(a:state.orig_win, '&statusline', ' Original ')
     call setwinvar(a:state.resp_win, '&statusline',
@@ -417,6 +458,16 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:s = b:ai_state
     if l:s.status ==# 'pending'
       echohl WarningMsg | echom l:s.tool . ' response is still loading.' | echohl None
+      return
+    endif
+    " 'lost' を 'failed' と別に告げるのは、原因がまるで違うから。'failed' は
+    " ツール側の失敗だが、'lost' はユーザー自身が応答ウィンドウを閉じただけで、
+    " 何も壊れていない。同じ「not available」に畳むと、読み手は壊れたツールと
+    " 自分のキー操作を区別できない。
+    if l:s.status ==# 'lost'
+      echohl WarningMsg
+      echom l:s.tool . ' response was lost: its buffer was closed before the reply arrived.'
+      echohl None
       return
     endif
     if l:s.status !=# 'done'
@@ -445,8 +496,18 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       let l:out = s:AI_StripCodeFences(s:AI_TrimOutput(l:s.output))
       call setbufvar(l:s.resp_buf, '&modifiable', 1)
       if a:status == 0 && len(l:out) > 0
-        let l:s.status = 'done'
-        call s:AI_SetBufAll(l:s.resp_buf, l:out)
+        " status は y (s:AI_SingleAccept) が読む唯一の値で、'done' だけが
+        " 「バッファの中身」についての主張になっている。だから 'done' は描画が
+        " 実際に入ったことを確かめてからでなければ書けない。先に 'done' を立てて
+        " いた頃は、応答ウィンドウを素の <C-w>c で閉じられると描画が無音で no-op
+        " したうえでタブが成功を名乗り、y は status しか見ないので
+        " getbufline() の返す [] がそのまま s:AI_Apply に渡って、s:AI_SetLines が
+        " 「置換」ではなく「削除」の枝 (l:new < l:old) を通り、ユーザーの選択範囲を
+        " 何も入れずに消していた。
+        " 'failed' 側を同じように守らないのは意図的: 'failed' は中身について何も
+        " 主張していないし、y は元から拒否するので、書き込みが no-op しても損は
+        " ない。証明が要るのは 'done' だけ。
+        let l:s.status = s:AI_SetBufAll(l:s.resp_buf, l:out) ? 'done' : 'lost'
       else
         let l:s.status = 'failed'
         call s:AI_SetBufAll(l:s.resp_buf,
@@ -530,8 +591,11 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:i = 1
     for l:t in a:state.tools
       let l:st = a:state.status[l:i]
+      " 'lost' の印については s:AI_SingleStatus のコメントを参照。all モードは
+      " 応答ウィンドウが生き残ることがあるぶん、この取り違えが実際に画面へ出る。
       let l:m = l:st ==# 'pending' ? ' (loading)'
             \ : l:st ==# 'failed' ? ' (failed)'
+            \ : l:st ==# 'lost' ? ' (lost)'
             \ : l:st ==# 'cancelled' ? ' (cancelled)' : ''
       let l:label = l:t . l:m
       if l:i == a:state.active
@@ -582,6 +646,14 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       echohl WarningMsg | echom l:s.tools[l:i - 1] . ' response is still loading.' | echohl None
       return
     endif
+    " 'lost' を別扱いする理由は s:AI_SingleAccept のコメントを参照。
+    if l:s.status[l:i] ==# 'lost'
+      echohl WarningMsg
+      echom l:s.tools[l:i - 1]
+            \ . ' response was lost: its buffer was closed before the reply arrived.'
+      echohl None
+      return
+    endif
     if l:s.status[l:i] !=# 'done'
       echohl WarningMsg | echom l:s.tools[l:i - 1] . ' response is not available.' | echohl None
       return
@@ -614,8 +686,10 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:out = s:AI_StripCodeFences(s:AI_TrimOutput(l:s.output[a:idx]))
     call setbufvar(l:buf, '&modifiable', 1)
     if a:status == 0 && len(l:out) > 0
-      let l:s.status[a:idx] = 'done'
-      call s:AI_SetBufAll(l:buf, l:out)
+      " s:AI_SingleFinish と同じ順序・同じ理由 (詳細はあちらのコメント)。この側の
+      " バッファは bufhidden=hide なので素のウィンドウ閉じでは消えないが、
+      " :bwipeout / :bd! なら同じ宙ぶらりんの番号になり、`y` が辿る先も同じ。
+      let l:s.status[a:idx] = s:AI_SetBufAll(l:buf, l:out) ? 'done' : 'lost'
     else
       let l:s.status[a:idx] = 'failed'
       call s:AI_SetBufAll(l:buf,
@@ -761,8 +835,10 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       call setbufvar(l:s.resp_buf, '&modifiable', 1)
       if a:status == 0 && len(l:result) > 0
             \ && !(len(l:result) == 1 && l:result[0] ==# '')
-        let l:s.status = 'done'
-        call s:AI_SetBufAll(l:s.resp_buf, l:result)
+        " s:AI_SingleFinish と同じ順序・同じ理由 (詳細はあちらのコメント)。この
+        " 経路は single モードの UI・accept・status をそのまま使い回すので、
+        " 応答バッファが消えたときの穴も同一だった。
+        let l:s.status = s:AI_SetBufAll(l:s.resp_buf, l:result) ? 'done' : 'lost'
       else
         let l:s.status = 'failed'
         let l:msg = s:AI_OllamaFailureReason(
