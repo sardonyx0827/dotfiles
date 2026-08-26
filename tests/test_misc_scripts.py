@@ -172,15 +172,157 @@ class TestTmuxLoggingBind:
         )
 
 
+class TestTmuxSendToAllExceptNvimBind:
+    """`.tmux.conf` の `bind S` は、打ち込んだ文字列をシェル語に埋め込まない。
+
+    旧実装は `run-shell "~/.tmux/...sh '%%'"` だった。tmux の `%%` は
+    「打った文字列をそのまま貼り付ける」だけの置換で、貼り付け先がシングル
+    クォートの内側だったため二つ壊れていた:
+
+    1. `git commit -m 'wip'` と打つとユーザのクォートが黙って剥がれ、
+       各ペインには `git commit -m wip` が別々の語として届く。
+    2. `a'; echo INJECTED; '` と打つとシングルクォートが途中で閉じ、
+       `echo INJECTED` が tmux サーバのシェルで走る。自分で自分を撃つ形
+       とはいえ、正真正銘のコマンドインジェクション。
+
+    修正後はシェル語への埋め込みを一切やめ、tmux のユーザオプション
+    (`@send_to_all_except_nvim`) を伝言板に使う。`run-shell` に渡る文字列は
+    定数になり、打った文字列は tmux のパーサ内だけで完結する。
+
+    `%%` ではなく `%%%` でなければならない。`%%%` は貼り付ける文字列中の
+    `"` `\\` `$` `;` `~` をエスケープする版で、これを `%%` に落とすと今度は
+    tmux のパース層でインジェクションが復活する: `x" ; kill-server ; set -g @y "`
+    と打てば `set-option` の文字列を抜けて tmux が `kill-server` を実行する。
+
+    テキストレベルで検査する理由は TestTmuxLoggingBind と同じ。実際の bind を
+    動かすには生きた tmux ペインが要り、設定ファイルから取り出した文字列を
+    実行するのは本リポジトリの bash-review フックも bandit も (正しく) 拒む。
+    """
+
+    def _bind_line(self) -> str:
+        conf = (REPO_ROOT / ".tmux.conf").read_text(encoding="utf-8")
+        binds = [line for line in conf.splitlines() if line.startswith("bind S ")]
+        assert binds, "the `bind S` send-to-all-panes bind is gone"
+        (line,) = binds
+        assert "command-prompt" in line, (
+            f"`bind S` no longer prompts for the command to send: {line}"
+        )
+        return line
+
+    def test_prompt_response_is_never_spliced_into_the_shell_command(self):
+        line = self._bind_line()
+        # `run-shell` hands its argument to /bin/sh. tmux offers no way to
+        # shell-quote a prompt response, so the ONLY safe shape is a run-shell
+        # argument that contains no substitution at all.
+        run_shell = line[line.index("run-shell") :]
+        assert "%" not in run_shell, (
+            "the typed text is still spliced into the `run-shell` shell command; "
+            "tmux's %% is a raw-text paste, so a typed quote breaks out of the "
+            f"shell word and executes in the tmux server's shell: {line}"
+        )
+
+    def test_response_is_handed_over_through_a_tmux_option(self):
+        line = self._bind_line()
+        # The hand-off has to happen before run-shell, or the script reads a
+        # stale value from the previous invocation.
+        assert re.search(
+            r'set(?:-option)?\s+-g\s+@send_to_all_except_nvim\s+"%%%"', line
+        ), (
+            "the prompt response is no longer stashed in the "
+            f"@send_to_all_except_nvim tmux option as a quoted `%%%`: {line}"
+        )
+        assert line.index("@send_to_all_except_nvim") < line.index("run-shell"), (
+            "the option must be set before run-shell starts the script"
+        )
+
+    def test_the_escaping_form_of_the_substitution_is_pinned(self):
+        line = self._bind_line()
+        # `%%%` escapes " \ $ ; ~ for tmux's OWN parser; `%%` does not, and a
+        # typed `"` would then close set-option's argument and let the rest of
+        # the line run as tmux commands.
+        assert not re.search(r"(?<!%)%%(?!%)", line), (
+            "`bind S` uses the non-escaping `%%` substitution; a typed double "
+            "quote closes the set-option argument and the remainder of the "
+            f"input is executed as tmux commands: {line}"
+        )
+
+
 class TestTmuxSendToAllExceptNvim:
-    def _stub_tmux(self, shell_env, sync_state: str):
+    #: What `bind S` stashes the prompt response in. The script's only job on
+    #: that path is to read it back out verbatim, so the payload below is
+    #: deliberately built from every character that broke the old bind.
+    NASTY = """git commit -m 'wip "x"' $HOME `id` ; echo hi \\ ~"""
+
+    def _stub_tmux(self, shell_env, sync_state: str, option_value=None):
+        """Stub tmux. `option_value=None` means @send_to_all_except_nvim is unset.
+
+        The value is passed through a file rather than interpolated into the
+        stub's source: the whole point of the payload is that it is full of
+        shell metacharacters, and baking it into a generated `sh` script would
+        re-introduce at test level exactly the quoting bug under test.
+        """
+        show_options = ""
+        if option_value is not None:
+            option_file = shell_env.stub_bin.parent / "tmux-option-value"
+            option_file.write_text(option_value, encoding="utf-8")
+            show_options = f'  show-options) cat "{option_file}" ;;\n'
         body = (
             'case "$1" in\n'
             f'  show-window-option) echo "{sync_state}" ;;\n'
+            f"{show_options}"
             "  list-panes) printf '%%1 zsh\\n%%2 nvim\\n%%3 vim\\n' ;;\n"
             "esac"
         )
         shell_env.stub("tmux", body=body)
+
+    def test_reads_the_command_from_the_tmux_option_when_given_no_arguments(
+        self, shell_env
+    ):
+        # This is the path `bind S` uses. Nothing the user typed ever reaches a
+        # shell command line, so quotes, `;`, `$` and backticks must arrive at
+        # send-keys byte for byte.
+        self._stub_tmux(shell_env, sync_state="off", option_value=self.NASTY)
+        res = shell_env.run(TMUX_SCRIPT)
+        assert res.returncode == 0, res.stderr
+        send_calls = [c for c in shell_env.calls if "send-keys" in c]
+        assert f"tmux send-keys -t %1 {self.NASTY} Enter" in send_calls, (
+            "the command stashed in @send_to_all_except_nvim did not reach the "
+            f"panes intact: {send_calls}"
+        )
+        assert f"tmux send-keys -t %3 {self.NASTY} Enter" in send_calls
+        assert not any("-t %2" in c for c in send_calls), "nvim must be skipped"
+
+    def test_the_option_is_cleared_once_it_has_been_read(self, shell_env):
+        # The option is a one-shot mailbox from the prompt to the script. Left
+        # set, a later argument-less run (or anything else calling run-shell)
+        # would replay the previous command into every pane.
+        self._stub_tmux(shell_env, sync_state="off", option_value="echo once")
+        shell_env.run(TMUX_SCRIPT)
+        calls = shell_env.calls
+        unset = [
+            i
+            for i, c in enumerate(calls)
+            if "@send_to_all_except_nvim" in c and ("-gu" in c or "-ug" in c)
+        ]
+        assert unset, f"@send_to_all_except_nvim is never unset: {calls}"
+        send_idx = [i for i, c in enumerate(calls) if "send-keys" in c]
+        assert min(unset) < min(send_idx), (
+            "clear the mailbox before sending, so a failure mid-loop cannot "
+            "leave a stale command armed for the next run"
+        )
+
+    def test_an_unset_option_sends_nothing_at_all(self, shell_env):
+        # An empty prompt response, or a stray argument-less invocation, must
+        # not fire a bare Enter at every pane -- nor toggle synchronize-panes.
+        self._stub_tmux(shell_env, sync_state="on", option_value="")
+        res = shell_env.run(TMUX_SCRIPT)
+        assert res.returncode == 0, res.stderr
+        assert not any("send-keys" in c for c in shell_env.calls), (
+            f"an empty command must not be sent anywhere: {shell_env.calls}"
+        )
+        assert not any("synchronize-panes" in c for c in shell_env.calls), (
+            "nothing was sent, so the sync state must not have been disturbed"
+        )
 
     def test_sends_to_all_panes_except_nvim(self, shell_env):
         self._stub_tmux(shell_env, sync_state="off")
