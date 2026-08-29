@@ -267,8 +267,10 @@
   "tui": "default",
   "autoMemoryEnabled": false,
   "skipWorkflowUsageWarning": true,
+  "theme": "dark",
   "editorMode": "normal",
   "teammateMode": "tmux",
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false
+  "voiceEnabled": false,
+  "agentPushNotifEnabled": true
 }
