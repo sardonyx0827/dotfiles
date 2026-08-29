@@ -14,6 +14,15 @@ esac
 export PATH=~/go/bin:$PATH
 export PATH=~/.npm-global/bin:$PATH
 
+## ~/.local/bin
+# install.sh が Debian の bat/fd エイリアスと OSC 52 の pbcopy を置く場所なので、
+# uv などのインストーラが env スクリプトを残しているかに関わらず PATH に通す。
+# env スクリプト側は PATH の重複追加を自前で避けるため、両方あっても害はない。
+# ここに書くのは .zshrc 末尾が ~/.zsh_secrets ガード専用の場所だから
+# (末尾のコメント参照: 最終行の終了ステータスが .zshrc 自身のものになる)。
+export PATH="$HOME/.local/bin:$PATH"
+[ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+
 if [[ "$_os" == macos ]]; then
   # Homebrew (Apple Silicon) 固有のパス群。Linux には存在しないため読み込まない。
   export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"

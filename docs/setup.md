@@ -225,6 +225,15 @@ ln -sf ~/dotfiles/.oh-my-zsh/custom/themes/px-rose-pine.zsh-theme ~/.oh-my-zsh/c
 # tmuxヘルパースクリプト (.tmux.conf の `bind S` が参照)
 mkdir -p ~/.tmux
 ln -sf ~/dotfiles/scripts/tmux_send_to_all_except_nvim.sh ~/.tmux/tmux_send_to_all_except_nvim.sh
+
+# OSC 52 クリップボードブリッジ (X/Wayland のクリップボードに届かない環境向け。
+# Android の Debian コンテナや素の SSH セッションでは xsel/wl-copy に話し相手が
+# いないため、エスケープを直接 /dev/tty へ書いて外側の端末に選択範囲を渡す)
+# macOS では実行しないこと: 純正の /usr/bin/pbcopy を PATH 上で覆い隠す
+# (.zshrc が source する ~/.local/bin/env が ~/.local/bin を /usr/bin より前に置く)。
+mkdir -p ~/.local/bin
+ln -sf ~/dotfiles/scripts/pbcopy ~/.local/bin/pbcopy
+chmod +x ~/dotfiles/scripts/pbcopy
 ```
 
 </details>

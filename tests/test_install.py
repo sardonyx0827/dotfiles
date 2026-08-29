@@ -476,11 +476,28 @@ class TestCreateSymlinks:
         )
         assert (home / ".tmux/tmux_send_to_all_except_nvim.sh").is_symlink()
 
+        # OSC 52 pbcopy lands in ~/.local/bin (on PATH), not /usr/local/bin --
+        # nothing in create_symlinks elevates, and an absolute path outside
+        # $HOME would escape this test's faked home onto the real filesystem.
+        pbcopy = home / ".local/bin/pbcopy"
+        assert pbcopy.is_symlink()
+        assert pbcopy.resolve() == (REPO_ROOT / "scripts/pbcopy").resolve()
+
         # The pre-existing real .zshrc was backed up; the stale symlink was not.
         backups = list(home.glob(".dotfiles_backup_*"))
         assert len(backups) == 1
         assert (backups[0] / ".zshrc").read_text(encoding="utf-8") == "old content\n"
         assert not (backups[0] / ".vimrc").exists()
+
+    def test_pbcopy_is_not_linked_on_macos(self, shell_env):
+        # macOS ships its own /usr/bin/pbcopy, and .zshrc sources
+        # ~/.local/bin/env, which puts ~/.local/bin AHEAD of /usr/bin on PATH.
+        # Linking there would silently shadow the system command with the OSC
+        # 52 stand-in, so _link_pbcopy must bail out before touching anything.
+        home = shell_env.home
+        res = run_sourced("OS=macos _link_pbcopy", shell_env.env)
+        assert res.returncode == 0
+        assert not (home / ".local/bin/pbcopy").exists()
 
     # --- Codex config.toml: seeded, never linked, never clobbered -----------
     # Codex owns this file at runtime: `codex mcp add` writes mcp_servers into

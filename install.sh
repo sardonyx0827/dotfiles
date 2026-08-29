@@ -1425,6 +1425,25 @@ _link_tmux_helper() {
   [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
 }
 
+_link_pbcopy() {
+  # OSC 52 clipboard bridge. Terminals with no X/Wayland clipboard reachable
+  # -- Android's Debian container, a plain SSH session -- have nothing for
+  # xsel/wl-copy to talk to; writing the escape straight to /dev/tty hands the
+  # selection to the outer terminal emulator instead.
+  #
+  # macOS is skipped deliberately. It ships its own /usr/bin/pbcopy, and
+  # .zshrc sources ~/.local/bin/env, which puts ~/.local/bin AHEAD of /usr/bin
+  # on PATH -- linking here would silently shadow the system command with this
+  # stand-in on every macOS machine.
+  if [ "$OS" = "macos" ]; then
+    return 0
+  fi
+
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.local/bin"
+  link_entry "$DOTFILES_DIR/scripts/pbcopy" "$HOME/.local/bin/pbcopy"
+  [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/pbcopy" 2>/dev/null || true
+}
+
 create_symlinks() {
   print_info "Creating symbolic links..."
 
@@ -1458,6 +1477,7 @@ create_symlinks() {
   # after install_oh_my_zsh.
 
   _link_tmux_helper
+  _link_pbcopy
 
   # Backup-dir bookkeeping. Guard the whole open+close as one unit: in dry-run
   # the dir was never created, so running `ls -A`/`rmdir` on it would fail under

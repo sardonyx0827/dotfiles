@@ -74,6 +74,29 @@ Waylandを使用している場合は `wl-clipboard` も必要になる場合が
 sudo apt-get install -y wl-clipboard
 ```
 
+#### X/Wayland が無い環境（Android の Linux ターミナル / SSH）
+
+Pixel などの Android 端末上で動く Debian コンテナや、素の SSH セッションには X も
+Wayland もありません。`xsel` / `wl-copy` は接続先が無いまま失敗するため、端末の
+エスケープシーケンス経由でクリップボードへ書き込む **OSC 52** を使う `pbcopy` を
+用意しています。
+
+`install.sh` は macOS 以外で `scripts/pbcopy` を `~/.local/bin/pbcopy` へリンクします。
+macOS でリンクしないのは、`.zshrc` が読み込む `~/.local/bin/env` が `~/.local/bin` を
+`/usr/bin` より前に置くため、純正の `/usr/bin/pbcopy` を黙って覆い隠してしまうからです。
+
+```bash
+echo hello | pbcopy
+```
+
+tmux 内から OSC 52 を通すために `.tmux.conf` で `allow-passthrough on` を設定しています
+（tmux 3.3 以降の既定は off で、未設定だと tmux 内でのみ終了ステータス 0 のまま
+無言で失敗します）。
+
+> **注意**: tmux のコピーモード（`y` / `Enter`）のバインドは `uname` が `Linux` を返すと
+> `xsel` を呼ぶ設定のままです。この環境で選択範囲をコピーしたい場合は、パイプで
+> `pbcopy` に渡すか、該当バインドを `pbcopy` に差し替えてください。
+
 #### フォントの追加設定
 
 ```bash

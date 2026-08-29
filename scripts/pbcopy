@@ -1,0 +1,7 @@
+#!/bin/sh
+data=$(base64 -w0)
+if [ -n "$TMUX" ]; then
+  printf '\033Ptmux;\003\033]52;c;%s\a\033\\' "$data" > /dev/tty
+else
+  printf '\033]52;c;%s\a' "$data" > /dev/tty
+fi
