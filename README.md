@@ -64,6 +64,7 @@
 ├── .gitconfig                      # Git設定
 ├── .gitignore_global               # グローバルgitignore
 ├── .tmux.conf                      # tmux設定
+├── .uim                            # uim (IME) 設定: 既定を Mozc にし Alt+j でトグル
 ├── .vimrc                          # 薄いローダー (.vim/rc/*.vim を順次source)
 ├── .wezterm.lua                    # WezTerm設定
 ├── .zshrc                          # Zsh設定

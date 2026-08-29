@@ -424,7 +424,14 @@ class TestCreateSymlinks:
         assert res.returncode == 0
 
         # Top-level dotfiles are symlinked into the repo.
-        for name in (".zshrc", ".vimrc", ".tmux.conf", ".gitconfig", ".wezterm.lua"):
+        for name in (
+            ".zshrc",
+            ".vimrc",
+            ".tmux.conf",
+            ".gitconfig",
+            ".wezterm.lua",
+            ".uim",
+        ):
             link = home / name
             assert link.is_symlink(), f"{name} should be a symlink"
             assert link.resolve() == (REPO_ROOT / name).resolve()

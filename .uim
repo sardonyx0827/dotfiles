@@ -1,0 +1,3 @@
+(define default-im-name 'mozc)
+(define-key generic-on-key? '("<Alt>j"))
+(define-key generic-off-key? '("<Alt>j"))

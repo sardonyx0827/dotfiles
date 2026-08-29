@@ -1106,6 +1106,7 @@ _link_top_level_dotfiles() {
     ".gitconfig"
     ".gitignore_global"
     ".wezterm.lua"
+    ".uim"
   )
 
   for file in "${files[@]}"; do

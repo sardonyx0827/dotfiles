@@ -154,6 +154,9 @@ ln -sf ~/dotfiles/.vimrc ~/.vimrc
 # tmux設定
 ln -sf ~/dotfiles/.tmux.conf ~/.tmux.conf
 
+# IME設定 (uim: 既定の入力メソッドを Mozc にし、Alt+j でオン/オフをトグル)
+ln -sf ~/dotfiles/.uim ~/.uim
+
 # Git設定
 ln -sf ~/dotfiles/.gitconfig ~/.gitconfig
 ln -sf ~/dotfiles/.gitignore_global ~/.gitignore_global
