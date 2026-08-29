@@ -1432,9 +1432,9 @@ _link_pbcopy() {
   # selection to the outer terminal emulator instead.
   #
   # macOS is skipped deliberately. It ships its own /usr/bin/pbcopy, and
-  # .zshrc sources ~/.local/bin/env, which puts ~/.local/bin AHEAD of /usr/bin
-  # on PATH -- linking here would silently shadow the system command with this
-  # stand-in on every macOS machine.
+  # .zshrc exports ~/.local/bin AHEAD of /usr/bin unconditionally -- linking
+  # here would silently shadow the system command with this stand-in on every
+  # macOS machine.
   if [ "$OS" = "macos" ]; then
     return 0
   fi
