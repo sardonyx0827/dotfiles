@@ -1,7 +1,9 @@
 """Tests for utility scripts and syntax checks for all shell configs."""
 
 import os
+import pty
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -106,6 +108,23 @@ def extract_zsh_secrets_guard() -> str:
             "whatever now runs last owns .zshrc's exit status instead"
         )
     return block
+
+
+def extract_uim_fep_block() -> str:
+    """Return .zshrc's uim-fep autostart block.
+
+    Not a function either, and unlike the secrets guard it is not anchored to
+    EOF, so take the marker comment through the `fi` that closes the single if.
+    """
+    text = ZSHRC.read_text(encoding="utf-8")
+    index = text.find("## uim-fep")
+    if index == -1:
+        raise AssertionError("no uim-fep block found in .zshrc")
+    rest = text[index:]
+    end = re.search(r"^fi$", rest, re.MULTILINE)
+    if end is None:
+        raise AssertionError("uim-fep block has no closing fi")
+    return rest[: end.end()]
 
 
 def stub_bin(directory, name: str, body: str):
@@ -751,6 +770,135 @@ class TestZshSecretsGuard:
         assert res.returncode == 0, res.stderr
         assert res.stdout == "yes", (
             "guarding the exit status must not stop the file from being sourced"
+        )
+
+
+class TestUimFepAutostart:
+    """.zshrc's uim-fep block replaces the shell with a terminal IME.
+
+    It runs `exec`, so every guard on it is load-bearing in a way an ordinary
+    conditional is not: a shell that reaches the exec by mistake is gone, and
+    whatever was driving it gets uim-fep's raw terminal output instead of the
+    command it asked for. The tty test is the one that keeps this away from
+    every non-interactive caller -- editors, hooks, `zsh -ic` from a tool --
+    since those are interactive by flag but have no terminal behind them.
+    """
+
+    def _stub_dir(self, tmp_path, present: bool):
+        """A uim-fep that reports being reached instead of seizing the tty."""
+        bin_dir = tmp_path / "bin"
+        if present:
+            stub_bin(bin_dir, "uim-fep", 'echo "EXECED args=[$*]"')
+        else:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+        return bin_dir
+
+    def _run(self, tmp_path, env_extra=None, *, on_a_tty=False, installed=True):
+        zsh = shutil.which("zsh")
+        if zsh is None:
+            pytest.skip("zsh not installed")
+        script = f"{extract_uim_fep_block()}\nprint REACHED-END"
+        # An empty ZDOTDIR makes `zsh -i` launch zsh-newuser-install, which
+        # blocks on a prompt; an existing (empty) .zshrc is what suppresses it.
+        (tmp_path / ".zshrc").write_text("", encoding="utf-8")
+        env = {
+            **os.environ,
+            # ZDOTDIR keeps `zsh -i` off the real ~/.zshrc, which would source
+            # oh-my-zsh and re-run the very block under test.
+            "ZDOTDIR": str(tmp_path),
+            "HOME": str(tmp_path),
+            # Absence has to be simulated by a PATH holding nothing else: this
+            # machine really does have /usr/bin/uim-fep, and the block would
+            # find it. The block itself needs no external command, and zsh is
+            # invoked by absolute path, so a lone empty dir is enough.
+            "PATH": (
+                f"{self._stub_dir(tmp_path, installed)}:{os.environ['PATH']}"
+                if installed
+                else str(self._stub_dir(tmp_path, installed))
+            ),
+            "TERM": "xterm-256color",
+        }
+        env.pop("UIM_FEP_PID", None)
+        env.pop("NO_UIM_FEP", None)
+        env.update(env_extra or {})
+
+        if not on_a_tty:
+            return subprocess.run(
+                [zsh, "-ic", script],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=30,
+            ).stdout
+
+        # The positive case needs a controlling terminal, which a pipe is not.
+        pid, fd = pty.fork()
+        if pid == 0:  # pragma: no cover - replaced by execvpe
+            os.execve(zsh, [zsh, "-ic", script], env)
+        out = b""
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if not select.select([fd], [], [], 5)[0]:
+                break
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+            if b"EXECED" in out or b"REACHED-END" in out:
+                break
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        os.close(fd)
+        return out.decode("utf-8", "replace")
+
+    def test_runs_uim_fep_on_a_real_terminal(self, tmp_path):
+        out = self._run(tmp_path, on_a_tty=True)
+        assert "EXECED" in out, (
+            f"the block never reached uim-fep on a tty, so the IME is dead: {out!r}"
+        )
+
+    def test_passes_zsh_explicitly(self, tmp_path):
+        out = self._run(tmp_path, on_a_tty=True)
+        assert "args=[-e /usr/bin/zsh]" in out, (
+            "uim-fep defaults its child to $SHELL, which is bash here -- dropping "
+            f"-e lands the user in bash inside the FEP: {out!r}"
+        )
+
+    def test_does_nothing_without_a_terminal(self, tmp_path):
+        assert "REACHED-END" in self._run(tmp_path), (
+            "a shell driven through a pipe must not be replaced by uim-fep"
+        )
+
+    def test_does_not_re_enter_itself(self, tmp_path):
+        out = self._run(tmp_path, {"UIM_FEP_PID": "9999"}, on_a_tty=True)
+        assert "REACHED-END" in out and "EXECED" not in out, (
+            "uim-fep exports UIM_FEP_PID into the shell it starts; ignoring it "
+            f"makes each shell start another uim-fep forever: {out!r}"
+        )
+
+    def test_honours_the_opt_out(self, tmp_path):
+        out = self._run(tmp_path, {"NO_UIM_FEP": "1"}, on_a_tty=True)
+        assert "REACHED-END" in out and "EXECED" not in out, (
+            f"NO_UIM_FEP is the way out that does not edit a tracked file: {out!r}"
+        )
+
+    def test_skips_dumb_terminals(self, tmp_path):
+        out = self._run(tmp_path, {"TERM": "dumb"}, on_a_tty=True)
+        assert "REACHED-END" in out and "EXECED" not in out, (
+            f"a dumb terminal cannot render the FEP's status line: {out!r}"
+        )
+
+    def test_does_nothing_where_uim_fep_is_absent(self, tmp_path):
+        # Nothing on PATH: the machines that share this .zshrc without uim-fep.
+        out = self._run(tmp_path, on_a_tty=True, installed=False)
+        assert "REACHED-END" in out and "EXECED" not in out, (
+            f"the block must be inert where uim-fep is not installed: {out!r}"
         )
 
 

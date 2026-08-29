@@ -10,6 +10,33 @@ case "$(uname -s)" in
   *) _os=other ;;
 esac
 
+## uim-fep (端末内 IME)
+# Android の Debian コンテナには GUI の入力メソッドを載せる先が無いので、
+# 端末とシェルの間に挟まる FEP で日本語入力を作る。変換エンジンとキーの
+# 割り当ては ~/.uim (既定 mozc / Alt+j トグル) をそのまま使う。
+#
+# ここが .zshrc の先頭寄りにあるのは exec のため。この下の行は外側のシェル
+# ごと置き換えられて捨てられるので、末尾に置くと oh-my-zsh と compinit を
+# シェル 1 枚につき二度走らせることになる。exec せずに起動すると、FEP を
+# 抜けたとき残った外側のプロンプトに落ちて exit を二度打つ羽目になる。
+#
+# -e で zsh を明示するのは uim-fep の既定の子プロセスが $SHELL で、この
+# 環境の $SHELL が /bin/bash だから (.tmux.conf の default-command が
+# ${SHELL} を諦めているのと同じ事情)。
+#
+# 各ガードの役割:
+#   UIM_FEP_PID  uim-fep が子へ渡す変数。これが無いと自分自身を無限に生む
+#   NO_UIM_FEP   利用者側の脱出口。tracked file を編集せず素の zsh を得る
+#   -t 0 / -t 1  制御端末が要る。`zsh -ic` で呼ばれる道具のシェル (パイプ
+#                越しなので端末が無い) を乗っ取らせないための一番効く条件
+#   TERM=dumb    エディタが開くシェルなど、描画を前提にできない相手
+#   command -v   uim-fep が入っていない機械 (macOS など) では何もしない
+if [[ -o interactive ]] && [[ -z "$UIM_FEP_PID" ]] && [[ -z "$NO_UIM_FEP" ]] \
+  && [[ -t 0 ]] && [[ -t 1 ]] && [[ "$TERM" != dumb ]] \
+  && command -v uim-fep >/dev/null 2>&1; then
+  exec uim-fep -e /usr/bin/zsh
+fi
+
 ## Go
 export PATH=~/go/bin:$PATH
 export PATH=~/.npm-global/bin:$PATH
