@@ -1,7 +1,85 @@
 #!/bin/sh
-data=$(base64 -w0)
-if [ -n "$TMUX" ]; then
-  printf '\033Ptmux;\003\033]52;c;%s\a\033\\' "$data" > /dev/tty
-else
-  printf '\033]52;c;%s\a' "$data" > /dev/tty
+# 標準入力をクリップボードへ渡す。届く出口は環境ごとに違うので、上から順に選ぶ。
+#
+#   1. Wayland (wl-copy)
+#   2. X11 (xsel)
+#   3. OSC 52 (端末エスケープ)
+#
+# Android の Linux ターミナル (AVF) で 1. が先頭に来ているのは偶然ではない。
+# ゲストエージェント /usr/bin/linux_vm_manager が Android 本体との橋渡しを
+# していて、その実装は readClipboard で
+#   XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 wl-paste --no-newline
+# を、逆方向の updateClipboard で wl-copy を叩く。つまり Android と繋がって
+# いるのは **Wayland のクリップボードだけ**。xsel が書く X のクリップボードは
+# Xwayland ↔ weston の同期で結果的に追随するだけだし、3. は ttyd が配る
+# WebView が 52 番の OSC ハンドラを一つも登録していないので届かない。
+#
+# set -e は付ける (出口が塞がっていたら 0 を返さない)。pipefail は POSIX sh
+# に無いので使わない — Debian の /bin/sh は dash。
+set -eu
+
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR
+
+# ttyd が起こすシェルには DISPLAY だけが入っていて WAYLAND_DISPLAY が無い。
+# ソケットがあるなら既定名で補う。weston は weston.socket による socket
+# activation なので、まだ動いていなくても接続した時点で立ち上がる。
+if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+  WAYLAND_DISPLAY=wayland-0
+  export WAYLAND_DISPLAY
 fi
+
+if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-copy >/dev/null 2>&1; then
+  # wl-copy は選択を保持するデーモンへ fork する。tmux の copy-pipe から
+  # 呼ばれてもこの子は残る (tmux サーバを落としても選択は生き続ける)。
+  #
+  # 下の X11 経路と違って PRIMARY (--primary) は立てない。橋渡し先の
+  # linux_vm_manager が読むのは CLIPBOARD だけで、primary-selection プロトコル
+  # を持たないコンパクトなコンポジタでは --primary が失敗しうるため。Wayland
+  # デスクトップで中クリック貼り付けも要るなら、ここに一行足すこと。
+  exec wl-copy
+fi
+
+if [ -n "${DISPLAY:-}" ] && command -v xsel >/dev/null 2>&1; then
+  # CLIPBOARD に stdin をそのまま渡し、PRIMARY はそこから写す (中クリック
+  # 貼り付けは旧 .tmux.conf の bind が提供していたので落とさない)。
+  #
+  # 順序は入れ替えられない: dash に pipefail は無く、パイプの終了ステータスは
+  # 最後の xsel だけで決まる。前段が失敗しても後段は空の stdin で正常終了し
+  # うるので、失敗を見逃してはいけない CLIPBOARD 側を直接書く。
+  xsel -ib
+  xsel -ob | xsel -ip
+  exit 0
+fi
+
+# ここから先は OSC 52。X も Wayland も無い SSH 先などの最後の出口で、
+# 選択を受け取るのは外側の端末エミュレータ。
+data=$(base64 -w0)
+
+if [ -n "${TMUX:-}" ]; then
+  # 開けるかどうかは試すしかない (/dev/tty は制御端末が無くてもノードは
+  # あり、mode も 0666 なので [ -w ] は真になる)。ただしリダイレクト失敗を
+  # 素で書くと、特殊組み込みの `:` に対する失敗として POSIX シェルは
+  # その場で終了する — サブシェルに閉じ込めて判定だけ取り出す。
+  if (: >/dev/tty) 2>/dev/null; then
+    # ペインの中。tmux の DCS パススルーで包む (.tmux.conf の
+    # allow-passthrough on が要る)。中の ESC は **二重**にしないと tmux が
+    # DCS ごと捨てる — 以前ここは \003 (ETX) で、tmux 内では何も届いていなかった。
+    # shellcheck disable=SC1003  # \\ は printf に渡す「エスケープした
+    # バックスラッシュ」で、シングルクォートの脱出ではない (ST = ESC \)
+    printf '\033Ptmux;\033\033]52;c;%s\a\033\\' "$data" >/dev/tty
+    exit 0
+  fi
+  # tmux サーバの子 (copy-pipe など) は制御端末を持たないので /dev/tty は
+  # ENXIO で開けない。クライアントの端末を tmux に聞いて直接書く。tmux の
+  # 外へ出た後なので、こちらは包まない。
+  client_tty=$(tmux display -p '#{client_tty}' 2>/dev/null || :)
+  if [ -n "$client_tty" ] && [ -w "$client_tty" ]; then
+    printf '\033]52;c;%s\a' "$data" >"$client_tty"
+    exit 0
+  fi
+  echo "pbcopy: クリップボードへ届く経路がありません (Wayland/X11/端末のいずれも不可)" >&2
+  exit 1
+fi
+
+printf '\033]52;c;%s\a' "$data" >/dev/tty

@@ -211,7 +211,10 @@ jobs:
         run: |
           shellcheck --version
           # 自作シェルスクリプトのみ検査（vendored な .codex/skills/.system 配下は除外）
-          files=$(git ls-files '*.sh' | grep -v '^\.codex/skills/\.system/')
+          # 拡張子の無い実行スクリプトは glob に掛からないので明示的に足す。
+          # ここに書き忘れると CI も PostToolUse の lint フック（拡張子で言語を
+          # 決める）も素通りし、そのスクリプトだけ無検査になる。
+          files=$(git ls-files '*.sh' 'scripts/pbcopy' | grep -v '^\.codex/skills/\.system/')
           echo "$files"
           # -x: source 先を追って検査する。フックは _hook_common.sh 等を sibling
           # として読み込むため、無いと SC1091 (Not following) で落ちる。
