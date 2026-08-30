@@ -82,7 +82,7 @@ fpath=(~/.docker/completions $fpath)
 
 source $ZSH/oh-my-zsh.sh
 
-export EDITOR=vim
+export EDITOR=nvim
 
 # using fzf
 sshs () {
@@ -128,10 +128,10 @@ fi
 alias sl="ls"
 
 # use vim
-alias v="vim"
-alias vim="vim"
-alias vimdiff="vim -d"
-alias view="vim -R"
+alias v="nvim"
+alias vim="nvim"
+alias vimdiff="nvim -d"
+alias view="nvim -R"
 
 # or 'docker exec MyContainer nvim --headless --listen 0.0.0.0:22222'
 alias nvim_listen="nvim --headless --listen 0.0.0.0:22222"
