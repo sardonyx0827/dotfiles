@@ -1,11 +1,13 @@
 """Tests for utility scripts and syntax checks for all shell configs."""
 
+import html
 import os
 import pty
 import re
 import select
 import shutil
 import signal
+import socket
 import subprocess
 import time
 
@@ -1358,3 +1360,492 @@ class TestMcCli:
         argc, argv = self._run(tmp_path, "mc execute do the thing")
 
         assert (argc, argv) == (4, ["--model", "sonnet", "-p", "do the thing"])
+
+
+# --------------------------------------------------------------------------
+# scripts/pbcopy -- クリップボードの出口選び
+# --------------------------------------------------------------------------
+
+PBCOPY = REPO_ROOT / "scripts/pbcopy"
+CLIP_TO_ANDROID = REPO_ROOT / "scripts/clip_to_android.sh"
+
+
+def make_wayland_socket(directory):
+    """`[ -S ... ]` が真になる本物の AF_UNIX ソケットノードを作る。
+
+    通常ファイルや FIFO では判定が変わってしまうので、ここだけは実際に
+    bind(2) する。ノードは bind した時点で出来るので、返した socket を
+    閉じてもパスは残る (tmp_path ごと消える)。
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "wayland-0"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(path))
+    return sock, path
+
+
+class TestPbcopyBackendSelection:
+    """`scripts/pbcopy` は「その環境で本当に届く出口」を上から順に選ぶ。
+
+    Android の Linux ターミナル (AVF) では、ゲストエージェント
+    `/usr/bin/linux_vm_manager` が readClipboard/updateClipboard で
+    `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0` の
+    `wl-paste` / `wl-copy` を呼ぶ。つまり **Wayland のクリップボードだけ**が
+    Android 本体と繋がっている。xsel が書く X のクリップボードは Xwayland
+    経由でたまたま同期されるだけ、OSC 52 は ttyd の WebView が 52 番の OSC
+    ハンドラを一切登録していないので届かない。順序はこの事実に従う。
+    """
+
+    def _stubs(self, tmp_path):
+        bin_dir = tmp_path / "bin"
+        log = tmp_path / "log"
+        stub_bin(
+            bin_dir,
+            "wl-copy",
+            'printf "backend=wl-copy WAYLAND_DISPLAY=%s\\n" "${WAYLAND_DISPLAY:-}"'
+            f' > "{log}"\ncat >> "{log}"',
+        )
+        # xsel は選択ごとに別の器を持つ本物に寄せる。pbcopy は CLIPBOARD を
+        # 直接書いてから PRIMARY へ写すので、-ob が何も返さないスタブだと
+        # PRIMARY の検証が素通りしてしまう。
+        primary = tmp_path / "primary"
+        stub_bin(
+            bin_dir,
+            "xsel",
+            'case "$*" in\n'
+            f'  *-ib*) {{ echo "backend=xsel"; cat; }} > "{log}" ;;\n'
+            f'  *-ob*) tail -n +2 "{log}" ;;\n'
+            f'  *-ip*) cat > "{primary}" ;;\n'
+            f'  *-op*) cat "{primary}" ;;\n'
+            "esac",
+        )
+        return bin_dir, log
+
+    def _run(self, tmp_path, env_extra, text="rect-copied"):
+        bin_dir, log = self._stubs(tmp_path)
+        runtime = tmp_path / "run"
+        runtime.mkdir(exist_ok=True)
+        env = {
+            **path_env(bin_dir),
+            "HOME": str(tmp_path),
+            "XDG_RUNTIME_DIR": str(runtime),
+        }
+        for key in ("DISPLAY", "WAYLAND_DISPLAY", "TMUX"):
+            env.pop(key, None)
+        env.update(env_extra)
+        res = subprocess.run(
+            [str(PBCOPY)],
+            input=text,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        return res, (log.read_text(encoding="utf-8") if log.exists() else "")
+
+    def test_wayland_wins_even_when_display_is_also_set(self, tmp_path):
+        # ttyd が起こすシェルには DISPLAY=:0 が必ず入っている。X を先に見る実装
+        # だと、Android へ届く唯一の出口を素通りして VM 内クリップボードで
+        # 満足してしまう。
+        sock, _ = make_wayland_socket(tmp_path / "run")
+        try:
+            res, log = self._run(tmp_path, {"DISPLAY": ":0"})
+        finally:
+            sock.close()
+
+        assert res.returncode == 0, res.stderr
+        assert "backend=wl-copy" in log, f"Wayland を選ばなかった: {log!r}"
+        assert log.endswith("rect-copied")
+
+    def test_wayland_display_is_defaulted_from_the_socket(self, tmp_path):
+        # ttyd 経由のシェルには WAYLAND_DISPLAY が無い (DISPLAY だけ入る)。
+        # 補わないと wl-copy が繋ぎ先を知らないまま落ちる。
+        sock, _ = make_wayland_socket(tmp_path / "run")
+        try:
+            res, log = self._run(tmp_path, {"DISPLAY": ":0"})
+        finally:
+            sock.close()
+
+        assert res.returncode == 0, res.stderr
+        assert "WAYLAND_DISPLAY=wayland-0" in log, (
+            f"wl-copy に WAYLAND_DISPLAY が渡っていない: {log!r}"
+        )
+
+    def test_falls_back_to_x11_without_a_wayland_socket(self, tmp_path):
+        res, log = self._run(tmp_path, {"DISPLAY": ":0"})
+
+        assert res.returncode == 0, res.stderr
+        assert "backend=xsel" in log, f"X11 に落ちなかった: {log!r}"
+        assert log.endswith("rect-copied")
+
+    def test_x11_still_sets_primary_as_well_as_clipboard(self, tmp_path):
+        # 旧 `.tmux.conf` の bind は `xsel -ip && xsel -op | xsel -ib` で
+        # PRIMARY も立てていた。bind を pbcopy に寄せた時にここが落ちると、
+        # X デスクトップでの中クリック貼り付けが黙って消える。
+        bin_dir, log = self._stubs(tmp_path)
+        runtime = tmp_path / "run"
+        runtime.mkdir(exist_ok=True)
+        env = {
+            **path_env(bin_dir),
+            "HOME": str(tmp_path),
+            "XDG_RUNTIME_DIR": str(runtime),
+            "DISPLAY": ":0",
+        }
+        env.pop("WAYLAND_DISPLAY", None)
+        env.pop("TMUX", None)
+        subprocess.run(
+            [str(PBCOPY)], input="primary too", text=True, env=env, timeout=30
+        )
+
+        assert (tmp_path / "primary").read_text(encoding="utf-8") == "primary too"
+
+
+class TestPbcopyOsc52Fallback:
+    """X も Wayland も無い環境 (素の SSH 先) 向けの最後の出口。
+
+    tmux の中では DCS パススルーで包む必要があり、その中の ESC は **二重に**
+    しなければならない。旧実装は `\\033Ptmux;\\003\\033]52;...` と ETX を
+    挟んでいて、tmux はこの DCS を外側の端末へ渡さず捨てていた -- 終了
+    ステータスは 0 のままなので、tmux 内の pbcopy はずっと無言で死んでいた。
+    """
+
+    ENCODED = "aGk="  # base64 of "hi"
+
+    def _env(self, tmp_path, extra):
+        runtime = tmp_path / "run"
+        runtime.mkdir(parents=True, exist_ok=True)
+        env = {
+            **os.environ,
+            "HOME": str(tmp_path),
+            "XDG_RUNTIME_DIR": str(runtime),
+        }
+        for key in ("DISPLAY", "WAYLAND_DISPLAY", "TMUX"):
+            env.pop(key, None)
+        env.update(extra)
+        return env
+
+    def test_inside_a_pane_the_passthrough_doubles_the_escape(self, tmp_path):
+        env = self._env(tmp_path, {"TMUX": f"{tmp_path}/tmux-socket,1,0"})
+        pid, fd = pty.fork()
+        if pid == 0:  # pragma: no cover - replaced by execve
+            os.execve("/bin/sh", ["/bin/sh", "-c", f'printf hi | "{PBCOPY}"'], env)
+        out = b""
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if not select.select([fd], [], [], 5)[0]:
+                break
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+            if b"\x1b\\" in out:
+                break
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        os.close(fd)
+
+        expected = b"\x1bPtmux;\x1b\x1b]52;c;" + self.ENCODED.encode() + b"\x07\x1b\\"
+        assert expected in out, (
+            "tmux のパススルーが正しい形で出ていない。ESC を二重にしないと "
+            f"tmux は DCS ごと捨てる: {out!r}"
+        )
+
+    def test_without_a_controlling_terminal_it_writes_to_the_client_tty(self, tmp_path):
+        # copy-pipe の子は tmux サーバの子であって端末を持たない。/dev/tty は
+        # ENXIO で開けないので、クライアントの端末を tmux に聞いて直接書く。
+        # ここは tmux の外へ出た後なので、パススルーで包んではいけない。
+        bin_dir = tmp_path / "bin"
+        target = tmp_path / "client-tty"
+        target.write_text("", encoding="utf-8")
+        stub_bin(bin_dir, "tmux", f'printf "%s\\n" "{target}"')
+        env = self._env(tmp_path, {"TMUX": f"{tmp_path}/tmux-socket,1,0"})
+        # PATH は _env が消した DISPLAY を戻さない形で足す。os.environ を丸ごと
+        # マージし直すと X の枝に落ちて、この経路を一度も通らない。
+        env["PATH"] = f"{bin_dir}:{env['PATH']}"
+
+        res = subprocess.run(
+            [str(PBCOPY)],
+            input="hi",
+            text=True,
+            capture_output=True,
+            env=env,
+            start_new_session=True,
+            timeout=30,
+        )
+
+        assert res.returncode == 0, res.stderr
+        written = target.read_bytes()
+        assert written == b"\x1b]52;c;" + self.ENCODED.encode() + b"\x07", (
+            f"クライアント端末へ素の OSC 52 が出ていない: {written!r}"
+        )
+
+    def test_no_reachable_clipboard_fails_loudly(self, tmp_path):
+        # 出口が一つも無いときに 0 を返すのが一番たちが悪い。tmux の bind から
+        # 呼ばれると失敗が画面に出ないので、せめて終了ステータスで分かるように。
+        env = self._env(tmp_path, {})
+        res = subprocess.run(
+            [str(PBCOPY)],
+            input="hi",
+            text=True,
+            capture_output=True,
+            env=env,
+            start_new_session=True,
+            timeout=30,
+        )
+
+        assert res.returncode != 0, (
+            "届く経路が無いのに成功を返した。呼び出し側は貼り付けられると 思い込む"
+        )
+
+
+class TestPosixShellScripts:
+    @pytest.mark.skipif(shutil.which("dash") is None, reason="dash not installed")
+    @pytest.mark.parametrize("script", [PBCOPY, CLIP_TO_ANDROID], ids=lambda p: p.name)
+    def test_dash_can_parse_it(self, script):
+        # install.sh が置く先は Debian で、そこの /bin/sh は dash。bash 前提の
+        # 書き方が混ざると実機だけで落ちる。/bin/sh へフォールバックしないのは、
+        # そこが bash の環境では bashism を通したまま緑になり、何も検査して
+        # いないことが見えなくなるため。
+        res = subprocess.run(
+            [shutil.which("dash"), "-n", str(script)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert res.returncode == 0, res.stderr
+
+
+class TestTmuxCopyBindsReachTheHostClipboard:
+    """copy-mode の y/Enter は pbcopy を通す。
+
+    Linux 側の bind は `xsel -ip && xsel -op | xsel -ib` のままだった。X の
+    クリップボードは VM の中で閉じているので、Android の Linux ターミナルで
+    矩形コピーしても母艦へは何も渡らない。届く先を一つに決める役目は
+    scripts/pbcopy にあるので、bind はそれを呼ぶだけにする。
+    """
+
+    def _copy_binds(self):
+        conf = (REPO_ROOT / ".tmux.conf").read_text(encoding="utf-8")
+        return [
+            line.strip()
+            for line in conf.splitlines()
+            if re.match(r"\s*bind -T copy-mode-vi (y|Enter)\b", line)
+        ]
+
+    def test_copy_binds_exist_for_both_keys(self):
+        binds = self._copy_binds()
+        assert len(binds) == 2, f"y と Enter の bind が揃っていない: {binds}"
+
+    def test_no_copy_bind_pipes_into_xsel(self):
+        for bind in self._copy_binds():
+            assert "xsel" not in bind, (
+                "y/Enter が xsel に流れている。X のクリップボードは VM 内で "
+                f"閉じていて Android には届かない: {bind}"
+            )
+
+    def test_every_copy_bind_pipes_into_pbcopy(self):
+        for bind in self._copy_binds():
+            assert "copy-pipe-and-cancel" in bind and "pbcopy" in bind, (
+                f"y/Enter が pbcopy を通っていない: {bind}"
+            )
+
+    def test_copy_binds_sit_outside_the_os_branch(self):
+        """`if-shell` のブロックの中に戻っていないこと。
+
+        中身だけ見ていると、片方の枝にだけ pbcopy の bind を置いた形
+        (= もう片方の OS でコピーが死ぬ) を通してしまう。ブレースの数え上げは
+        `#{mouse_x}` のようなフォーマット指定にも当たるので、`if-shell ... {`
+        で開いて単独の `}` / `} {` で閉じるこのファイルの書き方だけを追う。
+        """
+        depth = 0
+        for line in (REPO_ROOT / ".tmux.conf").read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if re.match(r"bind -T copy-mode-vi (y|Enter)\b", stripped):
+                assert depth == 0, (
+                    "コピーの bind が OS 分岐の中に入っている。片方の枝にしか "
+                    f"置かれていないと、もう片方の OS で黙ってコピーが死ぬ: {stripped}"
+                )
+            if stripped in ("}", "} {"):
+                depth -= 1
+            if re.match(r"(if-shell|%if)\b.*\{$", stripped) or stripped == "} {":
+                depth += 1
+
+
+# --------------------------------------------------------------------------
+# scripts/clip_to_android.sh -- Android の共有ストレージ経由の逃げ道
+# --------------------------------------------------------------------------
+
+
+def textarea_body(html_path) -> str:
+    """生成された index.html の textarea の中身を、エスケープを戻して返す。
+
+    `<textarea>` 直後の改行 1 個は HTML パーサが捨てる規則なので、比較する側
+    でも同じように落とす。ここを合わせないと「原文どおりに貼れるか」ではなく
+    「パーサの癖を再現できているか」を測るテストになってしまう。
+    """
+    text = html_path.read_text(encoding="utf-8")
+    match = re.search(r"<textarea[^>]*>\n?(.*?)</textarea>", text, re.S)
+    assert match, "index.html に textarea が無い"
+    return html.unescape(match.group(1))
+
+
+class TestClipToAndroid:
+    """tmux の選択範囲を Android から読める場所へ置く。
+
+    Android の Linux ターミナル (AVF) では、端末アプリが readClipboard を
+    呼ばない限り VM のクリップボードは本体へ渡らない。ゲスト側から通知する
+    口が無いので、届く保証があるのは共有ストレージ (/mnt/shared =
+    /storage/emulated/0) にファイルを置く経路だけになる。
+
+    このスクリプトの核心は「原文をバイト単位で保つ」こと。ブラウザで開く
+    textarea の中身がそのままコピーされるので、1 バイトでも増減すると
+    貼り付けた結果が変わる。
+    """
+
+    def _run(self, tmp_path, payload: bytes, args=(), with_pbcopy=False):
+        share = tmp_path / "share"
+        bin_dir = tmp_path / "bin"
+        env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "CLIP_TO_ANDROID_DIR": str(share),
+        }
+        if with_pbcopy:
+            stub_bin(bin_dir, "pbcopy", f'cat > "{tmp_path}/pbcopy-saw"')
+        else:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+        res = subprocess.run(
+            [str(CLIP_TO_ANDROID), *args],
+            input=payload,
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+        return res, share
+
+    def test_payload_survives_byte_for_byte(self, tmp_path):
+        # 矩形コピーは末尾に改行が付かない。ここで 1 バイト増えると、貼り付けた
+        # 側に余計な改行が入る。
+        payload = b"BLK01\nBLK02\nBLK03"
+        res, share = self._run(tmp_path, payload)
+
+        assert res.returncode == 0, res.stderr
+        assert (share / "latest.txt").read_bytes() == payload
+        assert textarea_body(share / "index.html") == payload.decode()
+
+    def test_a_trailing_newline_is_not_eaten(self, tmp_path):
+        # 逆向きの取りこぼし。sed の実装差を決め打ちして無条件に 1 バイト削ると、
+        # GNU sed の環境では最後の 1 文字が消える。
+        payload = b"line-copy\n"
+        res, share = self._run(tmp_path, payload)
+
+        assert res.returncode == 0, res.stderr
+        assert (share / "latest.txt").read_bytes() == payload
+        assert textarea_body(share / "index.html") == payload.decode()
+
+    def test_html_metacharacters_are_escaped_and_restore(self, tmp_path):
+        # エスケープ漏れは表示が壊れるだけでなく、textarea が途中で閉じて
+        # 貼り付け内容が欠ける。
+        payload = "if a < b && c > d\n</textarea>".encode()
+        res, share = self._run(tmp_path, payload)
+
+        assert res.returncode == 0, res.stderr
+        raw = (share / "index.html").read_text(encoding="utf-8")
+        assert "&lt;/textarea&gt;" in raw, "textarea を閉じるタグが素通りしている"
+        assert textarea_body(share / "index.html") == payload.decode()
+
+    def test_it_also_feeds_pbcopy(self, tmp_path):
+        # Y は y の上位互換であってほしい: 共有ストレージへ出すついでに VM の
+        # クリップボードにも入れる。
+        payload = b"both-places"
+        res, _ = self._run(tmp_path, payload, with_pbcopy=True)
+
+        assert res.returncode == 0, res.stderr
+        assert (tmp_path / "pbcopy-saw").read_bytes() == payload
+
+    def test_clear_empties_the_share(self, tmp_path):
+        # パスワードを流してしまったときの後始末。消せないと平文が残り続ける。
+        self._run(tmp_path, b"secret-token")
+        res, share = self._run(tmp_path, b"", args=("--clear",))
+
+        assert res.returncode == 0, res.stderr
+        assert (share / "latest.txt").read_bytes() == b""
+        assert textarea_body(share / "index.html") == ""
+
+    def test_unwritable_share_fails_loudly(self, tmp_path):
+        # マウントされていない環境で 0 を返すと、Android 側に置けたと思い込む。
+        share = tmp_path / "blocked"
+        share.write_text("not a directory", encoding="utf-8")
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "CLIP_TO_ANDROID_DIR": str(share / "under-a-file"),
+        }
+        res = subprocess.run(
+            [str(CLIP_TO_ANDROID)],
+            input=b"x",
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert res.returncode != 0, "書けなかったのに成功を返した"
+        # スクリプト名だけの照合では足りない: リダイレクト失敗時にシェル自身が
+        # 出すエラー文にもスクリプト名が入るので、die を通ったことにならない。
+        assert "作れません".encode() in res.stderr, res.stderr
+
+    def test_a_read_only_share_fails_loudly_too(self, tmp_path):
+        """ディレクトリはあるのに書けない場合 (読み取り専用マウント、容量不足)。
+
+        `set -e` に任せると die を通らずに落ちる。copy-pipe から呼ばれた子には
+        端末が無く stderr もどこにも出ないので、tmux のステータス行に出す die を
+        必ず経由させないと「成功した」ようにしか見えない。
+        """
+        share = tmp_path / "readonly"
+        share.mkdir()
+        share.chmod(0o500)
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "CLIP_TO_ANDROID_DIR": str(share),
+        }
+        try:
+            res = subprocess.run(
+                [str(CLIP_TO_ANDROID)],
+                input=b"x",
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+        finally:
+            share.chmod(0o700)
+
+        assert res.returncode != 0, "書けなかったのに成功を返した"
+        assert "書き込めません".encode() in res.stderr, (
+            f"die を通っていないので利用者に何も伝わらない: {res.stderr!r}"
+        )
+        assert not list(share.iterdir()), "壊れかけのファイルが残っている"
+
+
+class TestTmuxSharesTheSelectionWithAndroid:
+    def test_Y_is_bound_to_the_share_helper(self):
+        conf = (REPO_ROOT / ".tmux.conf").read_text(encoding="utf-8")
+        binds = [
+            line.strip()
+            for line in conf.splitlines()
+            if line.strip().startswith("bind -T copy-mode-vi Y ")
+        ]
+        assert len(binds) == 1, f"copy-mode の Y バインドが一意でない: {binds}"
+        assert "clip_to_android.sh" in binds[0], binds[0]
+
+    def test_install_links_the_helper_the_bind_names(self):
+        # bind が呼ぶのは ~/.tmux/clip_to_android.sh。install.sh がそこへ張って
+        # いなければ、キーを押しても "not found" で黙って終わる。
+        install = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+        assert '"$HOME/.tmux/clip_to_android.sh"' in install

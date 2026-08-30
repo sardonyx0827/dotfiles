@@ -1419,17 +1419,26 @@ _link_gemini_config() {
 }
 
 _link_tmux_helper() {
-  # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
+  # tmux helper scripts: .tmux.conf `bind S` invokes
+  # ~/.tmux/tmux_send_to_all_except_nvim.sh, and copy-mode `Y` invokes
+  # ~/.tmux/clip_to_android.sh (Android's Linux Terminal only -- it writes the
+  # selection to the shared storage the host can read; harmless elsewhere,
+  # where it just reports the missing mount point).
   [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.tmux"
+  # ループにまとめないこと: docs/setup.md との差分を見張るテストは
+  # link_entry のリテラルなパスを読むので、変数に畳むとリンクを見失う。
   link_entry "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
+  link_entry "$DOTFILES_DIR/scripts/clip_to_android.sh" "$HOME/.tmux/clip_to_android.sh"
   [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
+  [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/clip_to_android.sh" 2>/dev/null || true
 }
 
 _link_pbcopy() {
-  # OSC 52 clipboard bridge. Terminals with no X/Wayland clipboard reachable
-  # -- Android's Debian container, a plain SSH session -- have nothing for
-  # xsel/wl-copy to talk to; writing the escape straight to /dev/tty hands the
-  # selection to the outer terminal emulator instead.
+  # Clipboard bridge. Picks the backend that can actually reach a clipboard:
+  # Wayland (wl-copy) first -- on Android's Linux Terminal VM that is the only
+  # selection the host reads, through linux_vm_manager's readClipboard -- then
+  # X11 (xsel), then OSC 52 for a plain SSH session with neither. .tmux.conf's
+  # copy binds go through this too, on every OS.
   #
   # macOS is skipped deliberately. It ships its own /usr/bin/pbcopy, and
   # .zshrc exports ~/.local/bin AHEAD of /usr/bin unconditionally -- linking

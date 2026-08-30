@@ -66,22 +66,25 @@ sudo apt-get upgrade -y
 
 #### クリップボード統合
 
-tmuxでのクリップボード操作には `xsel` を使用します（インストールスクリプトで自動インストール）。
-
-Waylandを使用している場合は `wl-clipboard` も必要になる場合があります：
+tmux のコピー (`y` / `Enter`) は `~/.local/bin/pbcopy`（= `scripts/pbcopy`）を通ります。
+Wayland セッションなら `wl-copy`、X11 セッションなら `xsel` を選ぶので、使っている
+セッション側のパッケージが要ります（`xsel` はインストールスクリプトが自動で入れます）。
 
 ```bash
-sudo apt-get install -y wl-clipboard
+sudo apt-get install -y wl-clipboard   # Wayland セッションの場合
 ```
 
-#### X/Wayland が無い環境（Android の Linux ターミナル / SSH）
+貼り付け (`Ctrl+a ]`) だけは `xsel` 固定です。
 
-Pixel などの Android 端末上で動く Debian コンテナや、素の SSH セッションには X も
-Wayland もありません。`xsel` / `wl-copy` は接続先が無いまま失敗するため、端末の
-エスケープシーケンス経由でクリップボードへ書き込む **OSC 52** を使う `pbcopy` を
-用意しています。
+#### Android の Linux ターミナル (AVF) / X も Wayland も無い SSH 先
 
 `install.sh` は macOS 以外で `scripts/pbcopy` を `~/.local/bin/pbcopy` へリンクします。
+このスクリプトは「その環境で本当に届く出口」を上から順に選ぶディスパッチャです。
+
+1. **Wayland** (`wl-copy`)
+2. **X11** (`xsel`)
+3. **OSC 52**（端末エスケープ。X も Wayland も無い SSH 先向け）
+
 macOS でリンクしないのは、`.zshrc` の `export PATH="$HOME/.local/bin:$PATH"` が
 `~/.local/bin` を無条件で `/usr/bin` より前に置くため、純正の `/usr/bin/pbcopy` を
 黙って覆い隠してしまうからです（`~/.local/bin/env` の読み込みは条件付きなので、
@@ -91,9 +94,82 @@ macOS でリンクしないのは、`.zshrc` の `export PATH="$HOME/.local/bin:
 echo hello | pbcopy
 ```
 
+`.tmux.conf` のコピー系バインド（`y` / `Enter`）も OS で分岐せずこの `pbcopy` を
+通すので、矩形コピー（`C-v` で矩形トグル → `y`）もそのまま同じ経路に乗ります。
+
+##### Android 側のクリップボードへ渡る仕組み
+
+Pixel などの Android 端末上で動く Linux ターミナル (AVF の Debian VM) では、
+**Wayland のクリップボードだけ**が Android 本体と繋がっています。ゲストエージェント
+`/usr/bin/linux_vm_manager` が橋渡しをしていて、`readClipboard`（ゲスト → Android）で
+
+```
+XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 wl-paste --no-newline
+```
+
+を、逆方向の `updateClipboard`（Android → ゲスト）で `wl-copy` を呼びます。したがって:
+
+- `xsel` が書く X のクリップボードは、Xwayland ↔ weston の同期で結果的に追随する
+  だけで、VM の中で閉じた経路です
+- **OSC 52 はこの環境では届きません**。端末を配っているのは `ttyd` で、その WebView
+  は 52 番の OSC ハンドラを一つも登録していません（`registerOscHandler` に 52 が無い）
+- ttyd から起動したシェルには `DISPLAY=:0` だけが入っていて `WAYLAND_DISPLAY` は
+  空なので、`pbcopy` はソケット (`$XDG_RUNTIME_DIR/wayland-0`) を見て既定名を補います
+
+動作確認:
+
+```bash
+printf 'clipboard-check' | pbcopy   # tmux なら矩形選択して y
+# → Android 側のアプリで長押し → 貼り付け
+```
+
+Android 側でコピーした文字列が VM に降りてくるか（`updateClipboard` 方向）は
+`wl-paste` で確認できます。
+
+##### 端末アプリが橋渡ししてくれない場合の逃げ道（共有ストレージ経由）
+
+上の仕組みは「Android アプリが `readClipboard` を呼びに来る」ことが前提です。
+呼びに来ないアプリ／バージョンでは、`wl-copy` まで届いていても本体のクリップ
+ボードには入りません（ゲスト側から通知する口は無く、AIDL のメソッドはどちらも
+Android から呼ぶ側です）。
+
+その場合は共有ストレージを使います。`/mnt/shared` に Android の
+`/storage/emulated/0` が virtiofs で見えていて、VM から書き込めます。
+
+- コピーモードで **`Y`**（`y` の代わり）を押すと、`~/.tmux/clip_to_android.sh`
+  が選択範囲を `/mnt/shared/Download/tmux-clip/` に書き出します（`latest.txt`
+  と `index.html`）。ついでに `pbcopy` も呼ぶので VM 側のクリップボードにも入ります
+- Android のブラウザで次を開き、ブックマークしておきます
+
+```
+file:///storage/emulated/0/Download/tmux-clip/index.html
+```
+
+- ページは 3 秒ごとに読み直すので、`Y` を押してブラウザに切り替えれば最新の
+  内容が出ています。「コピー」を 1 タップで Android のクリップボードへ入ります
+  （`file://` はセキュアコンテキストではないため `navigator.clipboard` は使えず、
+  `execCommand('copy')` に落ちます。それも塞がれている場合はテキストを長押し →
+  全選択 → コピー）
+
+`y` と `Y` を分けているのは、`Y` では選択範囲が **Android のストレージに平文で
+残る**からです（ストレージ権限を持つアプリから読めます）。途中経過は VM 内の
+`/tmp`（tmpfs, 0600）も通りますが、こちらは終了時に消えます。パスワードのような
+ものを流してしまったら消してください:
+
+```bash
+~/.tmux/clip_to_android.sh --clear
+```
+
+常に共有したい場合は `.tmux.conf` の `y` のバインドをこのスクリプトに差し替え
+れば済みます（スクリプトの中で `pbcopy` も呼んでいます）。書き出し先は
+`CLIP_TO_ANDROID_DIR` で変更できます。
+
+##### OSC 52 に落ちる環境（素の SSH 先など）
+
 tmux 内から OSC 52 を通すために `.tmux.conf` で `allow-passthrough on` を設定しています
 （tmux 3.3 以降の既定は off で、未設定だと tmux 内でのみ終了ステータス 0 のまま
-無言で失敗します）。
+無言で失敗します）。ペインの中から送るときはエスケープを DCS パススルーで包み、
+その内側の ESC は二重にする必要があります（`\033Ptmux;\033\033]52;...`）。
 
 > **`allow-passthrough on` が開くもの**: この設定はサーバー全体 (`set -g`) に効き、
 > `pbcopy` だけを通すわけではありません。ペインに出力を出せるプログラムはどれも
@@ -104,13 +180,12 @@ tmux 内から OSC 52 を通すために `.tmux.conf` で `allow-passthrough on`
 > 個人用の 1 人 tmux では許容できる取引ですが、共用サーバーでは見直してください。
 > なお `all` ではなく `on` なので、背景ペインからの素通しは対象外です。
 
-> **注意**: tmux のコピーモード（`y` / `Enter`）のバインドは `uname` が `Linux` を返すと
-> `xsel` を呼ぶ設定のままです。この環境で選択範囲をコピーしたい場合は、パイプで
-> `pbcopy` に渡すか、該当バインドを `pbcopy` に差し替えてください。
-
-> **注意**: `pbcopy` は制御端末 (`/dev/tty`) へ直接書きます。cron、フック、pty を
-> 割り当てない非対話リモート実行のように制御端末を持たない呼び出しでは、
-> `/dev/tty` を開けずに失敗します。対話セッション専用と考えてください。
+> **注意**: OSC 52 に落ちたときだけ `pbcopy` は端末 (`/dev/tty`) を必要とします。
+> tmux の `copy-pipe` から呼ばれた場合は tmux サーバの子で制御端末を持たないため、
+> クライアントの端末 (`#{client_tty}`) を tmux に問い合わせて直接書きます。それも
+> 無い呼び出し（cron、フック、pty を割り当てない非対話リモート実行）では、届く
+> 経路が無いことを終了ステータス 1 で返します。Wayland / X11 が使える環境では
+> この制約はありません。
 
 #### 端末内での日本語入力（uim-fep）
 

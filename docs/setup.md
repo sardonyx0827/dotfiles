@@ -222,16 +222,18 @@ done
 mkdir -p ~/.oh-my-zsh/custom/themes
 ln -sf ~/dotfiles/.oh-my-zsh/custom/themes/px-rose-pine.zsh-theme ~/.oh-my-zsh/custom/themes/px-rose-pine.zsh-theme
 
-# tmuxヘルパースクリプト (.tmux.conf の `bind S` が参照)
+# tmuxヘルパースクリプト (.tmux.conf の `bind S` とコピーモードの `Y` が参照)
 mkdir -p ~/.tmux
-ln -sf ~/dotfiles/scripts/tmux_send_to_all_except_nvim.sh ~/.tmux/tmux_send_to_all_except_nvim.sh
+for e in tmux_send_to_all_except_nvim.sh clip_to_android.sh; do
+  ln -sf ~/dotfiles/scripts/$e ~/.tmux/$e
+done
 
-# OSC 52 クリップボードブリッジ (X/Wayland のクリップボードに届かない環境向け。
-# Android の Debian コンテナや素の SSH セッションでは xsel/wl-copy に話し相手が
-# いないため、エスケープを直接 /dev/tty へ書いて外側の端末に選択範囲を渡す)
+# クリップボードブリッジ (.tmux.conf の y/Enter もこれを通す。Wayland → X11 →
+# OSC 52 の順に、その環境で本当に届く出口を選ぶ。Android の Linux ターミナルで
+# Android 本体と繋がっているのは Wayland のクリップボードだけ)
 # macOS では実行しないこと: 純正の /usr/bin/pbcopy を PATH 上で覆い隠す
 # (.zshrc の export PATH が ~/.local/bin を無条件で /usr/bin より前に置くため)。
-# また pbcopy は /dev/tty へ書くので、制御端末を持たない呼び出しでは失敗する。
+# OSC 52 に落ちたときだけ端末が要る (詳細は INSTALL_PLATFORM.md)。
 mkdir -p ~/.local/bin
 ln -sf ~/dotfiles/scripts/pbcopy ~/.local/bin/pbcopy
 chmod +x ~/dotfiles/scripts/pbcopy

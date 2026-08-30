@@ -87,9 +87,13 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 - **viモード**: コピーモードでviキーバインド使用
 - **マウス操作**: ペイン端のダブルクリックで分割、それ以外はコピーモード
 - **テーマ / プラグイン**（tpm で管理）: `rose-pine/tmux`（moon）、`tmux-mode-indicator`、`tmux-sensible`、`tmux-logging`、`tmux-easy-motion`（`f` プレフィックスで高速カーソル移動）
-- **クリップボード統合**:
-  - macOS: pbcopy/pbpaste
-  - Linux: xsel
+- **クリップボード統合**: コピー (`y` / `Enter`) は OS を問わず `pbcopy`
+  - macOS: 純正の `/usr/bin/pbcopy`
+  - それ以外: `scripts/pbcopy` (Wayland → X11 → OSC 52 の順に届く出口を選ぶ)
+  - 貼り付け (`]`) のみ分岐: macOS は `pbpaste`、Linux は `xsel`
+  - `Y`: Android の Linux ターミナル用。選択範囲を共有ストレージ
+    (`/mnt/shared/Download/tmux-clip/`) にも書き出し、Android のブラウザから
+    1 タップでコピーできるようにする（詳細は INSTALL_PLATFORM.md）
 - **ロギング**: `Ctrl+a C-p` 開始 / `Ctrl+a C-o` 停止（`~/.tmux/log` に保存）
 
 #### 主要なキーバインド
