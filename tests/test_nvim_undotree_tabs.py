@@ -304,3 +304,31 @@ class TestTheSharedTargetBufferKeymapActsOnTheDiffYouAreIn:
             "pressing <C-w>q outside the diff tab closed the diff tab"
         )
         assert res["tab_count"] == 2
+
+
+class TestTargetBufferSelection:
+    """find_target_buf must pick the FILE, not whichever window comes first.
+
+    Side panels -- nvim-tree, a terminal, quickfix -- sit in the first window
+    of the tab far more often than not, and the scan excluded only the four
+    undotree filetypes. So `<C-d>` with nvim-tree open diffed the tree buffer
+    and failed with E830 instead of opening anything.
+    """
+
+    def test_a_nofile_side_panel_in_the_first_window_is_skipped(self):
+        res = scenario("side_panel_first_in_tab")
+        assert res["diff_tab_valid"], "no diff tab was opened at all"
+        # The diff tab's right-hand window shows the real buffer in diff mode.
+        assert True in res["target_still_in_diff_mode"], (
+            "the diff was not opened on the target buffer"
+        )
+
+
+class TestBothChordSpellingsCloseTheDiff:
+    def test_the_control_form_on_the_target_side_closes_the_diff_too(self):
+        # cleanup_diff already deletes BOTH `<C-w>q` and `<C-w><C-q>` from the
+        # target buffer; only the letter form was ever bound there.
+        res = scenario("close_via_target_ctrl_chord")
+        assert not res["diff_tab_valid"], "the diff tab was left standing"
+        assert res["tab_count"] == 1
+        assert not any(res["target_still_in_diff_mode"])

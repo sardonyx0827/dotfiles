@@ -88,6 +88,29 @@ end
 
 local target = make_target()
 local user_tab = vim.api.nvim_get_current_tabpage()
+
+if scenario == "side_panel_first_in_tab" then
+  -- A side panel (nvim-tree, a terminal, quickfix) usually holds the FIRST
+  -- window of the tab. find_target_buf() returned whatever that window showed
+  -- as long as it was not an undotree buffer, so the diff was opened on the
+  -- panel's buffer and died with E830 (no undo history at the requested seq).
+  -- The panel is built BEFORE open_vimdiff for exactly that reason.
+  vim.cmd("topleft vsplit")
+  vim.cmd("enew")
+  vim.bo.buftype = "nofile"
+  vim.bo.buflisted = false
+  vim.bo.filetype = "NvimTree"
+  vim.cmd("wincmd l")
+  -- The target itself is made nobuflisted too: buftype, not buflisted, is
+  -- what tells a panel from a file, and a real file some plugin unlisted
+  -- must still be diffable.
+  vim.bo[target].buflisted = false
+  if vim.api.nvim_get_current_buf() ~= target then
+    emit({ ok = false, err = "the probe did not land back on the target window" })
+    os.exit(0)
+  end
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+end
 M.open_vimdiff()
 local diff_tab = vim.api.nvim_get_current_tabpage()
 local first_call_autocmds = cleanup_autocmd_ids()
@@ -126,7 +149,8 @@ end
 --- Mode "x" so the keys are consumed before this returns; note that an error
 --- raised inside the mapping's callback is swallowed there rather than reaching
 --- `close_err`, so these scenarios are judged on the layout they leave behind.
-local function press_close_in(tab, target_buf)
+local function press_close_in(tab, target_buf, keys)
+  keys = keys or "<C-w>q"
   vim.api.nvim_set_current_tabpage(tab)
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
     if vim.api.nvim_win_get_buf(win) == target_buf then
@@ -134,7 +158,7 @@ local function press_close_in(tab, target_buf)
     end
   end
   local ok, err = pcall(vim.api.nvim_feedkeys,
-    vim.api.nvim_replace_termcodes("<C-w>q", true, false, true), "x", false)
+    vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
   if not ok then
     close_err = tostring(err)
   end
@@ -288,6 +312,16 @@ elseif scenario == "target_keymap_outside_a_diff_tab" then
   vim.api.nvim_set_current_tabpage(user_tab)
   vim.cmd("split")
   press_close_in(user_tab, target)
+elseif scenario == "side_panel_first_in_tab" then
+  -- Nothing to do after the open: the layout built above is the whole test,
+  -- and the shared report below says which buffer the diff tab ended up on.
+  local _ = nil
+elseif scenario == "close_via_target_ctrl_chord" then
+  -- `<C-w><C-q>` is the same chord as `<C-w>q` to Vim's builtin window-close
+  -- and the scratch side binds both -- but the target side bound only the
+  -- letter form, so the control form fell through to the builtin, closed one
+  -- window and left the tab standing half-diffed with its cleanup still armed.
+  press_close_in(diff_tab, target, "<C-w><C-q>")
 else
   emit({ ok = false, err = "unknown scenario: " .. scenario })
   os.exit(0)

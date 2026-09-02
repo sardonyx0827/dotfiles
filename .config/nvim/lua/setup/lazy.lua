@@ -34,8 +34,14 @@ local function load_plugins()
       if type == "directory" then
         scan_dir(full_path)
       elseif type == "file" and name:match("%.lua$") then
-        -- Convert file path to module path
-        local module = full_path:gsub(vim.fn.stdpath("config") .. "/lua/", "")
+        -- Convert file path to module path. The prefix is removed with
+        -- string.sub, NOT gsub: gsub reads its first argument as a Lua
+        -- pattern, and a config path containing `-` (a lazy quantifier) or
+        -- `.` (any char) never matched itself, so every spec under
+        -- /Users/jane-doe/.config or a `dotfiles-main` worktree was skipped
+        -- and the editor started with no plugins at all.
+        local prefix = vim.fn.stdpath("config") .. "/lua/"
+        local module = full_path:sub(#prefix + 1)
             :gsub("%.lua$", "")
             :gsub("/", ".")
         local ok, plugin = pcall(require, module)

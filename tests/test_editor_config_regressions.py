@@ -817,3 +817,19 @@ class TestAcceptNeverDeletesTheSelection:
         assert got["FINISH_THREW"] == "", got
         assert got["STATUS"] == "done", got
         assert got["TARGET_AFTER"] == str(["T1", "R1", "R2", "T4", "T5"]), got
+
+
+def test_no_deprecated_vim_highlight_calls_in_the_lua_tree():
+    """`vim.highlight` was deprecated in 0.11 and is scheduled for removal.
+
+    The tree was swept for deprecated 0.12 APIs (see tests/test_nvim_keymap_opts.py
+    for the commit), but the TextYankPost handler in setup/init.lua kept calling
+    `vim.highlight.on_yank`, which warns on every yank on 0.12 and will simply
+    fail once the alias is removed. `vim.hl` is the replacement.
+    """
+    offenders = sorted(
+        str(path.relative_to(REPO_ROOT))
+        for path in (REPO_ROOT / ".config/nvim").rglob("*.lua")
+        if "vim.highlight." in path.read_text(encoding="utf-8")
+    )
+    assert offenders == [], f"deprecated vim.highlight used in: {offenders}"

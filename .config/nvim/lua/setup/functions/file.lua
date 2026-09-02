@@ -104,8 +104,12 @@ local function move_to_codeblock(direction)
     end
   end
 
-  -- Set the cursor position or print a message if no code block is found
+  -- Set the cursor position or print a message if no code block is found.
+  -- `i + step` can point one line past either end while a fence is still
+  -- being typed on the first/last line; nvim_win_set_cursor rejects that
+  -- with "out of range", so clamp it.
   if between_line ~= limit then
+    between_line = math.max(1, math.min(between_line, line_count))
     vim.api.nvim_win_set_cursor(0, { between_line, 0 })
   else
     print(message)
@@ -140,8 +144,11 @@ local function select_codeblock_text()
     end
   end
 
-  -- if start_line and end_line are found, select the text
-  if start_line and end_line then
+  -- if start_line and end_line are found, select the text. Both scans start
+  -- at the cursor line, so a cursor ON a fence matches it twice and yields
+  -- start > end; that is "no block", not a selection to attempt (the old
+  -- guard passed, `normal! V` ran, and set_cursor(0) threw mid-selection).
+  if start_line and end_line and start_line <= end_line then
     vim.api.nvim_win_set_cursor(0, { start_line, 0 })
     vim.cmd("normal! V")
     vim.api.nvim_win_set_cursor(0, { end_line, 0 })

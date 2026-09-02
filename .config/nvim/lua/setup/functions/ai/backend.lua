@@ -369,7 +369,15 @@ local function run_cli(tool, model, instruction, input, skip_git_check, done)
     on_exit = function(_, exit_code)
       vim.fn.delete(tmpfile)
       vim.schedule(function()
-        if exit_code == 0 and #result > 0 then
+        -- `#result > 0` alone is not "the tool answered": a lone "\n" splits
+        -- into {"", ""}, clean_cli_lines drops one, and the surviving empty
+        -- string would be handed back as a successful one-line reply -- the
+        -- tab turns green and `y` replaces the selection with a blank line.
+        -- Whitespace-only is an empty response, the rule parse_ollama and
+        -- parse_edits already apply.
+        local has_text = exit_code == 0
+          and vim.trim(table.concat(result, "\n")) ~= ""
+        if has_text then
           done(true, result, nil)
         else
           done(false, {}, cli_failure_reason(exit_code, stderr))
@@ -533,7 +541,14 @@ function M.run_with_fallback(specs, done)
   local failures = {}
   local function attempt(i)
     local spec = specs[i]
-    handle.job = M.run(spec, function(ok, lines, err)
+    -- `handle.job` is claimed only by the attempt that is still current. A
+    -- spec that fails SYNCHRONOUSLY (unknown tool, oversized payload, a
+    -- refused jobstart) runs the callback below -- which advances to
+    -- attempt(i + 1) and stores that job -- before M.run has even returned,
+    -- so an unconditional `handle.job = M.run(...)` then overwrote the live
+    -- id with nil and ui.lua's cancel_job had nothing to stop.
+    handle.attempt = i
+    local job = M.run(spec, function(ok, lines, err)
       if ok then
         done(true, lines, nil, spec.tool)
         return
@@ -576,6 +591,9 @@ function M.run_with_fallback(specs, done)
       end
       done(false, {}, detail, spec.tool)
     end, true)
+    if handle.attempt == i then
+      handle.job = job
+    end
   end
   attempt(1)
   return handle
