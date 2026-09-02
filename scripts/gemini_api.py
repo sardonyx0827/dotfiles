@@ -63,6 +63,7 @@ buffer, which is not the same thing at all.
 
 import argparse
 import contextlib
+import http.client
 import json
 import os
 import re
@@ -357,10 +358,13 @@ def request_generate(
             # waiting out a backoff for nothing.
             if exc.code not in RETRYABLE_STATUS:
                 raise GeminiError(last) from exc
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             # URLError and TimeoutError are both OSError subclasses, and so is a
-            # connection reset raised while reading the body; one clause covers
-            # every transport failure worth retrying.
+            # connection reset raised while reading the body. A connection that
+            # is closed cleanly mid-body is different: http.client reports that
+            # as IncompleteRead, an HTTPException that is NOT an OSError, so
+            # the arm has to name both to cover every transport failure worth
+            # retrying.
             last = f"{type(exc).__name__}: {exc}"
         except json.JSONDecodeError as exc:
             # A body that is not JSON is not a transport hiccup — retrying it
