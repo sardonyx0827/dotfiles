@@ -1232,3 +1232,42 @@ class TestMcCli:
         argc, argv = self._run(tmp_path, "mc execute do the thing")
 
         assert (argc, argv) == (4, ["--model", "sonnet", "-p", "do the thing"])
+
+
+class TestPromptThemeStatusSegment:
+    """The theme's status segment must be able to see background jobs.
+
+    `$(jobs -l | wc -l)` runs in a forked subshell whose job table is empty,
+    and the segment is itself already inside `$(prompt_agnoster_main)`, so the
+    GEAR the comment promises ("are there background jobs?") could never
+    appear. The count has to be taken in precmd, in the main shell.
+    """
+
+    THEME = REPO_ROOT / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme"
+
+    def _render_prompt_with_a_background_job(self):
+        program = (
+            f'source "{self.THEME}"\n'
+            "setopt promptsubst\n"
+            "sleep 5 &\n"
+            "prompt_agnoster_precmd\n"
+            'print -P -- "$PROMPT"\n'
+            "kill %1 2>/dev/null; wait 2>/dev/null\n"
+        )
+        res = subprocess.run(
+            ["zsh", "-f", "-c", program],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(self.THEME.parent),
+        )
+        assert res.returncode == 0, res.stderr
+        return res.stdout
+
+    def test_a_background_job_lights_the_gear(self):
+        if shutil.which("zsh") is None:
+            pytest.skip("zsh not installed")
+        out = self._render_prompt_with_a_background_job()
+        assert "\u2699" in out or "\\u2699" in out, (
+            f"no background-job indicator in the rendered prompt: {out!r}"
+        )

@@ -421,7 +421,10 @@ _mc() {
       _describe 'mc commands' commands
       ;;
     args)
-      case $words[2] in
+      # `*::args` rewrites `words` to the normal arguments only, so the
+      # subcommand sits at words[1] (the idiom zsh's own _asciinema / _augeas
+      # use); words[2] was the argument AFTER it and never matched a hint.
+      case $words[1] in
         translate|execute|cli)
           _message "プロンプトまたは翻訳したいテキストを入力"
           ;;
