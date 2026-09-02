@@ -1,6 +1,9 @@
 -- Highlitght colors, Indents, etc
 return {
   "nvim-treesitter/nvim-treesitter",
+  -- Pin to `master`: the default branch moved to `main`, a full rewrite that
+  -- drops `nvim-treesitter.configs` and the whole option set used below.
+  branch = "master",
   event = "BufRead",
   dependencies = {
     -- show context
