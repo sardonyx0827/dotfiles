@@ -401,8 +401,12 @@ class TestUpdateAiTools:
         assert res.returncode == 0
         expected = [
             "claude update",
-            "npm update -g @openai/codex",
-            "npm upgrade -g @google/gemini-cli",
+            # `@latest`, not `npm update -g`: update resolves inside the range
+            # recorded at install time and will not cross a major version, so
+            # a new major of either CLI was silently skipped while the script
+            # still printed success.
+            "npm install -g @openai/codex@latest",
+            "npm install -g @google/gemini-cli@latest",
             "copilot update",
             "claude --version",
             "codex --version",
@@ -429,8 +433,8 @@ class TestUpdateAiTools:
 
         assert res.returncode == 0, f"a failing tool aborted the script: {res.stderr}"
         for call in (
-            "npm update -g @openai/codex",
-            "npm upgrade -g @google/gemini-cli",
+            "npm install -g @openai/codex@latest",
+            "npm install -g @google/gemini-cli@latest",
             "copilot update",
             "codex --version",
             "gemini --version",
