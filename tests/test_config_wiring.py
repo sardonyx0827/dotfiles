@@ -410,3 +410,30 @@ def test_vscode_git_stage_keys_are_distinct():
     by_key = {b["key"]: b["command"] for b in bindings if "git.stage" in b["command"]}
     assert by_key.get("ctrl+g shift+s") == "git.stageAll"
     assert by_key.get("ctrl+g s") == "git.stage"
+
+
+def test_tmux_double_click_selects_the_word_under_the_mouse():
+    """copy-mode needs `-M` to start at the mouse, and -M only works in a binding.
+
+    The old `run-shell` branch ran `tmux copy-mode -t <pane>` with no -M, so the
+    copy cursor started at the TERMINAL cursor and `select-word` picked the last
+    word of the pane whatever was double-clicked; its `send-keys -X` also had
+    no -t and went to the active pane. -M is rejected inside run-shell (no mouse
+    event there), so the copy branch has to live in the binding itself.
+    """
+    conf = (REPO_ROOT / ".tmux.conf").read_text(encoding="utf-8")
+    start = conf.index("DoubleClick1Pane")
+    end = conf.index("\n\n", start)
+    binding = conf[start:end]
+    assert "copy-mode -M" in binding, binding
+    assert "run-shell" not in binding, "the copy branch must not go through run-shell"
+    # tmux's bare `<=` is a STRING comparison ("20" <= "5" is true); only the
+    # `e|` form is numeric. A double-click 10-49 columns from the edge split
+    # the pane instead of selecting the word until this read `#{e|<=:...}`.
+    assert binding.count("#{e|<=:") == 2, binding
+    assert "#{<=:" not in binding, "edge distance compared as a string"
+    # tmux's bare `<=` is a STRING comparison ("20" <= "5" is true); only the
+    # `e|` form is numeric. A double-click 10-49 columns from the edge split
+    # the pane instead of selecting the word until this read `#{e|<=:...}`.
+    assert binding.count("#{e|<=:") == 2, binding
+    assert "#{<=:" not in binding, "edge distance compared as a string"
