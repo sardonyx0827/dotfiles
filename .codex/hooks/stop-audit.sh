@@ -9,6 +9,14 @@
 
 input=$(cat)
 
+# jq が無いと stop_hook_active を読めない。読めないまま監査を続けると、block
+# からの継続でもフラグが空 = false 扱いで再び block し、Stop が終わらなくなる
+# (Codex 変種で実測)。lint.sh / auto-format.sh と同じく jq 不在は監査しない。
+command -v jq >/dev/null 2>&1 || {
+  echo "stop-audit: jq not found on PATH; debug-statement audit skipped" >&2
+  exit 0
+}
+
 stop_active=$(echo "$input" | jq -r '.stop_hook_active // false' 2>/dev/null)
 [ "$stop_active" = "true" ] && exit 0
 

@@ -90,3 +90,28 @@ class TestStatusline:
         )
         assert "rl 85%" in out
         assert f"↺{expected}" in out
+
+    def test_backslashes_in_the_directory_are_shown_literally(self, shell_env):
+        """printf %b read the cwd's backslashes as escapes.
+
+        macOS allows `\\` in a directory name; `\\c` told %b to stop printing,
+        so everything after it -- model, ctx, git, cost and the trailing reset --
+        vanished and the terminal was left coloured. `\\t` became a tab.
+        """
+        weird = shell_env.home / "src" / "c\\components"
+        weird.mkdir(parents=True)
+        out = render(
+            shell_env, base_input(shell_env, workspace={"current_dir": str(weird)})
+        )
+        assert "c\\components" in out
+        assert "Opus 4" in out, f"output truncated at the backslash: {out!r}"
+        assert "$1.5000" in out
+
+    def test_a_backslash_t_in_the_directory_is_not_a_tab(self, shell_env):
+        weird = shell_env.home / "x\\ty"
+        weird.mkdir(parents=True)
+        out = render(
+            shell_env, base_input(shell_env, workspace={"current_dir": str(weird)})
+        )
+        assert "x\\ty" in out
+        assert "\t" not in out

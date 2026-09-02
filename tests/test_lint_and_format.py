@@ -847,6 +847,80 @@ echo "$out"
         assert res.returncode == 2
         assert "[ESLint]" in res.stderr
 
+    def test_tsc_launch_failure_is_not_a_pass(self, LINT, shell_env, git_repo):
+        """tsc exiting non-zero WITHOUT naming any file means it never ran.
+
+        A broken tsconfig.json makes tsc print `error TS5083: Cannot read file
+        'tsconfig.json'.` and exit 1. The related-lines filter grep'd for the
+        basename, found nothing, appended nothing -- and the hook returned 0
+        on a file with a genuine type error. checkstyle and cppcheck in the
+        same file already treat "non-zero and no findings" as a launch failure.
+        """
+        (git_repo / "tsconfig.json").write_text(
+            "{ this is not json\n", encoding="utf-8"
+        )
+        target = git_repo / "bad.ts"
+        target.write_text("export const x: number = 'no'\n", encoding="utf-8")
+        shell_env.stub(
+            "tsc",
+            body="echo \"error TS5083: Cannot read file 'tsconfig.json'.\"",
+            exit_code=1,
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2, "a tsc that could not run must not pass the gate"
+        assert "[TypeScript]" in res.stderr
+        assert "TS5083" in res.stderr
+
+    def test_tsc_errors_only_in_other_files_do_not_block(
+        self, LINT, shell_env, git_repo
+    ):
+        # The launch-failure guard must not widen into "any tsc error blocks":
+        # a diagnostic that names a DIFFERENT file is not this edit's problem.
+        (git_repo / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+        target = git_repo / "fine.ts"
+        target.write_text("export const y = 1\n", encoding="utf-8")
+        shell_env.stub(
+            "tsc",
+            body="echo \"src/other.ts(1,14): error TS2322: Type 'string' is not"
+            " assignable to type 'number'.\"",
+            exit_code=1,
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0, res.stderr
+
+    @pytest.mark.parametrize(
+        "config", [".eslintrc.cjs", ".eslintrc.yaml", "eslint.config.ts"]
+    )
+    def test_every_eslint_config_spelling_is_detected(
+        self, LINT, shell_env, git_repo, config
+    ):
+        # The list had eslint.config.cjs but not .eslintrc.cjs, .yml but not
+        # .yaml, and no eslint.config.ts -- so with eslint installed and one
+        # of these configs present the hook printed "config not found" and
+        # went green on code eslint had rejected.
+        shell_env.stub("eslint", body='echo "1:1 error Unexpected var"', exit_code=1)
+        (git_repo / config).write_text("\n", encoding="utf-8")
+        target = git_repo / "x.js"
+        target.write_text("var x = 1\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2, f"{config} was not recognised as an ESLint config"
+        assert "[ESLint]" in res.stderr
+
+    def test_eslint_config_in_a_package_directory_is_detected(
+        self, LINT, shell_env, git_repo
+    ):
+        # Monorepos keep the config next to the package, not at the git root;
+        # the search only looked at PROJECT_ROOT.
+        shell_env.stub("eslint", body='echo "1:1 error Unexpected var"', exit_code=1)
+        pkg = git_repo / "packages" / "web"
+        pkg.mkdir(parents=True)
+        (pkg / ".eslintrc.js").write_text("module.exports = {}\n", encoding="utf-8")
+        target = pkg / "app.js"
+        target.write_text("var x = 1\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "[ESLint]" in res.stderr
+
     def _tsc_project(self, shell_env, git_repo, filename: str):
         """A tsc that reports one error against `filename`, exiting non-zero."""
         (git_repo / "tsconfig.json").write_text("{}\n", encoding="utf-8")
@@ -1239,3 +1313,32 @@ class TestCodexAutoFormat:
         call = osascript_calls[0]
         assert target.name not in call
         assert "HOOK_NOTIFY_MESSAGE" in call
+
+
+class TestLintHelperOutputVarGuard:
+    """hook_lint_file must refuse an output variable that shadows one of its locals.
+
+    The guard enumerates the locals by hand; GO_PKG_DIR was declared local but
+    left out of the list, so that one name slipped through and printf -v would
+    have written into the local -- the caller sees nothing, silently.
+    """
+
+    @pytest.mark.parametrize("name", ["OUTPUT", "GO_PKG_DIR", "RELATED"])
+    def test_a_colliding_output_variable_is_rejected(self, shell_env, tmp_path, name):
+        hooks = REPO_ROOT / ".claude/hooks"
+        target = tmp_path / "x.txt"
+        target.write_text("x\n", encoding="utf-8")
+        program = (
+            f'source "{hooks}/_hook_common.sh"\n'
+            f'source "{hooks}/_lint_common.sh"\n'
+            f'hook_lint_file "{target}" {name} /dev/null\n'
+        )
+        res = subprocess.run(
+            ["bash", "-c", program],
+            capture_output=True,
+            text=True,
+            env=shell_env.env,
+            timeout=60,
+        )
+        assert res.returncode == 2, f"{name}: {res.stdout} {res.stderr}"
+        assert "collides" in res.stderr
