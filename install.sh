@@ -995,7 +995,7 @@ link_oh_my_zsh_theme() {
       rm -f "$HOME/.oh-my-zsh/custom"
     fi
   fi
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.oh-my-zsh/custom/themes"
+  ensure_dir "$HOME/.oh-my-zsh/custom/themes"
   for theme in "$DOTFILES_DIR"/.oh-my-zsh/custom/themes/*; do
     [ -e "$theme" ] || continue
     link_entry "$theme" "$HOME/.oh-my-zsh/custom/themes/$(basename "$theme")"
@@ -1075,9 +1075,31 @@ backup_if_real() {
     print_info "[DRY-RUN] would back up $target -> $dest_parent/"
     return 0
   fi
-  print_warning "Backing up existing $(basename "$target")"
+  # Name the destination every time: create_symlinks reports the backup dir
+  # only for its own step, and link_oh_my_zsh_theme (called later from main)
+  # can be the sole step that moves anything -- the user must still be told
+  # where their file went.
+  print_warning "Backing up existing $(basename "$target") -> $dest_parent/"
   mkdir -p "$dest_parent"
   mv "$target" "$dest_parent/"
+}
+
+# Helper: create a destination directory, replacing a dangling symlink first.
+#
+# The sites this replaced were `[ "$DRY_RUN" -eq 1 ] || mkdir -p "$dir"`: an
+# OR-list, so the mkdir IS the command `set -e` watches. On a stale symlink
+# (an unmounted volume, a moved directory) mkdir -p fails with a bare "No such
+# file or directory" and the installer died mid-run, before packages, MCP
+# registration or chsh, with no [ERROR] line. backup_if_real already treats a
+# symlink -- even a broken one -- as ours to replace; a symlink that resolves
+# to a real directory elsewhere is the user's redirect and is kept.
+ensure_dir() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  if [ -L "$1" ] && [ ! -e "$1" ]; then
+    print_warning "Replacing dangling symlink $1 with a real directory"
+    rm -f "$1"
+  fi
+  mkdir -p "$1"
 }
 
 # Helper: symlink a repo entry into a destination directory, backing up reals
@@ -1087,6 +1109,22 @@ link_entry() {
   if [ ! -e "$src" ]; then
     print_warning "Skipping missing source: $src"
     return
+  fi
+  # Refuse to write through a parent that already resolves INTO the checkout
+  # (`ln -s ~/dotfiles/.claude ~/.claude` is a common pre-existing layout).
+  # ensure_dir / mkdir -p no-op on such a symlink, so dest resolves back onto
+  # src itself: backup_if_real would then MOVE the repo's own entry into the
+  # backup dir and `ln -sf` would leave a self-referential link in the working
+  # tree -- while reporting success. install_oh_my_zsh carries the same
+  # self-heal for ~/.oh-my-zsh/custom; this is the general form.
+  local src_real dest_parent_real
+  src_real="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"
+  dest_parent_real="$(cd "$(dirname "$dest")" 2>/dev/null && pwd -P)" ||
+    dest_parent_real=""
+  if [ -n "$dest_parent_real" ] &&
+    [ "$dest_parent_real/$(basename "$dest")" = "$src_real" ]; then
+    print_warning "Skipping $dest: it already resolves into the checkout ($src)"
+    return 0
   fi
   backup_if_real "$dest"
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -1182,6 +1220,19 @@ _render_git_local_config() {
       print_info "[DRY-RUN] would prompt for a git identity (interactive) or write a commented-out placeholder at $git_user_config"
     fi
   else
+    # Per-machine files, and the user's real name/email: if ~/.config itself
+    # resolves into the checkout (the layout link_entry guards against), they
+    # would land in the working tree as untracked files.
+    local cfg_home_real cfg_repo_real
+    cfg_home_real="$(cd "$HOME/.config" 2>/dev/null && pwd -P)" || cfg_home_real=""
+    cfg_repo_real="$(cd "$DOTFILES_DIR/.config" 2>/dev/null && pwd -P)" || cfg_repo_real=""
+    if [ -n "$cfg_home_real" ] && [ "$cfg_home_real" = "$cfg_repo_real" ]; then
+      print_warning "Skipping git config render: $HOME/.config resolves into the checkout"
+      return 0
+    fi
+    # ~/.config itself may be a dangling symlink (see ensure_dir); this is the
+    # first write under it, ahead of _link_editor_configs.
+    ensure_dir "$HOME/.config"
     mkdir -p "$HOME/.config/git"
     printf '[credential]\n\thelper = %s\n' "$git_cred_helper" \
       >"$HOME/.config/git/os.gitconfig"
@@ -1201,8 +1252,12 @@ _render_git_local_config() {
         fi
       fi
       if [ -n "$git_name" ] && [ -n "$git_email" ]; then
-        printf '[user]\n\tname = %s\n\temail = %s\n' "$git_name" "$git_email" \
-          >"$git_user_config"
+        # Written through git itself, not printf: a raw value is corrupted by
+        # `#` / `;` (comment start), `"` (swallowed) or a trailing backslash
+        # (line continuation -- the name then absorbed the email line and
+        # user.email was left unset, so git refused to commit).
+        git config --file "$git_user_config" user.name "$git_name"
+        git config --file "$git_user_config" user.email "$git_email"
         print_success "Rendered user.gitconfig ($git_name <$git_email>)"
       else
         # Commented-out keys, not empty ones: an empty `name =` makes git report
@@ -1217,7 +1272,7 @@ _render_git_local_config() {
 
 _link_editor_configs() {
   # Directories to symlink
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.config"
+  ensure_dir "$HOME/.config"
 
   # Neovim config (repo stores it at .config/nvim)
   link_entry "$DOTFILES_DIR/.config/nvim" "$HOME/.config/nvim"
@@ -1246,7 +1301,7 @@ _link_editor_configs() {
   else
     vscode_user_dir="$HOME/.config/Code/User"
   fi
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$vscode_user_dir"
+  ensure_dir "$vscode_user_dir"
 
   local editor_config_files=(
     "settings.json"
@@ -1260,7 +1315,7 @@ _link_editor_configs() {
 _link_claude_config() {
   # Claude Code config: symlink individual entries so CLI runtime data
   # (projects/, sessions/, history.jsonl, backups/, etc.) stays out of the repo.
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.claude"
+  ensure_dir "$HOME/.claude"
   local claude_entries=(
     "CLAUDE.md"
     "settings.json"
@@ -1308,7 +1363,7 @@ _link_codex_config() {
   # hand-written skill stops being live in Codex until it is moved back into
   # .codex/skills here. That is the cost of linking the directory rather than
   # its entries.
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.codex"
+  ensure_dir "$HOME/.codex"
 
   local codex_link_entries=(
     "AGENTS.md"
@@ -1327,6 +1382,19 @@ _link_codex_config() {
       link_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
     fi
   done
+
+  # Everything below WRITES per-machine files under ~/.codex. If ~/.codex
+  # itself resolves into the checkout (see the guard in link_entry), a rendered
+  # hooks.json carrying this machine's $HOME and a seeded config.toml would
+  # land in the working tree as untracked files -- exactly the "one `git add`
+  # away from committing a token" trap the comments below describe.
+  local codex_home_real codex_repo_real
+  codex_home_real="$(cd "$HOME/.codex" 2>/dev/null && pwd -P)" || codex_home_real=""
+  codex_repo_real="$(cd "$DOTFILES_DIR/.codex" && pwd -P)"
+  if [ -n "$codex_home_real" ] && [ "$codex_home_real" = "$codex_repo_real" ]; then
+    print_warning "Skipping config.toml / hooks.json: $HOME/.codex resolves into the checkout"
+    return 0
+  fi
 
   # config.toml is deliberately NOT symlinked. Codex owns this file at runtime:
   # `codex mcp add` writes mcp_servers into it -- Authorization headers and all
@@ -1399,7 +1467,7 @@ _link_codex_config() {
 
 _link_gemini_config() {
   # Gemini config: symlink individual entries
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.gemini"
+  ensure_dir "$HOME/.gemini"
   local gemini_entries=(
     "GEMINI.md"
     "settings.json"
@@ -1419,7 +1487,7 @@ _link_gemini_config() {
 
 _link_tmux_helper() {
   # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
-  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.tmux"
+  ensure_dir "$HOME/.tmux"
   link_entry "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
   [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
 }
