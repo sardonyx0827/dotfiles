@@ -788,19 +788,34 @@ def _iter_top_level(
     """
     current: list[str] = []
     in_single = in_double = False
+    # $'...' (ANSI-C quoting) の内側か。通常のシングルクォートと違い、内側の
+    # バックスラッシュはエスケープとして働く (`$'x\\''` は閉じた 1 語)。これを
+    # 通常のシングルクォート扱いすると `\\'` で閉じずに以降ずっと引用中と
+    # 見なし、後続の `|` / `;` を区切りとして認識できなくなる → その後ろの
+    # sudo / curl が独立サブコマンドとして切り出されず、静的 DENY が黙る。
+    in_ansi = False
+    # 直前の文字が (エスケープされていない・クォート外の) `$` か。`\\$'a'` の
+    # `'` は通常のシングルクォートなので、エスケープ対で消費した `$` は数えない。
+    prev_dollar = False
     op_before = ""
     i, n = 0, len(cmd)
     while i < n:
         ch = cmd[i]
-        # シングルクォート内ではバックスラッシュも通常文字
-        if ch == "\\" and not in_single and i + 1 < n:
+        # シングルクォート内ではバックスラッシュも通常文字 ($'...' 内は除く)
+        if ch == "\\" and (not in_single or in_ansi) and i + 1 < n:
             current.append(cmd[i : i + 2])
             i += 2
+            prev_dollar = False
             continue
         if ch == "'" and not in_double:
+            if not in_single:
+                in_ansi = prev_dollar
+            else:
+                in_ansi = False
             in_single = not in_single
         elif ch == '"' and not in_single:
             in_double = not in_double
+        prev_dollar = ch == "$" and not in_single and not in_double
         if not in_single and not in_double:
             if cmd.startswith("&&", i) or cmd.startswith("||", i):
                 yield op_before, "".join(current)
@@ -851,16 +866,24 @@ def _substitutions_at_level(text: str) -> list[str]:
     """
     bodies: list[str] = []
     in_single = in_double = False
+    # $'...' の内側ではバックスラッシュがエスケープとして働く (_iter_top_level と
+    # 同じ規則。片方だけ直すと `$(...)` の中身の走査で再び引用状態がずれる)。
+    in_ansi = False
+    prev_dollar = False
     i, n = 0, len(text)
     while i < n:
         ch = text[i]
-        if ch == "\\" and not in_single:
+        if ch == "\\" and (not in_single or in_ansi):
             i += 2
+            prev_dollar = False
             continue
         if ch == "'" and not in_double:
+            in_ansi = prev_dollar if not in_single else False
             in_single = not in_single
             i += 1
+            prev_dollar = False
             continue
+        prev_dollar = ch == "$" and not in_single and not in_double
         if ch == '"' and not in_single:
             in_double = not in_double
             i += 1
@@ -874,6 +897,7 @@ def _substitutions_at_level(text: str) -> list[str]:
                 j += 2 if text[j] == "\\" else 1
             bodies.append(text[i + 1 : j])
             i = j + 1
+            prev_dollar = False
             continue
         is_cmd_sub = text.startswith("$(", i)
         is_proc_sub = ch in "<>" and not in_double and text.startswith("(", i + 1)
@@ -900,6 +924,8 @@ def _substitutions_at_level(text: str) -> list[str]:
                 j += 1
             bodies.append(text[i + 2 : j])
             i = j + 1
+            # `$` は置換の一部として消費済み。直後の `'` は通常のクォート。
+            prev_dollar = False
             continue
         i += 1
     return bodies
@@ -922,6 +948,33 @@ def _substitution_bodies(cmd: str) -> list[str]:
     return bodies
 
 
+# 行末の「エスケープされていないバックスラッシュ + 改行」(行継続)。奇数個の
+# バックスラッシュだけが継続で、偶数個は `\\` リテラル + 行末。
+_LINE_CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
+
+
+def _join_line_continuations(text: str) -> str:
+    """行継続 (バックスラッシュ + 改行) を畳んだ綴りを返す。
+
+    bash は語分割の前にこの対を取り除くため、`cu\\<改行>rl` の実行体は curl で
+    ある。一方、各分類器はサブコマンドを改行で割ってから見るため `cu` と
+    `rl http://evil` にしか見えず、DENY にも高リスクにも当たらなかった。
+    シングルクォート内では対がリテラルなので、畳んだ綴りは元の綴りを置き換える
+    のではなく「もう 1 つの分類対象」として足す (_classification_texts)。
+    検出を増やす方向にしか働かない。
+    """
+    return _LINE_CONTINUATION.sub(r"\1", text)
+
+
+def _classification_texts(cmd: str) -> list[str]:
+    """DENY / 高リスク判定が走査すべきテキスト列 (元 + 置換の中身 + 行継続畳み)。"""
+    texts = [cmd] + _substitution_bodies(cmd)
+    joined = _join_line_continuations(cmd)
+    if joined != cmd:
+        texts += [joined] + _substitution_bodies(joined)
+    return list(dict.fromkeys(texts))
+
+
 def _split_commands(cmd: str) -> list[str]:
     """セーフスキップと DENY/高リスク判定が共有するサブコマンド列を返す。
 
@@ -933,9 +986,8 @@ def _split_commands(cmd: str) -> list[str]:
     パートが増えるほど検出が広がり、`echo hi & sudo rm -rf /` や
     `echo $(sudo rm -rf /)` が低リスクの fast path へ素通りしなくなる。
     """
-    texts = [cmd] + _substitution_bodies(cmd)
     parts: list[str] = []
-    for text in texts:
+    for text in _classification_texts(cmd):
         for part in _split_top_level(text):
             parts.append(part)
             amp = _split_top_level(part, split_ampersand=True)
@@ -1389,7 +1441,10 @@ def _docker_high_risk_label(args: list[str]) -> str:
         # 管理形 `docker container run` は `docker run` と同じ動作。container
         # の次の非フラグトークンが実サブコマンド (container 管理サブコマンドに
         # 値付きグローバルフラグは無いため _find_subcommand で足りる)。
-        args = args[args.index(sub) + 1 :]
+        # 切り出しはサブコマンド位置から行う。`args.index("container")` だと
+        # `--context container` のような同名のフラグ値に先に当たって 1 つ手前で
+        # 切れ、sub が "container" のまま残って脱出級判定が外れる。
+        args = _strip_global_flags("docker", args)[1:]
         sub = _find_subcommand("container", args)
     if sub not in _DOCKER_RUN_SUBCOMMANDS:
         return ""
@@ -1424,6 +1479,78 @@ def _docker_high_risk_label(args: list[str]) -> str:
                 if mount:
                     return f"{label} {mount}"
     return ""
+
+
+# 後続の語をサブコマンドではなく「実行対象の名前 / 引数」として取る runner 系。
+# `npm run install` の install はスクリプト名で、インストール動詞ではない。
+_PKG_RUNNER_SUBCOMMANDS = frozenset({"run", "run-script", "exec"})
+
+
+def _pkg_install_word(pkg_exe: str, args: list[str]) -> str:
+    """args に pkg_exe のインストール系サブコマンド語があればそれを返す。
+
+    サブコマンド位置 (_find_subcommand) だけを見る判定は、値付きグローバル
+    フラグの登録漏れ (`pip --trusted-host <host> install` / `npm --registry
+    <url> install`) で値がサブコマンド枠に入った途端に外れ、二モデル AND
+    ゲート + 強制 ask が丸ごと飛ぶ。表は網羅できないので、フラグ以外の語を
+    全て走査して fail-closed にする (_docker_high_risk_label の全引数走査と
+    同じ割り切り。誤検知しても ask が 1 回増えるだけで、許可が漏れる側には
+    倒れない)。
+    """
+    subs = _PKG_INSTALL_SUBCOMMANDS.get(pkg_exe)
+    if not subs:
+        return ""
+    # `npm run install` / `cargo run install` の install は runner の引数
+    # (スクリプト名やプログラム引数) であってインストール動詞ではない。全引数
+    # 走査のままだと ask が空振りするので、サブコマンド枠 (登録済み値付き
+    # フラグを読み飛ばした先頭語) が runner なら対象外にする。未登録フラグの
+    # 値が枠に入った場合は runner 語ではないので走査は続く (fail-closed のまま)。
+    if _find_subcommand(pkg_exe, args) in _PKG_RUNNER_SUBCOMMANDS:
+        return ""
+    for tok in args:
+        if not tok.startswith("-") and tok in subs:
+            return tok
+    return ""
+
+
+# python の短オプションのうち値を取るもの (密着 `-Wignore` / 分離 `-W ignore`
+# の両形)。-c と -m も値を取るが、どちらも「以降は全部プログラム側」なので
+# 個別に扱う。
+_PY_VALUE_OPTS = frozenset("WXQ")
+
+
+def _python_module_args(args: list[str]) -> list[str]:
+    """`python ... -m MOD rest` の [MOD, *rest] を返す (無ければ [])。
+
+    `"-m" in rest` の完全一致だけでは `-mpip` / `-Bm pip` (単一文字オプションと
+    束ねた形。どちらも実際に動く) が外れ、同じ pip install が綴りひとつで
+    単独モデルの fast path へ滑り落ちていた。python の短オプションを左から
+    読み、`m` に当たったところで残り (密着していればその文字列、無ければ次の
+    トークン) をモジュールとする。値を取る -W/-X/-Q は値ごと読み飛ばす
+    (`-Ximporttime` の m をモジュールフラグと誤読しない)。`-c` 以降と最初の
+    位置引数 (スクリプト) 以降はプログラム側なので -m を探さない。
+    """
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "--" or not tok.startswith("-"):
+            return []  # 位置引数 (スクリプト) 以降はプログラムの引数
+        if tok.startswith("--"):
+            i += 1  # 長形式オプションはモジュールを取らない
+            continue
+        letters = tok[1:]
+        skip_next = False
+        for j, ch in enumerate(letters):
+            if ch == "m":
+                glued = letters[j + 1 :]
+                return [glued, *args[i + 1 :]] if glued else args[i + 1 :]
+            if ch == "c":
+                return []  # 以降はインラインコード
+            if ch in _PY_VALUE_OPTS:
+                skip_next = j + 1 == len(letters)  # 値が分離形なら次を消費
+                break
+        i += 2 if skip_next else 1
+    return []
 
 
 def _high_risk_label(cmd: str) -> str:
@@ -1480,22 +1607,28 @@ def _high_risk_label(cmd: str) -> str:
     # 残して実際に走る形を見せる。剥がした結果が別キーに化けるのは pip 系のみ
     # (他のキーは末尾に数字を持たない) なので誤分類は生じない。
     pkg_exe = _VERSION_SUFFIX.sub("", exe)
-    if pkg_exe in _PKG_INSTALL_SUBCOMMANDS and sub in _PKG_INSTALL_SUBCOMMANDS[pkg_exe]:
-        return f"{exe_raw} {sub}"
+    install_word = _pkg_install_word(pkg_exe, rest)
+    if install_word:
+        return f"{exe_raw} {install_word}"
     # `python -m pip install` は `pip install` と全く同じサプライチェーン操作
     # なので同じラベルに寄せる。`-m` 自体は引き金にせず (python -m http.server /
-    # -m pytest は通常運用)、モジュールが pip でサブコマンドが install の
-    # 場合だけ拾う。`uv pip install` を個別判定しているのと同じ粒度。
-    if _VERSION_SUFFIX.sub("", exe) == "python" and "-m" in rest:
-        module_args = rest[rest.index("-m") + 1 :]
-        if module_args[:2] == ["pip", "install"]:
+    # -m pytest は通常運用)、モジュールが pip で install 語を伴う場合だけ拾う。
+    # `uv pip install` を個別判定しているのと同じ粒度。
+    if pkg_exe == "python":
+        module_args = _python_module_args(rest)
+        if not module_args and "-m" in rest:
+            # 短オプションの解釈が想定外の綴りで外れても、従来の完全一致は
+            # 床として残す (検出が減る方向の退行を起こさない)。
+            module_args = rest[rest.index("-m") + 1 :]
+        if module_args[:1] == ["pip"] and _pkg_install_word("pip", module_args[1:]):
             return "pip install"
-    # 2 段のサブコマンドなので _find_subcommand (1 個目しか返さない) では足りず、
-    # グローバルフラグを落とした残りの先頭 2 つを見る。rest をそのまま見ると
-    # `uv --directory . pip install` が ["--directory", "."] に一致せず、
-    # インストーラ判定が丸ごと外れる。
-    if exe == "uv" and _strip_global_flags(exe, rest)[:2] == ["pip", "install"]:
-        return "uv pip install"
+    # 2 段のサブコマンドなので、フラグ以外の語の並びに `pip install` が連続して
+    # 現れるかを見る。`uv --directory . pip install` (登録済みの値付きフラグ) も
+    # `uv --color never pip install` (未登録) も同じ経路で拾う。
+    if exe == "uv":
+        words = [t for t in rest if not t.startswith("-")]
+        if any(words[i : i + 2] == ["pip", "install"] for i in range(len(words) - 1)):
+            return "uv pip install"
     if exe in ("pnpm", "yarn") and sub == "dlx":
         return f"{exe_raw} dlx"
     if exe in _REMOTE_EXEC_EXECUTABLES:
@@ -1641,7 +1774,7 @@ def stdin_interpreter_label(command: str) -> str:
     が自前の < リダイレクトを持てば裸インタプリタとして拾う)。
     """
     labels: list[str] = []
-    for text in [command] + _substitution_bodies(command):
+    for text in _classification_texts(command):
         for op, segment in _iter_top_level(text, split_ampersand=True):
             lines = [ln.strip() for ln in segment.splitlines() if ln.strip()]
             for idx, line in enumerate(lines):
@@ -1662,6 +1795,11 @@ def classify_high_risk(sub_commands: list[str], command: str) -> str:
     結合する。どちらかが非空なら高リスク層 (二モデル AND ゲート + 必ず ask)。
     """
     parts = [high_risk_label(sub_commands), stdin_interpreter_label(command)]
+    # $'...' は任意のリテラルを再構成できる (`$'\\x72\\x6d'` = rm) ため、字面の
+    # 分類では安全性を確定できない。_is_sensitive_command が safe-skip を一律に
+    # 拒むのと対称に、こちらは高リスク層 (二モデル AND + 必ず ask) へ倒す。
+    if _DOLLAR_QUOTE.search(command):
+        parts.append("ansi-c quoting")
     return ", ".join(p for p in parts if p)
 
 
