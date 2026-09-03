@@ -1,6 +1,7 @@
 -- undotree vimdiff integration
 -- Opens a vimdiff tab comparing a selected undo state with the current buffer
--- for jiaoshijie/undotree. Supports do (obtain) / dp (put) operations.
+-- for jiaoshijie/undotree. Supports `do` (obtain a hunk from the past state);
+-- the past side is a read-only scratch buffer, so `dp` is not available.
 --
 -- Relocated from after/plugin/undotree.lua so it only loads when undotree does.
 -- The undotree plugin spec calls M.setup() from its config.
@@ -53,6 +54,13 @@ local function get_seq_from_line()
 end
 
 --- Find the editing target buffer in the same tab as the undotree panel.
+---
+--- Only an ordinary buffer (`buftype` empty) qualifies. The scan used to
+--- exclude just the undotree filetypes, so with a side panel in the first
+--- window -- nvim-tree, a terminal, quickfix -- it returned the panel's buffer
+--- and the diff failed with E830 (no undo history at the requested seq).
+--- `buflisted` is deliberately NOT required: a real file a plugin has marked
+--- nobuflisted still has undo history and is a legitimate target.
 ---@return number|nil buf buffer number
 local function find_target_buf()
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -60,7 +68,8 @@ local function find_target_buf()
     local ft = vim.bo[buf].filetype
     -- Exclude undotree-related buffers
     if ft ~= "undotree" and ft ~= "undotreeDiff"
-       and ft ~= "Undotree" and ft ~= "UndotreeDiff" then
+       and ft ~= "Undotree" and ft ~= "UndotreeDiff"
+       and vim.bo[buf].buftype == "" then
       return buf
     end
   end
@@ -108,7 +117,7 @@ end
 
 --- Open a vimdiff in a new tab.
 --- Left: past undo state (scratch, read-only)
---- Right: actual editing buffer (editable, supports do/dp)
+--- Right: actual editing buffer (editable; `do` pulls a hunk from the left)
 function M.open_vimdiff()
   local seq = get_seq_from_line()
   if not seq then
@@ -362,6 +371,14 @@ function M.open_vimdiff()
     buf = target_buf, silent = true, noremap = true,
     desc = "undotree vimdiff: close diff tab",
   })
+  -- Both spellings, as on the scratch side. cleanup_diff deletes both from
+  -- this buffer, but only the letter form was ever bound here, so
+  -- `<C-w><C-q>` fell through to the builtin window-close, took one window
+  -- and left the tab standing half-diffed with its cleanup still armed.
+  vim.keymap.set("n", "<C-w><C-q>", close_if_in_diff_tab, {
+    buf = target_buf, silent = true, noremap = true,
+    desc = "undotree vimdiff: close diff tab",
+  })
 
   -- Clean up if the scratch buffer is wiped by other means.
   -- from_wipeout = true: old_buf is mid-wipe right now, so cleanup_diff must
@@ -403,9 +420,11 @@ function M.open_vimdiff()
     end,
   })
 
+  -- Only `do` is advertised: the left side is a read-only scratch buffer, so
+  -- `dp` from the right always fails with E793 and would only mislead.
   vim.notify(
     "undotree vimdiff: undo#" .. seq .. " vs current  |  "
-    .. "do=obtain  dp=put  ]c/[c=next/prev hunk  <C-w>q=quit",
+    .. "do=obtain  ]c/[c=next/prev hunk  <C-w>q=quit",
     vim.log.levels.INFO
   )
 end

@@ -18,7 +18,9 @@ autocmd("TextYankPost", {
   group = yank_group,
   pattern = "*",
   callback = function()
-    vim.highlight.on_yank({
+    -- vim.hl replaced vim.highlight in 0.11; the old name warns on every
+    -- yank on 0.12 and is scheduled for removal.
+    vim.hl.on_yank({
       higroup = "IncSearch",
       timeout = 40,
     })

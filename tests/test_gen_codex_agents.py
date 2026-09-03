@@ -215,6 +215,42 @@ def test_check_reports_orphans(tmp_path, monkeypatch, capsys):
     assert "has no ghost.md source" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "twin, expected_message",
+    [(None, "is missing"), ("not = [valid toml\n", "is not valid TOML")],
+)
+def test_check_reports_a_missing_or_corrupt_hand_maintained_twin(
+    tmp_path, monkeypatch, capsys, twin, expected_message
+):
+    """The generator cannot rebuild a hand-maintained twin, so it must check it.
+
+    Skipping the stem outright let `--check` print "current" with the twin
+    deleted or replaced by garbage: `expected` still carried the stem, so the
+    orphan sweep never saw it either, and CI stayed green on a broken agent.
+    """
+    import gen_codex_agents
+
+    src = tmp_path / "claude"
+    out = tmp_path / "codex"
+    src.mkdir()
+    out.mkdir()
+    (src / "demo.md").write_text(
+        "---\nname: demo\ndescription: d\n---\n\n# Demo\n", encoding="utf-8"
+    )
+    if twin is not None:
+        (out / "demo.toml").write_text(twin, encoding="utf-8")
+    monkeypatch.setattr(gen_codex_agents, "CLAUDE_AGENTS_DIR", src)
+    monkeypatch.setattr(gen_codex_agents, "CODEX_AGENTS_DIR", out)
+    monkeypatch.setattr(gen_codex_agents, "HAND_MAINTAINED", frozenset({"demo"}))
+
+    assert gen_codex_agents.main(["--check"]) == 1
+    err = capsys.readouterr().err
+    assert "demo.toml" in err
+    assert expected_message in err
+    # A generate run cannot repair it either, so it must not claim success.
+    assert gen_codex_agents.main([]) == 1
+
+
 def test_generate_writes_and_removes_orphans(tmp_path, monkeypatch):
     import gen_codex_agents
 

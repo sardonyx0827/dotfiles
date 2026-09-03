@@ -458,6 +458,12 @@ DETECTION_CASES = [
     ("git --git-dir /tmp/repo/.git push origin main", True),
     ("git -c user.name=x push", True),
     ("git push;true", True),
+    # A redirect glued to `push` is still a push. The end-of-token class had
+    # `;&|)` and the backtick but neither `>` nor `<`, so `git push>/dev/null`
+    # slipped past both variants while `git push </dev/null` was caught.
+    ("git push>/dev/null 2>&1", True),
+    ("git push</dev/null", True),
+    ("git push>log", True),
     # Backslash line-continuation joins `git \` + newline + `push` into one
     # logical line at execution time; the detection grep must join it too
     # before matching, or it slips through as two independent lines.
@@ -604,3 +610,100 @@ def test_large_quote_free_push_command_skips_the_quote_scan(
         f"{variant}: a 20KB quote-free push command took {elapsed:.2f}s -- the "
         f"strip_quoted_ranges fast path is missing"
     )
+
+
+def _summary_text(res, variant):
+    if variant == "claude":
+        return json.loads(res.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    return res.stderr
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_dash_c_summary_survives_a_quoted_path(shell_env, tmp_path, variant, hook):
+    """`git -C "/path with space" push` must summarise THAT repo.
+
+    The -C value was read off cmd_for_match, i.e. AFTER strip_quoted_ranges had
+    removed every quoted range -- the path included. The regex then took the
+    next token (`push`) as the directory, `git -C push rev-parse` failed, and
+    the confirmation carried an empty summary: an ask the user cannot judge.
+    """
+    base = tmp_path / "has space"
+    base.mkdir()
+    target = make_target_repo(base)
+    outside = tmp_path / "not-a-repo"
+    outside.mkdir()
+    res = shell_env.run(hook, stdin=payload(f'git -C "{target}" push'), cwd=outside)
+    _assert_push_detected(res, variant, str(target))
+    reason = _summary_text(res, variant)
+    assert "branch: feature-target" in reason, reason
+    assert "target repo commit" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_large_quoted_push_command_stays_fast(shell_env, git_repo, variant, hook):
+    """Quotes AND a push: neither existing guard applies, so this must be bounded.
+
+    The "no push substring" short-circuit and the "no quote" fast path both
+    miss a long heredoc or commit message chained to a push -- the common
+    shape -- and the O(n^2) quote scan ran in full (17s measured at 40KB) on
+    every such Bash call. Past a size cap the scan falls back to dropping the
+    quote characters, which can only ADD detections, never lose one.
+    """
+    big = 'echo "' + ("x" * 40_000) + '" && git push'
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin=payload(big), cwd=git_repo)
+    elapsed = time.monotonic() - started
+
+    _assert_push_detected(res, variant, "echo <40KB> && git push")
+    assert elapsed < _QUADRATIC_BUDGET_SECONDS, (
+        f"{variant}: a 40KB quoted push command took {elapsed:.2f}s"
+    )
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_dash_c_of_an_unrelated_chained_git_call_does_not_supply_the_summary(
+    shell_env, tmp_path, variant, hook
+):
+    """The -C that counts is the one on the git call that pushes.
+
+    A regex over the whole command took the leftmost quoted `-C` it could
+    find, so `git -C "/gone" push && git -C "decoy" status` summarised the
+    decoy's commits as if they were about to be pushed. With the push
+    target unreadable the honest answer is an empty summary.
+    """
+    decoy = make_target_repo(tmp_path)
+    outside = tmp_path / "not-a-repo"
+    outside.mkdir()
+    cmd = f'git -C "{tmp_path}/gone" push && git -C "{decoy}" status'
+    res = shell_env.run(hook, stdin=payload(cmd), cwd=outside)
+    _assert_push_detected(res, variant, cmd)
+    assert "feature-target" not in _summary_text(res, variant)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_a_directory_named_push_in_cwd_cannot_hijack_the_summary(
+    shell_env, tmp_path, variant, hook
+):
+    """`git -C "real" push` with a sibling directory literally named `push`.
+
+    The quote-stripped command reads `git -C  push`, and a preference for a
+    -C value that is an existing directory then picked `push/` -- a decoy
+    repo -- over the real quoted target. Word-splitting sees the quoted value
+    and never consults the filesystem to choose.
+    """
+    from conftest import run_git
+
+    real = make_target_repo(tmp_path)
+    cwd = tmp_path / "cwd"
+    (cwd / "push-parent").mkdir(parents=True)
+    decoy = make_target_repo(cwd / "push-parent")
+    (decoy / "g.txt").write_text("y\n", encoding="utf-8")
+    run_git(decoy, "add", "g.txt")
+    run_git(decoy, "commit", "-q", "-m", "decoy commit")
+    (cwd / "push").symlink_to(decoy)
+    cmd = f'git -C "{real}" push origin main'
+    res = shell_env.run(hook, stdin=payload(cmd), cwd=cwd)
+    _assert_push_detected(res, variant, cmd)
+    reason = _summary_text(res, variant)
+    assert "target repo commit" in reason, reason
+    assert "decoy commit" not in reason, "the summary came from the decoy `push/` repo"

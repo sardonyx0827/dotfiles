@@ -184,6 +184,24 @@ def _rel(path: Path) -> str:
         return str(path)
 
 
+def _hand_maintained_problem(stem: str) -> str | None:
+    """Check a twin the generator cannot rebuild; None when it is usable.
+
+    Skipping a hand-maintained stem outright let `--check` report "current"
+    with its twin deleted or replaced by garbage: `expected` still carried the
+    stem, so the orphan sweep never saw it either, and CI stayed green on a
+    broken agent. The generator cannot repair it, so it reports instead.
+    """
+    target = CODEX_AGENTS_DIR / f"{stem}.toml"
+    try:
+        tomllib.loads(target.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return f"{_rel(target)} is missing (hand-maintained; restore it from git)"
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return f"{_rel(target)} is not valid TOML: {exc}"
+    return None
+
+
 def run(check: bool) -> int:
     problems: list[str] = []
     expected: set[str] = set()
@@ -191,6 +209,9 @@ def run(check: bool) -> int:
     for path in source_agents():
         expected.add(path.stem)
         if path.stem in HAND_MAINTAINED:
+            problem = _hand_maintained_problem(path.stem)
+            if problem:
+                problems.append(problem)
             continue
         try:
             name, rendered = build(path)

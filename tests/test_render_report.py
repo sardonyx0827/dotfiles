@@ -140,6 +140,22 @@ class TestBuildHtml:
         assert "<title>a&lt;b&gt;&amp;&quot;</title>" in html
         assert "<title>a<b>" not in html
 
+    @pytest.mark.parametrize(
+        "marker", ["__MD_B64__", "__MERMAID_SRC__", "__MARKED_SRC__"]
+    )
+    def test_a_title_that_spells_a_placeholder_is_not_expanded(self, marker):
+        """The title is substituted LAST, so it can never become a placeholder.
+
+        html.escape leaves underscores alone, so a heading like `# __MD_B64__`
+        used to be replaced by the whole base64 payload (or the CDN URL) by the
+        substitutions that followed it.
+        """
+        html = render_report.build_html(
+            "# r\n", title=marker, assets=render_report.CDN_ASSETS
+        )
+        assert f"<title>{marker}</title>" in html
+        assert decode_embedded_markdown(html) == "# r\n"
+
 
 class TestExtractTitle:
     def test_prefers_the_first_atx_heading(self):
@@ -221,6 +237,29 @@ class TestRender:
 
         assert exit_code != 0
         assert "nope.md" in capsys.readouterr().err
+
+    def test_a_report_that_is_not_valid_utf8_still_renders(self, tmp_path):
+        """A stray byte must not turn into a UnicodeDecodeError traceback."""
+        md_path = tmp_path / "r.md"
+        md_path.write_bytes(b"# Title \xff\xfe\n\nbody\n")
+
+        html_path = render_report.render(md_path, open_browser=False)
+
+        html = html_path.read_text(encoding="utf-8")
+        assert "<title>Title" in html
+        assert "body" in decode_embedded_markdown(html)
+
+    def test_crlf_input_is_normalised_like_read_text_used_to(self, tmp_path):
+        # read_text() translated universal newlines; the bytes+decode path
+        # that replaced it (for the errors="replace" behaviour) must keep that.
+        md_path = tmp_path / "r.md"
+        md_path.write_bytes(b"# Title\r\n\r\nbody\r\n")
+
+        html_path = render_report.render(md_path, open_browser=False)
+
+        markdown = decode_embedded_markdown(html_path.read_text(encoding="utf-8"))
+        assert "\r" not in markdown
+        assert markdown == "# Title\n\nbody\n"
 
 
 class TestMain:

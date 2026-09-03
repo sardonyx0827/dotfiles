@@ -2606,3 +2606,171 @@ class TestTryInstall:
         # and must NOT be captured by try_install.
         assert re.search(r"fetch_and_run https://astral\.sh/uv", text)
         assert text.count("try_install ") >= 30
+
+
+class TestLinkingThroughASymlinkedParent:
+    """A parent that already resolves INTO the checkout must never be written through.
+
+    `ln -s ~/dotfiles/.claude ~/.claude` is a common pre-existing layout.
+    `mkdir -p` no-ops on that symlink, so every dest resolved back onto its own
+    src: backup_if_real saw a real entry and MOVED the repo's own file into the
+    backup dir, and `ln -sf` left a self-referential link in the working tree --
+    while printing [SUCCESS]. _link_codex_config went further and wrote the
+    rendered hooks.json and a seeded config.toml straight into the checkout.
+
+    Driven against a COPY of the checkout: with the defect present, the test
+    would otherwise relocate the real repository's files.
+    """
+
+    @staticmethod
+    def _scratch_checkout(tmp_path):
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        shutil.copy2(INSTALL, checkout / "install.sh")
+        for rel in (".claude", ".codex", ".gemini", ".config/Code"):
+            shutil.copytree(
+                REPO_ROOT / rel,
+                checkout / rel,
+                symlinks=True,
+                ignore=shutil.ignore_patterns("__pycache__", ".system"),
+            )
+        # The nvim tree is large and irrelevant here; an empty dir is enough
+        # for link_entry to have a source.
+        (checkout / ".config/nvim").mkdir()
+        return checkout
+
+    @staticmethod
+    def _shape(root):
+        return {
+            str(p.relative_to(root)): (p.is_symlink(), p.is_file(), p.is_dir())
+            for p in root.rglob("*")
+        }
+
+    # `.config` covers the git identity render: with ~/.config resolving into
+    # the checkout, os.gitconfig and the user's real name/email were written
+    # into the working tree as untracked files.
+    @pytest.mark.parametrize("rel", [".claude", ".codex", ".gemini", ".config"])
+    def test_a_config_dir_already_linked_into_the_checkout_is_left_alone(
+        self, shell_env, tmp_path, rel
+    ):
+        checkout = self._scratch_checkout(tmp_path)
+        (shell_env.home / rel).symlink_to(checkout / rel)
+        before = self._shape(checkout / rel)
+
+        res = subprocess.run(
+            ["bash", "-c", f'source "{checkout / "install.sh"}"\ncreate_symlinks'],
+            capture_output=True,
+            text=True,
+            env=shell_env.env,
+            timeout=120,
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert self._shape(checkout / rel) == before, "the checkout was modified"
+        assert not list(shell_env.home.glob(f".dotfiles_backup_*/{rel}")), (
+            "the repository's own files were moved into the backup dir"
+        )
+        assert "resolves into the checkout" in res.stdout + res.stderr
+
+
+class TestDanglingParentSymlinks:
+    """A stale symlink where a config directory belongs must be replaced, not fatal.
+
+    `[ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.claude"` is an OR-list, so the
+    mkdir IS the command `set -e` watches: on a dangling ~/.claude it failed
+    with a bare "No such file or directory" and the installer died mid-run,
+    before packages, MCP registration or chsh -- with no [ERROR] line.
+    backup_if_real already treats a symlink, even a broken one, as ours to
+    replace; the directory sites have to agree.
+    """
+
+    @pytest.mark.parametrize(
+        "rel", [".claude", ".codex", ".gemini", ".tmux", ".config", ".config/Code/User"]
+    )
+    def test_a_dangling_symlink_where_a_config_dir_belongs_is_replaced(
+        self, shell_env, rel
+    ):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).symlink_to("/nonexistent/gone")
+
+        res = run_sourced("create_symlinks", shell_env.env)
+
+        assert res.returncode == 0, res.stderr
+        assert (home / rel).is_dir() and not (home / rel).is_symlink()
+
+    def test_a_dangling_themes_symlink_is_replaced_too(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh/custom").mkdir(parents=True)
+        (home / ".oh-my-zsh/custom/themes").symlink_to("/nonexistent/gone")
+
+        res = run_sourced("create_symlinks && link_oh_my_zsh_theme", shell_env.env)
+
+        assert res.returncode == 0, res.stderr
+        assert (home / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme").is_symlink()
+
+
+class TestBackupsAreAnnounced:
+    def test_a_backup_made_after_create_symlinks_still_names_its_location(
+        self, shell_env
+    ):
+        """create_symlinks reports the backup dir only for ITS OWN backups.
+
+        With nothing else to back up it rmdir'd the empty dir and said nothing;
+        link_oh_my_zsh_theme (called later from main) then re-created it for
+        the user's hand-edited theme and printed only "Backing up existing ...",
+        so the one file that was moved was moved to a location never shown.
+        """
+        home = shell_env.home
+        themes = home / ".oh-my-zsh/custom/themes"
+        themes.mkdir(parents=True)
+        (themes / "px-rose-pine.zsh-theme").write_text(
+            "hand-edited\n", encoding="utf-8"
+        )
+
+        res = run_sourced("create_symlinks && link_oh_my_zsh_theme", shell_env.env)
+
+        assert res.returncode == 0, res.stderr
+        backups = list(home.glob(".dotfiles_backup_*"))
+        assert len(backups) == 1
+        moved = backups[0] / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme"
+        assert moved.read_text(encoding="utf-8") == "hand-edited\n"
+        assert str(backups[0]) in res.stdout + res.stderr, (
+            "the backup location was never announced"
+        )
+
+
+class TestGitIdentityRendering:
+    @pytest.mark.parametrize(
+        "name", ['Taro "T" Yamada', "Taro #1", "Taro; Yamada", "Taro\\"]
+    )
+    def test_config_metacharacters_in_the_identity_round_trip(
+        self, shell_env, tmp_path, name
+    ):
+        """The rendered [user] block must read back exactly as it was given.
+
+        A raw printf wrote the values unquoted: `#` and `;` start a comment
+        (so `Taro #1` became `Taro`), a `"` was swallowed, and a trailing
+        backslash CONTINUED the line -- the name absorbed the email line and
+        user.email was left unset, so git refused to commit.
+        """
+        prior = tmp_path / "prior-gitconfig"
+        for key, value in (("user.name", name), ("user.email", "t@example.com")):
+            subprocess.run(
+                ["git", "config", "--file", str(prior), key, value], check=True
+            )
+        env = {**shell_env.env, "GIT_CONFIG_GLOBAL": str(prior)}
+
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+
+        rendered = shell_env.home / ".config/git/user.gitconfig"
+        for key, expected in (("user.name", name), ("user.email", "t@example.com")):
+            got = subprocess.run(
+                ["git", "config", "--file", str(rendered), key],
+                capture_output=True,
+                text=True,
+            )
+            assert got.returncode == 0, f"{key} is unreadable: {rendered.read_text()}"
+            assert got.stdout.rstrip("\n") == expected

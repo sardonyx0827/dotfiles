@@ -226,7 +226,18 @@ cmd_norm="${cmd_norm//\$IFS/ }"
 # 1 文字ずつの走査を丸ごと省く。上の打ち切りを通過した大きな push コマンド
 # (`git push origin main # <長いコメント>` 等) はこちらで受ける。
 case "$cmd_norm" in
-*[\'\"\\]*) cmd_for_match=$(strip_quoted_ranges "$cmd_norm") ;;
+*[\'\"\\]*)
+  # 状態機械は O(n^2)。上の 2 つのガード (push 無し / クォート無し) は、長い
+  # ヒアドキュメントやコミットメッセージに push をチェーンした形 (実際に多い)
+  # をどちらも通してしまい、40KB で 17 秒掛かっていた。上限を超えたらクォート
+  # 文字だけを落とした過剰近似へ倒す: 検知が緩む方向ではなく厳しくなる方向
+  # (余分に ask へ倒れる) なので、ゲートとしては安全側。
+  if [ "${#cmd_norm}" -le 4000 ]; then
+    cmd_for_match=$(strip_quoted_ranges "$cmd_norm")
+  else
+    cmd_for_match=$(printf '%s' "$cmd_norm" | tr -d "\"'")
+  fi
+  ;;
 *) cmd_for_match="$cmd_norm" ;;
 esac
 
@@ -262,30 +273,162 @@ fi
 # 形式 (git -C /repo push)」の両方を許容する (値はフラグと誤読しないよう
 # 先頭が - 以外のトークンに限定)。push の直後は空白・行末だけでなく、
 # `;` `&` `|` `)` と閉じバッククォートも文の終端になり得る
-# (`git push;true` / `(git push)` / `$(git push)` を見逃さない)。
+# (`git push;true` / `(git push)` / `$(git push)` を見逃さない)。リダイレクト
+# 演算子も同じ (`git push>/dev/null` / `git push</dev/null`): `<` `>` が終端
+# クラスに無かったため、`push` の直後にリダイレクトを密着させた形だけが両変種を
+# 素通りしていた。
 #
 # 境界に `/` を含める理由は上の executes_string_arg と同じ: パス指定の
 # `/usr/bin/git push` も同じコマンドで、`/` が境界でないと裸の `git push` は
 # 捕まるのにパス付きだけ素通りするという不整合な穴が残る。
 # shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル(展開させない)
-echo "$cmd_for_match" | grep -qiE '(^|[;&|[:space:](`/])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:];&|)`]|$)' || exit 0
+echo "$cmd_for_match" | grep -qiE '(^|[;&|[:space:](`/])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:];&|)<>`]|$)' || exit 0
+
+# `git … -C <dir>` の <dir> を、クォート解釈済みの語単位で探す。
+#
+# 以前は正規表現で文字列を直接見ていた。クォート区間を除去した文字列に対しては
+# `-C "/path with space"` の値が消えて次の語 `push` を掴み (要約が空の ask)、
+# 逆にクォートを残した文字列に対してはコミットメッセージ内の
+# `git -C "/fake" push` を本物の -C として拾い、別リポジトリ (空) の要約で承認を
+# 誘発できた — 文字列照合では「引用されたテキスト」と「実行される語」を区別
+# できない。シェルと同じ規則で語に割れば、メッセージは `-m` の値 1 語であって
+# -C フラグにはならず、`-C "/a b"` の値はそのまま 1 語として得られる。
+#
+# セグメント (; | & ( ) ` 改行 で区切る) ごとに、先頭語の basename が git
+# (大小無視: case-insensitive な FS では `GIT` も git を走らせる) で、ダッシュ語
+# だけを挟んで `-C <値>` が続くものを候補にする。push 語を持つセグメントを優先し、
+# 無ければ最初の候補。`-c key=val` (小文字) は別のフラグなので対象外。
+# ダブルクォート内の `$(` は中身が実行されるのでセグメント境界として扱う
+# (閉じ側の対応は取らない近似。要約先の選択にしか使わないので十分)。
+# 1 文字ずつ走査するため入力長に比例して遅く、呼び出し側は strip_quoted_ranges
+# と同じ長さ上限の内側でだけ使う。
+git_c_dir_from_words() {
+  local s="$1"
+  local n=${#s} i=0 ch word="" in_word=0 in_s=0 in_d=0
+  local -a toks=()
+  local sep=$'\x01'
+  while [ "$i" -lt "$n" ]; do
+    ch=${s:i:1}
+    if [ "$in_s" -eq 1 ]; then
+      if [ "$ch" = "'" ]; then in_s=0; else word+=$ch; fi
+      i=$((i + 1))
+      continue
+    fi
+    if [ "$ch" = "\\" ]; then
+      if [ "$i" -lt $((n - 1)) ]; then
+        word+=${s:i+1:1}
+        in_word=1
+      fi
+      i=$((i + 2))
+      continue
+    fi
+    if [ "$in_d" -eq 1 ]; then
+      if [ "$ch" = '"' ]; then
+        in_d=0
+      elif [ "$ch" = '$' ] && [ "${s:i+1:1}" = '(' ]; then
+        if [ "$in_word" -eq 1 ]; then
+          toks+=("$word")
+          word=""
+          in_word=0
+        fi
+        toks+=("$sep")
+        in_d=0
+        i=$((i + 2))
+        continue
+      else
+        word+=$ch
+      fi
+      i=$((i + 1))
+      continue
+    fi
+    case "$ch" in
+    "'")
+      in_s=1
+      in_word=1
+      ;;
+    '"')
+      in_d=1
+      in_word=1
+      ;;
+    ' ' | $'\t')
+      if [ "$in_word" -eq 1 ]; then
+        toks+=("$word")
+        word=""
+        in_word=0
+      fi
+      ;;
+    ';' | '|' | '&' | '(' | ')' | '`' | $'\n')
+      if [ "$in_word" -eq 1 ]; then
+        toks+=("$word")
+        word=""
+        in_word=0
+      fi
+      toks+=("$sep")
+      ;;
+    *)
+      word+=$ch
+      in_word=1
+      ;;
+    esac
+    i=$((i + 1))
+  done
+  if [ "$in_word" -eq 1 ]; then toks+=("$word"); fi
+  toks+=("$sep")
+
+  local tok first_hit="" push_hit="" c_val=""
+  local seg_start=1 seg_git=0 seg_push=0 flags_ok=1 expect_val=0
+  for tok in "${toks[@]}"; do
+    if [ "$tok" = "$sep" ]; then
+      if [ "$seg_git" -eq 1 ] && [ -n "$c_val" ]; then
+        [ -z "$first_hit" ] && first_hit=$c_val
+        if [ "$seg_push" -eq 1 ] && [ -z "$push_hit" ]; then push_hit=$c_val; fi
+      fi
+      seg_start=1
+      seg_git=0
+      seg_push=0
+      flags_ok=1
+      expect_val=0
+      c_val=""
+      continue
+    fi
+    if [ "$seg_start" -eq 1 ]; then
+      seg_start=0
+      case "${tok##*/}" in [Gg][Ii][Tt]) seg_git=1 ;; esac
+      continue
+    fi
+    [ "$seg_git" -eq 1 ] || continue
+    if [ "$expect_val" -eq 1 ]; then
+      c_val=$tok
+      expect_val=0
+      flags_ok=0
+      continue
+    fi
+    [ "$tok" = push ] && seg_push=1
+    if [ "$flags_ok" -eq 1 ]; then
+      case "$tok" in
+      -C) expect_val=1 ;;
+      -*) ;;
+      *) flags_ok=0 ;;
+      esac
+    fi
+  done
+  printf '%s' "${push_hit:-$first_hit}"
+}
 
 # `git -C <dir> push` のように push 対象リポジトリが明示されている場合、
-# サマリもフック自身の cwd ではなく同じ <dir> を対象に生成する。
-# 生 $cmd を最左マッチすると、チェーン内の別コマンド (`grep -C 3 ... && git push`)
-# や、クォート内メッセージ (`git commit -m "... -C ..."`) の -C を拾ってしまう。
-# 検知と同じ cmd_for_match (クォート区間除去済み) 上で、git に直接続く -C
-# (途中はダッシュフラグのみ) だけを push 対象の -C として拾う。
+# サマリもフック自身の cwd ではなく同じ <dir> を対象に生成する。誤った要約は
+# 空の要約より悪い (別リポジトリの中身に対する承認を誘発する) ので、
+# 「表示バグ」ではなくゲートの欠陥として扱う。
+#
+# strip_quoted_ranges と同じ長さ上限を超える入力では -C を解決しない (cwd の
+# 要約を出す)。理由は 2 つ: 語分割も 1 文字ずつの走査で入力長に比例して遅い
+# こと、そして上限超えのフォールバックはクォート文字だけを落とすため、引用
+# されたメッセージの中身が語として見えており、そこから -C を拾うとコミット
+# メッセージで要約先を差し替えられること。
 git_c_opt=()
-# shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル(展開させない)
-# 大小の扱いは検知側と違い、`git` の綴りだけ [Gg][Ii][Tt] で許して `-C` は区別
-# したままにする。nocasematch で一括に畳むと `-C` が git の実在フラグ `-c`
-# (`git -c key=val push` の config 指定) にも一致し、その値をリポジトリパスとして
-# 掴んでサマリを壊す — 値がたまたま実在リポジトリなら、別リポジトリの要約を見せて
-# 承認させる形になる。
-git_c_re='(^|[;&|[:space:](`/])[Gg][Ii][Tt][[:space:]]+(-[^[:space:]]+[[:space:]]+)*-C[[:space:]]+([^[:space:]]+)'
-if [[ "$cmd_for_match" =~ $git_c_re ]]; then
-  git_c_opt=(-C "${BASH_REMATCH[3]}")
+if [ "${#cmd_norm}" -le 4000 ]; then
+  git_c_dir=$(git_c_dir_from_words "$cmd_norm")
+  [ -n "$git_c_dir" ] && git_c_opt=(-C "$git_c_dir")
 fi
 
 summary=""

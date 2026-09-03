@@ -272,3 +272,20 @@ def test_audits_paths_needing_git_quoting(shell_env, git_repo, variant, hook, fi
     else:
         assert res.returncode == 2, label
         assert filename in res.stderr, label
+
+
+@pytest.mark.parametrize("hook", [CLAUDE_HOOK, CODEX_HOOK], ids=["claude", "codex"])
+def test_without_jq_the_audit_never_blocks(shell_env, git_repo, hook):
+    """No jq means stop_hook_active cannot be read, so the audit must stand down.
+
+    With jq absent the Codex variant read an EMPTY flag, ran the audit anyway
+    and exited 2 -- on every Stop, including the continuation after its own
+    block, so the loop-prevention flag could never end it. The sibling hooks
+    (lint.sh / auto-format.sh) all exit 0 without jq; both variants now do too.
+    """
+    (git_repo / "app.ts").write_text('console.log("x")\n', encoding="utf-8")
+    shell_env.hide("jq")
+    for stdin in (json.dumps({"stop_hook_active": True}), "{}"):
+        res = shell_env.run(hook, stdin=stdin, cwd=git_repo)
+        assert res.returncode == 0, (stdin, res.stderr)
+        assert res.stdout == ""

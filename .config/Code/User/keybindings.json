@@ -181,7 +181,7 @@
   {
     // stage changes (git)
     "key": "ctrl+g s",
-    "command": "git.stageAll",
+    "command": "git.stage",
     "when": "sideBarFocus && activeViewlet == 'workbench.view.scm'"
   },
   {

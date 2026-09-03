@@ -4,13 +4,16 @@ The `mcp` package is stubbed out so the tests run without it and the
 tool functions stay plain callables.
 """
 
+import http.client
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import time
 import types
+import urllib.error
 import urllib.request
 from urllib.error import URLError
 
@@ -584,3 +587,128 @@ class TestLoggingNeverCostsTheResponse:
         monkeypatch.setattr(urllib.request, "urlopen", fake_gemini("the answer"))
         monkeypatch.setattr(server, "_append_log", boom)
         assert getattr(server, tool)("question") == "the answer"
+
+
+class TestUpstreamFailures:
+    """Non-2xx statuses, truncated bodies and odd payload shapes.
+
+    call_gemini used to catch only (URLError, TimeoutError). HTTPError *is* a
+    URLError, so a 400 / 403 / 404 -- which answers identically every time --
+    burned all three attempts and 3s of backoff, and the upstream
+    `error.message` that names the cause was never read. http.client's
+    IncompleteRead is neither, so a connection dropped mid-body escaped the
+    tool entirely. scripts/gemini_api.py already states the policy the server
+    is aligned with here: retry only what may still succeed, quote the
+    upstream message, and always hand the caller a string.
+    """
+
+    @staticmethod
+    def _http_error(code, body=b"{}"):
+        return urllib.error.HTTPError(
+            "https://example.invalid", code, "reason", {}, io.BytesIO(body)
+        )
+
+    @staticmethod
+    def _response(body):
+        class Resp:
+            def read(self):
+                return json.dumps(body).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return lambda req, timeout: Resp()
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404])
+    def test_a_permanent_status_fails_fast_and_quotes_the_upstream_message(
+        self, server, monkeypatch, status
+    ):
+        sleeps, calls = [], []
+        monkeypatch.setattr(time, "sleep", sleeps.append)
+        body = json.dumps({"error": {"message": "model X is not found"}}).encode()
+        monkeypatch.setattr(
+            urllib.request,
+            "urlopen",
+            fake_gemini(self._http_error(status, body), calls=calls),
+        )
+        result = server.consult_gemini("anything")
+        assert result.startswith("Gemini API error:")
+        assert str(status) in result
+        assert "model X is not found" in result
+        assert len(calls) == 1, "a permanent status must not burn the retries"
+        assert sleeps == []
+
+    @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
+    def test_a_transient_status_is_retried(self, server, monkeypatch, status):
+        sleeps = []
+        monkeypatch.setattr(time, "sleep", sleeps.append)
+        monkeypatch.setattr(
+            urllib.request,
+            "urlopen",
+            fake_gemini(self._http_error(status), "recovered"),
+        )
+        assert server.call_gemini("question") == "recovered"
+        assert sleeps == [1]
+
+    def test_an_exhausted_transient_status_reports_the_status(
+        self, server, monkeypatch
+    ):
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        monkeypatch.setattr(
+            urllib.request, "urlopen", fake_gemini(self._http_error(503))
+        )
+        result = server.review_gemini("anything")
+        assert result.startswith("Gemini API error:")
+        assert "503" in result
+
+    def test_a_truncated_body_is_retried_then_reported_as_a_string(
+        self, server, monkeypatch
+    ):
+        sleeps, calls = [], []
+        monkeypatch.setattr(time, "sleep", sleeps.append)
+        monkeypatch.setattr(
+            urllib.request,
+            "urlopen",
+            fake_gemini(http.client.IncompleteRead(b"{", 400), calls=calls),
+        )
+        result = server.review_gemini("anything")
+        assert result.startswith("Gemini API error:")
+        assert len(calls) == 3
+        assert sleeps == [1, 2]
+
+    def test_a_truncated_body_then_success_recovers(self, server, monkeypatch):
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        monkeypatch.setattr(
+            urllib.request,
+            "urlopen",
+            fake_gemini(http.client.IncompleteRead(b"{", 400), "recovered"),
+        )
+        assert server.call_gemini("question") == "recovered"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"candidates": [{"content": {"parts": ["oops"]}, "finishReason": "STOP"}]},
+            {
+                "candidates": [
+                    {"content": {"parts": [{"text": None}]}, "finishReason": "STOP"}
+                ]
+            },
+            {"candidates": [{"content": "not a dict", "finishReason": "STOP"}]},
+            {"candidates": [None]},
+            {"candidates": "not a list"},
+            {"candidates": {"0": "not a list either"}},
+            {"promptFeedback": "not a dict"},
+            ["not", "a", "dict"],
+        ],
+    )
+    def test_a_malformed_payload_returns_a_message_instead_of_raising(
+        self, server, monkeypatch, body
+    ):
+        monkeypatch.setattr(urllib.request, "urlopen", self._response(body))
+        result = server.consult_gemini("anything")
+        assert isinstance(result, str)
+        assert result.startswith("[Gemini"), result

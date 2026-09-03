@@ -835,6 +835,21 @@ class TestRunWithFallbackReporting:
         assert res.calls == [], "claude reaches jobstart, whose callback is deferred"
         assert res.only is not None, "the handle must track the in-flight attempt"
 
+    def test_a_synchronous_first_failure_does_not_lose_the_live_job(self, tmp_path):
+        """`handle.job` must name the attempt in flight, not the one that failed.
+
+        A spec that fails synchronously (unknown tool, oversized payload, a
+        refused jobstart) runs its callback -- which advances to the next spec
+        and stores THAT job -- before `handle.job = M.run(...)` assigns, so the
+        assignment then overwrote the live id with nil. ui.lua's cancel_job
+        found nothing to stop, and the subprocess the user had cancelled kept
+        running.
+        """
+        res = self.chain(tmp_path, "no-such-a", "claude")
+        assert isinstance(res.only, dict), res.only
+        job = res.only.get("job")
+        assert isinstance(job, int) and job > 0, f"the live job was lost: {res.only}"
+
 
 # Drives one fallback chain through a REAL ui driver and reports what happened.
 #
@@ -1243,3 +1258,67 @@ def test_the_ui_test_seam_exposes_exactly_what_these_tests_use(tmp_path):
         'io.stdout:write(table.concat(names, ","), "\\n")\n',
     )
     assert out == "failure_lines"
+
+
+# A CLI that exits 0 having printed nothing but a newline. Real: a tool whose
+# model answered with an empty message, or one that swallowed the prompt.
+EMPTY_REPLY_PROBE = r"""
+local backend = require("setup.functions.ai.backend")
+local reported
+backend.run({ tool = "codex", prompt = "I", input = "x" }, function(ok, lines, err)
+  reported = { ok = ok, lines = lines, err = err }
+end, true)
+vim.wait(10000, function() return reported ~= nil end, 20)
+io.stdout:write(vim.json.encode(reported or { timeout = true }), "\n")
+"""
+
+
+def make_empty_reply_bin(tmp_path, output):
+    """A sealed PATH whose `codex` prints `output` (printf-escaped) and exits 0."""
+    binroot = tmp_path / "emptybin"
+    binroot.mkdir(parents=True, exist_ok=True)
+    for tool in ("sh", "cat"):
+        real = shutil.which(tool)
+        assert real, f"{tool} is required by this test but is not installed"
+        (binroot / tool).write_text(
+            f'#!/bin/sh\nexec "{real}" "$@"\n', encoding="utf-8"
+        )
+    (binroot / "codex").write_text(
+        f"#!/bin/sh\ncat >/dev/null\nprintf '{output}'\nexit 0\n", encoding="utf-8"
+    )
+    for entry in binroot.iterdir():
+        entry.chmod(0o755)
+    return binroot
+
+
+class TestWhitespaceOnlyReplies:
+    """Exit 0 with nothing but whitespace on stdout is an empty response.
+
+    `"\\n"` splits into {"", ""}; clean_cli_lines drops one trailing empty
+    string and `#result > 0` counted the survivor as an answer. The report tab
+    turned green and `y` replaced the selection with a single blank line -- and
+    cli_failure_reason's own "empty response" branch was unreachable. The other
+    transports already apply the rule (parse_ollama / parse_edits treat
+    whitespace-only as empty).
+    """
+
+    @pytest.mark.parametrize("output", ["\\n", "\\n\\n", "   \\n\\t\\n"])
+    def test_a_whitespace_only_reply_is_reported_as_empty(self, tmp_path, output):
+        out = _lua_probe(
+            tmp_path, EMPTY_REPLY_PROBE, binroot=make_empty_reply_bin(tmp_path, output)
+        )
+        res = json.loads([ln for ln in out.splitlines() if ln.startswith("{")][-1])
+        assert "timeout" not in res, "the job never reported back"
+        assert res["ok"] is False, f"a blank reply was accepted as an answer: {res}"
+        assert res["lines"] == []
+        assert "empty response" in res["err"]
+
+    def test_a_reply_with_content_is_still_accepted(self, tmp_path):
+        out = _lua_probe(
+            tmp_path,
+            EMPTY_REPLY_PROBE,
+            binroot=make_empty_reply_bin(tmp_path, "hello\\n"),
+        )
+        res = json.loads([ln for ln in out.splitlines() if ln.startswith("{")][-1])
+        assert res["ok"] is True, res
+        assert res["lines"] == ["hello"]

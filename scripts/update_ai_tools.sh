@@ -21,10 +21,15 @@ run_if_installed() {
 echo "Updating AI command-line tools..."
 echo "# claude code"
 run_if_installed claude update
+# `npm install -g <pkg>@latest`, not `npm update -g`: update resolves inside
+# the semver range recorded at install time and will not cross a major
+# version, so a new major of either CLI was skipped while the script still
+# reported success. install.sh installs both with `npm install -g`, and
+# @latest is the upgrade path both vendors document.
 echo "# codex"
-run_if_installed npm update -g @openai/codex
+run_if_installed npm install -g @openai/codex@latest
 echo "# gemini cli"
-run_if_installed npm upgrade -g @google/gemini-cli
+run_if_installed npm install -g @google/gemini-cli@latest
 echo "# copilot cli"
 run_if_installed copilot update
 

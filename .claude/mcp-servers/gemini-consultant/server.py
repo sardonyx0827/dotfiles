@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ~/.claude/mcp-servers/gemini-consultant/server.py
 import contextlib
+import http.client
 import json
 import os
 import platform
@@ -223,6 +224,56 @@ class GeminiKeyError(Exception):
     """
 
 
+# 同じ要求を繰り返せば通るかもしれない状態だけ再試行する。それ以外
+# (400 不正リクエスト / 403 キー無効 / 404 モデル名違い) は何度送っても同じ
+# 答えなので、再試行は読み手に必要なメッセージを遅らせるだけになる。
+# scripts/gemini_api.py の RETRYABLE_STATUS と同じ集合。
+RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+
+# 上流のエラーメッセージを引用する上限。「model X is not found for API
+# version v1beta」が丸ごと収まり、JSON の壁が応答を押し流さない長さ。
+MAX_DETAIL = 400
+
+
+class GeminiUpstreamError(Exception):
+    """API が 2xx 以外を返した。メッセージには状態コードと上流の error.message。
+
+    URLError のサブクラスにはしない。HTTPError が URLError のサブクラスである
+    こと自体が、400 系まで一律にリトライされていた原因なので、専用の型で
+    識別してツール側の except に明示的に並べる。
+    """
+
+
+def _error_detail(raw: str) -> str:
+    """エラー本文から error.message を取り出す。JSON でなければ本文そのもの。"""
+    try:
+        decoded = json.loads(raw)
+    except ValueError:
+        return raw.strip()[:MAX_DETAIL]
+    if isinstance(decoded, dict):
+        err = decoded.get("error")
+        if isinstance(err, dict):
+            message = err.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()[:MAX_DETAIL]
+    return raw.strip()[:MAX_DETAIL]
+
+
+def _upstream_error(exc: urllib.error.HTTPError) -> GeminiUpstreamError:
+    """HTTPError を、状態コードと上流メッセージを持つ例外に変換する。
+
+    本文は Google が生成するエラー JSON で、こちらの API キーは含まれない。
+    """
+    fp = exc.fp
+    try:
+        raw = fp.read().decode("utf-8", errors="replace") if fp is not None else ""
+    except (OSError, http.client.HTTPException):
+        # 本文の読み出し自体が失敗しても、状態コードだけは伝える。
+        raw = ""
+    detail = _error_detail(raw)
+    return GeminiUpstreamError(f"HTTP {exc.code}: {detail or exc.reason}")
+
+
 def _reject_unusable_api_key(api_key: str) -> None:
     """ヘッダ値として送れないキーを、値を一切明かさずに拒否する。
 
@@ -247,7 +298,7 @@ def _reject_unusable_api_key(api_key: str) -> None:
         ) from None
 
 
-def _extract_text(body: dict) -> str:
+def _extract_text(body: object) -> str:
     """レスポンス本文をテキスト化し、途中で打ち切られていればそれを明示する。
 
     以前は `body.get("candidates", [{}])[0]` から parts を連結して返すだけで、
@@ -258,17 +309,30 @@ def _extract_text(body: dict) -> str:
     `candidates` が「キーは在るが空リスト」の場合も既定値 [{}] は効かないため
     [0] が IndexError になり、`list index out of range` という何も説明しない
     文字列だけが返っていた。プロンプト段階のブロックはこの形で来る。
+
+    形の検査は isinstance で行う。parts に文字列や text=null が混じると
+    `p.get("text", "")` が AttributeError / TypeError を投げ、ツール側のどの
+    except 腕にも掛からず例外が MCP の外へそのまま抜けていた
+    (scripts/gemini_api.py の extract_text と同じ選別に揃える)。
     """
-    candidates = body.get("candidates") or []
-    if not candidates:
-        blocked = (body.get("promptFeedback") or {}).get("blockReason")
+    if not isinstance(body, dict):
+        body = {}
+    candidates = body.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        feedback = body.get("promptFeedback")
+        blocked = feedback.get("blockReason") if isinstance(feedback, dict) else None
         if blocked:
             return f"[Gemini はプロンプトをブロックしました: blockReason={blocked}]"
         return "[Gemini から候補が返りませんでした]"
 
-    candidate = candidates[0] or {}
-    parts = (candidate.get("content") or {}).get("parts") or []
-    text = "".join(p.get("text", "") for p in parts)
+    candidate = candidates[0] if isinstance(candidates[0], dict) else {}
+    content = candidate.get("content")
+    parts = content.get("parts") if isinstance(content, dict) else None
+    text = "".join(
+        p["text"]
+        for p in (parts if isinstance(parts, list) else [])
+        if isinstance(p, dict) and isinstance(p.get("text"), str)
+    )
 
     # STOP が正常完了。それ以外 (MAX_TOKENS / SAFETY / RECITATION 等) は
     # answer が途中で切れているので、部分テキストは活かしつつ理由を添える。
@@ -342,11 +406,23 @@ def call_gemini(
             with urllib.request.urlopen(req, timeout=90) as resp:  # nosec: B310
                 body = json.loads(resp.read().decode("utf-8"))
                 return _extract_text(body)
-        except (urllib.error.URLError, TimeoutError) as e:
+        except urllib.error.HTTPError as e:
+            # HTTPError は URLError のサブクラスなので、この腕は必ず下の腕より
+            # 前に置くこと。以前は下の腕が 400/403/404 まで拾って 3 回送り
+            # (待ち時間 3 秒)、しかも本文を一度も読まなかったため、Google が
+            # 返す error.message (モデル名違い、キー無効 ...) が呼び出し側に
+            # 届かなかった。同じ答えしか返らない状態は 1 回目で報告する。
+            last_error = _upstream_error(e)
+            if e.code not in RETRYABLE_STATUS:
+                raise last_error from e
+        except (urllib.error.URLError, TimeoutError, http.client.HTTPException) as e:
+            # HTTPException は本文の途中で接続が切れた IncompleteRead など。
+            # OSError 系ではないため、以前はリトライもされず、ツール側の except
+            # にも掛からずに MCP の外へ抜けていた。
             last_error = e
-            # 最終試行の失敗後は再試行しないので待つ意味がない
-            if attempt < max_retries - 1:
-                time.sleep(2**attempt)
+        # 最終試行の失敗後は再試行しないので待つ意味がない
+        if attempt < max_retries - 1:
+            time.sleep(2**attempt)
 
     raise last_error  # type: ignore[misc]
 
@@ -383,8 +459,10 @@ def consult_gemini(question: str) -> str:
     # `except ValueError` より前に置くこと。順序を入れ替えると、以前と同じく
     # ここが死んで JSON パース失敗が「予期しないエラー」に化ける。
     except (
+        GeminiUpstreamError,
         urllib.error.URLError,
         TimeoutError,
+        http.client.HTTPException,
         json.JSONDecodeError,
         IndexError,
         KeyError,
@@ -434,8 +512,10 @@ def review_gemini(question: str) -> str:
     # `except ValueError` より前に置くこと。順序を入れ替えると、以前と同じく
     # ここが死んで JSON パース失敗が「予期しないエラー」に化ける。
     except (
+        GeminiUpstreamError,
         urllib.error.URLError,
         TimeoutError,
+        http.client.HTTPException,
         json.JSONDecodeError,
         IndexError,
         KeyError,

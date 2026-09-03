@@ -178,18 +178,19 @@
     },
     {
       "before": ["<leader>", "j", "j"],
-      // vim easy motion
-      "after": ["leader", "leader", "leader", "b", "d", "w"]
+      // vim easy motion: the bidirectional `bdw` motion takes THREE leaders
+      // (<leader><leader><leader> bdw) in VSCodeVim's table, unlike `s` / `/`.
+      "after": ["<leader>", "<leader>", "<leader>", "b", "d", "w"]
     },
     {
       "before": ["<leader>", "j", "s"],
       // vim easy motion
-      "after": ["leader", "leader", "/"]
+      "after": ["<leader>", "<leader>", "/"]
     },
     {
       "before": ["<leader>", "j", "c"],
       // vim easy motion
-      "after": ["leader", "leader", "s"]
+      "after": ["<leader>", "<leader>", "s"]
     },
     {
       "before": ["<C-l>"],

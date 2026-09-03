@@ -15,6 +15,7 @@ apply an answer written for a fragment to the entire range, so it has to read
 as a failure — see TestExtractText.
 """
 
+import http.client
 import io
 import json
 import os
@@ -353,6 +354,23 @@ class TestRequestGenerate:
     def test_a_timeout_is_retried_like_any_other_transport_failure(self, monkeypatch):
         calls = []
         body = self.call(monkeypatch, TimeoutError("slow"), _ok_body("hi"), calls=calls)
+        assert body == _ok_body("hi")
+        assert len(calls) == 2
+
+    def test_a_truncated_body_is_retried_like_a_transport_failure(self, monkeypatch):
+        """A connection dropped mid-body surfaces as http.client.IncompleteRead.
+
+        That is an HTTPException, not an OSError, so the transport arm did not
+        see it -- despite its own comment claiming to cover "a connection
+        reset raised while reading the body".
+        """
+        calls = []
+        body = self.call(
+            monkeypatch,
+            http.client.IncompleteRead(b"{", 400),
+            _ok_body("hi"),
+            calls=calls,
+        )
         assert body == _ok_body("hi")
         assert len(calls) == 2
 

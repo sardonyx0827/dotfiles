@@ -127,7 +127,10 @@ prompt_status() {
   symbols=()
   [[ $RETVAL -ne 0 ]] && symbols+="%{%F{$RP_LOVE}%}$CROSS" # Orig. Value: red
   [[ $UID -eq 0 ]] && symbols+="%{%F{$RP_GOLD}%}$LIGHTNING" # Orig. Value: yellow
-  [[ $(jobs -l | wc -l) -gt 0 ]] && symbols+="%{%F{$RP_FOAM}%}$GEAR" # Orig. value. cyan
+  #### PX-Note: read in precmd (RP_JOBS), not here. This runs inside
+  #### $(prompt_agnoster_main), a forked subshell whose job table is empty, so
+  #### `$(jobs -l | wc -l)` was always 0 and the gear could never appear.
+  [[ ${RP_JOBS:-0} -gt 0 ]] && symbols+="%{%F{$RP_FOAM}%}$GEAR" # Orig. value. cyan
 
   #### PX-Note: Original value was...$PRIMARY_FG default...
   [[ -n "$symbols" ]] && prompt_segment $RP_BASE default " $symbols "
@@ -153,6 +156,9 @@ prompt_agnoster_main() {
 }
 
 prompt_agnoster_precmd() {
+  # Background-job count for prompt_status, taken in the main shell: %j (like
+  # `jobs`) reports 0 inside the $( ) the prompt segments run in.
+  typeset -g RP_JOBS=${(%):-%j}
   vcs_info
   PROMPT='%{%f%b%k%}$(prompt_agnoster_main) '
 }

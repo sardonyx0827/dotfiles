@@ -105,14 +105,14 @@ hook_lint_file() {
   BASENAME=$(basename "$FILE_PATH")
   local LINT_ERRORS=""
   local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
-  local GO_PKG_DIR
+  local GO_PKG_DIR eslint_dir eslint_root
 
   # 出力変数名がこの関数の local と衝突すると、printf -v は local を書き換えて
   # しまい呼び出し元には何も返らない。黙って通るより落とす。
   case "$hook_out_var" in
   FILE_PATH | EXTENSION | BASENAME | LINT_ERRORS | PROJECT_ROOT | OUTPUT | \
     HAS_ESLINT_CONFIG | ESLINT_BIN | CONFIG | HAS_MYPY_CONFIG | RELATED | cfg | \
-    hook_out_var | hook_log_file)
+    GO_PKG_DIR | eslint_dir | eslint_root | hook_out_var | hook_log_file)
     echo "hook_lint_file: output variable '$hook_out_var' collides with an internal local" >&2
     return 2
     ;;
@@ -127,11 +127,22 @@ hook_lint_file() {
   js | jsx | ts | tsx)
     PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
 
-    # ESLint設定ファイルの存在確認
+    # ESLint設定ファイルの存在確認。編集ファイルのディレクトリから PROJECT_ROOT
+    # まで遡って探す (monorepo は packages/<pkg>/ に置く)。名前の一覧は ESLint が
+    # 実際に読むものを揃える: .eslintrc.cjs / .eslintrc.yaml / eslint.config.ts が
+    # 漏れていて、eslint があっても「config not found」で静かに緑を返していた。
     HAS_ESLINT_CONFIG=false
     if [ -n "$PROJECT_ROOT" ]; then
-      for cfg in eslint.config.js eslint.config.mjs eslint.config.cjs .eslintrc .eslintrc.js .eslintrc.json .eslintrc.yml; do
-        [ -f "$PROJECT_ROOT/$cfg" ] && HAS_ESLINT_CONFIG=true && break
+      eslint_dir=$(cd "$(dirname "$FILE_PATH")" 2>/dev/null && pwd -P)
+      eslint_root=$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)
+      while [ -n "$eslint_dir" ]; do
+        for cfg in eslint.config.js eslint.config.mjs eslint.config.cjs eslint.config.ts \
+          .eslintrc .eslintrc.js .eslintrc.cjs .eslintrc.json .eslintrc.yml .eslintrc.yaml; do
+          [ -f "$eslint_dir/$cfg" ] && HAS_ESLINT_CONFIG=true && break 2
+        done
+        [ "$eslint_dir" = "$eslint_root" ] && break
+        [ "$eslint_dir" = "/" ] && break
+        eslint_dir=$(dirname "$eslint_dir")
       done
     fi
 
@@ -170,6 +181,14 @@ hook_lint_file() {
             # 返す」という、このファイル冒頭が戒めている最悪の壊れ方をする。
             # -- は BASENAME が `-` で始まる場合にオプション扱いされないため。
             RELATED=$(echo "$OUTPUT" | grep -F -- "$BASENAME")
+            # tsc が起動すらできなかった (壊れた tsconfig.json → TS5083 等) 場合、
+            # 出力はどのファイルも名指ししない。空の RELATED を「関連エラー無し」
+            # と読むと、型エラーのあるファイルでゲートが緑を返す。ファイル名を
+            # 1 つも含まない失敗出力は起動失敗として丸ごと報告する (他ファイル
+            # だけのエラーは従来どおり素通し。checkstyle / cppcheck と同じ扱い)。
+            if [ -z "$RELATED" ] && ! echo "$OUTPUT" | grep -qE '\.tsx?[(:]'; then
+              RELATED="$OUTPUT"
+            fi
             if [ -n "$RELATED" ]; then
               LINT_ERRORS="${LINT_ERRORS}[TypeScript]\n${RELATED}\n"
             fi

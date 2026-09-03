@@ -335,3 +335,105 @@ def test_codex_config_is_valid_toml():
 
 def test_gemini_settings_is_valid_json():
     json.loads(GEMINI_SETTINGS.read_text(encoding="utf-8"))
+
+
+def _load_jsonc(path):
+    """Parse a VS Code JSON-with-comments file (// and /* */ outside strings)."""
+    text = path.read_text(encoding="utf-8")
+    out = []
+    i, n = 0, len(text)
+    in_string = False
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            continue
+        out.append(ch)
+        i += 1
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+    return json.loads(cleaned)
+
+
+VSCODE_USER = REPO_ROOT / ".config/Code/User"
+
+
+def test_vscode_vim_keybindings_spell_the_leader_token():
+    """VSCodeVim only recognises `<leader>`; a bare `leader` is three letters.
+
+    The EasyMotion remaps wrote `"after": ["leader", "leader", ...]`, so the
+    `<leader><leader>` prefix EasyMotion listens for was never produced and
+    `,jj` / `,js` / `,jc` typed the letters instead. Every `before` in the same
+    file already spells `<leader>`.
+    """
+    settings = _load_jsonc(VSCODE_USER / "settings.json")
+    offenders = []
+    for key, value in settings.items():
+        if not (key.startswith("vim.") and isinstance(value, list)):
+            continue
+        for binding in value:
+            if not isinstance(binding, dict):
+                continue  # e.g. a plain list of key names
+            for side in ("before", "after"):
+                for tok in binding.get(side, []):
+                    if tok.lower() == "leader":
+                        offenders.append((key, side, binding.get("before")))
+    assert offenders == [], f"bare `leader` tokens: {offenders}"
+
+
+def test_vscode_git_stage_keys_are_distinct():
+    """`ctrl+g s` and `ctrl+g shift+s` must not run the same command.
+
+    Both named git.stageAll, so the key whose comment reads "stage changes"
+    staged everything -- indistinguishable from its shifted sibling.
+    """
+    bindings = _load_jsonc(VSCODE_USER / "keybindings.json")
+    by_key = {b["key"]: b["command"] for b in bindings if "git.stage" in b["command"]}
+    assert by_key.get("ctrl+g shift+s") == "git.stageAll"
+    assert by_key.get("ctrl+g s") == "git.stage"
+
+
+def test_tmux_double_click_selects_the_word_under_the_mouse():
+    """copy-mode needs `-M` to start at the mouse, and -M only works in a binding.
+
+    The old `run-shell` branch ran `tmux copy-mode -t <pane>` with no -M, so the
+    copy cursor started at the TERMINAL cursor and `select-word` picked the last
+    word of the pane whatever was double-clicked; its `send-keys -X` also had
+    no -t and went to the active pane. -M is rejected inside run-shell (no mouse
+    event there), so the copy branch has to live in the binding itself.
+    """
+    conf = (REPO_ROOT / ".tmux.conf").read_text(encoding="utf-8")
+    start = conf.index("DoubleClick1Pane")
+    end = conf.index("\n\n", start)
+    binding = conf[start:end]
+    assert "copy-mode -M" in binding, binding
+    assert "run-shell" not in binding, "the copy branch must not go through run-shell"
+    # tmux's bare `<=` is a STRING comparison ("20" <= "5" is true); only the
+    # `e|` form is numeric. A double-click 10-49 columns from the edge split
+    # the pane instead of selecting the word until this read `#{e|<=:...}`.
+    assert binding.count("#{e|<=:") == 2, binding
+    assert "#{<=:" not in binding, "edge distance compared as a string"
+    # tmux's bare `<=` is a STRING comparison ("20" <= "5" is true); only the
+    # `e|` form is numeric. A double-click 10-49 columns from the edge split
+    # the pane instead of selecting the word until this read `#{e|<=:...}`.
+    assert binding.count("#{e|<=:") == 2, binding
+    assert "#{<=:" not in binding, "edge distance compared as a string"

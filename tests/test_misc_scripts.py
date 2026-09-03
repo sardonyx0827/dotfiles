@@ -306,11 +306,11 @@ class TestTmuxSendToAllExceptNvim:
         res = shell_env.run(TMUX_SCRIPT)
         assert res.returncode == 0, res.stderr
         send_calls = [c for c in shell_env.calls if "send-keys" in c]
-        assert f"tmux send-keys -t %1 {self.NASTY} Enter" in send_calls, (
+        assert f"tmux send-keys -t %1 -l -- {self.NASTY}" in send_calls, (
             "the command stashed in @send_to_all_except_nvim did not reach the "
             f"panes intact: {send_calls}"
         )
-        assert f"tmux send-keys -t %3 {self.NASTY} Enter" in send_calls
+        assert f"tmux send-keys -t %3 -l -- {self.NASTY}" in send_calls
         assert not any("-t %2" in c for c in send_calls), "nvim must be skipped"
 
     def test_the_option_is_cleared_once_it_has_been_read(self, shell_env):
@@ -350,11 +350,33 @@ class TestTmuxSendToAllExceptNvim:
         res = shell_env.run(TMUX_SCRIPT, "echo", "hello")
         assert res.returncode == 0
         send_calls = [c for c in shell_env.calls if "send-keys" in c]
-        # Enter is required so the sent text is actually executed, not just
-        # typed into the pane's prompt.
-        assert "tmux send-keys -t %1 echo hello Enter" in send_calls
-        assert "tmux send-keys -t %3 echo hello Enter" in send_calls
+        # The text goes literally (-l) and behind `--`; Enter is a SEPARATE
+        # send-keys so the text is actually executed, not just typed into the
+        # pane's prompt -- under -l an Enter in the same call would be text.
+        assert "tmux send-keys -t %1 -l -- echo hello" in send_calls
+        assert "tmux send-keys -t %1 Enter" in send_calls
+        assert "tmux send-keys -t %3 -l -- echo hello" in send_calls
+        assert "tmux send-keys -t %3 Enter" in send_calls
         assert not any("-t %2" in c for c in send_calls)
+        # ...and the Enter follows its text, per pane.
+        assert send_calls.index("tmux send-keys -t %1 -l -- echo hello") < (
+            send_calls.index("tmux send-keys -t %1 Enter")
+        )
+
+    @pytest.mark.parametrize("word", ["up", "tab", "enter", "-r"])
+    def test_the_text_is_never_parsed_as_a_key_name_or_a_flag(self, shell_env, word):
+        """`send-keys up` is the Up ARROW to tmux, not the word.
+
+        Without -l a lone word is resolved as a key name, case-insensitively,
+        so `up` re-ran the previous command in every non-nvim pane; a command
+        starting with `-` was read as send-keys flags, failed, and the `|| true`
+        swallowed it -- nothing sent, nothing reported.
+        """
+        self._stub_tmux(shell_env, sync_state="off")
+        res = shell_env.run(TMUX_SCRIPT, word)
+        assert res.returncode == 0, res.stderr
+        send_calls = [c for c in shell_env.calls if "send-keys" in c]
+        assert f"tmux send-keys -t %1 -l -- {word}" in send_calls, send_calls
 
     def test_sync_off_state_is_not_toggled(self, shell_env):
         self._stub_tmux(shell_env, sync_state="off")
@@ -400,8 +422,12 @@ class TestUpdateAiTools:
         assert res.returncode == 0
         expected = [
             "claude update",
-            "npm update -g @openai/codex",
-            "npm upgrade -g @google/gemini-cli",
+            # `@latest`, not `npm update -g`: update resolves inside the range
+            # recorded at install time and will not cross a major version, so
+            # a new major of either CLI was silently skipped while the script
+            # still printed success.
+            "npm install -g @openai/codex@latest",
+            "npm install -g @google/gemini-cli@latest",
             "copilot update",
             "claude --version",
             "codex --version",
@@ -428,8 +454,8 @@ class TestUpdateAiTools:
 
         assert res.returncode == 0, f"a failing tool aborted the script: {res.stderr}"
         for call in (
-            "npm update -g @openai/codex",
-            "npm upgrade -g @google/gemini-cli",
+            "npm install -g @openai/codex@latest",
+            "npm install -g @google/gemini-cli@latest",
             "copilot update",
             "codex --version",
             "gemini --version",
@@ -1360,6 +1386,45 @@ class TestMcCli:
         argc, argv = self._run(tmp_path, "mc execute do the thing")
 
         assert (argc, argv) == (4, ["--model", "sonnet", "-p", "do the thing"])
+
+
+class TestPromptThemeStatusSegment:
+    """The theme's status segment must be able to see background jobs.
+
+    `$(jobs -l | wc -l)` runs in a forked subshell whose job table is empty,
+    and the segment is itself already inside `$(prompt_agnoster_main)`, so the
+    GEAR the comment promises ("are there background jobs?") could never
+    appear. The count has to be taken in precmd, in the main shell.
+    """
+
+    THEME = REPO_ROOT / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme"
+
+    def _render_prompt_with_a_background_job(self):
+        program = (
+            f'source "{self.THEME}"\n'
+            "setopt promptsubst\n"
+            "sleep 5 &\n"
+            "prompt_agnoster_precmd\n"
+            'print -P -- "$PROMPT"\n'
+            "kill %1 2>/dev/null; wait 2>/dev/null\n"
+        )
+        res = subprocess.run(
+            ["zsh", "-f", "-c", program],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(self.THEME.parent),
+        )
+        assert res.returncode == 0, res.stderr
+        return res.stdout
+
+    def test_a_background_job_lights_the_gear(self):
+        if shutil.which("zsh") is None:
+            pytest.skip("zsh not installed")
+        out = self._render_prompt_with_a_background_job()
+        assert "\u2699" in out or "\\u2699" in out, (
+            f"no background-job indicator in the rendered prompt: {out!r}"
+        )
 
 
 # --------------------------------------------------------------------------

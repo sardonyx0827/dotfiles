@@ -18,8 +18,8 @@ python3 -m pytest
 python3 -m pytest tests/test_bash_review.py -v
 ```
 
-Python フック（`.claude/hooks` / `.claude/mcp-servers` / `.codex/hooks`）と
-`scripts/` の Python スクリプトは、テストが in-process で `exec` / import するため、
+Python フック（`.claude/hooks` / `.claude/mcp-servers` / `.codex/hooks`）、
+`.claude/skills` 配下のスクリプト、`scripts/` の Python スクリプトは、テストが in-process で `exec` / import するため、
 カバレッジを実測できます。
 CI（`.github/workflows/ci.yml`）は `pytest-cov` でブランチカバレッジを測定し、
 **90% を下回るとジョブが失敗**します（実測は約 97%、設定は `.coveragerc`）。
@@ -43,7 +43,8 @@ CI（`.github/workflows/ci.yml`）は `pytest-cov` でブランチカバレッ�
 ```bash
 pip install "pytest-cov==7.0.0"
 python3 -m pytest \
-  --cov=.claude/hooks --cov=.claude/mcp-servers --cov=.codex/hooks --cov=scripts \
+  --cov=.claude/hooks --cov=.claude/mcp-servers --cov=.claude/skills \
+  --cov=.codex/hooks --cov=scripts \
   --cov-report=term-missing --cov-fail-under=90
 ```
 
@@ -56,12 +57,12 @@ CI は pytest に加えて `ruff`（lint / format）、`bandit`（medium 以上�
 1.2.0 に固定）です。
 
 ```bash
-ruff check .claude/hooks .claude/mcp-servers tests .codex/hooks scripts
+ruff check .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
 # --no-site-packages は CI の再現に必須。CI の lint ジョブはリンター類 (ruff /
 # bandit / mypy) しか入れず実行時依存 (mcp SDK 等) を入れないため、手元にだけ
 # 入っている実行時依存が import を解決してしまい、ローカル緑・CI 赤という
 # 食い違いが起きる。
-mypy --no-site-packages .claude/hooks .claude/mcp-servers scripts
+mypy --no-site-packages .claude/hooks .claude/mcp-servers .claude/skills scripts
 # root を分けるのは同名の bash-review.py の重複を避けるため。MYPYPATH は共有
 # モジュールの解決に必須（実体は .claude/hooks 側にしか無く、実行時の
 # sys.path.insert を mypy は追えない）

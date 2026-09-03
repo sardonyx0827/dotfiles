@@ -109,11 +109,15 @@ def extract_title(markdown: str, fallback: str) -> str:
 def build_html(markdown: str, title: str, assets: dict[str, str]) -> str:
     """Wrap `markdown` in the standalone viewer shell."""
     payload = base64.b64encode(markdown.encode("utf-8")).decode("ascii")
+    # The title goes in LAST. It is the only substitution that carries user
+    # text, and html.escape leaves underscores alone, so a heading that spells
+    # `__MD_B64__` would otherwise be a live placeholder for the replaces that
+    # follow it and end up holding the whole payload.
     return (
-        _TEMPLATE.replace("__TITLE__", html_mod.escape(title, quote=True))
-        .replace("__MERMAID_SRC__", assets["mermaid"])
+        _TEMPLATE.replace("__MERMAID_SRC__", assets["mermaid"])
         .replace("__MARKED_SRC__", assets["marked"])
         .replace("__MD_B64__", payload)
+        .replace("__TITLE__", html_mod.escape(title, quote=True))
     )
 
 
@@ -121,7 +125,15 @@ def render(
     md_path: Path, out_dir: Path | None = None, open_browser: bool = True
 ) -> Path:
     """Render `md_path` to HTML beside it (or into `out_dir`) and return the path."""
-    markdown = md_path.read_text(encoding="utf-8")
+    # errors="replace": a stray byte in a hand-edited report must not turn into
+    # a UnicodeDecodeError traceback when the rest of the page is fine. The
+    # newline translation read_text() used to do is kept explicitly.
+    markdown = (
+        md_path.read_bytes()
+        .decode("utf-8", errors="replace")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+    )
     title = extract_title(markdown, md_path.stem)
     html = build_html(markdown, title, resolve_assets())
 
