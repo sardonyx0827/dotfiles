@@ -61,7 +61,36 @@ brew install --cask font-ubuntu-mono font-hack-nerd-font
 **Ubuntu/Debian:**
 
 ```bash
-sudo apt-get install -y git zsh vim neovim tmux curl wget build-essential xsel
+sudo apt-get install -y git zsh vim tmux curl wget build-essential xsel
+
+# Neovim は APT から入れません（配布版が古く、.config/nvim が要求する 0.11+ に
+# 届かないため）。公式リリースの tarball を ~/.local へ展開します。
+# NVIM_VERSION / NVIM_SHA256 は install.sh 冒頭の NEOVIM_VERSION /
+# NEOVIM_SHA256_* からそのまま写してください。
+#
+# 下は 1 本の && チェーンです。行ごとに分けて実行すると、sha256sum が FAILED を
+# 出しても後続の tar がそのまま走り、検証していないバイナリを入れてしまいます
+# （チェックサムを置く意味がなくなるので、必ずこの形のまま貼ってください）。
+# 展開先 ~/.local/nvim が既にある場合は、先に `rm -rf ~/.local/nvim` してください。
+#
+# 下の 3 行は x86_64 用です。arm64（Android の Linux ターミナル/AVF はこちら）
+# では NVIM_ASSET と NVIM_SHA256 を**両方**差し替えてください。片方だけだと
+# sha256sum が必ず落ちます（fail-closed なので危険ではありませんが、進みません）。
+#   NVIM_ASSET=nvim-linux-arm64.tar.gz
+#   NVIM_SHA256=1aa5ca085249580ae0f91eb14f27ec0919773ff2d99a163d03f3d6c21ac29725
+NVIM_VERSION=v0.12.5
+NVIM_ASSET=nvim-linux-x86_64.tar.gz
+NVIM_SHA256=bce0f56eda1f1b1db6eee8f4133d7a38813ea07933837dd1777411ca384c6875
+
+NVIM_TMP="$(mktemp -d)" &&
+  curl -fsSL -o "$NVIM_TMP/$NVIM_ASSET" \
+    "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/${NVIM_ASSET}" &&
+  echo "${NVIM_SHA256}  ${NVIM_TMP}/${NVIM_ASSET}" | sha256sum -c - &&
+  tar -xzf "$NVIM_TMP/$NVIM_ASSET" -C "$NVIM_TMP" &&
+  mkdir -p ~/.local/bin &&
+  mv "$NVIM_TMP/${NVIM_ASSET%.tar.gz}" ~/.local/nvim &&
+  ln -sf ~/.local/nvim/bin/nvim ~/.local/bin/nvim &&
+  rm -rf "$NVIM_TMP"
 
 # WezTerm
 curl -fsSL https://apt.fury.io/wez/gpg.key | sudo gpg --yes --dearmor -o /usr/share/keyrings/wezterm-fury.gpg

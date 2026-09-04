@@ -237,3 +237,53 @@ def test_no_config_claims_a_ci_check_is_advisory_while_ci_gates_everything():
         "every CI job gates (no continue-on-error key in ci.yml), but these "
         f"files still describe a check as advisory: {offenders}"
     )
+
+
+def test_manual_neovim_recipe_matches_the_installer_pin():
+    """docs/setup.md hardcodes the Neovim version and digest install.sh pins.
+
+    The manual recipe is the path for a reader who does not run install.sh, and
+    it tells them to verify the download with `sha256sum -c`. A digest that has
+    drifted from the script's turns that verification into a guaranteed failure
+    on a correct download -- which teaches the reader to drop the check. The
+    two must move together, so this compares them directly.
+    """
+    install = INSTALL_SH.read_text(encoding="utf-8")
+    doc = SETUP_DOC.read_text(encoding="utf-8")
+
+    pairs = [
+        (
+            "NEOVIM_VERSION",
+            "NVIM_VERSION",
+            r'^NEOVIM_VERSION="([^"]*)"',
+            r"^NVIM_VERSION=(\S+)",
+        ),
+        (
+            "NEOVIM_SHA256_X86_64",
+            "NVIM_SHA256",
+            r'^NEOVIM_SHA256_X86_64="([^"]*)"',
+            r"^NVIM_SHA256=(\S+)",
+        ),
+    ]
+    for script_name, doc_name, script_re, doc_re in pairs:
+        in_script = re.search(script_re, install, re.MULTILINE)
+        in_doc = re.search(doc_re, doc, re.MULTILINE)
+        assert in_script, f"{script_name} is not defined in install.sh"
+        assert in_doc, f"{doc_name} is not set in docs/setup.md's manual recipe"
+        assert in_script.group(1) == in_doc.group(1), (
+            f"install.sh's {script_name} is {in_script.group(1)!r} but "
+            f"docs/setup.md's {doc_name} is {in_doc.group(1)!r}; the manual "
+            "recipe verifies the download against this value, so a stale copy "
+            "makes a correct download fail its checksum check"
+        )
+
+    # The arm64 digest appears in the recipe's prose, not as an assignment --
+    # the reader swaps it in by hand. It rots the same way, and an arm64 reader
+    # (Android's AVF Debian is arm64) has no other copy to check against.
+    arm = re.search(r'^NEOVIM_SHA256_ARM64="([^"]*)"', install, re.MULTILINE)
+    assert arm, "NEOVIM_SHA256_ARM64 is not defined in install.sh"
+    assert arm.group(1) in doc, (
+        f"install.sh pins the arm64 digest {arm.group(1)!r}, which docs/setup.md's "
+        "manual recipe does not offer; an arm64 reader following the note would "
+        "verify against the x86_64 digest and never get past sha256sum"
+    )

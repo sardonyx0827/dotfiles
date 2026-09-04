@@ -82,6 +82,36 @@ LAZYDOCKER_INSTALL_REF="7e7aadc2071d58031bf2daafca1fbd4093efc23f"
 OHMYZSH_INSTALL_REF="98fe9b81a62ed75baf25cf23aa41e338a83bec6d"
 VIM_PLUG_REF="88e31471818e9a29a8a20a0ee61360cfd7bdc1cd"
 
+# --- Neovim: installed from the upstream release tarball, never from APT -----
+# .config/nvim targets the modern API surface (`vim.lsp.config`, `vim.hl`,
+# 0.11+ treesitter behaviour), so an APT `neovim` is not merely old -- it is
+# broken against this repo's config. Debian 13 (trixie) ships 0.10.4 and
+# Debian 12 ships 0.7.2, which is what an Android AVF / Debian VM install
+# lands on; the config errors out on first launch there. Upstream publishes a
+# self-contained tarball for exactly the two Linux architectures below, so the
+# installer fetches that into ~/.local instead and leaves APT out of it.
+# macOS is unaffected -- Homebrew's formula tracks upstream -- so the brew
+# package list still carries `neovim` and install_neovim is a no-op there.
+#
+# NEOVIM_VERSION is the pin. Unlike the four bootstrap scripts above, a release
+# asset has no commit SHA to name, so the bytes are verified instead: the
+# tarball's sha256 must match the digest below before anything is extracted.
+# Version and digests therefore move TOGETHER -- a bumped version with a stale
+# digest fails closed (nothing is installed, the mismatch is printed).
+#
+# NEOVIM_MIN_VERSION is a separate knob: it is what .config/nvim needs, not
+# what we install. An nvim already on PATH at or above it is left alone.
+#
+# To refresh the pin (do this deliberately):
+#   gh release view --repo neovim/neovim --json tagName --jq .tagName
+#   for a in nvim-linux-x86_64 nvim-linux-arm64; do
+#     curl -fsSL "https://github.com/neovim/neovim/releases/download/<tag>/$a.tar.gz" | sha256sum
+#   done
+NEOVIM_VERSION="v0.12.5"
+NEOVIM_MIN_VERSION="0.11.0"
+NEOVIM_SHA256_X86_64="bce0f56eda1f1b1db6eee8f4133d7a38813ea07933837dd1777411ca384c6875"
+NEOVIM_SHA256_ARM64="1aa5ca085249580ae0f91eb14f27ec0919773ff2d99a163d03f3d6c21ac29725"
+
 # Function to print colored messages
 print_info() {
   echo -e "${BLUE}[INFO]${NC} $1"
@@ -257,11 +287,14 @@ install_apt_packages() {
   sudo apt-get update || print_warning "apt-get update failed (continuing)"
 
   print_info "Installing required packages..."
+  # No `neovim` in this list on purpose: Debian/Ubuntu ship a version older
+  # than .config/nvim can run on (see the NEOVIM_VERSION block at the top of
+  # this file), so install_neovim fetches the upstream tarball into ~/.local
+  # instead. Putting it back would only place a broken 0.10.x on PATH.
   sudo apt-get install -y \
     git \
     zsh \
     vim \
-    neovim \
     tmux \
     curl \
     wget \
@@ -352,6 +385,272 @@ install_brew_packages() {
   done
 
   print_success "Homebrew packages installed"
+}
+
+# Compare two dotted versions; true when $1 >= $2. Only the numeric
+# major.minor.patch is compared, so a development build ("0.12.5-dev-1+gabc")
+# is treated as its release number -- close enough for a "is this new enough
+# to run .config/nvim" gate, and it avoids pretending to implement semver
+# pre-release ordering. `sort -V` is deliberately not used: this has to agree
+# with itself on BSD and GNU userland alike.
+version_at_least() {
+  local have="${1%%-*}" want="${2%%-*}" i h w
+  local -a hp wp
+  IFS=. read -r -a hp <<<"$have"
+  IFS=. read -r -a wp <<<"$want"
+  for i in 0 1 2; do
+    h="${hp[i]:-0}"
+    w="${wp[i]:-0}"
+    # Strip anything non-numeric (a "+gabcdef" build suffix on the patch
+    # field) so the arithmetic below cannot be fed a non-number.
+    h="${h//[!0-9]/}"
+    w="${w//[!0-9]/}"
+    ((10#${h:-0} > 10#${w:-0})) && return 0
+    ((10#${h:-0} < 10#${w:-0})) && return 1
+  done
+  return 0
+}
+
+# Echo the version of the nvim binary at $1 ("0.12.5"), or return 1 when it is
+# missing, not executable, or does not run here (a tarball built against a
+# newer glibc than this machine has fails exactly this way).
+#
+# No `| head -1`: under `set -eo pipefail` head can SIGPIPE the producer, and
+# an unguarded command substitution would then abort the whole installer --
+# the same class of failure install_homebrew and install_oh_my_zsh carry long
+# comments about. Take the first line with a parameter expansion instead.
+nvim_version_of() {
+  local bin="$1" out
+  [ -x "$bin" ] || return 1
+  out="$("$bin" --version 2>/dev/null)" || return 1
+  out="${out%%$'\n'*}" # "NVIM v0.12.5"
+  out="${out#*v}"      # "0.12.5"
+  [[ "$out" =~ ^[0-9]+\.[0-9]+ ]] || return 1
+  printf '%s\n' "$out"
+}
+
+# `rm -rf` that cannot take the installer down with it.
+#
+# A bare `rm -rf` that fails is FATAL here: `set -eo pipefail` is on,
+# install_neovim is called bare from main(), and main() is called bare at the
+# bottom of the file, so none of bash's errexit exemptions apply. A failing
+# cleanup would skip the `return 0` right below it AND everything main() does
+# afterwards -- WezTerm, fonts, Node, Docker, Oh My Zsh, vim-plug, tmux
+# plugins, the AI tools, MCP registration -- with no message. That is the same
+# silent-skip failure install_homebrew, install_oh_my_zsh and create_symlinks
+# each carry a comment about, and the "root-owned leftovers from a sudo run"
+# case reclaim_aborted_clone documents is exactly how a cleanup comes to fail.
+# Losing a temp directory is worth a warning; it is never worth the rest of
+# the run.
+rm_rf_safely() {
+  local err
+  if ! err="$(rm -rf "$@" 2>&1)"; then
+    print_warning "Failed to remove: $*"
+    if [ -n "$err" ]; then
+      # `|| true`, unlike the same printf|sed in try_install / pip_install_user:
+      # a bare pipeline is still a bare command under `set -eo pipefail`, and
+      # the whole contract of this function is that it cannot abort the run.
+      # Indenting a diagnostic must never be the thing that kills main().
+      printf '%s\n' "$err" | sed 's/^/    /' || true
+    fi
+  fi
+  return 0
+}
+
+# Install Neovim from the upstream release tarball into ~/.local.
+#
+# Layout: the tarball is extracted whole into ~/.local/nvim (bin/, lib/,
+# share/) and ~/.local/bin/nvim -- already on PATH via .zshrc -- links to
+# ~/.local/nvim/bin/nvim. Neovim resolves $VIMRUNTIME from the real path of
+# its own executable, so the symlink costs nothing.
+#
+# Do NOT "simplify" this by extracting with --strip-components=1 straight into
+# ~/.local: that merges the tarball's share/nvim (which holds $VIMRUNTIME)
+# into ~/.local/share/nvim, which is lazy.nvim's data directory. The clean
+# reinstall recipe in INSTALL_PLATFORM.md is `rm -rf ~/.local/share/nvim` --
+# under a merged layout that documented step deletes the Neovim runtime.
+install_neovim() {
+  # macOS gets Neovim from Homebrew (the formula tracks upstream); Windows is
+  # out of scope for this script's package installs.
+  case "$OS" in
+  ubuntu | linux) ;;
+  *) return 0 ;;
+  esac
+
+  local prefix="$HOME/.local/nvim"
+  local link="$HOME/.local/bin/nvim"
+  local want="${NEOVIM_VERSION#v}"
+  local have=""
+
+  # Heal a run that was killed between the two moves in the swap below, which
+  # leaves $prefix gone and the previous install stranded in $prefix.old. This
+  # has to happen BEFORE anything else: the swap starts by clearing
+  # $prefix.old, so without this the next run would delete the only copy left
+  # and then -- if its download, checksum or extraction failed -- leave the
+  # machine with no Neovim at all.
+  if [ ! -e "$prefix" ] && [ -e "$prefix.old/bin/nvim" ]; then
+    if mv "$prefix.old" "$prefix"; then
+      print_info "Restored the Neovim an interrupted run left at $prefix.old"
+    else
+      print_warning "A previous Neovim is stranded at $prefix.old; move it back by hand"
+    fi
+  fi
+
+  # Already at the pinned version under our own prefix: nothing to fetch. The
+  # symlink is still (re)made, so a run after someone deleted it heals it.
+  if have="$(nvim_version_of "$prefix/bin/nvim")" && [ "$have" = "$want" ]; then
+    link_managed_nvim "$prefix" "$link"
+    print_success "Neovim $have already installed ($prefix)"
+    return 0
+  fi
+
+  # Someone else's nvim, new enough for .config/nvim: leave it alone rather
+  # than shadowing it from ~/.local/bin. Only consulted when we have no
+  # managed install of our own -- otherwise this would find ours and skip the
+  # version bump it is supposed to perform.
+  if [ ! -e "$prefix/bin/nvim" ] && command_exists nvim; then
+    if have="$(nvim_version_of "$(command -v nvim)")" &&
+      version_at_least "$have" "$NEOVIM_MIN_VERSION"; then
+      print_success "Neovim $have already installed ($(command -v nvim)); leaving it alone"
+      return 0
+    fi
+    print_info "Neovim ${have:-(unknown version)} is older than $NEOVIM_MIN_VERSION, which .config/nvim requires."
+  fi
+
+  # A ~/.local/nvim that is not a Neovim prefix belongs to someone else; this
+  # function is not entitled to replace it.
+  if [ -e "$prefix" ] && [ ! -e "$prefix/bin/nvim" ]; then
+    print_warning "$prefix exists but holds no bin/nvim; leaving it alone (no Neovim installed)"
+    return 0
+  fi
+
+  local asset sha arch
+  arch="$(uname -m)"
+  case "$arch" in
+  x86_64 | amd64)
+    asset="nvim-linux-x86_64.tar.gz"
+    sha="$NEOVIM_SHA256_X86_64"
+    ;;
+  aarch64 | arm64)
+    asset="nvim-linux-arm64.tar.gz"
+    sha="$NEOVIM_SHA256_ARM64"
+    ;;
+  *)
+    print_warning "Upstream publishes no Neovim build for $arch; install Neovim >= $NEOVIM_MIN_VERSION manually (see INSTALL_PLATFORM.md)"
+    return 0
+    ;;
+  esac
+
+  local -a sha_cmd
+  if command_exists sha256sum; then
+    sha_cmd=(sha256sum)
+  elif command_exists shasum; then
+    sha_cmd=(shasum -a 256)
+  else
+    # Fail closed. Skipping the check would install unverified bytes that then
+    # run as this user on every `nvim`; skipping the install only costs an
+    # editor, and says so.
+    print_warning "Neither sha256sum nor shasum found; refusing to install an unverified Neovim"
+    return 0
+  fi
+
+  # Staged inside ~/.local so the final move is a rename on the same
+  # filesystem rather than a cross-device copy, and so a killed run leaves its
+  # debris next to the prefix instead of in /tmp.
+  if ! mkdir -p "$HOME/.local/bin"; then
+    print_warning "Failed to create $HOME/.local/bin; skipping Neovim"
+    return 0
+  fi
+  local tmpdir
+  if ! tmpdir="$(mktemp -d "$HOME/.local/.nvim-install.XXXXXX")"; then
+    print_warning "Failed to create a staging directory for Neovim"
+    return 0
+  fi
+
+  print_info "Installing Neovim $NEOVIM_VERSION ($asset) into $prefix..."
+  local url="https://github.com/neovim/neovim/releases/download/$NEOVIM_VERSION/$asset"
+  if ! curl -fsSL "$url" -o "$tmpdir/$asset"; then
+    print_warning "Failed to download $asset"
+    rm_rf_safely "$tmpdir"
+    return 0
+  fi
+
+  local actual
+  actual="$("${sha_cmd[@]}" "$tmpdir/$asset" 2>/dev/null)" || actual=""
+  actual="${actual%% *}"
+  # The `-z` half is not redundant with the comparison: `-u` is deliberately
+  # not set in this script, so a typo'd or deleted NEOVIM_SHA256_* would leave
+  # $sha empty, and a checksum tool that failed leaves $actual empty too --
+  # two empty strings compare equal and would wave the download through. Fail
+  # on an unusable result first, then compare.
+  if [ -z "$actual" ] || [ "$actual" != "$sha" ]; then
+    print_warning "Checksum mismatch for $asset; refusing to install"
+    print_warning "  expected: $sha"
+    print_warning "  actual:   ${actual:-<none>}"
+    print_warning "  If Neovim $NEOVIM_VERSION was re-released, refresh NEOVIM_SHA256_* in install.sh."
+    rm_rf_safely "$tmpdir"
+    return 0
+  fi
+
+  if ! tar -xzf "$tmpdir/$asset" -C "$tmpdir"; then
+    print_warning "Failed to extract $asset"
+    rm_rf_safely "$tmpdir"
+    return 0
+  fi
+
+  # Run the extracted binary BEFORE anything is moved into place: an archive
+  # that unpacked short, or one built against a newer glibc than this machine
+  # has, must not replace a working install. This is also what makes the
+  # existing setup survive a bad release.
+  local staged="$tmpdir/${asset%.tar.gz}"
+  if ! have="$(nvim_version_of "$staged/bin/nvim")"; then
+    print_warning "The downloaded Neovim does not run on this machine; leaving the current setup alone"
+    rm_rf_safely "$tmpdir"
+    return 0
+  fi
+
+  # Swap: the outgoing tree is moved aside first and removed only once the new
+  # one is in place, so a failure here restores what was there.
+  rm_rf_safely "$prefix.old"
+  if [ -e "$prefix" ] && ! mv "$prefix" "$prefix.old"; then
+    print_warning "Failed to move the existing $prefix aside; Neovim not updated"
+    rm_rf_safely "$tmpdir"
+    return 0
+  fi
+  if ! mv "$staged" "$prefix"; then
+    print_warning "Failed to install Neovim into $prefix"
+    if [ -e "$prefix.old" ] && ! mv "$prefix.old" "$prefix"; then
+      print_warning "The previous Neovim is left at $prefix.old; move it back by hand"
+    fi
+    rm_rf_safely "$tmpdir"
+    return 0
+  fi
+  rm_rf_safely "$prefix.old" "$tmpdir"
+
+  link_managed_nvim "$prefix" "$link"
+  # Same reason install_uv / install_glow / install_nodejs export after their
+  # install: without this the checks that follow in this run cannot see the
+  # binary that was just placed on PATH.
+  export PATH="$HOME/.local/bin:$PATH"
+  print_success "Neovim $have installed ($prefix)"
+}
+
+# Point ~/.local/bin/nvim at the managed prefix, under the same rule
+# link_debian_alias applies: a symlink is ours to replace, anything real
+# belongs to the user and wins.
+link_managed_nvim() {
+  local prefix="$1" link="$2"
+  if [ -e "$link" ] && [ ! -L "$link" ]; then
+    print_warning "$link already exists and is not a symlink; leaving it alone (put $prefix/bin on PATH yourself)"
+    return 0
+  fi
+  # Guarded, and the function always returns 0: both call sites invoke it bare
+  # under `set -e`, so a failed link would abort the installer instead of
+  # warning -- see rm_rf_safely's header for why that costs the whole run.
+  if ! (mkdir -p "$(dirname "$link")" && ln -sf "$prefix/bin/nvim" "$link"); then
+    print_warning "Failed to link $link -> $prefix/bin/nvim"
+  fi
+  return 0
 }
 
 # Install WezTerm
@@ -1947,13 +2246,18 @@ main() {
   # dry-run value is in the symlink/backup preview above, not here.
   if [ "$DRY_RUN" -eq 1 ]; then
     print_info "[DRY-RUN] Skipping package and tool installation (not simulated)."
-    print_info "[DRY-RUN]   Would install: OS packages (Homebrew / APT), WezTerm, fonts,"
+    print_info "[DRY-RUN]   Would install: OS packages (Homebrew / APT), Neovim, WezTerm, fonts,"
     print_info "[DRY-RUN]   Node.js, gh, pyenv, uv, glow, Docker, lazydocker, tree-sitter,"
     print_info "[DRY-RUN]   MCP deps, linters/formatters, Oh My Zsh, vim-plug, tmux plugins;"
     print_info "[DRY-RUN]   set up Neovim; install AI tools; register Claude MCP servers."
   else
     # Platform-specific package installation
     install_os_packages
+
+    # Neovim comes from the upstream tarball, not APT -- see install_neovim.
+    # Placed right after the package step because it needs curl and tar from
+    # it, and before the editor setup further down.
+    install_neovim
 
     # Common installations
     install_wezterm

@@ -64,6 +64,12 @@ jobs:
       # バージョンを固定し、加えてリリース資産の sha256 も検証する
       # (GitHub API の digest 由来)。バージョンを上げるときは URL と
       # NVIM_SHA256 の両方を更新すること。
+      #
+      # この pin は install.sh の NEOVIM_VERSION とは**意図的に独立**（両者が
+      # 一致している必要はない）。install.sh が入れるのは利用者が日常使う
+      # エディタ本体なので最新安定版を追うが、ここが必要としているのは
+      # 「Lua テストが走る 0.12 系ならどれでもよい」だけ。追随させる価値より、
+      # 検証済みの digest を無用に差し替えるコストの方が高い。
       - name: Install Neovim (pinned)
         if: matrix.python-version == env.PRIMARY_PYTHON
         env:

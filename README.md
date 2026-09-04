@@ -102,7 +102,7 @@ cd ~/dotfiles
 - プラットフォームの検出（macOS/Ubuntu/Windows）
 - 必要なパッケージのインストール
   - macOS: Homebrew経由でVim、Neovim、tmux、WezTermなど
-  - Ubuntu: APT経由でVim、Neovim、tmux、WezTermなど
+  - Ubuntu/Debian: APT経由でVim、tmux、WezTermなど（**Neovim は APT を使いません**。配布版が `.config/nvim` の要求する 0.11+ より古いため、公式リリースの tarball を sha256 検証のうえ `~/.local/nvim` へ展開し、`~/.local/bin/nvim` からリンクします）
 - CLI ツール（ripgrep、fd、bat、universal-ctags、tree-sitter、lazydocker など）のインストール
 - Oh My Zshとプラグインのインストール
 - vim-plugのインストール

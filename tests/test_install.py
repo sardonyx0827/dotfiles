@@ -1,10 +1,12 @@
 """Tests for install.sh (sourced; main() is guarded and never runs here)."""
 
+import hashlib
 import json
 import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from conftest import REPO_ROOT
@@ -21,6 +23,7 @@ def run_sourced(snippet: str, env: dict, cwd=None):
         env=env,
         cwd=cwd,
         timeout=120,
+        check=False,
     )
 
 
@@ -89,6 +92,7 @@ class TestSourceGuard:
             env=shell_env.env,
             cwd=outside,
             timeout=60,
+            check=False,
         )
         assert res.returncode == 1
         assert "Dotfiles repository not found" in res.stdout
@@ -198,7 +202,7 @@ class TestFetchSiteInventory:
     # Fetches deliberately left unpinned, with the reason install.sh:52-56
     # gives: these vendor redirectors expose no immutable ref, so pinning them
     # would mean a content hash re-pinned on every upstream release.
-    UNPINNED_BY_DESIGN = {
+    UNPINNED_BY_DESIGN: ClassVar[dict[str, str]] = {
         "https://astral.sh/uv/install.sh": "vendor redirector, no immutable ref",
         "https://pyenv.run": "vendor redirector, no immutable ref",
         "https://get.docker.com": "vendor redirector, no immutable ref (runs via sudo sh)",
@@ -222,7 +226,7 @@ class TestFetchSiteInventory:
     # bucket is a worklist, not a blessing. Pin an entry (or move it above with
     # a stated reason) and delete it from here; test_open_findings_are_current
     # fails if a listed URL is gone, so the list cannot rot into a fiction.
-    UNPINNED_OPEN_FINDINGS = {
+    UNPINNED_OPEN_FINDINGS: ClassVar[dict[str, str]] = {
         "https://github.com/tmux-plugins/tpm": "git clone of branch HEAD",
         "https://github.com/zsh-users/zsh-autosuggestions": (
             "git clone of branch HEAD; runs on every interactive shell start"
@@ -252,9 +256,33 @@ class TestFetchSiteInventory:
         }
     )
 
+    # Downloads that carry no commit SHA to pin -- a GitHub *release asset* has
+    # a version tag, not a ref -- but whose bytes are checked before use. The
+    # justification here is different in kind from the two buckets above and is
+    # kept separate rather than filed under "unpinned": the URL names an
+    # immutable release tag AND install.sh compares the download's sha256
+    # against a digest pinned in the script, refusing to install on a mismatch.
+    # That is a stronger guarantee than a commit pin, not a weaker one.
+    # TestNeovimPin asserts the digests are real and actually compared against;
+    # without that half this bucket would be a claim rather than a check.
+    #
+    # The strength of that second half, stated plainly rather than assumed: it
+    # is hardcoded to NEOVIM_SHA256_*, not derived from this bucket. A future
+    # entry added here would satisfy test_every_fetch_url_is_classified without
+    # anything proving its bytes are verified at all -- membership is checked,
+    # verification logic is not. Adding an entry therefore means adding its own
+    # digest test alongside, the way TestNeovimPin does; the bucket does not
+    # enforce that for you.
+    CHECKSUM_VERIFIED: ClassVar[dict[str, str]] = {
+        "https://github.com/neovim/neovim/releases/download/$NEOVIM_VERSION/$asset": (
+            "release tarball pinned to a version tag, verified against "
+            "NEOVIM_SHA256_* before anything is extracted"
+        ),
+    }
+
     # URLs that appear in executable lines but are never fetched -- printed for
     # the user to open by hand.
-    NOT_FETCHED = {
+    NOT_FETCHED: ClassVar[set[str]] = {
         "https://checkstyle.sourceforge.io/",
         "https://github.com/google/google-java-format",
     }
@@ -304,6 +332,7 @@ class TestFetchSiteInventory:
         known = (
             set(self.UNPINNED_BY_DESIGN)
             | set(self.UNPINNED_OPEN_FINDINGS)
+            | set(self.CHECKSUM_VERIFIED)
             | self.NOT_FETCHED
         )
         unclassified = {
@@ -317,8 +346,9 @@ class TestFetchSiteInventory:
                 f"{url} (install.sh:{line})"
                 for url, line in sorted(unclassified.items())
             )
-            + ". Pin it, or add it to UNPINNED_BY_DESIGN with a reason, or to "
-            "NOT_FETCHED if it is only printed."
+            + ". Pin it, or verify its bytes and file it under CHECKSUM_VERIFIED, "
+            "or add it to UNPINNED_BY_DESIGN with a reason, or to NOT_FETCHED "
+            "if it is only printed."
         )
 
     def test_open_findings_match_the_reviewed_set(self):
@@ -327,7 +357,10 @@ class TestFetchSiteInventory:
             "here if you can, and update EXPECTED_OPEN_FINDINGS deliberately if you cannot"
         )
 
-    @pytest.mark.parametrize("bucket", ["UNPINNED_BY_DESIGN", "UNPINNED_OPEN_FINDINGS"])
+    @pytest.mark.parametrize(
+        "bucket",
+        ["UNPINNED_BY_DESIGN", "UNPINNED_OPEN_FINDINGS", "CHECKSUM_VERIFIED"],
+    )
     def test_listed_urls_are_still_present(self, bucket):
         # A bucket entry for a URL install.sh no longer fetches reads as a live
         # exception while covering nothing, and hides that the finding was fixed.
@@ -968,6 +1001,520 @@ class TestInstallVimPlug:
         assert res.returncode == 0, res.stderr
         assert "vim-plug installed" in res.stdout
         assert plug.read_text(encoding="utf-8") == '" already here\n'
+
+
+# --- Neovim from the upstream tarball ---------------------------------------
+# Debian/Ubuntu's `neovim` package is older than .config/nvim can run on
+# (trixie ships 0.10.4, bookworm 0.7.2), so `nvim` on an Android AVF / Debian
+# VM errored out on the config's 0.11+ API use. install_neovim replaces that
+# APT dependency with the upstream release tarball unpacked into ~/.local.
+
+_FAKE_NVIM = """#!/bin/bash
+if [ "$1" = "--version" ]; then
+  echo "NVIM v{version}"
+  echo "Build type: Release"
+  exit 0
+fi
+exit 0
+"""
+
+
+def _fake_release_tarball(tmp_path, asset="nvim-linux-x86_64.tar.gz", version="0.12.5"):
+    """Build a stand-in for an upstream Neovim release asset.
+
+    Same shape as the real thing (a single top-level `<asset stem>/` holding
+    bin/, lib/, share/), so the extraction path, the top-level directory the
+    script derives from the asset name, and the "does it actually run here?"
+    probe all exercise real behaviour. Returns (path, sha256) so a test can
+    hand install.sh the digest it will compute.
+    """
+    stem = asset[: -len(".tar.gz")]
+    stage = tmp_path / "release" / stem
+    (stage / "bin").mkdir(parents=True)
+    (stage / "lib").mkdir()
+    (stage / "share" / "nvim" / "runtime").mkdir(parents=True)
+    (stage / "share" / "nvim" / "runtime" / "filetype.lua").write_text(
+        "-- runtime\n", encoding="utf-8"
+    )
+    binary = stage / "bin" / "nvim"
+    binary.write_text(_FAKE_NVIM.format(version=version), encoding="utf-8")
+    binary.chmod(0o755)
+
+    tarball = tmp_path / asset
+    subprocess.run(
+        ["tar", "-czf", str(tarball), "-C", str(stage.parent), stem],
+        check=True,
+        capture_output=True,
+    )
+    return tarball, hashlib.sha256(tarball.read_bytes()).hexdigest()
+
+
+def _stub_curl_serving(shell_env, tarball: Path):
+    """A curl stub that writes `tarball` to whatever follows -o."""
+    shell_env.stub(
+        "curl",
+        body=(
+            'prev=""; out=""\n'
+            'for arg in "$@"; do\n'
+            '  if [ "$prev" = "-o" ]; then out="$arg"; fi\n'
+            '  prev="$arg"\n'
+            "done\n"
+            f'[ -n "$out" ] && cp "{tarball}" "$out"\n'
+        ),
+    )
+
+
+def _install_neovim(shell_env, digest, arch="x86_64", extra=""):
+    """Run install_neovim for one architecture with a known-good digest.
+
+    The two digests are deliberately DIFFERENT: only the architecture under
+    test gets the real one. Setting both to the same value would let a swapped
+    arch->digest mapping in install.sh pass every test here, since either
+    branch would then verify successfully.
+    """
+    real_arch = arch in ("x86_64", "amd64")
+    x86 = digest if real_arch else "1" * 64
+    arm = "2" * 64 if real_arch else digest
+    return run_sourced(
+        f"OS=ubuntu; uname() {{ echo {arch}; }}; "
+        f'NEOVIM_SHA256_X86_64="{x86}"; NEOVIM_SHA256_ARM64="{arm}"; '
+        f'{extra}install_neovim; echo "AFTER_NEOVIM"',
+        shell_env.env,
+    )
+
+
+class TestVersionAtLeast:
+    @pytest.mark.parametrize(
+        "have,want,expected",
+        [
+            ("0.12.5", "0.11.0", True),
+            ("0.11.0", "0.11.0", True),
+            ("0.10.4", "0.11.0", False),
+            ("0.9.5", "0.11.0", False),  # 9 vs 11: string compare would say yes
+            ("1.0.0", "0.11.0", True),
+            ("0.11", "0.11.0", True),  # missing patch field reads as 0
+            ("0.12.5-dev-1234+gabcdef", "0.11.0", True),
+            ("0.11.0-dev", "0.11.0", True),
+        ],
+    )
+    def test_numeric_comparison(self, shell_env, have, want, expected):
+        res = run_sourced(
+            f'version_at_least "{have}" "{want}" && echo YES || echo NO',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert ("YES" if expected else "NO") in res.stdout
+
+
+class TestNvimVersionOf:
+    def test_parses_the_first_line(self, shell_env, tmp_path):
+        binary = tmp_path / "nvim"
+        binary.write_text(_FAKE_NVIM.format(version="0.12.5"), encoding="utf-8")
+        binary.chmod(0o755)
+        res = run_sourced(f'nvim_version_of "{binary}"', shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert res.stdout.strip() == "0.12.5"
+
+    def test_a_binary_that_does_not_run_is_reported_missing(self, shell_env, tmp_path):
+        """A tarball built against a newer glibc fails exactly this way."""
+        binary = tmp_path / "nvim"
+        binary.write_text("#!/bin/bash\nexit 127\n", encoding="utf-8")
+        binary.chmod(0o755)
+        res = run_sourced(
+            f'nvim_version_of "{binary}" || echo NO_VERSION', shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert "NO_VERSION" in res.stdout
+
+    def test_a_missing_binary_does_not_abort_under_set_e(self, shell_env, tmp_path):
+        res = run_sourced(
+            f'nvim_version_of "{tmp_path}/absent" || echo NO_VERSION; echo AFTER',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "NO_VERSION" in res.stdout
+        assert "AFTER" in res.stdout
+
+
+class TestInstallNeovim:
+    def test_installs_the_pinned_release_under_local(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+
+        res = _install_neovim(shell_env, digest)
+
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_NEOVIM" in res.stdout
+        assert "Neovim 0.12.5 installed" in res.stdout
+        prefix = shell_env.home / ".local/nvim"
+        assert (prefix / "bin/nvim").is_file()
+        # The runtime must stay inside the prefix, NOT merged into
+        # ~/.local/share/nvim -- that is lazy.nvim's data dir, and
+        # INSTALL_PLATFORM.md tells the reader to `rm -rf` it.
+        assert (prefix / "share/nvim/runtime/filetype.lua").is_file()
+        assert not (shell_env.home / ".local/share/nvim/runtime").exists()
+
+    def test_links_local_bin_at_the_prefix(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+
+        _install_neovim(shell_env, digest)
+
+        link = shell_env.home / ".local/bin/nvim"
+        assert link.is_symlink()
+        assert link.resolve() == (shell_env.home / ".local/nvim/bin/nvim").resolve()
+
+    def test_arm64_asset_is_selected_on_aarch64(self, shell_env, tmp_path):
+        """The Android AVF case: Debian on arm64, where APT has only 0.10.x."""
+        shell_env.hide("nvim")
+        tarball, digest = _fake_release_tarball(tmp_path, "nvim-linux-arm64.tar.gz")
+        _stub_curl_serving(shell_env, tarball)
+
+        res = _install_neovim(shell_env, digest, arch="aarch64")
+
+        assert res.returncode == 0, res.stderr
+        assert "nvim-linux-arm64.tar.gz" in " ".join(shell_env.calls)
+        assert (shell_env.home / ".local/nvim/bin/nvim").is_file()
+
+    def test_unsupported_architecture_warns_and_downloads_nothing(
+        self, shell_env, tmp_path
+    ):
+        shell_env.hide("nvim")
+        shell_env.stub("curl")
+        res = _install_neovim(shell_env, "0" * 64, arch="armv7l")
+        assert res.returncode == 0, res.stderr
+        assert "[WARNING]" in res.stdout
+        assert not any(c.startswith("curl ") for c in shell_env.calls)
+
+    def test_checksum_mismatch_installs_nothing(self, shell_env, tmp_path):
+        """Verified bytes are the whole reason the URL may name a version tag."""
+        shell_env.hide("nvim")
+        tarball, _ = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+
+        res = _install_neovim(shell_env, "0" * 64)
+
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_NEOVIM" in res.stdout
+        assert "Checksum mismatch" in res.stdout
+        assert "installed" not in res.stdout.replace("Neovim not", "")
+        assert not (shell_env.home / ".local/nvim").exists()
+
+    def test_an_unusable_checksum_result_installs_nothing(self, shell_env, tmp_path):
+        """A checksum tool that produces nothing must not read as a match.
+
+        `-u` is not set in install.sh, so an empty digest constant and an empty
+        `sha256sum` result would compare equal -- two blanks waving the
+        download through. The guard tests the result for emptiness first.
+        """
+        shell_env.hide("nvim")
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+        shell_env.stub("sha256sum", exit_code=1)
+        shell_env.stub("shasum", exit_code=1)
+
+        res = _install_neovim(shell_env, digest, extra='NEOVIM_SHA256_X86_64=""; ')
+
+        assert res.returncode == 0, res.stderr
+        assert "Checksum mismatch" in res.stdout
+        assert not (shell_env.home / ".local/nvim").exists()
+
+    def test_a_failed_download_leaves_no_debris(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        shell_env.stub("curl", exit_code=1)
+
+        res = _install_neovim(shell_env, "0" * 64)
+
+        assert res.returncode == 0, res.stderr
+        assert "[WARNING]" in res.stdout
+        assert not (shell_env.home / ".local/nvim").exists()
+        # A staging directory left behind would accumulate one per failed run.
+        assert not list((shell_env.home / ".local").glob(".nvim-install.*"))
+
+    def test_a_tarball_that_does_not_run_here_keeps_the_existing_install(
+        self, shell_env, tmp_path
+    ):
+        shell_env.hide("nvim")
+        prefix = shell_env.home / ".local/nvim"
+        (prefix / "bin").mkdir(parents=True)
+        good = prefix / "bin/nvim"
+        good.write_text(_FAKE_NVIM.format(version="0.11.2"), encoding="utf-8")
+        good.chmod(0o755)
+
+        broken = tmp_path / "release" / "nvim-linux-x86_64"
+        (broken / "bin").mkdir(parents=True)
+        (broken / "bin/nvim").write_text("#!/bin/bash\nexit 127\n", encoding="utf-8")
+        (broken / "bin/nvim").chmod(0o755)
+        tarball = tmp_path / "nvim-linux-x86_64.tar.gz"
+        subprocess.run(
+            ["tar", "-czf", str(tarball), "-C", str(broken.parent), broken.name],
+            check=True,
+            capture_output=True,
+        )
+        digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
+        _stub_curl_serving(shell_env, tarball)
+
+        res = _install_neovim(shell_env, digest)
+
+        assert res.returncode == 0, res.stderr
+        assert "does not run on this machine" in res.stdout
+        assert "0.11.2" in good.read_text(encoding="utf-8")
+        assert not list((shell_env.home / ".local").glob(".nvim-install.*"))
+        assert not (shell_env.home / ".local/nvim.old").exists()
+
+    def test_an_existing_new_enough_nvim_is_left_alone(self, shell_env, tmp_path):
+        """A Homebrew / self-built nvim must not be shadowed from ~/.local/bin."""
+        shell_env.stub("nvim", body='[ "$1" = "--version" ] && echo "NVIM v0.11.9"')
+        shell_env.stub("curl", exit_code=1)
+
+        res = _install_neovim(shell_env, "0" * 64)
+
+        assert res.returncode == 0, res.stderr
+        assert "leaving it alone" in res.stdout
+        assert not any(c.startswith("curl ") for c in shell_env.calls)
+        assert not (shell_env.home / ".local/nvim").exists()
+
+    def test_an_apt_era_nvim_is_superseded(self, shell_env, tmp_path):
+        """Debian trixie's 0.10.4 -- the version that broke .config/nvim."""
+        shell_env.stub("nvim", body='[ "$1" = "--version" ] && echo "NVIM v0.10.4"')
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+
+        res = _install_neovim(shell_env, digest)
+
+        assert res.returncode == 0, res.stderr
+        assert "older than" in res.stdout
+        assert (shell_env.home / ".local/nvim/bin/nvim").is_file()
+        assert (shell_env.home / ".local/bin/nvim").is_symlink()
+
+    def test_rerun_at_the_pinned_version_downloads_nothing(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        prefix = shell_env.home / ".local/nvim"
+        (prefix / "bin").mkdir(parents=True)
+        binary = prefix / "bin/nvim"
+        binary.write_text(_FAKE_NVIM.format(version="0.12.5"), encoding="utf-8")
+        binary.chmod(0o755)
+        shell_env.stub("curl", exit_code=1)
+
+        res = _install_neovim(shell_env, "0" * 64)
+
+        assert res.returncode == 0, res.stderr
+        assert "already installed" in res.stdout
+        assert not any(c.startswith("curl ") for c in shell_env.calls)
+        # ...and a deleted symlink is healed rather than left broken.
+        assert (shell_env.home / ".local/bin/nvim").is_symlink()
+
+    def test_a_stale_managed_prefix_is_upgraded(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        prefix = shell_env.home / ".local/nvim"
+        (prefix / "bin").mkdir(parents=True)
+        binary = prefix / "bin/nvim"
+        binary.write_text(_FAKE_NVIM.format(version="0.11.0"), encoding="utf-8")
+        binary.chmod(0o755)
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+
+        res = _install_neovim(shell_env, digest)
+
+        assert res.returncode == 0, res.stderr
+        assert "Neovim 0.12.5 installed" in res.stdout
+        assert "0.12.5" in (prefix / "bin/nvim").read_text(encoding="utf-8")
+        # The displaced tree must not be left lying around.
+        assert not (shell_env.home / ".local/nvim.old").exists()
+
+    def test_a_failing_cleanup_does_not_abort_the_installer(self, shell_env, tmp_path):
+        """The whole run must survive an `rm` that cannot delete.
+
+        install_neovim is called bare from main(), and main() is called bare at
+        the bottom of the file, so under `set -eo pipefail` NONE of bash's
+        errexit exemptions apply: a bare `rm -rf` that fails skips the
+        `return 0` under it and every later step of main() -- WezTerm, fonts,
+        Node, Docker, Oh My Zsh, vim-plug, tmux plugins, the AI tools, MCP
+        registration -- with no message at all. Root-owned leftovers from an
+        earlier sudo run make `rm` fail for real; reclaim_aborted_clone already
+        documents that happening in this tree.
+        """
+        shell_env.hide("nvim")
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+        shell_env.stub("rm", body='echo "rm: cannot remove: denied" >&2', exit_code=1)
+
+        res = _install_neovim(shell_env, digest)
+
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_NEOVIM" in res.stdout, (
+            "a failing cleanup aborted the script, so everything main() does "
+            "after install_neovim would have been skipped silently"
+        )
+        assert "Neovim 0.12.5 installed" in res.stdout
+        assert "Failed to remove" in res.stdout
+        assert (shell_env.home / ".local/nvim/bin/nvim").is_file()
+
+    def test_an_interrupted_swap_is_restored_on_the_next_run(self, shell_env, tmp_path):
+        """Killed between the two moves: $prefix gone, the install in .old.
+
+        Without recovery the next run's first act is to clear $prefix.old --
+        deleting the only remaining copy -- and if that run then fails to
+        download, verify or extract, the machine is left with no Neovim.
+        """
+        shell_env.hide("nvim")
+        stranded = shell_env.home / ".local/nvim.old"
+        (stranded / "bin").mkdir(parents=True)
+        binary = stranded / "bin/nvim"
+        binary.write_text(_FAKE_NVIM.format(version="0.12.5"), encoding="utf-8")
+        binary.chmod(0o755)
+        # Nothing may be downloaded: the restored tree is already at the pin.
+        shell_env.stub("curl", exit_code=1)
+
+        res = _install_neovim(shell_env, "0" * 64)
+
+        assert res.returncode == 0, res.stderr
+        assert "Restored the Neovim" in res.stdout
+        assert (shell_env.home / ".local/nvim/bin/nvim").is_file()
+        assert not stranded.exists()
+        assert not any(c.startswith("curl ") for c in shell_env.calls)
+
+    def test_a_stranded_backup_survives_a_failed_reinstall(self, shell_env, tmp_path):
+        """The same recovery, on the path where this run then fails."""
+        shell_env.hide("nvim")
+        stranded = shell_env.home / ".local/nvim.old"
+        (stranded / "bin").mkdir(parents=True)
+        binary = stranded / "bin/nvim"
+        binary.write_text(_FAKE_NVIM.format(version="0.11.5"), encoding="utf-8")
+        binary.chmod(0o755)
+        shell_env.stub("curl", exit_code=1)
+
+        res = _install_neovim(shell_env, "0" * 64)
+
+        assert res.returncode == 0, res.stderr
+        # 0.11.5 is below the pin but at or above the minimum, so the restored
+        # tree is kept as-is and the user still has a working editor.
+        assert (shell_env.home / ".local/nvim/bin/nvim").is_file()
+        assert "0.11.5" in (shell_env.home / ".local/nvim/bin/nvim").read_text(
+            encoding="utf-8"
+        )
+
+    def test_a_local_dir_that_is_not_a_neovim_prefix_is_not_destroyed(
+        self, shell_env, tmp_path
+    ):
+        shell_env.hide("nvim")
+        prefix = shell_env.home / ".local/nvim"
+        prefix.mkdir(parents=True)
+        (prefix / "notes.md").write_text("mine\n", encoding="utf-8")
+        shell_env.stub("curl", exit_code=1)
+
+        res = _install_neovim(shell_env, "0" * 64)
+
+        assert res.returncode == 0, res.stderr
+        assert "[WARNING]" in res.stdout
+        assert (prefix / "notes.md").read_text(encoding="utf-8") == "mine\n"
+        assert not any(c.startswith("curl ") for c in shell_env.calls)
+
+    def test_a_real_file_at_the_link_path_is_never_clobbered(self, shell_env, tmp_path):
+        """Same rule link_debian_alias applies to its bat/fd aliases."""
+        shell_env.hide("nvim")
+        (shell_env.home / ".local/bin").mkdir(parents=True)
+        wrapper = shell_env.home / ".local/bin/nvim"
+        wrapper.write_text("#!/bin/bash\n# my own wrapper\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+
+        res = _install_neovim(shell_env, digest)
+
+        assert res.returncode == 0, res.stderr
+        assert not wrapper.is_symlink()
+        assert "my own wrapper" in wrapper.read_text(encoding="utf-8")
+        assert "not a symlink" in res.stdout
+
+    def test_missing_checksum_tool_refuses_to_install(self, shell_env, tmp_path):
+        """Fail closed: an unverified Neovim is worse than no Neovim.
+
+        `sha256sum` lives in /usr/bin (and /bin) on every machine this runs on,
+        both protected by _without_commands, so absence has to be expressed by
+        shadowing the guard itself -- the same technique TestInstallVimPlugins
+        uses for `vim`.
+        """
+        shell_env.hide("nvim")
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+        no_checksum_tool = (
+            'command_exists() { case "$1" in sha256sum|shasum) return 1;; '
+            '*) command -v "$1" >/dev/null 2>&1;; esac; }; '
+        )
+
+        res = _install_neovim(shell_env, digest, extra=no_checksum_tool)
+
+        assert res.returncode == 0, res.stderr
+        assert "unverified Neovim" in res.stdout
+        assert not (shell_env.home / ".local/nvim").exists()
+
+    def test_macos_leaves_neovim_to_homebrew(self, shell_env, tmp_path):
+        shell_env.stub("curl", exit_code=1)
+        res = run_sourced(
+            'OS=macos; install_neovim; echo "AFTER_NEOVIM"', shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_NEOVIM" in res.stdout
+        assert not any(c.startswith("curl ") for c in shell_env.calls)
+        assert not (shell_env.home / ".local/nvim").exists()
+
+
+class TestNeovimPin:
+    def test_version_is_a_release_tag(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        match = re.search(r'^NEOVIM_VERSION="([^"]*)"', text, re.MULTILINE)
+        assert match, "NEOVIM_VERSION is not defined in install.sh"
+        assert re.fullmatch(r"v\d+\.\d+\.\d+", match.group(1)), (
+            f"NEOVIM_VERSION must be a release tag like v0.12.5, got {match.group(1)!r}"
+        )
+
+    @pytest.mark.parametrize("var", ["NEOVIM_SHA256_X86_64", "NEOVIM_SHA256_ARM64"])
+    def test_digest_is_a_sha256(self, var):
+        text = INSTALL.read_text(encoding="utf-8")
+        match = re.search(rf'^{var}="([^"]*)"', text, re.MULTILINE)
+        assert match, f"{var} is not defined in install.sh"
+        assert re.fullmatch(r"[0-9a-f]{64}", match.group(1)), (
+            f"{var} must be a 64-char sha256 hex digest, got {match.group(1)!r}"
+        )
+
+    @pytest.mark.parametrize("var", ["NEOVIM_SHA256_X86_64", "NEOVIM_SHA256_ARM64"])
+    def test_digest_is_actually_compared_against(self, var):
+        # Same reasoning as test_pin_variable_is_actually_used: a digest
+        # nobody checks reads as verification while the download rides an
+        # unverified URL.
+        text = INSTALL.read_text(encoding="utf-8")
+        assert f'sha="${var}"' in text, (
+            f"{var} is defined but never used to verify a download"
+        )
+
+    def test_apt_does_not_install_neovim(self):
+        """The regression this whole path exists for.
+
+        `apt-get install neovim` on Debian 13 lands 0.10.4, and .config/nvim
+        needs 0.11+ (vim.lsp.config, vim.hl) -- so an APT Neovim is not an old
+        Neovim, it is a broken one.
+        """
+        text = INSTALL.read_text(encoding="utf-8")
+        apt_block = text.split("install_apt_packages() {", 1)[1].split("\n}", 1)[0]
+        package_lines = [
+            line.strip().rstrip("\\").strip()
+            for line in apt_block.splitlines()
+            if not line.lstrip().startswith("#")
+        ]
+        assert "neovim" not in package_lines, (
+            "install_apt_packages lists `neovim` again; Debian/Ubuntu's package "
+            "is older than .config/nvim can run on -- install_neovim fetches "
+            "the upstream tarball instead"
+        )
+
+    def test_main_installs_neovim(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        assert re.search(r"^\s+install_neovim$", text, re.MULTILINE), (
+            "install_neovim is defined but main() never calls it"
+        )
 
 
 class TestOptionalEntryLoopsDoNotAbortTheInstaller:
@@ -2663,6 +3210,7 @@ class TestLinkingThroughASymlinkedParent:
             text=True,
             env=shell_env.env,
             timeout=120,
+            check=False,
         )
 
         assert res.returncode == 0, res.stderr
@@ -2771,6 +3319,7 @@ class TestGitIdentityRendering:
                 ["git", "config", "--file", str(rendered), key],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             assert got.returncode == 0, f"{key} is unreadable: {rendered.read_text()}"
             assert got.stdout.rstrip("\n") == expected

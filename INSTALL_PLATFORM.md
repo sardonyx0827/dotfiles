@@ -256,13 +256,35 @@ sudo rm /usr/share/keyrings/wezterm-fury.gpg
 
 #### Neovimのバージョンが古い
 
-Ubuntu 20.04などでNeovimのバージョンが古い場合は、PPAを使用：
+`.config/nvim` は Neovim 0.11+ の API（`vim.lsp.config` / `vim.hl` など）を前提に
+しているため、ディストリ配布版の Neovim では初回起動時にエラーになります。
+Debian 13 (trixie) は 0.10.4、Debian 12 (bookworm) は 0.7.2 と、いずれも要件を
+満たしません（Android の Linux ターミナル (AVF) はこの Debian 上に構築されます）。
+
+そのため `install.sh` は **APT の `neovim` を入れません**。代わりに公式リリースの
+tarball を sha256 検証したうえで `~/.local/nvim` へ展開し、`~/.local/bin/nvim`
+から張ったシンボリックリンクで参照します（`~/.local/bin` は `.zshrc` が
+`/usr/bin` より前に置くため、古い APT 版が残っていても新しい方が優先されます）。
+バージョンを上げるときは `install.sh` 冒頭の `NEOVIM_VERSION` と
+`NEOVIM_SHA256_*` を**セットで**更新してください（片方だけだと照合に失敗し、
+期待値と実際のハッシュを表示したうえで、何もインストールせずに終了します）。
 
 ```bash
-sudo add-apt-repository ppa:neovim-ppa/unstable
-sudo apt-get update
-sudo apt-get install -y neovim
+# 実際に使われている Neovim と、その導入元を確認する
+which -a nvim
+nvim --version | head -1
+ls -l ~/.local/bin/nvim          # -> ~/.local/nvim/bin/nvim
+
+# 入れ直す（install.sh は同じバージョンなら再ダウンロードしません）
+rm -rf ~/.local/nvim ~/.local/bin/nvim
+./install.sh
+
+# APT 版が残っていて紛らわしい場合は削除してよい
+sudo apt-get remove -y neovim
 ```
+
+すでに 0.11 以上の Neovim（Homebrew、自前ビルドなど）が PATH 上にある場合、
+`install.sh` はそれを尊重して何もしません。
 
 #### tmuxでマウス操作が動作しない
 
