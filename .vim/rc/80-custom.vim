@@ -13,6 +13,8 @@ function! s:TrimTrailingWhitespace() abort
   keeppatterns %s/\s\+$//e
   call winrestview(l:view)
 endfunction
+" Manual trigger for the trim above, kept safe the same way.
+command! FixWhitespace call s:TrimTrailingWhitespace()
 augroup TrimWhitespace
   autocmd!
   autocmd BufWritePre * call s:TrimTrailingWhitespace()

@@ -20,6 +20,33 @@ from conftest import REPO_ROOT
 
 TOGGLETERM_SPEC = REPO_ROOT / ".config/nvim/lua/setup/plugins/utilities/toggleterm.lua"
 VIM_AI_RC = REPO_ROOT / ".vim/rc/70-ai.vim"
+VIM_COMMANDS_RC = REPO_ROOT / ".vim/rc/50-commands-autocmds.vim"
+VIM_CUSTOM_RC = REPO_ROOT / ".vim/rc/80-custom.vim"
+
+
+# A bare `:%s/\s\+$//e` moves the cursor and clobbers the last search pattern that n/N
+# read; s:TrimTrailingWhitespace() in 80-custom.vim wraps the save-time trim in
+# winsaveview/keeppatterns/winrestview for exactly that reason. `:FixWhitespace` must
+# reuse the same wrapper instead of running the bare substitution on its own.
+def test_fixwhitespace_command_uses_the_wrapped_trim():
+    text = (
+        VIM_COMMANDS_RC.read_text(encoding="utf-8")
+        + "\n"
+        + VIM_CUSTOM_RC.read_text(encoding="utf-8")
+    )
+    command_lines = [
+        line
+        for line in text.splitlines()
+        if line.lstrip().startswith("command!") and "FixWhitespace" in line
+    ]
+    assert command_lines, "the FixWhitespace command definition is gone"
+    assert not any(r"%s/\s\+$//e" in line for line in command_lines), (
+        "FixWhitespace still runs the bare substitution directly, which moves the "
+        f"cursor and clobbers the search register n/N read: {command_lines}"
+    )
+    assert any("s:TrimTrailingWhitespace" in line for line in command_lines), (
+        f"FixWhitespace does not call the wrapped trim helper: {command_lines}"
+    )
 
 
 # toggleterm's own commandline parser splits each space-separated token on "=" and takes
