@@ -13,6 +13,8 @@ substitutions actually firing, the residue guard, and the TOML string choices
 cannot hold).
 """
 
+import shutil
+
 import pytest
 import tomllib
 from conftest import REPO_ROOT
@@ -74,14 +76,37 @@ def test_generated_bodies_round_trip_byte_exact():
 
 
 def test_hand_maintained_agents_are_not_generated(tmp_path, monkeypatch):
-    """The allowlisted exception must survive a generate run untouched."""
+    """The allowlisted exception must survive a real generate run untouched.
+
+    The previous version of this test only called `run(check=True)`, which
+    never writes anything -- it could not have failed even if HAND_MAINTAINED
+    were ignored during an actual generate. This copies the real
+    .codex/agents tree so `run(check=False)` has real files to (not) touch,
+    mutates the hand-maintained twin, and confirms an ordinary sibling is
+    regenerated while the mutation survives.
+    """
     import gen_codex_agents
 
-    target = CODEX_AGENTS_DIR / "codex-delegator.toml"
-    before = target.read_text(encoding="utf-8")
-    monkeypatch.setattr(gen_codex_agents, "CODEX_AGENTS_DIR", CODEX_AGENTS_DIR)
-    assert gen_codex_agents.run(check=True) == 0
-    assert target.read_text(encoding="utf-8") == before
+    codex_copy = tmp_path / "codex_agents"
+    shutil.copytree(CODEX_AGENTS_DIR, codex_copy)
+    monkeypatch.setattr(gen_codex_agents, "CODEX_AGENTS_DIR", codex_copy)
+
+    hand_maintained_twin = codex_copy / "codex-delegator.toml"
+    before = hand_maintained_twin.read_text(encoding="utf-8")
+    marker = "\n# regression marker: must survive a generate run untouched\n"
+    hand_maintained_twin.write_text(before + marker, encoding="utf-8")
+
+    sibling_path = next(p for p in source_agents() if p.stem not in HAND_MAINTAINED)
+    sibling_twin = codex_copy / f"{sibling_path.stem}.toml"
+    sibling_twin.write_text(
+        "stale placeholder, not real generator output\n", encoding="utf-8"
+    )
+
+    assert gen_codex_agents.run(check=False) == 0
+
+    assert hand_maintained_twin.read_text(encoding="utf-8") == before + marker
+    _, expected_rendered = build(sibling_path)
+    assert sibling_twin.read_text(encoding="utf-8") == expected_rendered
 
 
 def test_hand_maintained_list_stays_justified():
