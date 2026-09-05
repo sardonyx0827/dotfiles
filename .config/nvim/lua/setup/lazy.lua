@@ -50,8 +50,10 @@ local function load_plugins()
         else
           -- A spec that fails to load used to vanish from lazy.setup without a
           -- trace: the plugin simply stopped existing. Nothing could catch it
-          -- either, since no luacheck / vint runs over this tree in CI, so a
-          -- typo here degraded the editor silently until noticed by hand.
+          -- either: luacheck now gates CI over this tree (see .config/nvim/.luacheckrc),
+          -- but it only catches undefined-global-style typos, not a require
+          -- that raises or returns nil, so a typo here degraded the editor
+          -- silently until noticed by hand.
           -- Two distinct failures are folded together on purpose -- both mean
           -- "this file produced no usable spec":
           --   not ok   -> require raised (syntax error, runtime error)

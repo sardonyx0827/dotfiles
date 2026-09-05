@@ -1,5 +1,5 @@
 return {
-  "Mofiqul/vscode.nvim",   -- default
+  "Mofiqul/vscode.nvim",
   name = "vscode",
   event = "VeryLazy",
   config = function()
@@ -9,7 +9,7 @@ return {
       style = 'dark',
       -- Enable transparent background
       transparent = true,
-      -- Enable italic comment
+      -- Disable italic comment
       italic_comments = false,
       -- Disable nvim-tree background color
       disable_nvimtree_bg = true,

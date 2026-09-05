@@ -24,16 +24,11 @@ to close it. Every scenario predating this called open_vimdiff exactly once,
 which is why a green suite never noticed.
 
 A fourth is the same defect class as that third one -- per-invocation state
-colliding on a shared handle -- reached through the keymap instead. The
-`<C-w>q` on the user's real buffer is registered with { buf = target_buf }, and
-target_buf is shared across invocations: a second undo-diff re-registers the
-same {buf, mode, lhs} slot and vim.keymap.set silently REPLACES the first
-mapping. Pressing the documented key in the FIRST diff tab then ran the SECOND
-invocation's callback, whose tab-identity check failed, so it took the
-"not in a diff tab" fallback and issued a bare `:quit` -- closing one window and
-leaving that tab standing, still in diff mode, with its cleanup autocmds armed
-for a diff nobody can reach any more. The mappings on the scratch buffer are not
-affected: that buffer is fresh on every call, so only the shared one collides.
+colliding on a shared handle -- reached through the keymap instead: the
+`<C-w>q` mapping on the user's real buffer is shared across invocations, so a
+second undo-diff can silently replace the first's callback.
+
+See the `live_diffs` comment in undotree_vimdiff.lua for the full mechanism.
 
 These run the module for real under `nvim -l` (no init.lua, so no plugin
 manager) via tests/lua/undotree_tabs.lua, because the behaviour under test is a

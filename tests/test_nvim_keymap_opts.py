@@ -9,7 +9,7 @@ Commit de046d2 ("refactor: migrate deprecated Neovim 0.12 APIs") swept the whole
 tree and its message spells the rule out: "Rename `buffer` to `buf` in
 vim.keymap.set/del opts (deprecated-0.12)". Nothing then held the line, and two
 later commits reintroduced the old spelling in code written after the sweep --
-ad938a4 (ai/init.lua) and 51cb2a8 (ai/ui.lua), 23 sites between them. Both files
+ad938a4 (ai/init.lua) and 51cb2a8 (ai/ui.lua), 22 sites between them. Both files
 are inside luacheck's scope; luacheck reads names and scopes, not table keys, so
 it cannot see an option key that is merely wrong. Only a text-level check can,
 which is why this lives here rather than in .luacheckrc.

@@ -1,5 +1,6 @@
 -- DAP for Debugging (config + dap-ui formerly in after/plugin/nvim-dap*.lua)
--- requirements: apt install python3 python3.x-venv, pip3 install debugpy
+-- requirements: install the Mason `debugpy` package (:MasonInstall debugpy);
+-- the adapter below runs it from mason/packages/debugpy/debugpy-adapter.
 return {
   'mfussenegger/nvim-dap',
   lazy = true,

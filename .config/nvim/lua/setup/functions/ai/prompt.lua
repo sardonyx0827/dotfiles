@@ -419,12 +419,8 @@ function M.apply_edits(lines, edits)
   --- `fixed` is the ONLY model-supplied value that reaches the buffer verbatim,
   --- and that API refuses a non-string item ("expected String, got Integer")
   --- and a string with an embedded newline ("'replacement string' item contains
-  --- newlines"). Checking only `type(fixed) == "table"`, as this did, let both
-  --- shapes through to ai.ui, where the write happens inside a job callback: the
-  --- throw was swallowed, the response pane kept its loading placeholder, and
-  --- the tab had already been marked done -- so `y` fed that placeholder to
-  --- on_accept and replaced the user's whole buffer with it. ai.ui now writes
-  --- the status only after a successful render, and this is the other half.
+  --- newlines"). This is the other half of ai.ui's run_multi status-after-render
+  --- fix (see its comment there for the story of what broke before this existed).
   ---
   --- Skipped rather than repaired (splitting the string, coercing the value):
   --- M.fix_buffer_system defines `fixed` as an array of lines, so either shape

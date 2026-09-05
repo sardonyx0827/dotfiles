@@ -38,7 +38,8 @@ end
 --- keeps this side answering identically to the VimScript port (which pins no
 --- model at all). The literal is repeated because ai/init.lua DISPLAYS the model
 --- in a report header, and "(default)" is not something a reader can act on;
---- tests/test_gemini_api_cli.py pins the two copies together.
+--- tests/test_nvim_ai_backend.py::test_the_reported_default_matches_the_python_helper
+--- pins the two copies together.
 ---
 --- Read on every call rather than captured at load: a value frozen at `require`
 --- time would make the header name a model the request never used.

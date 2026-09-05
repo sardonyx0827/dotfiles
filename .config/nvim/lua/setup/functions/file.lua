@@ -24,8 +24,6 @@ local create_file_path_list_from_current_dir = function()
   -- write it down to the current buffer
   vim.cmd("normal! i" .. cmd)
   vim.cmd(".!sh")
-
-  -- print("execute command: " .. cmd)
 end
 vim.keymap.set("n", "<leader>lb", create_file_path_list_from_current_dir,
   { desc = 'create file path list from current directory' })
