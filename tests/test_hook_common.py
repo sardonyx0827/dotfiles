@@ -1,7 +1,8 @@
 """Tests for _hook_common.sh (hook_log / hook_notify).
 
-These run against the .claude copy; .codex reaches the same file through a
-symlink, which test_hook_sync.py pins.
+These run against the .claude copy; .codex holds no copy or symlink of it and
+instead resolves ../../.claude/hooks by physical path at runtime, which
+test_hook_sync.py pins.
 """
 
 import re

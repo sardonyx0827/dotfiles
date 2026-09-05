@@ -26,7 +26,7 @@ if ! command -v jq >/dev/null 2>&1; then
     cat >&2 <<'EOF'
 git push detected, but jq is unavailable so this hook could not parse the
 command or build the usual commit summary. Review manually before pushing
-(see ~/.codex/AGENTS.md "Git ワークフロー").
+(see ~/.codex/AGENTS.md "## 3. Git Workflow").
 EOF
     exit 2
   fi
@@ -60,19 +60,8 @@ if ! printf '%s' "$cmd" | tr -d '\\"'"'"'\n' | grep -qi push; then
   exit 0
 fi
 
-# シングル/ダブルクォートで囲まれた区間は実行されるコマンドではなく単なる
-# 文字列(コミットメッセージ等)なので、誤検知を避けるため push 判定の前に
-# 除去する (例: `git commit -m "please dont git push this yet"` は push
-# コマンドではない)。
-#
-# `s/'[^']*'//g; s/"[^"]*"//g` のような一括置換は左から右への状態遷移を
-# 無視するため、`git commit -m "it's fine" && git push && echo 'done'` の
-# ようなコマンドで "it's" のアポストロフィが後方の 'done' の開始クォートと
-# 誤ってペアリングされ、間にある実行される裸の git push ごと消えてしまう
-# (置換順序を入れ替えても鏡像ケースで同じ問題が起きるため直らない)。その
-# ため 1 文字ずつシェルの引用規則(シングルクォート内はバックスラッシュが
-# 無効、ダブルクォート内・クォート外はバックスラッシュが次の1文字をエスケー
-# プ)を状態機械で追ってクォート区間を除去する。
+# strip_quoted_ranges: クォート区間を 1 文字ずつの状態機械で除去する設計根拠は
+# .claude/hooks/git-push-review.sh の同名関数のコメントを参照(ロジックは同一)。
 strip_quoted_ranges() {
   local str="$1" out="" c state=0 i=0 len depth=0 sub=""
   len=${#str}
@@ -284,24 +273,8 @@ fi
 # shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル(展開させない)
 echo "$cmd_for_match" | grep -qiE '(^|[;&|[:space:](`/])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:];&|)<>`]|$)' || exit 0
 
-# `git … -C <dir>` の <dir> を、クォート解釈済みの語単位で探す。
-#
-# 以前は正規表現で文字列を直接見ていた。クォート区間を除去した文字列に対しては
-# `-C "/path with space"` の値が消えて次の語 `push` を掴み (要約が空の ask)、
-# 逆にクォートを残した文字列に対してはコミットメッセージ内の
-# `git -C "/fake" push` を本物の -C として拾い、別リポジトリ (空) の要約で承認を
-# 誘発できた — 文字列照合では「引用されたテキスト」と「実行される語」を区別
-# できない。シェルと同じ規則で語に割れば、メッセージは `-m` の値 1 語であって
-# -C フラグにはならず、`-C "/a b"` の値はそのまま 1 語として得られる。
-#
-# セグメント (; | & ( ) ` 改行 で区切る) ごとに、先頭語の basename が git
-# (大小無視: case-insensitive な FS では `GIT` も git を走らせる) で、ダッシュ語
-# だけを挟んで `-C <値>` が続くものを候補にする。push 語を持つセグメントを優先し、
-# 無ければ最初の候補。`-c key=val` (小文字) は別のフラグなので対象外。
-# ダブルクォート内の `$(` は中身が実行されるのでセグメント境界として扱う
-# (閉じ側の対応は取らない近似。要約先の選択にしか使わないので十分)。
-# 1 文字ずつ走査するため入力長に比例して遅く、呼び出し側は strip_quoted_ranges
-# と同じ長さ上限の内側でだけ使う。
+# git_c_dir_from_words: `-C <dir>` を語単位で解決する設計根拠は
+# .claude/hooks/git-push-review.sh の同名関数のコメントを参照(ロジックは同一)。
 git_c_dir_from_words() {
   local s="$1"
   local n=${#s} i=0 ch word="" in_word=0 in_s=0 in_d=0
@@ -449,7 +422,7 @@ fi
 
 # Codex では exit 2 + stderr でブロックし、内容をエージェント/ユーザーに伝える
 cat >&2 <<EOF
-git push detected. Review before pushing (see ~/.codex/AGENTS.md "Git ワークフロー"):
+git push detected. Review before pushing (see ~/.codex/AGENTS.md "## 3. Git Workflow"):
 ${summary}
 EOF
 exit 2

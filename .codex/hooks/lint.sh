@@ -44,8 +44,9 @@ SHARED_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../.claude/hooks" 2>/dev/
 # shellcheck source=../../.claude/hooks/_hook_common.sh
 . "$SHARED_DIR/_hook_common.sh"
 # 読み込めていなければ fail-open で抜ける (解決失敗時は SHARED_DIR が空になり
-# source が失敗してここに落ちる)。黙って進むと macOS では `log` が
-# /usr/bin/log に解決されてしまい、記録が静かにシステムログへ消える。
+# source が失敗してここに落ちる)。ここで止めないと、後段の hook_lint_file
+# 呼び出しが軒並み「command not found」で失敗扱いになり、指摘が 1 件も無い
+# のに全ファイルが "Lint Failed" として exit 2 を返してしまう。
 if ! declare -F hook_log >/dev/null 2>&1; then
   echo "lint.sh: could not load _hook_common.sh from ${SHARED_DIR:-<unresolved>}" >&2
   exit 0

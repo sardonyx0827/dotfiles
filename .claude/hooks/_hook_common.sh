@@ -14,8 +14,11 @@
 #     lint.sh は `exec 1>/dev/null` の前後どちらで source しても安全でなければ
 #     ならず、また fail-open 設計のフックに `set -e` を持ち込んではならないため。
 #   - 関数内では exit せず return する。終了コードの決定は wrapper の責務。
-#   - 関数名は hook_、変数名は HOOK_ で名前空間を切る。bash は動的スコープなので、
-#     wrapper 側の local と衝突すると静かに壊れる。
+#   - 関数名は hook_ で名前空間を切るが、変数名は統一されていない
+#     (hook_lint_file/hook_format_file 内部の FILE_PATH/EXTENSION/BASENAME/
+#     LINT_ERRORS 等は無プレフィックス)。bash は動的スコープなので、呼び出し元
+#     の変数名と衝突すると静かに壊れる。衝突対策は命名規則ではなく、
+#     hook_lint_file 内の禁止名リストで個別に行っている。
 #
 # ■ なぜログファイルを引数で渡すか
 #

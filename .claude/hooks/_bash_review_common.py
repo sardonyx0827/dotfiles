@@ -743,7 +743,7 @@ COMPLEX_SHELL_SYNTAX = re.compile(r"[\r\n`<>]|\$\(|(?<!&)&(?!&)")
 # 機密ファイル/秘匿情報へのアクセスは、たとえ cat/head/grep 等のセーフ
 # コマンドであってもレビューをスキップさせない。コマンド文字列全体に対して
 # 大文字小文字を無視して部分一致で判定する。これは settings.json の
-# Read(.env) / Read(id_rsa) / Read(**/*key*) などの deny ルールが Bash 経由の
+# Read(.env) / Read(**/id_rsa*) / Read(**/*.key) などの deny ルールが Bash 経由の
 # 読み出しで迂回されるのを防ぐためのもの。誤検知 (レビュー行き) はレイテンシ
 # 増のみでブロックにはならないため、疑わしきはマッチさせる方針とする。
 SENSITIVE_PATTERNS = re.compile(
