@@ -35,7 +35,8 @@ from pathlib import Path
 
 # scan_secrets is the single source of truth for the credential patterns; it
 # lives with the bash-review hooks. Import it from there rather than copying the
-# regexes (matches how tests/conftest.py reaches the hook modules).
+# regexes (same sys.path approach as tests/test_bash_review.py and
+# tests/test_config_wiring.py).
 _HOOKS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))

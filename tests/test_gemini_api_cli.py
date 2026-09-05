@@ -360,9 +360,11 @@ class TestRequestGenerate:
     def test_a_truncated_body_is_retried_like_a_transport_failure(self, monkeypatch):
         """A connection dropped mid-body surfaces as http.client.IncompleteRead.
 
-        That is an HTTPException, not an OSError, so the transport arm did not
-        see it -- despite its own comment claiming to cover "a connection
-        reset raised while reading the body".
+        That is an HTTPException, not an OSError, so the transport arm used to
+        miss it -- despite its own comment claiming to cover "a connection
+        reset raised while reading the body". Fixed in 0ad9b15, which widened
+        the catch to `(OSError, http.client.HTTPException)`; this pins that
+        fix so the regression cannot come back.
         """
         calls = []
         body = self.call(

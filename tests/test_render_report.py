@@ -1,19 +1,9 @@
 """Tests for the session-report renderer.
 
-The renderer turns a markdown report (with ```mermaid fences) into a single
-self-contained HTML page that is opened straight from `file://`. Two of the
-assertions here are not style preferences but the reason the design works at
-all, so they must not be relaxed:
-
-- The library tags must stay *classic* scripts. Chrome refuses ES-module
-  imports on a `file://` origin (opaque origin -> CORS failure), so a
-  `type="module"` tag would render every diagram blank. mermaid's
-  `dist/mermaid.min.js` ends with `globalThis["mermaid"] = ...` and marked's
-  `marked.min.js` is a UMD bundle ending in `g["marked"]=f()`, which is exactly
-  why the classic form works.
-- The markdown must reach the page base64-encoded. Reports quote shell and JS,
-  so a report that merely mentions `</script>` would otherwise terminate the
-  embedding tag early and truncate the page.
+Pins two invariants that must not be relaxed: library `<script>` tags stay
+*classic* (not `type="module"`), and the embedded markdown stays
+base64-encoded. See render_report.py's module docstring
+(.claude/skills/session-report/render_report.py) for why each is load-bearing.
 """
 
 import base64

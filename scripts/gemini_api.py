@@ -76,8 +76,9 @@ from typing import Any
 # Same variable and same default as .claude/hooks/bash-review.py (and its
 # .codex twin), so "which Gemini model does this repo use" has a single answer.
 # The Neovim side repeats the literal in ai/backend.lua because it also has to
-# DISPLAY the model in a report header; tests/test_gemini_api_cli.py pins the
-# two copies together so they cannot drift.
+# DISPLAY the model in a report header; tests/test_nvim_ai_backend.py
+# (test_the_reported_default_matches_the_python_helper and neighbours) pins
+# the two copies together so they cannot drift.
 DEFAULT_MODEL = "gemini-flash-lite-latest"
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"

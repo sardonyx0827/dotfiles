@@ -508,9 +508,7 @@ def review_gemini(question: str) -> str:
         _log_quietly("review_gemini", "ERROR", prompt, str(e))
         notify("Gemini Consultant", "APIキーの問題", 8)
         return f"Gemini API error: {e}"
-    # JSONDecodeError は ValueError のサブクラスなので、この腕は必ず下の
-    # `except ValueError` より前に置くこと。順序を入れ替えると、以前と同じく
-    # ここが死んで JSON パース失敗が「予期しないエラー」に化ける。
+    # 例外の順序の理由は consult_gemini の同じ腕を参照。
     except (
         GeminiUpstreamError,
         urllib.error.URLError,
@@ -524,9 +522,7 @@ def review_gemini(question: str) -> str:
         notify("Gemini Consultant", "APIエラーが発生しました", 10)
         return f"Gemini API error: {e}"
     except ValueError as e:
-        # 想定外の ValueError。メッセージを外へ出さないのが要点: http.client の
-        # `Invalid header value %r` のように、値そのものを埋め込む例外が
-        # この経路に来うる。型名だけを記録し、本文は捨てる。
+        # 想定外の ValueError の扱いは consult_gemini の同じ腕を参照。
         _log_quietly("review_gemini", "ERROR", prompt, f"unexpected {type(e).__name__}")
         notify("Gemini Consultant", "APIエラーが発生しました", 10)
         return (
