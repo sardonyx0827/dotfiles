@@ -210,10 +210,6 @@ setopt correct
 bindkey '^]' autosuggest-accept
 bindkey '^n' autosuggest-accept
 
-# fzf は上部で `eval "$(fzf --zsh)"` により初期化済み。旧来の ~/.fzf.zsh の
-# 読み込みと、oh-my-zsh が既に実行済みの compinit の再実行はいずれも重複のため削除した。
-# Docker CLI 補完の fpath 追加は oh-my-zsh の source 前に移動済み。
-
 # When Neovim is closed
 function precmd() {
   printf '\e[1 q'

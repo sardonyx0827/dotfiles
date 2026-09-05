@@ -142,7 +142,7 @@ jobs:
 
           print(f"\nAll measured files meet the {FLOOR:.0f}% per-file floor.")
           PY
-      # install.sh (約 1600 行) は pytest のカバレッジ計測外 — 上のゲートは
+      # install.sh は pytest のカバレッジ計測外 — 上のゲートは
       # Python フック群だけを測る。source した関数単位テスト (test_install.py)
       # は個々の分岐を hermetic に押さえるが、main() を通した end-to-end の配線
       # (detect_os → create_symlinks → backup_if_real → _render_git_local_config
@@ -225,8 +225,8 @@ jobs:
   # クラスの退行を検知できなかった。stylua による整形強制は日常的な手調整と衝突
   # するため意図的に入れず、luacheck を lint 専用で回して当該バグクラスだけを拾う。
   #
-  # 助言的 (continue-on-error) から gating へ格上げした。Lua ツリーは約 4,500 行
-  # あってこのリポジトリ最大の未検証面であり、テストも無いので luacheck だけが
+  # 助言的 (continue-on-error) から gating へ格上げした。Lua ツリーは
+  # このリポジトリ最大の未検証面であり、テストも無いので luacheck だけが
   # 唯一の自動検査になる。非ブロックのままでは「赤くならない警告」を誰も読まず、
   # 検知できても退行を止められない。格上げの前提として、直近の main で
   # 0 warnings / 0 errors in 50 files を確認済み。

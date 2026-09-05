@@ -401,10 +401,9 @@ class TestUpdateAiTools:
         assert res.returncode == 0
         expected = [
             "claude update",
-            # `@latest`, not `npm update -g`: update resolves inside the range
-            # recorded at install time and will not cross a major version, so
-            # a new major of either CLI was silently skipped while the script
-            # still printed success.
+            # `@latest`, not `npm update -g`: see the comment above the
+            # `npm install -g ...@latest` calls in scripts/update_ai_tools.sh
+            # for why.
             "npm install -g @openai/codex@latest",
             "npm install -g @google/gemini-cli@latest",
             "copilot update",
@@ -1135,18 +1134,9 @@ class TestDwc:
 
 @requires_zsh
 class TestMcCli:
-    """.zshrc の mc() cli) は素通し。`claude "$*"` は引数を 1 語に潰していた。
-
-    同じ .zshrc の補完定義が cli を「標準のClaudeコマンドを実行」と説明して
-    いるのに、`"$*"` は全引数を 1 語に連結する。結果 `mc cli mcp list` は
-    `claude "mcp list"` (argc=1) になり、claude CLI はそれをサブコマンドでは
-    なく 1 本のプロンプト文字列として受け取っていた。引数無しの `mc cli` も
-    同様で、空文字列を 1 個渡してしまい対話起動にならない。
-
-    兄弟の translate) / execute) が `"$*"` なのは正しい。あちらは日本語の
-    プロンプト文へ語を埋め込む用途なので、1 語に連結されるのが仕様そのもの。
-    「揃える」つもりで `"$@"` にするとバグを作り込むことになるため、下では
-    cli の修正と同時に兄弟が潰したままであることも固定する。
+    """cli) は `"$@"` で全引数を素通しし、translate)/execute) は `"$*"`
+    のまま (意図的) という非対称を固定する。理由の全文は .zshrc の mc() 内
+    cli) 直前のコメント (`# ここだけ "$@" なのは意図的...`) を正とする。
     """
 
     def _run(self, tmp_path, call):

@@ -8,8 +8,7 @@
 #   {
 #     "statusLine": {
 #       "type": "command",
-#       "command": "bash ~/.claude/statusline-command.sh",
-#       "padding": 0
+#       "command": "bash ~/.claude/statusline-command.sh"
 #     }
 #   }
 # =============================================================================

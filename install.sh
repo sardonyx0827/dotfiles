@@ -487,7 +487,7 @@ install_pyenv() {
   fi
 }
 
-# Install glow — vim :PreviewMarkdown renderer.
+# Install glow — a terminal Markdown viewer.
 install_glow() {
   if command_exists glow; then
     print_success "glow already installed"
@@ -533,7 +533,7 @@ install_lazydocker() {
   fi
 }
 
-# Install Docker — used by the dsollama/deollama aliases.
+# Install Docker — used by .zshrc's Docker Desktop CLI completions (fpath).
 install_docker() {
   if command_exists docker; then
     print_success "Docker already installed"
@@ -1291,8 +1291,11 @@ _link_editor_configs() {
   #
   # Falls back to the Linux path when APPDATA is unset (a bare msys shell rather
   # than Git Bash). That is where the pre-fix code always pointed, so the fallback
-  # is the old behaviour rather than a new failure mode -- and `set -u` makes an
-  # unguarded expansion abort the whole installer.
+  # is the old behaviour rather than a new failure mode. `-u` is intentionally
+  # not set here (see the note above `set -eo pipefail`), so `${APPDATA:-}`
+  # isn't guarding against a crash -- it just makes the unset case explicit,
+  # matching how DRY_RUN and DEBIAN_VERSION_FILE are guarded elsewhere in this
+  # script.
   local vscode_user_dir
   if [[ "$OS" == "macos" ]]; then
     vscode_user_dir="$HOME/Library/Application Support/Code/User"
@@ -1371,12 +1374,7 @@ _link_codex_config() {
     "agents"
     "skills"
   )
-  # `[ -e ] && link_entry` ではなく if/fi なのは、`&&` 形だと最後の要素が
-  # 欠けたときに for ループの終了ステータスが 1 になり、それが関数の最終
-  # コマンドである以上 関数自体が 1 を返すため。`set -eo pipefail` の下では
-  # そこでスクリプトごと落ち、main() は何のメッセージも出さずに exit 1 する
-  # (欠落を許容するための [ -e ] ガードが、最後の 1 要素にだけ効かなかった)。
-  # if/fi なら link_entry 本体の失敗はこれまで通り伝播する。
+  # `[ -e ] && link_entry` ではなく if/fi な理由は _link_claude_config を参照。
   for entry in "${codex_link_entries[@]}"; do
     if [ -e "$DOTFILES_DIR/.codex/$entry" ]; then
       link_entry "$DOTFILES_DIR/.codex/$entry" "$HOME/.codex/$entry"
@@ -1472,12 +1470,7 @@ _link_gemini_config() {
     "GEMINI.md"
     "settings.json"
   )
-  # `[ -e ] && link_entry` ではなく if/fi なのは、`&&` 形だと最後の要素が
-  # 欠けたときに for ループの終了ステータスが 1 になり、それが関数の最終
-  # コマンドである以上 関数自体が 1 を返すため。`set -eo pipefail` の下では
-  # そこでスクリプトごと落ち、main() は何のメッセージも出さずに exit 1 する
-  # (欠落を許容するための [ -e ] ガードが、最後の 1 要素にだけ効かなかった)。
-  # if/fi なら link_entry 本体の失敗はこれまで通り伝播する。
+  # `[ -e ] && link_entry` ではなく if/fi な理由は _link_claude_config を参照。
   for entry in "${gemini_entries[@]}"; do
     if [ -e "$DOTFILES_DIR/.gemini/$entry" ]; then
       link_entry "$DOTFILES_DIR/.gemini/$entry" "$HOME/.gemini/$entry"
