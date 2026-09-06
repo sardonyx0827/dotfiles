@@ -670,8 +670,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:s = a:state
     " Decrement pending and clean up the shared tmpfile regardless of
     " closed=1 (tab already closed via `q`), so it is removed once the last
-    " outstanding job actually exits. delete() silently no-ops on a missing
-    " file, so this stays safe even if invoked more than once.
+    " outstanding job actually exits. See s:AI_SingleFinish for the same
+    " pattern (delete() silently no-ops on a missing file).
     let l:s.pending -= 1
     if l:s.pending <= 0
       call delete(l:s.tmpfile)

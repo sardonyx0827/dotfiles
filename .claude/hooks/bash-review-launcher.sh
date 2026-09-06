@@ -44,9 +44,13 @@ command -v python3 >/dev/null 2>&1 ||
 out=$(python3 "$hook")
 status=$?
 
-# exit 0 (判定は stdout の JSON) と exit 2 (blocking error; stderr が Claude
-# へ届く) は本体の正常な終了語彙なのでそのまま返す。なお python3 が本体を
-# 読めない場合も exit 2 になるが、それは block = fail-closed なので許容する。
+# 本体 (bash-review.py) が実際に使う正常終了語彙は exit 0 のみで、判定
+# (allow/ask/deny) はすべて stdout の permissionDecision JSON に載せて返す。
+# exit 2 もここで素通ししているのは .codex 変種 (exit 2 = blocking error) と
+# 配線を合わせるための保険で、現行の本体コードから返ることはない。python3 が
+# 本体を読めない場合 (import/構文エラー) は try 節の外で例外になり python3 は
+# exit 1 で落ちる — これは 0/2 のどちらにも一致せず、下のクラッシュ用
+# フォールバック (ask_and_exit) に落ちる。
 if [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; then
   [ -n "$out" ] && printf '%s\n' "$out"
   exit "$status"

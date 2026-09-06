@@ -11,8 +11,8 @@
 # jq が無い環境では処理できないため安全に抜ける
 command -v jq >/dev/null 2>&1 || exit 0
 
-# 共有ヘルパー(hook_log / hook_notify)。実体はこの .claude/hooks/ 側だけで、
-# Codex 側は複製もリンクも持たず ../../.claude/hooks を自力で解決して読む。
+# 共有ヘルパー(hook_log / hook_notify)。実体と単一コピー方針は _hook_common.sh
+# のヘッダを参照。
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_hook_common.sh
 . "$HOOK_DIR/_hook_common.sh"
@@ -21,8 +21,9 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_lint_common.sh
 . "$HOOK_DIR/_lint_common.sh"
 # 読み込めていなければ fail-open で抜ける。shellcheck は関数の存在までは見ない
-# ので、ここで確認しないと実行時まで気付けない。黙って進むと macOS では `log` が
-# /usr/bin/log に解決され、記録が静かにシステムログへ消える。
+# ので、ここで確認しないと実行時まで気付けない。ここで止めないと、後段の
+# hook_lint_file 呼び出しが「command not found」で false 扱いになり if 分岐が
+# 失敗側へ落ち、指摘が 1 件も無いのに "Lint Failed" として exit 2 を返してしまう。
 if ! declare -F hook_log >/dev/null 2>&1 ||
   ! declare -F hook_lint_file >/dev/null 2>&1; then
   echo "lint.sh: could not load shared hook helpers from $HOOK_DIR" >&2

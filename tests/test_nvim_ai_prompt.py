@@ -1,7 +1,7 @@
 """Unit tests for `.config/nvim/lua/setup/functions/ai/prompt.lua`.
 
-The Neovim Lua tree is ~4,500 lines and mostly *configuration*: plugin specs,
-colorschemes, option and keymap wiring. That part is left to luacheck, because
+The Neovim Lua tree is mostly *configuration*: plugin specs, colorschemes,
+option and keymap wiring. That part is left to luacheck, because
 it breaks loudly the moment the editor starts. `functions/ai/` is the exception
 -- it is application code that happens to live in a dotfiles repo. It parses
 untrusted LLM output and then rewrites the user's buffer with the result, and

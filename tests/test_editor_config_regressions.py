@@ -20,15 +20,38 @@ from conftest import REPO_ROOT
 
 TOGGLETERM_SPEC = REPO_ROOT / ".config/nvim/lua/setup/plugins/utilities/toggleterm.lua"
 VIM_AI_RC = REPO_ROOT / ".vim/rc/70-ai.vim"
+VIM_COMMANDS_RC = REPO_ROOT / ".vim/rc/50-commands-autocmds.vim"
+VIM_CUSTOM_RC = REPO_ROOT / ".vim/rc/80-custom.vim"
 
 
-# toggleterm's own commandline parser splits each space-separated token on "=" and takes
-# the left side as the option name. `:ToggleTerm 2direction=horizontal` therefore parses
-# as {["2direction"]="horizontal"} -- an unrecognized key -- and `.direction` comes back
-# nil, so the terminal silently uses the setup default instead of the split the mapping's
-# own `desc` promises. The count belongs on the command name (`:2ToggleTerm ...`), which
-# is how Vim command counts work; glued to the option it is just a typo the parser cannot
-# report. Verified against the real module: parse("2direction=horizontal").direction == nil.
+# A bare `:%s/\s\+$//e` moves the cursor and clobbers the last search pattern that n/N
+# read; s:TrimTrailingWhitespace() in 80-custom.vim wraps the save-time trim in
+# winsaveview/keeppatterns/winrestview for exactly that reason. `:FixWhitespace` must
+# reuse the same wrapper instead of running the bare substitution on its own.
+def test_fixwhitespace_command_uses_the_wrapped_trim():
+    text = (
+        VIM_COMMANDS_RC.read_text(encoding="utf-8")
+        + "\n"
+        + VIM_CUSTOM_RC.read_text(encoding="utf-8")
+    )
+    command_lines = [
+        line
+        for line in text.splitlines()
+        if line.lstrip().startswith("command!") and "FixWhitespace" in line
+    ]
+    assert command_lines, "the FixWhitespace command definition is gone"
+    assert not any(r"%s/\s\+$//e" in line for line in command_lines), (
+        "FixWhitespace still runs the bare substitution directly, which moves the "
+        f"cursor and clobbers the search register n/N read: {command_lines}"
+    )
+    assert any("s:TrimTrailingWhitespace" in line for line in command_lines), (
+        f"FixWhitespace does not call the wrapped trim helper: {command_lines}"
+    )
+
+
+# `:ToggleTerm 2direction=horizontal` parses as an unrecognized "2direction" key, not a
+# count plus a `direction` option. See toggleterm.lua's own comment for why. Verified
+# against the real module: parse("2direction=horizontal").direction == nil.
 _COUNT_GLUED_TO_OPTION = re.compile(r":ToggleTerm\s+\d+[a-z_]+=")
 
 
@@ -52,12 +75,10 @@ def test_toggleterm_count_prefix_is_not_glued_to_an_option_name():
     )
 
 
-# The Copilot sensitive-path guard decides whether to disable Copilot for a buffer by
-# matching its name against a secret-path list. It only re-runs on the events in this
-# augroup, so a buffer that BECOMES sensitive by being renamed in place -- `:saveas
-# ~/.env`, `:file id_rsa` -- is never re-checked and keeps streaming to GitHub under its
-# new name. Renames fire BufFilePre/BufFilePost and none of the three originally watched
-# events, so the rename path had no coverage at all.
+# The Copilot sensitive-path guard only re-runs on the events in its augroup, so a
+# buffer renamed in place (`:saveas ~/.env`) fires BufFilePre/BufFilePost, none of which
+# were originally watched. See the AICopilotSensitiveGuard augroup's own comment in
+# 70-ai.vim for why BufFilePost had to be added.
 def test_copilot_sensitive_guard_rechecks_after_a_buffer_rename():
     text = VIM_AI_RC.read_text(encoding="utf-8")
     assert "AICopilotSensitiveGuard" in text, (

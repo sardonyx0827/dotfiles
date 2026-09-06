@@ -227,10 +227,8 @@ def _env_hiding(shell_env, *names: str) -> dict | None:
     return {**shell_env.env, "PATH": f"{shell_env.stub_bin}{os.pathsep}{path}"}
 
 
-# `go` stub bodies.
-#
-# Before running anything the go arm asks ONE positive question of the
-# toolchain: "is there a Go package here that you can actually analyse?", via
+# `go` stub bodies. Mirror the probe _go_dir_has_analyzable_package
+# (.claude/hooks/_lint_common.sh) makes via
 #     go list -e -f '{{len .GoFiles}}{{len .TestGoFiles}}{{len .XTestGoFiles}}' .
 # Counts derived from real go1.27 output:
 #   normal package        -> "100" (rc 0)      analyse
@@ -239,8 +237,6 @@ def _env_hiding(shell_env, *names: str) -> dict | None:
 #   build-constrained dir -> "000" (rc 0)      skip
 #   dir with a space      -> "000" (rc 0)      skip     (malformed import path)
 #   outside any module    -> ""    (rc 1)      skip
-# The last three are all "go vet would fail for a reason that is not a finding",
-# which is exactly what must never reach the agent as something to fix.
 _GO_STUB_ANALYZABLE = """\
 if [ "$1" = "list" ]; then echo 100; exit 0; fi
 """
@@ -274,11 +270,10 @@ exit 1
 def _stub_linter(shell_env, tool: str, body: str = "", exit_code: int = 0):
     """Stub a linter, teaching `go` to answer the hook's module probe.
 
-    The go arm asks `go list -e` whether there is an analysable package here
-    before running anything -- a positive check, so that "the toolchain cannot
-    look at this" is never reported as "your code is wrong". A bare `go` stub
-    answers that probe with an empty string and a non-zero status, i.e. "nothing
-    here", and every go row would then skip analysis and pass vacuously.
+    A bare `go` stub answers `go list -e` with an empty string and a non-zero
+    status, i.e. "nothing here", and every go row would then skip analysis and
+    pass vacuously. See _go_dir_has_analyzable_package in
+    .claude/hooks/_lint_common.sh for why the probe is asked this way.
     """
     if tool == "go":
         body = _GO_STUB_ANALYZABLE + body
@@ -304,8 +299,8 @@ EXIT_CODE_LINTERS = [
 # an [ERROR] never appears; cppcheck is asked for four categories but only two
 # of them were ever matched. A matcher that only knows the error spelling
 # reports a clean bill of health for every finding the tool actually produces --
-# the "found a problem but returned green" break this file's header calls the
-# worst one available. Same class as the clippy cases below.
+# the worst failure mode there is: "found a problem but returned green" hides
+# the finding entirely. Same class as the clippy cases below.
 #
 # The cppcheck rows are written in the `(severity)` shape the hook pins via
 # --template, NOT cppcheck 2.x's default `severity:` shape. That pin is itself
@@ -699,8 +694,9 @@ echo "$out"
         # `var x int = "matched no packages"` -- is silently reclassified as a
         # skip, and the hook reports a clean bill of health for a file that does
         # not compile. That is the same "found a problem but returned green"
-        # failure this file's header calls the worst one available, so module
-        # membership has to be established independently of the diagnostics.
+        # failure mode -- the worst one there is, since it hides the finding
+        # entirely -- so module membership has to be established independently
+        # of the diagnostics.
         shell_env.stub("go", body=_GO_STUB_ANALYZABLE_WITH_FINDING, exit_code=0)
         shell_env.stub("staticcheck")
         target = tmp_path / "main.go"

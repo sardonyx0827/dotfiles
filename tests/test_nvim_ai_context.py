@@ -467,11 +467,8 @@ class TestInjectedLanguages:
 class TestTrailingComments:
     """A comment sharing its line with code is not a doc block.
 
-    The unit is a LINE range, so absorbing `-- how many` out of
-    `local count = 0 -- how many` drags `local count = 0` in with it: unrelated
-    code at the top of the payload, a header citing a line that is not part of
-    the definition, and one more line handed to an external tool. Line
-    adjacency alone cannot tell a doc comment from a trailing one.
+    See `starts_its_line`'s comment in context.lua for why line adjacency
+    alone cannot tell a doc comment from a trailing one.
     """
 
     TRAILING_ABOVE_DEF = [
@@ -664,11 +661,11 @@ class TestNodeTypeMatchers:
         ],
     )
     def test_comment_types(self, node_type, language):
-        """A missing comment type fails quietly and asymmetrically: the
-        definition still resolves, so the feature looks like it works while the
-        doc comment -- the half it exists to compare against the code -- is
-        left out. kotlin shipped exactly that way until its `multiline_comment`
-        was found by inspecting a real tree."""
+        """Each of these node type names must be recognized as a comment.
+
+        See the `COMMENT_TYPES` table comment in context.lua for why a missing
+        name here fails quietly and asymmetrically.
+        """
         (matched,) = context_call("_internal.is_comment_type", node_type)
         assert matched is True, f"{node_type} ({language}) is not a comment"
 

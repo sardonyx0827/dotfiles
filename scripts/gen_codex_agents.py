@@ -24,9 +24,9 @@ Design constraints (learned the hard way -- do not relax without evidence)
   corrupt prose while buying nothing. Runtime-specific wording is neutralized
   in the SSOT instead of being substituted here.
 * Literal (''') TOML strings only. Three agent bodies contain `\\*`, `` \\` ``
-  and `\\/`, which are invalid escapes in a basic (\"\"\") string. The old
-  hand-written `refactor-cleaner.toml` used \"\"\" and had silently lost the
-  backslash from `api/products/\\*`. A literal string keeps the body byte-exact.
+  and `\\/`, which are invalid escapes in a basic (\"\"\") string -- tomllib
+  raises `TOMLDecodeError` on load rather than silently dropping them. A
+  literal string keeps the body byte-exact.
 * The generator never reformats. Quote style, semicolons and blank lines in
   the body are Prettier's business; touching them here would churn the output
   and change the meaning of code examples.

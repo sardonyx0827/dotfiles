@@ -17,28 +17,19 @@
 # 伝える (一律 fail-closed)。deny JSON は権威的に効く (Codex は迂回しない) が、
 # 内部 ask 判定まで deny に潰すと意味が変わるうえ利点も乏しいため採用しない。
 #
-# Gemini/Codex のレビュー呼び出しロジックは _bash_review_common.py に集約し、
-# claude 変種 (.claude/hooks/bash-review.py) とドリフトしないようにしてある。
-# この入口が持つのは「判定結果 (verdict) を exit code + stderr に変換する」
-# 変種固有の処理だけ。
+# Gemini/Codex の呼び出し (プロンプト生成・実行・パース) は _bash_review_common.py
+# に集約している。一方、判定の組み合わせ木 (Gemini×Codex のどちらが
+# allow/block になるか、理由文・detail log・summary・通知) はこの入口自身にも
+# あり、claude 変種 (.claude/hooks/bash-review.py) 側の木を意図的にミラーした
+# 複製である。変更するときは両方の入口を揃えて直すこと。共有分岐の理由コメントは
+# .claude 側を正とし、こちらは参照と Codex 固有の注記に留める。
 import json
 import os
 import sys
 import time
 
-# 共有モジュールの実体は .claude/hooks/_bash_review_common.py 一本で、こちらには
-# 複製もリンクも置かない。以前は .codex/hooks/_bash_review_common.py を相対
-# symlink にしていたが、core.symlinks=false (Git for Windows の既定) で clone
-# すると git が symlink を「リンク先パスを書いたテキストファイル」として展開する
-# ため import がそのパス文字列をソースとして読んで落ちる。install.sh は
-# OS="windows" (msys/cygwin) を宣言済みスコープに含むので、リンクをやめて
-# .claude 側を直接参照する。
-#
-# realpath であって abspath ではない: install.sh は ~/.codex/hooks を
-# <repo>/.codex/hooks への symlink にするため、本番では __file__ の親が $HOME
-# 側になる。abspath はリンクを解決しないので ../../.claude/hooks が
-# ~/.claude/hooks を指し、install.sh がそちらも張っているという偶然でしか
-# 解決しない (Codex 側だけ導入した利用者では静かに失敗する)。
+# 共有モジュールの実体は .claude/hooks/_bash_review_common.py 一本 (経緯と
+# realpath を使う理由は同ファイルのヘッダー docstring 参照)。以下はその参照側。
 sys.path.insert(
     0,
     os.path.join(
@@ -265,9 +256,8 @@ try:
     elapsed = time.monotonic() - review_started
 
     if codex_verdict == "ALLOW" and gemini_verdict == "DENY":
-        # Gemini の明示的 DENY を Codex の ALLOW 単独で自動上書きしない。
-        # 上書きを許すと、攻撃者はどちらか一方のモデルさえ説得すれば実行に
-        # 至れてしまう (実質 OR ゲート化)。両判定を添えてブロックに回す。
+        # 上書きしない理由は .claude/hooks/bash-review.py の同分岐参照。
+        # Codex には ask 相当が無いため、結果は exit 2 のブロックとして返す。
         emit_block(
             f"Gemini=DENY: {_sanitize_notify(gemini_output.strip(), limit=160)} "
             f"but Codex approved: {_sanitize_notify(codex_output.strip(), limit=160)}"
@@ -289,10 +279,8 @@ try:
         sys.exit(2)
 
     elif codex_verdict == "ALLOW" and gemini_verdict == "ASK":
-        # Gemini の ASK は「確認が必要」= 人間確認の明示要求 (レビュープロンプトの
-        # 定義)。ERROR (不可用 = 無意見) と違い単なる不確実ではないため、DENY と
-        # 同じく単独 Codex ALLOW では解消しない。Codex には ask 相当が無いので
-        # ブロック (exit 2) で両判定を stderr に返し、人間の確認へ回す。
+        # 解消しない理由は .claude/hooks/bash-review.py の同分岐参照。
+        # Codex には ask 相当が無いため、結果は exit 2 のブロックとして返す。
         emit_block(
             f"Gemini=ASK (confirmation requested) but Codex approved: "
             f"{_sanitize_notify(codex_output.strip(), limit=160)} — confirm manually"

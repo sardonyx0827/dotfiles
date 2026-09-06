@@ -178,15 +178,17 @@ class TestFetchSiteInventory:
     the buckets below are bookkeeping, the fail-closed default is the guard.
 
     What this deliberately does NOT cover, so its green is not read as more
-    than it is: package-manager installs. `go install <mod>@latest`
-    (install.sh:486, 1410, 1443, 1459, 1463) and `npm install -g <pkg>` do
-    fetch code at a floating version, but their registries verify what arrives
-    on their own -- Go checks the module against the checksum database, npm
-    against the registry's integrity hash -- so the exposure there is a moving
-    version, not unverified bytes. install.sh:70-79 scopes apt out for the same
-    reason. Folding them in would merge two different trust models into one
-    bucket and make the result harder to reason about, not easier; auditing
-    floating versions is a separate guard, not this one.
+    than it is: package-manager installs. `go install <mod>@latest` (the
+    install_glow and install_linters_formatters functions in install.sh) and
+    `npm install -g <pkg>` do fetch code at a floating version, but their
+    registries verify what arrives on their own -- Go checks the module
+    against the checksum database, npm against the registry's integrity hash
+    -- so the exposure there is a moving version, not unverified bytes. The
+    "separate trust paths" note in install.sh's fetch-inventory header
+    comment scopes apt out for the same reason. Folding them in would merge
+    two different trust models into one bucket and make the result harder to
+    reason about, not easier; auditing floating versions is a separate guard,
+    not this one.
     """
 
     # Pins live in these variables; a URL interpolating one is pinned. A bare
@@ -209,10 +211,10 @@ class TestFetchSiteInventory:
         "https://deb.nodesource.com/setup_lts.x": (
             "vendor redirector, no immutable ref (runs via sudo -E bash)"
         ),
-        # apt keyring / repository URLs. install.sh:70-79 scopes these out as a
-        # separate trust path: dearmoring a key or adding a sources.list entry
-        # is not the same as executing fetched bytes, and pinning a raw
-        # GitHub ref would not address either.
+        # apt keyring / repository URLs. The "separate trust paths" note in
+        # install.sh's fetch-inventory header comment scopes these out: dearmoring
+        # a key or adding a sources.list entry is not the same as executing
+        # fetched bytes, and pinning a raw GitHub ref would not address either.
         "https://apt.fury.io/wez/gpg.key": "apt keyring, separate trust path",
         "https://apt.fury.io/wez/": "apt repository, separate trust path",
         "https://cli.github.com/packages/githubcli-archive-keyring.gpg": (
@@ -1520,19 +1522,25 @@ class TestNeovimPin:
 class TestOptionalEntryLoopsDoNotAbortTheInstaller:
     """A missing OPTIONAL entry must not take the whole installer down.
 
-    Each `_link_*_config` walks an array and links the entries that exist:
+    Each `_link_*_config` used to walk an array and link the entries that
+    exist with:
 
         for entry in "${entries[@]}"; do
           [ -e "$DOTFILES_DIR/.x/$entry" ] && link_entry ...
         done
 
-    The `[ -e ]` guard is there precisely to tolerate an absent entry -- and it
-    does, for every element except the LAST. When the final element is missing,
-    `&&` short-circuits, the for-loop's exit status is that of the failed test,
-    and because the loop is the function's last command the function returns 1.
-    Under `set -eo pipefail` (install.sh:14) that kills the run, and main()
-    exits 1 having printed NO error at all: a silent, unexplained failure in the
-    middle of an install.
+    The `[ -e ]` guard was there precisely to tolerate an absent entry -- and
+    it did, for every element except the LAST. When the final element was
+    missing, `&&` short-circuited, the for-loop's exit status was that of the
+    failed test, and because the loop was the function's last command the
+    function returned 1. Under `set -eo pipefail` (install.sh:14) that killed
+    the run, and main() exited 1 having printed NO error at all: a silent,
+    unexplained failure in the middle of an install.
+
+    That `&&` form is gone now -- each `_link_*_config` uses
+    `if [ -e ... ]; then link_entry ...; fi` instead, which does not carry a
+    missing last entry's failed test into the loop's exit status. This test
+    pins that fix against a regression back to the `&&` form.
 
     Reachable from a sparse/partial clone, a zip export, a user who deleted the
     Gemini config -- or simply from someone appending a new optional entry to
@@ -2370,10 +2378,14 @@ class TestOptionalInstallerFailures:
 class TestAptAliasSymlinks:
     """Debian ships bat/fd as batcat/fdfind, so install_apt_packages drops
     PATH-visible aliases into ~/.local/bin. Those two `ln -sf` calls are the
-    only links in the script that never went through create_symlinks' backup
-    helper -- and `backup_if_real` is nested inside create_symlinks, so it is
-    not even in scope there. A real user binary at that path was destroyed
-    with no backup and no warning."""
+    only links in the script that skip create_symlinks' backup step --
+    link_debian_alias hand-rolls its own guard instead of calling
+    `backup_if_real` (these are generated aliases, not dotfiles worth backing
+    up into $backup_dir). `backup_if_real` used to be nested inside
+    create_symlinks and out of scope here; it has since been hoisted to top
+    level, but link_debian_alias still does not call it. Before its own guard
+    was added, a real user binary at that path was destroyed with no backup
+    and no warning."""
 
     def _prepare(self, shell_env):
         shell_env.stub("batcat")

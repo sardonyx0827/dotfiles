@@ -43,8 +43,9 @@ out=$(python3 "$hook")
 status=$?
 
 # exit 0 (許可) と exit 2 (ブロック; stderr が Codex へ届く) は本体の正常な
-# 終了語彙なのでそのまま返す。なお python3 が本体を読めない場合も exit 2 に
-# なるが、それはブロック = fail-closed なので許容する。
+# 終了語彙なのでそのまま返す。なお python3 が本体を読めない場合 (import/構文
+# エラー) は try 節の外で例外になり python3 は exit 1 で落ちる — これは 0/2 の
+# どちらにも一致せず、下のクラッシュ用フォールバック (block_and_exit) に落ちる。
 if [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; then
   [ -n "$out" ] && printf '%s\n' "$out"
   exit "$status"

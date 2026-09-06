@@ -273,7 +273,7 @@ local function check_current_buffer()
       -- claude first; on error fall back to gemini (see backend.run_with_fallback).
       return backend.run_with_fallback({
         { tool = "claude", prompt = system, input = input, model = CHECK_MODELS.claude },
-        -- No model: scripts/gemini_api.py reads $GEMINI_MODEL when it runs.
+        -- No model: same reason as start_fix above.
         { tool = "gemini", prompt = system, input = input },
       }, function(ok, result, err, tool)
         if not ok then
@@ -531,7 +531,7 @@ map("n", "<leader>co", function() generate_commit_message("gemma") end,
   { desc = "Generate commit message with Ollama (Gemma)", noremap = true })
 
 ---------------------------------------------------------
--- Ask the AI about a selection and replace it (claude / codex / gemini / all / gemma)
+-- Ask the AI about a selection and replace it (claude / codex / gemini / copilot / all / gemma)
 ---------------------------------------------------------
 local function ask_ai_and_replace(start_line, end_line, tool)
   if not start_line or not end_line or start_line == 0 or end_line == 0 then

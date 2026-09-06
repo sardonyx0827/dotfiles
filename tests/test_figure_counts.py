@@ -128,10 +128,10 @@ def test_orchestration_svg_counts_match_repo():
 
 
 # The prose architecture doc is the side this repo settled on as authoritative when the
-# skill count disagreed (it said 24; the SVGs said 23 because the figure helper excluded
-# the *-example template). The exclusion is gone and the SVGs now render 24 -- but the
-# doc itself was the one artifact with nothing checking it, so the number everyone else
-# was aligned TO could drift freely. Tie it to the filesystem too.
+# skill count disagreed with the SVGs (they were off by one, because the figure helper
+# excluded the *-example template). The exclusion is gone and the SVGs now match the raw
+# count -- but the doc itself was the one artifact with nothing checking it, so the
+# number everyone else was aligned TO could drift freely. Tie it to the filesystem too.
 ARCHITECTURE_DOC = REPO_ROOT / "docs/claude-architecture.md"
 
 
@@ -165,7 +165,8 @@ def test_architecture_doc_counts_match_repo():
         f"[{_skills()}, {_codex_skill_links()}]"
     )
 
-    # "24 中 18 を共有" -- the same two numbers restated in prose.
+    # The "<N> 中 <M> を共有" sharing-ratio sentence -- the same two numbers
+    # restated in prose.
     shared = re.search(r"(\d+)\s*中\s*(\d+)\s*を共有", text)
     assert shared, "claude-architecture.md: the sharing-ratio sentence is gone"
     assert (int(shared.group(1)), int(shared.group(2))) == (

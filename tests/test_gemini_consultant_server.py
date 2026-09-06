@@ -208,8 +208,9 @@ class TestApiKeyNeverLeaks:
     `str(e)` into BOTH the returned string and `_log_quietly`. The key then sits
     in the conversation transcript and on disk in ~/.claude/logs.
 
-    `call_gemini` strips the key before anything else (server.py:302), and only
-    THEN hands it to `_reject_unusable_api_key` (server.py:308). That ordering
+    `call_gemini` strips the key via `.strip()` before anything else, and only
+    THEN hands it to `_reject_unusable_api_key`, which rejects embedded CR/LF
+    and non-latin-1 characters without ever revealing the value. That ordering
     splits "illegal" into two shapes that behave nothing alike:
 
     - A CR/LF INTERIOR to the value survives strip() and reaches the guard,

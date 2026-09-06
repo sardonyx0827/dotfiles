@@ -10,10 +10,12 @@
 #      (明示的 DENY / 要確認 ASK) は Codex の ALLOW 単独で自動上書きしない
 #      (両判定を添えて ask)。ERROR (無意見) のみ Codex ALLOW で解消。
 #
-# Gemini/Codex のレビュー呼び出しロジックは _bash_review_common.py に集約し、
-# codex 変種 (.codex/hooks/bash-review.py) とドリフトしないようにしてある。
-# この入口が持つのは「判定結果 (verdict) を permissionDecision JSON に変換して
-# stdout へ出す」変種固有の処理だけ。
+# Gemini/Codex の呼び出し (プロンプト生成・実行・パース) は _bash_review_common.py
+# に集約している。一方、判定の組み合わせ木 (Gemini×Codex のどちらが
+# ask/allow/deny になるか、理由文・detail log・summary・通知) はこの入口自身が
+# 保持しており、codex 変種 (.codex/hooks/bash-review.py) 側に意図的にミラーした
+# 複製がある。この木を変更するときは両方の入口を揃えて直すこと。分岐の理由
+# コメントはこの .claude 側にまとめて書いてあり、.codex 側は参照のみに留める。
 import json
 import os
 import sys

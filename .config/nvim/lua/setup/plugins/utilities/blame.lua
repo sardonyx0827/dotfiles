@@ -1,4 +1,4 @@
--- show git diff
+-- show git blame
 return {
   "FabijanZulj/blame.nvim",
   lazy = true,

@@ -432,8 +432,3 @@ def test_tmux_double_click_selects_the_word_under_the_mouse():
     # the pane instead of selecting the word until this read `#{e|<=:...}`.
     assert binding.count("#{e|<=:") == 2, binding
     assert "#{<=:" not in binding, "edge distance compared as a string"
-    # tmux's bare `<=` is a STRING comparison ("20" <= "5" is true); only the
-    # `e|` form is numeric. A double-click 10-49 columns from the edge split
-    # the pane instead of selecting the word until this read `#{e|<=:...}`.
-    assert binding.count("#{e|<=:") == 2, binding
-    assert "#{<=:" not in binding, "edge distance compared as a string"

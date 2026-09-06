@@ -223,7 +223,6 @@ return {
       vim.keymap.set('n', '<C-l>', api.tree.change_root_to_node, opts('CD'))
       vim.keymap.set('n', '<C-h>', api.tree.change_root_to_parent, opts('Up'))
       vim.keymap.set('n', '<C-s>', api.node.open.horizontal, opts('Open: horizontal Split'))
-      --vim.keymap.set('n', '<leader>e', api.tree.close, opts('Close'))
       vim.keymap.set('n', '<leader>e', move_l, opts('Close'))
       vim.keymap.set('n', '<leader>df', diff_with_current_buffer, opts('Diff with current buffer'))
       vim.keymap.set('n', ']g', api.node.navigate.git.next, opts('Next Git'))

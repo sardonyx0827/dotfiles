@@ -782,18 +782,14 @@ class TestPayloadSizeRefusal:
 
 
 class TestRunWithFallbackReporting:
-    """When every tool in a chain fails, the report must name every reason.
-
-    Keeping only the LAST error was survivable while gemini was a CLI that
-    usually worked. It stopped being so once gemini can fail for a reason of its
-    own that says nothing about the request: with GEMINI_API_KEY unset -- the
-    normal state of a GUI-launched editor -- every claude outage in the
-    claude -> gemini chains (`<leader>qf`, `<leader>qh`) surfaced as
-    "GEMINI_API_KEY is not set" and threw away what claude had said.
+    """When every tool in a chain fails, the report must name every reason, not just the last.
 
     Driven with unknown tool names because M.run rejects those SYNCHRONOUSLY:
     `nvim -l` never runs the event loop, so a chain of real tools would park in
     jobstart and report nothing at all.
+
+    See `M.run_with_fallback`'s comment in backend.lua for why accumulating
+    every failure (rather than keeping only the last) matters.
     """
 
     def chain(self, tmp_path, *tools):

@@ -2691,11 +2691,8 @@ class TestHighRiskFlow:
     @pytest.mark.parametrize(
         "command",
         [
-            # One extra word in front of the payload used to re-open the hole:
-            # `A=1` matches the assignment rule, which consumes the WHOLE blob
-            # token, so the scan ran off the end and returned [] instead of
-            # None -- and [] does not escalate. Same for a leading redirect and
-            # a trailing `)`. All of them must reach the dual-review gate.
+            # Same failure mode as WRAPPER_QUOTED_BLOB_PREFIX_CASES; see that
+            # constant's header for why these must reach the dual-review gate.
             "watch 'A=1 sudo rm -rf /'",
             "watch 'X=1;sudo rm -rf /'",
             "watch '>/tmp/x sudo rm -rf /'",
