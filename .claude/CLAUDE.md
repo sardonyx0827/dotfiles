@@ -11,6 +11,29 @@
 - **`WebFetch` / `WebSearch`**: plain read-only fetches and searches. Both are allow-listed, so no justification is needed
 - `curl` / `wget` / `nc` / `ssh` are hard-denied by `permissions.deny` and by the bash-review hook, so they are not an available fetch path — do not plan a step around them
 
+## Code Navigation
+
+Read symbols, not whole files. Serena's tools are allow-listed, so they need no justification. It is
+scoped per project, so a project must be active before it answers — set one up as below rather than
+treating its absence as a reason to reach for Grep.
+
+| Question shape                                        | Tool                                            |
+| ----------------------------------------------------- | ----------------------------------------------- |
+| Named symbol — its definition, type, or body          | `find_symbol` (`find_declaration` for the decl) |
+| What calls or references a named symbol               | `find_referencing_symbols`                      |
+| What implements a named interface or abstract type    | `find_implementations`                          |
+| What a file contains, before deciding to read it      | `get_symbols_overview`                          |
+| The name is not known yet and the shape needs a sweep | see § Execution Layer Selection                 |
+
+If Serena has no project here (no `.serena/project.yml`), do not just fall through to Grep — call
+`activate_project` on the **repository root** first, which creates the project config if it is
+missing. Pointed at a subdirectory it silently creates a second, narrower project, and
+`.gitignore_global` hides the result. Then use the table above.
+
+Fall back only after that: the symbol is genuinely not found, or the project has no language server
+for this file type → Grep / Glob / Read. Do not open a whole file to reach one function that
+`find_symbol` returns with its line range.
+
 ## Git Operations
 
 When instructed to push / commit / create a PR, follow the Command Triggers in `@~/.claude/rules/git-workflow.md`
