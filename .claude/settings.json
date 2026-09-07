@@ -115,7 +115,6 @@
       "mcp__serena__rename_symbol",
       "mcp__serena__safe_delete_symbol"
     ],
-    "ask": ["Bash(git push:*)"],
     "deny": [
       "Bash(shutdown:*)",
       "Bash(reboot:*)",
@@ -185,6 +184,7 @@
       "Read(out/**)",
       "Read(./.next/**)"
     ],
+    "ask": ["Bash(git push:*)"],
     "defaultMode": "auto"
   },
   "hooks": {
@@ -270,7 +270,7 @@
   "theme": "dark",
   "editorMode": "normal",
   "teammateMode": "tmux",
+  "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false,
-  "agentPushNotifEnabled": true
+  "voiceEnabled": false
 }
