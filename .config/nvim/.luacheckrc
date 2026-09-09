@@ -12,8 +12,10 @@
 -- style diagnostics are off. Widen the checks only if a real regression slips
 -- through, not preemptively.
 --
--- The runtime/global facts mirror .luarc.json (LuaJIT + `vim`) so the lint and
--- the language server agree on what is defined.
+-- The runtime/global facts mirror .luarc.json (LuaJIT + `vim`, `R`, `Snacks`)
+-- so the lint and the language server agree on what is defined. Keep the two
+-- lists in step: tests/test_config_wiring.py compares the union of `globals`
+-- and `read_globals` here against .luarc.json's `diagnostics.globals`.
 
 std = "luajit" -- Neovim embeds LuaJIT (Lua 5.1 dialect); this defines its stdlib
 

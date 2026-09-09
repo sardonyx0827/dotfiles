@@ -432,3 +432,73 @@ def test_tmux_double_click_selects_the_word_under_the_mouse():
     # the pane instead of selecting the word until this read `#{e|<=:...}`.
     assert binding.count("#{e|<=:") == 2, binding
     assert "#{<=:" not in binding, "edge distance compared as a string"
+
+
+# --------------------------------------------------------------------------
+# .luacheckrc vs .luarc.json: the same set of known Neovim globals
+# --------------------------------------------------------------------------
+# .luacheckrc's header says its global facts "mirror .luarc.json (LuaJIT +
+# `vim`) so the lint and the language server agree on what is defined", and
+# ci.yml's luacheck job repeats the claim. They did not agree: luacheck knew
+# `R` (a plenary reload helper defined in lua/setup/init.lua) and `Snacks`
+# (injected by snacks.nvim), .luarc.json knew only `vim`. CI stayed green
+# because luacheck is the permissive side, so nothing surfaced -- while
+# lua_ls flagged both as undefined globals in the editor, every day.
+#
+# The two files spell the same idea differently: luacheck splits `globals`
+# (read+write) from `read_globals` (read-only), lua_ls has one flat
+# `diagnostics.globals`. So parity means the UNION, not a field-by-field
+# match; a test comparing only `globals` would pass while `Snacks` stayed
+# broken.
+LUACHECKRC = REPO_ROOT / ".config/nvim/.luacheckrc"
+LUARC = REPO_ROOT / ".config/nvim/.luarc.json"
+
+# `globals = { "vim", "R" }` / `read_globals = { "Snacks" }`
+_LUACHECK_GLOBALS_RE = re.compile(
+    r"^\s*(?:globals|read_globals)\s*=\s*\{([^}]*)\}", re.M
+)
+
+
+def _luacheck_known_globals() -> set[str]:
+    found: set[str] = set()
+    text = LUACHECKRC.read_text(encoding="utf-8")
+    for match in _LUACHECK_GLOBALS_RE.finditer(text):
+        found.update(re.findall(r'"([^"]+)"', match.group(1)))
+    return found
+
+
+def test_luacheck_and_lua_ls_agree_on_known_globals():
+    """Both checkers must know the same globals, or one lies to the reader."""
+    luacheck = _luacheck_known_globals()
+    assert luacheck, f"no globals parsed out of {LUACHECKRC}"
+    lua_ls = set(json.loads(LUARC.read_text(encoding="utf-8"))["diagnostics.globals"])
+    assert luacheck == lua_ls, (
+        f"luacheck knows {sorted(luacheck)}, lua_ls knows {sorted(lua_ls)}; "
+        "these two must declare the same globals -- fix whichever side is "
+        "wrong, and update the prose the test below pins"
+    )
+
+
+# The drift that started this was not in the data but in the PROSE about it:
+# .luacheckrc's header and ci.yml both said the two files agreed on
+# "LuaJIT + vim" long after luacheck had gained R and Snacks. Nothing read
+# those sentences, so nobody noticed. Pin the names only -- a substring check
+# per global, not a wording match -- so the sentences stay free to be
+# rewritten but cannot go on naming a stale set.
+def test_parity_prose_names_every_known_global():
+    """Whoever adds a global must fix the two comments that list them."""
+    globals_ = _luacheck_known_globals()
+    sources = {
+        ".config/nvim/.luacheckrc": LUACHECKRC.read_text(encoding="utf-8").split(
+            "\nstd ="
+        )[0],
+        ".github/workflows/ci.yml": (REPO_ROOT / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        ),
+    }
+    for label, prose in sources.items():
+        missing = sorted(g for g in globals_ if g not in prose)
+        assert not missing, (
+            f"{label} describes the known-globals set but never names "
+            f"{missing}; it still describes an older set"
+        )
