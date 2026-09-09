@@ -18,8 +18,8 @@ run through the `mcp__codex__codex` tool, and land the finished files in a calle
 
 Codex's `image_gen` lives in its system skill `~/.codex/skills/.system/imagegen/SKILL.md`.
 The **built-in tool mode is preferred and requires no `OPENAI_API_KEY`** (proven working under
-`sandbox: workspace-write`). A CLI fallback (`scripts/image_gen.py`) exists but needs
-`OPENAI_API_KEY` and is only for true native transparency — see Transparency below.
+`sandbox: workspace-write`). A CLI fallback exists but needs `OPENAI_API_KEY` and is only
+for true native transparency — see Transparency below.
 
 ## When to use
 
@@ -91,7 +91,10 @@ Requirements:
   it locally with `remove_chroma_key.py`. No API key.
 - **True native transparency** (hair, fur, smoke, glass, soft shadows) requires the CLI fallback
   `gpt-image-1.5 --background transparent`, which needs `OPENAI_API_KEY`. **Ask the user before
-  taking this path.**
+  taking this path.** The CLI is Codex's own, at
+  `$CODEX_HOME/skills/.system/imagegen/scripts/image_gen.py` (default `CODEX_HOME` is
+  `~/.codex`); it is untracked here because Codex manages that tree — see
+  `.codex/skills/.system/imagegen/references/cli.md` for the invocation.
 
 ## After Codex returns
 

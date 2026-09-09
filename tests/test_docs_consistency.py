@@ -237,3 +237,40 @@ def test_no_config_claims_a_ci_check_is_advisory_while_ci_gates_everything():
         "every CI job gates (no continue-on-error key in ci.yml), but these "
         f"files still describe a check as advisory: {offenders}"
     )
+
+
+# --------------------------------------------------------------------------
+# Prose must not name a repo script that does not exist
+# --------------------------------------------------------------------------
+# codex-image-gen/SKILL.md told the reader "A CLI fallback
+# (`scripts/image_gen.py`) exists". The script is real -- Codex ships it at
+# .codex/skills/.system/imagegen/scripts/image_gen.py -- but it has never sat
+# at the repo-root `scripts/` the sentence named, and bfbcc7a untracked that
+# whole tree, so an agent resolving the path as written found nothing. The
+# name alone is not enough: what makes a reference usable is that it resolves
+# from where the reader stands. Generalised rather than pinned to that one
+# name, since the same mistake is one rename away in any of these files.
+#
+# A reference is satisfied by the repo root OR by the file's own directory:
+# bundling a `scripts/` beside a SKILL.md is this repo's own layout (five of
+# the .codex system skills do it), so root-only resolution would fail a
+# skill whose script is right there next to it.
+_SCRIPT_REF_RE = re.compile(
+    r"`((?:scripts|\.claude/hooks)/[A-Za-z0-9_.-]+\.(?:py|sh))`"
+)
+
+_PROSE_DIRS = (".claude/skills", ".claude/commands", ".claude/agents")
+
+
+def test_prose_only_names_repo_scripts_that_exist():
+    """A named `scripts/x.py` must be a file, or the reader chases a ghost."""
+    missing = []
+    for rel_dir in _PROSE_DIRS:
+        for path in sorted((REPO_ROOT / rel_dir).rglob("*.md")):
+            for match in _SCRIPT_REF_RE.finditer(path.read_text(encoding="utf-8")):
+                ref = match.group(1)
+                if (REPO_ROOT / ref).is_file() or (path.parent / ref).is_file():
+                    continue
+                missing.append(f"{path.relative_to(REPO_ROOT)} names {ref}")
+    assert not missing, "prose names scripts that do not exist: " + "; ".join(missing)
+
