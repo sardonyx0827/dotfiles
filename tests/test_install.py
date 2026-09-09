@@ -254,11 +254,19 @@ class TestFetchSiteInventory:
         }
     )
 
-    # URLs that appear in executable lines but are never fetched -- printed for
-    # the user to open by hand.
+    # URL-shaped tokens that appear in executable lines but are never fetched:
+    # the first two are printed for the user to open by hand, the third is not
+    # a URL at all but a printf FORMAT whose %s is a hostname. The scanner
+    # matches on shape, so a format string reads as a URL to it; classifying it
+    # here is the sanctioned answer (the failure message says so) and keeps the
+    # fail-closed default intact for anything genuinely new. Do not "fix" this
+    # by rewriting the printf to hide the token -- every spelling that builds an
+    # https:// config key looks the same to a shape matcher, and hiding it would
+    # only teach the next author to evade the guard.
     NOT_FETCHED = {
         "https://checkstyle.sourceforge.io/",
         "https://github.com/google/google-java-format",
+        "https://%s",
     }
 
     # http:// is matched too, so downgrading a fetch to plaintext cannot slip
@@ -2784,3 +2792,117 @@ class TestGitIdentityRendering:
             )
             assert got.returncode == 0, f"{key} is unreadable: {rendered.read_text()}"
             assert got.stdout.rstrip("\n") == expected
+
+
+def _git_config_all(path, key):
+    """Every value git reads for `key`, in file order (empty resets included)."""
+    res = subprocess.run(
+        ["git", "config", "--file", str(path), "--get-all", key],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        return []
+    return res.stdout.split("\n")[:-1]
+
+
+class TestGithubCredentialHelper:
+    """`gh auth git-credential` may only be wired where gh is installable.
+
+    The tracked .gitconfig hard-coded it for github.com and gist.github.com,
+    but install_gh only has an install path for macos and ubuntu. detect_os
+    also produces OS=linux (non-Debian) and OS=windows, and install_gh returns
+    quietly there -- so git called a `gh` that was never installed on every
+    HTTPS operation. That is the same failure the file's own comment says was
+    fixed for osxkeychain by moving the OS-dependent helper out of the tracked
+    file and into the rendered ~/.config/git/os.gitconfig; the gh block was
+    left behind.
+    """
+
+    GH_HELPER = "!gh auth git-credential"
+
+    def test_tracked_gitconfig_carries_no_gh_helper(self):
+        """The OS-dependent helper must not be hard-coded in a linked file.
+
+        Comment lines are stripped before the check on purpose: .gitconfig
+        documents WHY the gh helper moved out, and that rationale necessarily
+        quotes the helper string. Matching the raw text would fail on the
+        explanation of the very fix it is guarding -- and the natural repair
+        would be to delete the explanation.
+        """
+        text = (REPO_ROOT / ".gitconfig").read_text(encoding="utf-8")
+        active = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert self.GH_HELPER not in active, (
+            ".gitconfig hard-codes the gh credential helper; it is linked on "
+            "every OS, including the ones install_gh cannot install gh on"
+        )
+
+    @pytest.mark.parametrize("os_name", ["macos", "ubuntu"])
+    def test_rendered_config_wires_gh_where_gh_is_installable(self, shell_env, os_name):
+        res = run_sourced(f"OS={os_name} create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        rendered = shell_env.home / ".config/git/os.gitconfig"
+        for host in ("github.com", "gist.github.com"):
+            key = f"credential.https://{host}.helper"
+            # The empty first value is the reset that drops any helper
+            # accumulated before it; dropping it would let a generic helper
+            # answer for github.com ahead of gh.
+            assert _git_config_all(rendered, key) == ["", self.GH_HELPER], (
+                f"{key} in {rendered.read_text(encoding='utf-8')!r}"
+            )
+
+    @pytest.mark.parametrize("os_name", ["linux", "windows"])
+    def test_rendered_config_omits_gh_where_gh_is_absent(self, shell_env, os_name):
+        # gh must be genuinely absent, not merely unsupported: a developer
+        # workstation has a real gh on PATH, and finding it is exactly what
+        # the sibling test below asserts should wire the helper.
+        env = _without_commands(shell_env.env, "gh")
+        res = run_sourced(f"OS={os_name} create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+        rendered = shell_env.home / ".config/git/os.gitconfig"
+        assert self.GH_HELPER not in rendered.read_text(encoding="utf-8"), (
+            f"OS={os_name} has no gh install path and no gh on PATH, so git "
+            "must not be told to call gh"
+        )
+
+    @pytest.mark.parametrize("os_name", ["linux", "windows"])
+    def test_rendered_config_wires_gh_when_it_is_already_installed(
+        self, shell_env, os_name
+    ):
+        """An OS install_gh cannot serve may still have gh from elsewhere.
+
+        Arch and Fedora ship gh in their own repositories, and Git Bash users
+        get it from winget/scoop; detect_os calls both `linux`/`windows`.
+        Gating the credential helper purely on the OS name would take the
+        helper away from those users -- who had it unconditionally while the
+        block lived in the tracked .gitconfig -- and drop them back to the
+        generic cache helper, re-prompting on every HTTPS operation. That is
+        a regression introduced by the fix, not by the original bug.
+        """
+        shell_env.stub("gh")
+        res = run_sourced(f"OS={os_name} create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        rendered = shell_env.home / ".config/git/os.gitconfig"
+        assert self.GH_HELPER in rendered.read_text(encoding="utf-8"), (
+            f"gh is installed on OS={os_name}, so the helper must be wired"
+        )
+
+    def test_generic_helper_still_follows_the_github_block(self, shell_env):
+        """Order is behaviour: the reset must not swallow the generic helper.
+
+        In the original .gitconfig the github block came first and the
+        generic helper arrived later via [include], so git's helper list for
+        a github URL was [gh, <generic>] -- gh first, the OS keychain/cache
+        behind it. Emitting the github block after the generic one instead
+        would put the `helper =` reset after it and leave [gh] alone.
+        """
+        res = run_sourced("OS=macos create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        rendered = shell_env.home / ".config/git/os.gitconfig"
+        text = rendered.read_text(encoding="utf-8")
+        assert text.index('[credential "https://github.com"]') < text.index(
+            "\n[credential]"
+        ), text
+        assert _git_config_all(rendered, "credential.helper") == ["osxkeychain"], text

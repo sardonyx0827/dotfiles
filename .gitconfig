@@ -2,22 +2,21 @@
   ls = log --graph --date-order -C -M --pretty=format:\"<%h> %ad [%an] %Cgreen%d%Creset %s\" --all --date=short
   ll = log --graph --abbrev-commit --decorate --format=format:'%C(bold blue)%h%C(reset) - %C(bold green)(%ar)%C(reset) %C(white)%s%C(reset) %C(dim white)- %an%C(reset)%C(bold yellow)%d%C(reset)' --all
   la = log --graph --abbrev-commit --decorate --format=format:'%C(bold blue)%h%C(reset) - %C(bold cyan)%aD%C(reset) %C(bold green)(%ar)%C(reset)%C(bold yellow)%d%C(reset)%n''          %C(white)%s%C(reset) %C(dim white)- %an%C(reset)' --all
-[credential "https://github.com"]
-  helper =
-  helper = !gh auth git-credential
-[credential "https://gist.github.com"]
-  helper =
-  helper = !gh auth git-credential
 [core]
   editor = nvim
   excludesfile = ~/.gitignore_global
 [http]
   sslVerify = true
-# 汎用の資格情報ヘルパーは OS 依存 (macOS: osxkeychain / Linux: cache) のため、
-# tracked な .gitconfig には直書きせず install.sh が生成する
-# ~/.config/git/os.gitconfig に切り出す。osxkeychain を直書きすると
-# credential-osxkeychain が存在しない Linux/WSL で毎回
-# 「git: 'credential-osxkeychain' is not a git command」が出るため。
+# 資格情報ヘルパーは OS 依存のため、tracked な .gitconfig には直書きせず
+# install.sh が生成する ~/.config/git/os.gitconfig に切り出す。
+#   - 汎用 (macOS: osxkeychain / それ以外: cache): osxkeychain を直書きすると
+#     credential-osxkeychain が存在しない Linux/WSL で毎回
+#     「git: 'credential-osxkeychain' is not a git command」が出るため。
+#   - github.com / gist.github.com の `!gh auth git-credential`: install_gh は
+#     macOS と Debian 系にしか導入経路が無く、detect_os は非 Debian Linux に
+#     OS=linux、Git Bash に OS=windows を割り当てる。直書きしていた頃はその
+#     どちらでも、github への HTTPS 操作のたびに存在しない gh が呼ばれて
+#     「gh: command not found」が出ていた (osxkeychain と全く同じ失敗)。
 # git は存在しない include パスを黙って無視するので、未生成でも壊れない。
 [include]
   path = ~/.config/git/os.gitconfig
