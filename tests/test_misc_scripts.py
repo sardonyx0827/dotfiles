@@ -1326,3 +1326,29 @@ class TestZshrcPath:
             "install.sh's pip --user linters are unreachable"
         )
 
+
+class TestZshrcAliases:
+    """Aliases .zshrc must not silently take away from a loaded plugin."""
+
+    def test_g_is_left_to_the_oh_my_zsh_git_plugin(self):
+        """`g` belongs to oh-my-zsh's git plugin; .zshrc must not shadow it.
+
+        .zshrc enables the `git` plugin and then sources oh-my-zsh.sh, which
+        defines `alias g='git'`. A later `alias g='gemini'` in this file wins
+        silently, so the reflex `g status` runs `gemini status` -- handing the
+        word "status" to an LLM CLI instead of running git. `ge` is defined
+        immediately above for that purpose, so the shadow bought nothing.
+        """
+        text = ZSHRC.read_text(encoding="utf-8")
+        # Anchored to the plugins=( ... ) block itself. A bare `"git" in text`
+        # passes on .gitconfig mentions and on any comment, so it would stay
+        # green after `git` left the plugin list -- leaving `alias g=` banned
+        # for a reason that no longer exists.
+        block = re.search(r"^plugins=\((.*?)^\)", text, re.M | re.S)
+        assert block, "precondition: no plugins=( ... ) block found in .zshrc"
+        assert "git" in block.group(1).split(), (
+            "precondition: .zshrc is expected to load the oh-my-zsh git plugin"
+        )
+        assert not re.search(r"^\s*alias g=", text, re.M), (
+            "alias g= in .zshrc shadows the oh-my-zsh git plugin's g='git'"
+        )

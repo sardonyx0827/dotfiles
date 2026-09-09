@@ -345,7 +345,6 @@ alias cx='codex'
 alias cop='copilot'
 ## Gemini CLI
 alias ge='gemini'
-alias g='gemini'
 # push / commit / pull_request はリモートや履歴を変更するため -y (自動承認) は使わず、
 # 対話モード (-i) で都度ユーザーに確認させる。
 alias push='gemini -i "pushして"'
