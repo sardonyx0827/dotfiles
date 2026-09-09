@@ -1047,6 +1047,42 @@ class TestOptionalEntryLoopsDoNotAbortTheInstaller:
         )
 
 
+class TestCodexConfigWithoutACodexTree:
+    """_link_codex_config must survive a checkout that has no .codex at all.
+
+    Its entry loop is written with `if [ -e "$DOTFILES_DIR/.codex/$entry" ]`
+    precisely so a missing entry is skipped rather than fatal. But the
+    resolution right below it,
+    `codex_repo_real="$(cd "$DOTFILES_DIR/.codex" && pwd -P)"`, carried
+    neither the `2>/dev/null` nor the `|| var=""` that both of its siblings
+    have (the ~/.codex probe on the line above, and the ~/.config pair in
+    _render_git_local_config). With .codex absent the cd fails, `set -e`
+    takes the whole installer down mid-way, and the run ends with the
+    top-level dotfiles and .claude linked, no [ERROR] line, and no hint that
+    anything was skipped.
+    """
+
+    def test_missing_codex_tree_is_skipped_not_fatal(self, shell_env, tmp_path):
+        fake_repo = tmp_path / "fake-dotfiles"
+        fake_repo.mkdir()
+        assert not (fake_repo / ".codex").exists()
+
+        env = {**shell_env.env, "DRY_RUN": "0"}
+        res = run_sourced(
+            f'DOTFILES_DIR="{fake_repo}"; _link_codex_config; echo "RC=$?"; '
+            "echo REACHED_NEXT_LINE",
+            env,
+        )
+        assert "RC=0" in res.stdout, (
+            "_link_codex_config failed on a checkout without .codex:\n"
+            f"stdout={res.stdout!r}\nstderr={res.stderr!r}"
+        )
+        assert "REACHED_NEXT_LINE" in res.stdout, (
+            "set -e killed the installer after _link_codex_config, silently:\n"
+            f"stdout={res.stdout!r}\nstderr={res.stderr!r}"
+        )
+
+
 class TestStrictMode:
     def test_pipefail_enabled(self, shell_env):
         # Pipelines like `curl ... | sudo tee` must not swallow curl's exit

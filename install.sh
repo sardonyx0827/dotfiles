@@ -1452,7 +1452,12 @@ _link_codex_config() {
   # away from committing a token" trap the comments below describe.
   local codex_home_real codex_repo_real
   codex_home_real="$(cd "$HOME/.codex" 2>/dev/null && pwd -P)" || codex_home_real=""
-  codex_repo_real="$(cd "$DOTFILES_DIR/.codex" && pwd -P)"
+  # `|| var=""` like the probe above and the ~/.config pair in
+  # _render_git_local_config: the entry loop above deliberately tolerates a
+  # missing .codex, so failing to resolve it must not take `set -e` with it.
+  # An empty value is safe here -- the guard below requires codex_home_real
+  # to be non-empty before it compares the two.
+  codex_repo_real="$(cd "$DOTFILES_DIR/.codex" 2>/dev/null && pwd -P)" || codex_repo_real=""
   if [ -n "$codex_home_real" ] && [ "$codex_home_real" = "$codex_repo_real" ]; then
     print_warning "Skipping config.toml / hooks.json: $HOME/.codex resolves into the checkout"
     return 0
