@@ -2089,6 +2089,31 @@ class TestGoInstallPathExport:
         assert "STATICCHECK_ON_PATH" in res.stdout, res.stdout
         assert "GOIMPORTS_ON_PATH" in res.stdout, res.stdout
 
+    def test_linters_formatters_macos_go_installed_tools_visible_afterward(
+        self, shell_env
+    ):
+        """The macOS branch has the same defect the Ubuntu one was fixed for.
+
+        macOS gets staticcheck from brew, so only goimports arrives through
+        `go install` there -- and that branch never exported ~/go/bin. The
+        `command_exists goimports` guard right above the install therefore
+        stayed false forever, so every re-run of install.sh fetched and
+        rebuilt goimports from scratch, and nothing later in the run could
+        see it either.
+        """
+        env = _without_commands(shell_env.env, "goimports", "npm", "pip", "php")
+        shell_env.stub("go", body=_GO_INSTALL_STUB)
+        shell_env.stub("brew")
+        res = run_sourced(
+            'command_exists() { case "$1" in gem|pip3) return 1 ;; '
+            '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+            "OS=macos install_linters_formatters; "
+            "command_exists goimports && echo GOIMPORTS_ON_PATH",
+            env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "GOIMPORTS_ON_PATH" in res.stdout, res.stdout
+
 
 class TestChangeShell:
     def test_chsh_failure_does_not_abort_script(self, shell_env):

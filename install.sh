@@ -1730,6 +1730,14 @@ install_linters_formatters() {
 
     # Go tools (requires go)
     if command_exists go; then
+      # Same reason as the ubuntu branch below: `go install` puts binaries in
+      # ~/go/bin, which is not on PATH until exported, so the command_exists
+      # check immediately below (and anything later in this run) would report
+      # goimports missing right after installing it -- rebuilding it from
+      # source on every re-run. install.sh runs under bash, so .zshrc's own
+      # ~/go/bin export does not apply here. staticcheck is not in this block
+      # because macOS gets it from brew above.
+      export PATH="$HOME/go/bin:$PATH"
       if ! command_exists goimports; then
         print_info "Installing goimports..."
         try_install goimports go install golang.org/x/tools/cmd/goimports@latest
