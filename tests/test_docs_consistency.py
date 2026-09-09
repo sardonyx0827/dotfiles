@@ -274,3 +274,39 @@ def test_prose_only_names_repo_scripts_that_exist():
                 missing.append(f"{path.relative_to(REPO_ROOT)} names {ref}")
     assert not missing, "prose names scripts that do not exist: " + "; ".join(missing)
 
+
+# --------------------------------------------------------------------------
+# README's "what install.sh does" list vs the order main() actually runs
+# --------------------------------------------------------------------------
+# README listed symlink creation second-to-last, after every package and tool
+# install. main() runs create_symlinks FIRST, directly after detect_os, and
+# its comment says why: "Symlinks first: ... Everything below can fail on a
+# flaky network or a renamed formula; when it ran last, one such failure left
+# the machine with no dotfiles linked at all." The README never followed that
+# fix, so a reader hitting a network failure mid-run would guess exactly
+# backwards about whether their dotfiles are linked.
+#
+# Only that one invariant is pinned, not the whole sequence: the README list
+# mixes real function calls with steps that are not (platform detection, font
+# installation), so an order-for-order comparison would be fragile prose
+# matching rather than a check of anything main() guarantees.
+def test_readme_lists_symlink_creation_before_package_installs():
+    """The README must not imply dotfiles are linked last."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    symlink_at = readme.index("設定ファイルのシンボリックリンク作成")
+    packages_at = readme.index("必要なパッケージのインストール")
+    assert symlink_at < packages_at, (
+        "README lists symlink creation after package installation, but main() "
+        "runs create_symlinks first, directly after detect_os"
+    )
+
+
+def test_main_runs_create_symlinks_before_any_package_install():
+    """...and the ordering the README describes is still the real one."""
+    install_sh = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+    main_at = install_sh.index("\nmain() {")
+    body = install_sh[main_at:]
+    assert body.index("\n  create_symlinks\n") < body.index("install_os_packages"), (
+        "main() no longer links before installing packages; update README.md "
+        "and this pair of tests together"
+    )
