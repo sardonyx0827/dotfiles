@@ -13,6 +13,20 @@ esac
 ## Go
 export PATH=~/go/bin:$PATH
 export PATH=~/.npm-global/bin:$PATH
+# install.sh がここへ入れるもの: uv / uvx、link_debian_alias が作る bat / fd
+# (Debian のみ)、そして pip の user スキームが posix_user の環境では
+# pip_install_user の ruff / bandit / mypy / autopep8 / isort。install.sh 側の
+# export はスクリプトのプロセス内限定なので、ここで恒久化しないとインストール
+# 直後から command -v が外れる (フックの Python 整形が無言で飛び、下の fzf
+# preview の bat も消える)。
+export PATH=~/.local/bin:$PATH
+# macOS の pip は --user 先が ~/.local/bin ではない。Homebrew 版も Apple 版も
+# osx_framework_user スキームで、スクリプトは ~/Library/Python/<X.Y>/bin に入る
+# (posix_user = ~/.local/bin になるのは pyenv 版だけで、install_pyenv は ubuntu
+# 限定)。上の行だけでは macOS で ruff が見つからないままになる。
+# (N) は該当が無ければ黙って空に潰す glob 修飾子なので、この行は Linux では
+# 無害な no-op になり OS ガードを要らなくする。* は残っている全バージョンを拾う。
+path=(~/Library/Python/*/bin(N) $path)
 
 if [[ "$_os" == macos ]]; then
   # Homebrew (Apple Silicon) 固有のパス群。Linux には存在しないため読み込まない。
