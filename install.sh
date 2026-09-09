@@ -31,6 +31,21 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Package / tool installation (Homebrew, APT, Node, AI CLIs, ...) is not
 # simulated -- main() announces and skips that whole block. See usage().
 DRY_RUN="${DRY_RUN:-0}"
+# Every DRY_RUN guard below spells `[ "$DRY_RUN" -eq 1 ]`, an integer
+# comparison. Given a non-numeric value `[` fails with "integer expression
+# expected" and, because the guard sits in a condition, `set -e` does not fire:
+# ALL of them fall through to the real branch. Since the value is deliberately
+# env-overridable (see above), `DRY_RUN=true` is a reachable typo that would
+# relink $HOME and move the user's dotfiles aside while looking like a preview.
+# Reject anything but 0/1 here rather than coercing -- a silent coercion just
+# moves the same surprise somewhere the user cannot see it.
+case "$DRY_RUN" in
+0 | 1) ;;
+*)
+  printf 'install.sh: DRY_RUN must be 0 or 1 (got: %s)\n' "$DRY_RUN" >&2
+  exit 2
+  ;;
+esac
 
 # --- Pinned upstream bootstrap scripts ---------------------------------------
 # These four refs are fetched over the network: three are executed (Homebrew,

@@ -2360,6 +2360,28 @@ class TestDryRun:
         assert res.returncode == 0, res.stderr
         assert (home / ".zshrc").is_symlink()
 
+    def test_non_numeric_dry_run_is_rejected(self, shell_env):
+        """A typo'd DRY_RUN must abort, not silently do the real work.
+
+        All 22 guards spell `[ "$DRY_RUN" -eq 1 ]`, an INTEGER comparison.
+        Given `DRY_RUN=true`, `[` fails with "integer expression expected"
+        and, because the guard sits in a condition, `set -e` does not fire --
+        every one of them falls through to the real branch. The header
+        comment invites exactly this ("env-overridable so tests can exercise
+        a single function in dry-run"), so the value is user-supplied and a
+        non-numeric one is a reachable typo: the run relinks HOME, moves the
+        user's real dotfiles into a backup dir and previews nothing, while
+        the errors scroll past as noise.
+        """
+        env = {**shell_env.env, "DRY_RUN": "true"}
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode != 0, (
+            "a non-numeric DRY_RUN was accepted; the guards silently "
+            f"fell through to the real branch\n{res.stdout}"
+        )
+        assert "DRY_RUN" in res.stderr, res.stderr
+        assert list(shell_env.home.iterdir()) == [], list(shell_env.home.iterdir())
+
 
 class TestFetchAndRun:
     """fetch_and_run downloads a remote installer in full before running it, so
