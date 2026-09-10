@@ -100,6 +100,8 @@ cd ~/dotfiles
 このスクリプトは以下を自動的に行います：
 
 - プラットフォームの検出（macOS/Ubuntu/Windows）
+- 設定ファイルのシンボリックリンク作成（既存の実ファイルは `~/.dotfiles_backup_<timestamp>/` へ自動退避。戻し方は[元に戻す](docs/setup.md#元に戻すバックアップと復旧)を参照）
+  - **最初に実行される**。以降のステップはネットワークやパッケージ名の変更で失敗しうるため、先にリンクを張り終える（最後に実行していた頃は、途中の失敗でdotfiles が一切リンクされないまま終わることがあった）
 - 必要なパッケージのインストール
   - macOS: Homebrew経由でVim、Neovim、tmux、WezTermなど
   - Ubuntu/Debian: APT経由でVim、tmux、WezTermなど（**Neovim は APT を使いません**。配布版が `.config/nvim` の要求する 0.11+ より古いため、公式リリースの tarball を sha256 検証のうえ `~/.local/nvim` へ展開し、`~/.local/bin/nvim` からリンクします）
@@ -109,7 +111,6 @@ cd ~/dotfiles
 - Node.jsとnpmのセットアップ
 - Linter / Formatter（prettier、eslint など。フックが利用）のインストール
 - フォントのインストール
-- 設定ファイルのシンボリックリンク作成（既存の実ファイルは `~/.dotfiles_backup_<timestamp>/` へ自動退避。戻し方は[元に戻す](docs/setup.md#元に戻すバックアップと復旧)を参照）
 - Claude Code への MCP サーバー登録
 - デフォルトシェルをZshに変更
 

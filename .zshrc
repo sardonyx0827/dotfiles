@@ -40,15 +40,24 @@ fi
 ## Go
 export PATH=~/go/bin:$PATH
 export PATH=~/.npm-global/bin:$PATH
-
-## ~/.local/bin
-# install.sh が Debian の bat/fd エイリアスと OSC 52 の pbcopy を置く場所なので、
-# uv などのインストーラが env スクリプトを残しているかに関わらず PATH に通す。
-# 重複しても冒頭の `typeset -U path PATH` が畳むので、両方あっても害はない。
-# ここに書くのは .zshrc 末尾が ~/.zsh_secrets ガード専用の場所だから
-# (末尾のコメント参照: 最終行の終了ステータスが .zshrc 自身のものになる)。
-export PATH="$HOME/.local/bin:$PATH"
+# install.sh がここへ入れるもの: uv / uvx、link_debian_alias が作る bat / fd
+# (Debian のみ)、_link_pbcopy が置く OSC 52 の pbcopy、そして pip の user
+# スキームが posix_user の環境では pip_install_user の ruff / bandit / mypy /
+# autopep8 / isort。install.sh 側の export はスクリプトのプロセス内限定なので、
+# ここで恒久化しないとインストール直後から command -v が外れる (フックの Python
+# 整形が無言で飛び、下の fzf preview の bat も消える)。
+export PATH=~/.local/bin:$PATH
+# uv のインストーラが置く env スクリプト。同じディレクトリをもう一度 PATH の
+# 先頭へ積むが、冒頭の `typeset -U path PATH` が重複を畳むので害はない。
+# 無い機械 (uv を入れていない、インストーラが仕様を変えた) では上の行が残る。
 [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+# macOS の pip は --user 先が ~/.local/bin ではない。Homebrew 版も Apple 版も
+# osx_framework_user スキームで、スクリプトは ~/Library/Python/<X.Y>/bin に入る
+# (posix_user = ~/.local/bin になるのは pyenv 版だけで、install_pyenv は ubuntu
+# 限定)。上の行だけでは macOS で ruff が見つからないままになる。
+# (N) は該当が無ければ黙って空に潰す glob 修飾子なので、この行は Linux では
+# 無害な no-op になり OS ガードを要らなくする。* は残っている全バージョンを拾う。
+path=(~/Library/Python/*/bin(N) $path)
 
 if [[ "$_os" == macos ]]; then
   # Homebrew (Apple Silicon) 固有のパス群。Linux には存在しないため読み込まない。
@@ -367,7 +376,6 @@ alias cx='codex'
 alias cop='copilot'
 ## Gemini CLI
 alias ge='gemini'
-alias g='gemini'
 # push / commit / pull_request はリモートや履歴を変更するため -y (自動承認) は使わず、
 # 対話モード (-i) で都度ユーザーに確認させる。
 alias push='gemini -i "pushして"'

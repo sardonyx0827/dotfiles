@@ -287,3 +287,76 @@ def test_manual_neovim_recipe_matches_the_installer_pin():
         "manual recipe does not offer; an arm64 reader following the note would "
         "verify against the x86_64 digest and never get past sha256sum"
     )
+
+
+# --------------------------------------------------------------------------
+# Prose must not name a repo script that does not exist
+# --------------------------------------------------------------------------
+# codex-image-gen/SKILL.md told the reader "A CLI fallback
+# (`scripts/image_gen.py`) exists". The script is real -- Codex ships it at
+# .codex/skills/.system/imagegen/scripts/image_gen.py -- but it has never sat
+# at the repo-root `scripts/` the sentence named, and bfbcc7a untracked that
+# whole tree, so an agent resolving the path as written found nothing. The
+# name alone is not enough: what makes a reference usable is that it resolves
+# from where the reader stands. Generalised rather than pinned to that one
+# name, since the same mistake is one rename away in any of these files.
+#
+# A reference is satisfied by the repo root OR by the file's own directory:
+# bundling a `scripts/` beside a SKILL.md is this repo's own layout (five of
+# the .codex system skills do it), so root-only resolution would fail a
+# skill whose script is right there next to it.
+_SCRIPT_REF_RE = re.compile(
+    r"`((?:scripts|\.claude/hooks)/[A-Za-z0-9_.-]+\.(?:py|sh))`"
+)
+
+_PROSE_DIRS = (".claude/skills", ".claude/commands", ".claude/agents")
+
+
+def test_prose_only_names_repo_scripts_that_exist():
+    """A named `scripts/x.py` must be a file, or the reader chases a ghost."""
+    missing = []
+    for rel_dir in _PROSE_DIRS:
+        for path in sorted((REPO_ROOT / rel_dir).rglob("*.md")):
+            for match in _SCRIPT_REF_RE.finditer(path.read_text(encoding="utf-8")):
+                ref = match.group(1)
+                if (REPO_ROOT / ref).is_file() or (path.parent / ref).is_file():
+                    continue
+                missing.append(f"{path.relative_to(REPO_ROOT)} names {ref}")
+    assert not missing, "prose names scripts that do not exist: " + "; ".join(missing)
+
+
+# --------------------------------------------------------------------------
+# README's "what install.sh does" list vs the order main() actually runs
+# --------------------------------------------------------------------------
+# README listed symlink creation second-to-last, after every package and tool
+# install. main() runs create_symlinks FIRST, directly after detect_os, and
+# its comment says why: "Symlinks first: ... Everything below can fail on a
+# flaky network or a renamed formula; when it ran last, one such failure left
+# the machine with no dotfiles linked at all." The README never followed that
+# fix, so a reader hitting a network failure mid-run would guess exactly
+# backwards about whether their dotfiles are linked.
+#
+# Only that one invariant is pinned, not the whole sequence: the README list
+# mixes real function calls with steps that are not (platform detection, font
+# installation), so an order-for-order comparison would be fragile prose
+# matching rather than a check of anything main() guarantees.
+def test_readme_lists_symlink_creation_before_package_installs():
+    """The README must not imply dotfiles are linked last."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    symlink_at = readme.index("設定ファイルのシンボリックリンク作成")
+    packages_at = readme.index("必要なパッケージのインストール")
+    assert symlink_at < packages_at, (
+        "README lists symlink creation after package installation, but main() "
+        "runs create_symlinks first, directly after detect_os"
+    )
+
+
+def test_main_runs_create_symlinks_before_any_package_install():
+    """...and the ordering the README describes is still the real one."""
+    install_sh = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+    main_at = install_sh.index("\nmain() {")
+    body = install_sh[main_at:]
+    assert body.index("\n  create_symlinks\n") < body.index("install_os_packages"), (
+        "main() no longer links before installing packages; update README.md "
+        "and this pair of tests together"
+    )

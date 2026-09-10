@@ -204,7 +204,7 @@ flowchart LR
 | `/e2e`                              | `e2e-runner`                                                              |
 | `/refactor-clean`                   | `refactor-cleaner`                                                        |
 | `/update-codemaps` / `/update-docs` | `doc-updater`                                                             |
-| `/verify`                           | `security-reviewer`                                                       |
+| `/verify`                           | `security-reviewer`（条件付き。下記参照）                                 |
 | `/requests`                         | `request-worker`                                                          |
 | `/auto-improve`                     | `refactor-cleaner`, `doc-updater`, `security-reviewer`                    |
 | `/orchestrate`                      | `architect`, `planner`, `tdd-guide`, `code-reviewer`, `security-reviewer` |
@@ -214,6 +214,11 @@ flowchart LR
 
 いくつかのコマンドは末尾に「関連コマンド」節を持ち、`code-reviewer` などを*次にやること*として
 案内していますが、これはコマンドが起動するものではなくユーザー向けの提案です。上の表には含めていません。
+
+`/verify` だけは他の行と性質が違います。既定の動作は `verification-loop` スキルを自分で実行する
+ことで、エージェントは起動しません。`security-reviewer` を呼ぶのは、変更が認証・ユーザー入力・
+シークレット・決済のいずれかに触れる場合だけです（`.claude/commands/verify.md` 参照）。
+`/db-review` → `database-reviewer` のような無条件の薄いラッパーとして読まないでください。
 
 モデルと effort はエージェント定義の frontmatter で決まります。`effort` を書いていない
 エージェントはセッションの `effortLevel` に追従します（`CLAUDE.md` の方針どおり、

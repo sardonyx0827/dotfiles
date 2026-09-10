@@ -31,6 +31,21 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Package / tool installation (Homebrew, APT, Node, AI CLIs, ...) is not
 # simulated -- main() announces and skips that whole block. See usage().
 DRY_RUN="${DRY_RUN:-0}"
+# Every DRY_RUN guard below spells `[ "$DRY_RUN" -eq 1 ]`, an integer
+# comparison. Given a non-numeric value `[` fails with "integer expression
+# expected" and, because the guard sits in a condition, `set -e` does not fire:
+# ALL of them fall through to the real branch. Since the value is deliberately
+# env-overridable (see above), `DRY_RUN=true` is a reachable typo that would
+# relink $HOME and move the user's dotfiles aside while looking like a preview.
+# Reject anything but 0/1 here rather than coercing -- a silent coercion just
+# moves the same surprise somewhere the user cannot see it.
+case "$DRY_RUN" in
+0 | 1) ;;
+*)
+  printf 'install.sh: DRY_RUN must be 0 or 1 (got: %s)\n' "$DRY_RUN" >&2
+  exit 2
+  ;;
+esac
 
 # --- Pinned upstream bootstrap scripts ---------------------------------------
 # These four refs are fetched over the network: three are executed (Homebrew,
@@ -720,11 +735,38 @@ install_fonts() {
   fi
 }
 
+# Whether git may be told to use `gh auth git-credential`. Two ways to qualify:
+# this OS has an install path in install_gh (macos / ubuntu), or gh is already
+# here by some other route. The second clause is not decoration -- detect_os
+# also yields `linux` (Arch and Fedora ship gh in their own repositories) and
+# `windows` (Git Bash + winget/scoop), and the tracked .gitconfig used to wire
+# the helper unconditionally. Gating on the OS name alone would take gh away
+# from those users and drop them onto the generic cache helper, re-prompting on
+# every HTTPS operation: a regression introduced by the fix rather than by the
+# bug it fixes.
+#
+# install_gh and _render_git_local_config must never disagree about this, so it
+# lives here rather than being inlined twice -- a list copied is how the
+# tracked .gitconfig came to name a gh that install_gh had quietly declined to
+# install. _render_git_local_config runs from create_symlinks, ahead of
+# install_gh, so on a fresh macos/ubuntu the first clause is what answers.
+gh_is_supported() {
+  [[ "$OS" == "macos" || "$OS" == "ubuntu" ]] || command_exists gh
+}
+
 # Install GitHub CLI (gh)
-# .gitconfig uses `gh auth git-credential` as the HTTPS credential helper.
+# git's github.com credential helper is wired to `gh auth git-credential` by
+# _render_git_local_config, but only where gh_is_supported.
 install_gh() {
   if command_exists gh; then
     print_success "gh already installed"
+    return
+  fi
+  if ! gh_is_supported; then
+    # Warn rather than return silently: the credential helper is skipped in
+    # step with this, and a user who expected gh needs to know which half of
+    # the pair is missing.
+    print_warning "No gh install path for OS=$OS; skipping (github.com credential helper not configured)"
     return
   fi
   print_info "Installing GitHub CLI (gh)..."
@@ -1511,7 +1553,11 @@ _render_git_local_config() {
   if [ "$DRY_RUN" -eq 1 ]; then
     # Read-only preview of the same decisions the real branch makes below --
     # never prompt (dry-run must not block on input) and never write.
-    print_info "[DRY-RUN] would render $HOME/.config/git/os.gitconfig (credential helper: $git_cred_helper)"
+    if gh_is_supported; then
+      print_info "[DRY-RUN] would render $HOME/.config/git/os.gitconfig (credential helper: $git_cred_helper, github.com: gh)"
+    else
+      print_info "[DRY-RUN] would render $HOME/.config/git/os.gitconfig (credential helper: $git_cred_helper; no gh on OS=$OS)"
+    fi
     if [ -e "$git_user_config" ]; then
       print_info "[DRY-RUN] would keep existing git identity ($git_user_config)"
     elif [ -n "$prior_git_name" ] && [ -n "$prior_git_email" ]; then
@@ -1523,7 +1569,7 @@ _render_git_local_config() {
     # Per-machine files, and the user's real name/email: if ~/.config itself
     # resolves into the checkout (the layout link_entry guards against), they
     # would land in the working tree as untracked files.
-    local cfg_home_real cfg_repo_real
+    local cfg_home_real cfg_repo_real gh_host
     cfg_home_real="$(cd "$HOME/.config" 2>/dev/null && pwd -P)" || cfg_home_real=""
     cfg_repo_real="$(cd "$DOTFILES_DIR/.config" 2>/dev/null && pwd -P)" || cfg_repo_real=""
     if [ -n "$cfg_home_real" ] && [ "$cfg_home_real" = "$cfg_repo_real" ]; then
@@ -1534,9 +1580,27 @@ _render_git_local_config() {
     # first write under it, ahead of _link_editor_configs.
     ensure_dir "$HOME/.config"
     mkdir -p "$HOME/.config/git"
-    printf '[credential]\n\thelper = %s\n' "$git_cred_helper" \
-      >"$HOME/.config/git/os.gitconfig"
-    print_success "Rendered os.gitconfig (credential helper: $git_cred_helper)"
+    # The github blocks are emitted BEFORE the generic one, and the order is
+    # behaviour rather than taste: their `helper =` resets the helper list
+    # accumulated so far, so a generic helper written above them would be
+    # discarded for github URLs. Written in this order git resolves
+    # github.com to [gh, <generic>] -- gh first, the keychain/cache behind it
+    # -- which is exactly what the tracked .gitconfig produced while it still
+    # carried the block and pulled this file in through [include] afterwards.
+    {
+      if gh_is_supported; then
+        for gh_host in github.com gist.github.com; do
+          printf '[credential "https://%s"]\n\thelper =\n\thelper = !gh auth git-credential\n' \
+            "$gh_host"
+        done
+      fi
+      printf '[credential]\n\thelper = %s\n' "$git_cred_helper"
+    } >"$HOME/.config/git/os.gitconfig"
+    if gh_is_supported; then
+      print_success "Rendered os.gitconfig (credential helper: $git_cred_helper, github.com: gh)"
+    else
+      print_success "Rendered os.gitconfig (credential helper: $git_cred_helper; no gh on OS=$OS)"
+    fi
 
     if [ -e "$git_user_config" ]; then
       print_info "Keeping existing git identity ($git_user_config)"
@@ -1688,7 +1752,12 @@ _link_codex_config() {
   # away from committing a token" trap the comments below describe.
   local codex_home_real codex_repo_real
   codex_home_real="$(cd "$HOME/.codex" 2>/dev/null && pwd -P)" || codex_home_real=""
-  codex_repo_real="$(cd "$DOTFILES_DIR/.codex" && pwd -P)"
+  # `|| var=""` like the probe above and the ~/.config pair in
+  # _render_git_local_config: the entry loop above deliberately tolerates a
+  # missing .codex, so failing to resolve it must not take `set -e` with it.
+  # An empty value is safe here -- the guard below requires codex_home_real
+  # to be non-empty before it compares the two.
+  codex_repo_real="$(cd "$DOTFILES_DIR/.codex" 2>/dev/null && pwd -P)" || codex_repo_real=""
   if [ -n "$codex_home_real" ] && [ "$codex_home_real" = "$codex_repo_real" ]; then
     print_warning "Skipping config.toml / hooks.json: $HOME/.codex resolves into the checkout"
     return 0
@@ -1995,6 +2064,14 @@ install_linters_formatters() {
 
     # Go tools (requires go)
     if command_exists go; then
+      # Same reason as the ubuntu branch below: `go install` puts binaries in
+      # ~/go/bin, which is not on PATH until exported, so the command_exists
+      # check immediately below (and anything later in this run) would report
+      # goimports missing right after installing it -- rebuilding it from
+      # source on every re-run. install.sh runs under bash, so .zshrc's own
+      # ~/go/bin export does not apply here. staticcheck is not in this block
+      # because macOS gets it from brew above.
+      export PATH="$HOME/go/bin:$PATH"
       if ! command_exists goimports; then
         print_info "Installing goimports..."
         try_install goimports go install golang.org/x/tools/cmd/goimports@latest

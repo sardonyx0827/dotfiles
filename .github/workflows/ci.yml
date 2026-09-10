@@ -246,7 +246,8 @@ jobs:
   # 未固定のままなので、これは完全な再現性ではなく「検査ツールの固定」である。
   # apt/luarocks の外部ネットワーク依存が失敗点になる点は gating な test ジョブが
   # 既に apt-get install zsh で負っている露出と同じで、新たに増やしてはいない。
-  # 設定は .config/nvim/.luacheckrc (LuaJIT + vim グローバル。.luarc.json と一致)。
+  # 設定は .config/nvim/.luacheckrc (LuaJIT + vim / R / Snacks グローバル。
+  # .luarc.json と一致し、tests/test_config_wiring.py が両者の一致を検査する)。
   luacheck:
     name: luacheck
     runs-on: ubuntu-latest

@@ -1299,11 +1299,18 @@ class TestMcCli:
             f' >"{record}"',
         )
         # HOME must be redirected, and it is not cosmetic. `zsh -c` still reads
-        # ~/.zshenv, and this repo's own ~/.zshenv does
+        # ~/.zshenv, and a developer machine typically has one that does
         # `export PATH="$HOME/.local/bin:$PATH"` -- which lands AHEAD of the
         # stub dir path_env() prepended. Without this the real `claude` CLI
         # wins the lookup and every assertion below turns into a live API call
         # that writes nothing to `record`.
+        #
+        # That ~/.zshenv is NOT ours: uv's installer writes it. This comment
+        # used to call it "this repo's own", which is what hid the fact that
+        # nothing tracked here put ~/.local/bin on PATH at all -- install.sh
+        # fills that directory (pip --user linters, bat/fd, uv) and its own
+        # export dies with the script. .zshrc now adds it; see
+        # TestZshrcPath::test_local_bin_is_on_the_path.
         home = tmp_path / "home"
         home.mkdir(exist_ok=True)
         env = {**path_env(bin_dir), "HOME": str(home)}
@@ -1904,3 +1911,83 @@ class TestTmuxSharesTheSelectionWithAndroid:
         # いなければ、キーを押しても "not found" で黙って終わる。
         install = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
         assert '"$HOME/.tmux/clip_to_android.sh"' in install
+
+
+class TestZshrcPath:
+    """PATH entries .zshrc must own, because install.sh's artifacts land there."""
+
+    def test_local_bin_is_on_the_path(self):
+        """~/.local/bin holds install.sh's own output, so .zshrc must add it.
+
+        install.sh fills it and never makes it reachable from a login shell:
+        uv/uvx on every platform, the Debian `bat`/`fd` aliases from
+        `link_debian_alias`, and `pip_install_user` output *where pip's user
+        scheme is posix_user*. Its own
+        `export PATH="$HOME/.local/bin:$PATH"` is scoped to the running
+        script, so nothing survives the install.
+
+        macOS is the exception and has its own test below: there pip uses the
+        osx_framework_user scheme and installs to ~/Library/Python/<X.Y>/bin
+        instead, so this entry alone does NOT make ruff reachable there.
+
+        It worked on the author's machine only through an untracked
+        ~/.zshenv that uv's installer happens to write -- a side effect of a
+        third-party tool, not something this repo ships. When that is absent
+        (uv skipped, or uv changes its installer), `command -v ruff` in
+        .claude/hooks/_format_common.sh goes false and Python formatting is
+        skipped in silence, and .zshrc's own fzf preview loses `bat`.
+        """
+        text = ZSHRC.read_text(encoding="utf-8")
+        assert re.search(r"^export PATH=.*\.local/bin", text, re.M), (
+            "no PATH entry for ~/.local/bin in .zshrc; install.sh's "
+            "pip --user / uv / bat / fd artifacts are unreachable"
+        )
+
+    def test_macos_pip_user_bin_is_on_the_path(self):
+        """macOS pip --user does NOT use ~/.local/bin, so cover its real dir.
+
+        Both python3 builds a fresh Mac can offer install_linters_formatters
+        report `osx_framework_user` as their user scheme -- Homebrew's
+        (~/Library/Python/3.14/bin) and Apple's (~/Library/Python/3.9/bin) --
+        not `posix_user`. ~/.local/bin is only pip's answer under pyenv, and
+        install_pyenv is ubuntu-only. So on macOS the ruff/bandit/mypy that
+        install.sh installs land in ~/Library/Python/<X.Y>/bin, and adding
+        ~/.local/bin alone leaves `command -v ruff` false -- the hooks stay
+        silently unformatted, which is the whole bug this was meant to close.
+
+        The (N) glob qualifier collapses to nothing when the directory does
+        not exist, so this line is inert on Linux and needs no OS guard, and
+        the * picks up every interpreter version left on the machine.
+        """
+        text = ZSHRC.read_text(encoding="utf-8")
+        assert re.search(r"^path=\(~/Library/Python/\*/bin\(N\)", text, re.M), (
+            "no PATH entry for ~/Library/Python/*/bin in .zshrc; on macOS "
+            "install.sh's pip --user linters are unreachable"
+        )
+
+
+class TestZshrcAliases:
+    """Aliases .zshrc must not silently take away from a loaded plugin."""
+
+    def test_g_is_left_to_the_oh_my_zsh_git_plugin(self):
+        """`g` belongs to oh-my-zsh's git plugin; .zshrc must not shadow it.
+
+        .zshrc enables the `git` plugin and then sources oh-my-zsh.sh, which
+        defines `alias g='git'`. A later `alias g='gemini'` in this file wins
+        silently, so the reflex `g status` runs `gemini status` -- handing the
+        word "status" to an LLM CLI instead of running git. `ge` is defined
+        immediately above for that purpose, so the shadow bought nothing.
+        """
+        text = ZSHRC.read_text(encoding="utf-8")
+        # Anchored to the plugins=( ... ) block itself. A bare `"git" in text`
+        # passes on .gitconfig mentions and on any comment, so it would stay
+        # green after `git` left the plugin list -- leaving `alias g=` banned
+        # for a reason that no longer exists.
+        block = re.search(r"^plugins=\((.*?)^\)", text, re.M | re.S)
+        assert block, "precondition: no plugins=( ... ) block found in .zshrc"
+        assert "git" in block.group(1).split(), (
+            "precondition: .zshrc is expected to load the oh-my-zsh git plugin"
+        )
+        assert not re.search(r"^\s*alias g=", text, re.M), (
+            "alias g= in .zshrc shadows the oh-my-zsh git plugin's g='git'"
+        )

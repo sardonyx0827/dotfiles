@@ -282,11 +282,19 @@ class TestFetchSiteInventory:
         ),
     }
 
-    # URLs that appear in executable lines but are never fetched -- printed for
-    # the user to open by hand.
+    # URL-shaped tokens that appear in executable lines but are never fetched:
+    # the first two are printed for the user to open by hand, the third is not
+    # a URL at all but a printf FORMAT whose %s is a hostname. The scanner
+    # matches on shape, so a format string reads as a URL to it; classifying it
+    # here is the sanctioned answer (the failure message says so) and keeps the
+    # fail-closed default intact for anything genuinely new. Do not "fix" this
+    # by rewriting the printf to hide the token -- every spelling that builds an
+    # https:// config key looks the same to a shape matcher, and hiding it would
+    # only teach the next author to evade the guard.
     NOT_FETCHED: ClassVar[set[str]] = {
         "https://checkstyle.sourceforge.io/",
         "https://github.com/google/google-java-format",
+        "https://%s",
     }
 
     # http:// is matched too, so downgrading a fetch to plaintext cannot slip
@@ -1610,6 +1618,42 @@ class TestOptionalEntryLoopsDoNotAbortTheInstaller:
         )
 
 
+class TestCodexConfigWithoutACodexTree:
+    """_link_codex_config must survive a checkout that has no .codex at all.
+
+    Its entry loop is written with `if [ -e "$DOTFILES_DIR/.codex/$entry" ]`
+    precisely so a missing entry is skipped rather than fatal. But the
+    resolution right below it,
+    `codex_repo_real="$(cd "$DOTFILES_DIR/.codex" && pwd -P)"`, carried
+    neither the `2>/dev/null` nor the `|| var=""` that both of its siblings
+    have (the ~/.codex probe on the line above, and the ~/.config pair in
+    _render_git_local_config). With .codex absent the cd fails, `set -e`
+    takes the whole installer down mid-way, and the run ends with the
+    top-level dotfiles and .claude linked, no [ERROR] line, and no hint that
+    anything was skipped.
+    """
+
+    def test_missing_codex_tree_is_skipped_not_fatal(self, shell_env, tmp_path):
+        fake_repo = tmp_path / "fake-dotfiles"
+        fake_repo.mkdir()
+        assert not (fake_repo / ".codex").exists()
+
+        env = {**shell_env.env, "DRY_RUN": "0"}
+        res = run_sourced(
+            f'DOTFILES_DIR="{fake_repo}"; _link_codex_config; echo "RC=$?"; '
+            "echo REACHED_NEXT_LINE",
+            env,
+        )
+        assert "RC=0" in res.stdout, (
+            "_link_codex_config failed on a checkout without .codex:\n"
+            f"stdout={res.stdout!r}\nstderr={res.stderr!r}"
+        )
+        assert "REACHED_NEXT_LINE" in res.stdout, (
+            "set -e killed the installer after _link_codex_config, silently:\n"
+            f"stdout={res.stdout!r}\nstderr={res.stderr!r}"
+        )
+
+
 class TestStrictMode:
     def test_pipefail_enabled(self, shell_env):
         # Pipelines like `curl ... | sudo tee` must not swallow curl's exit
@@ -2652,6 +2696,31 @@ class TestGoInstallPathExport:
         assert "STATICCHECK_ON_PATH" in res.stdout, res.stdout
         assert "GOIMPORTS_ON_PATH" in res.stdout, res.stdout
 
+    def test_linters_formatters_macos_go_installed_tools_visible_afterward(
+        self, shell_env
+    ):
+        """The macOS branch has the same defect the Ubuntu one was fixed for.
+
+        macOS gets staticcheck from brew, so only goimports arrives through
+        `go install` there -- and that branch never exported ~/go/bin. The
+        `command_exists goimports` guard right above the install therefore
+        stayed false forever, so every re-run of install.sh fetched and
+        rebuilt goimports from scratch, and nothing later in the run could
+        see it either.
+        """
+        env = _without_commands(shell_env.env, "goimports", "npm", "pip", "php")
+        shell_env.stub("go", body=_GO_INSTALL_STUB)
+        shell_env.stub("brew")
+        res = run_sourced(
+            'command_exists() { case "$1" in gem|pip3) return 1 ;; '
+            '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+            "OS=macos install_linters_formatters; "
+            "command_exists goimports && echo GOIMPORTS_ON_PATH",
+            env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "GOIMPORTS_ON_PATH" in res.stdout, res.stdout
+
 
 class TestChangeShell:
     def test_chsh_failure_does_not_abort_script(self, shell_env):
@@ -2930,6 +2999,28 @@ class TestDryRun:
         res = run_sourced("create_symlinks", shell_env.env)
         assert res.returncode == 0, res.stderr
         assert (home / ".zshrc").is_symlink()
+
+    def test_non_numeric_dry_run_is_rejected(self, shell_env):
+        """A typo'd DRY_RUN must abort, not silently do the real work.
+
+        All 22 guards spell `[ "$DRY_RUN" -eq 1 ]`, an INTEGER comparison.
+        Given `DRY_RUN=true`, `[` fails with "integer expression expected"
+        and, because the guard sits in a condition, `set -e` does not fire --
+        every one of them falls through to the real branch. The header
+        comment invites exactly this ("env-overridable so tests can exercise
+        a single function in dry-run"), so the value is user-supplied and a
+        non-numeric one is a reachable typo: the run relinks HOME, moves the
+        user's real dotfiles into a backup dir and previews nothing, while
+        the errors scroll past as noise.
+        """
+        env = {**shell_env.env, "DRY_RUN": "true"}
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode != 0, (
+            "a non-numeric DRY_RUN was accepted; the guards silently "
+            f"fell through to the real branch\n{res.stdout}"
+        )
+        assert "DRY_RUN" in res.stderr, res.stderr
+        assert list(shell_env.home.iterdir()) == [], list(shell_env.home.iterdir())
 
 
 class TestFetchAndRun:
@@ -3335,3 +3426,130 @@ class TestGitIdentityRendering:
             )
             assert got.returncode == 0, f"{key} is unreadable: {rendered.read_text()}"
             assert got.stdout.rstrip("\n") == expected
+
+
+def _git_config_all(path, key):
+    """Every value git reads for `key`, in file order (empty resets included)."""
+    res = subprocess.run(
+        ["git", "config", "--file", str(path), "--get-all", key],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        return []
+    return res.stdout.split("\n")[:-1]
+
+
+class TestGithubCredentialHelper:
+    """`gh auth git-credential` may only be wired where gh is installable.
+
+    The tracked .gitconfig hard-coded it for github.com and gist.github.com,
+    but install_gh only has an install path for macos and ubuntu. detect_os
+    also produces OS=linux (non-Debian) and OS=windows, and install_gh returns
+    quietly there -- so git called a `gh` that was never installed on every
+    HTTPS operation. That is the same failure the file's own comment says was
+    fixed for osxkeychain by moving the OS-dependent helper out of the tracked
+    file and into the rendered ~/.config/git/os.gitconfig; the gh block was
+    left behind.
+    """
+
+    GH_HELPER = "!gh auth git-credential"
+
+    def test_tracked_gitconfig_carries_no_gh_helper(self):
+        """The OS-dependent helper must not be hard-coded in a linked file.
+
+        Comment lines are stripped before the check on purpose: .gitconfig
+        documents WHY the gh helper moved out, and that rationale necessarily
+        quotes the helper string. Matching the raw text would fail on the
+        explanation of the very fix it is guarding -- and the natural repair
+        would be to delete the explanation.
+        """
+        text = (REPO_ROOT / ".gitconfig").read_text(encoding="utf-8")
+        active = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert self.GH_HELPER not in active, (
+            ".gitconfig hard-codes the gh credential helper; it is linked on "
+            "every OS, including the ones install_gh cannot install gh on"
+        )
+
+    @pytest.mark.parametrize("os_name", ["macos", "ubuntu"])
+    def test_rendered_config_wires_gh_where_gh_is_installable(self, shell_env, os_name):
+        res = run_sourced(f"OS={os_name} create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        rendered = shell_env.home / ".config/git/os.gitconfig"
+        for host in ("github.com", "gist.github.com"):
+            key = f"credential.https://{host}.helper"
+            # The empty first value is the reset that drops any helper
+            # accumulated before it; dropping it would let a generic helper
+            # answer for github.com ahead of gh.
+            assert _git_config_all(rendered, key) == ["", self.GH_HELPER], (
+                f"{key} in {rendered.read_text(encoding='utf-8')!r}"
+            )
+
+    @pytest.mark.parametrize("os_name", ["linux", "windows"])
+    def test_rendered_config_omits_gh_where_gh_is_absent(self, shell_env, os_name):
+        # gh must be genuinely absent, not merely unsupported: a developer
+        # workstation has a real gh on PATH, and finding it is exactly what
+        # the sibling test below asserts should wire the helper.
+        #
+        # Shadowing command_exists rather than stripping PATH, for the reason
+        # _without_commands documents: it refuses to remove a protected system
+        # directory and stops there. gh sits in /opt/homebrew/bin on this
+        # author's Mac (strippable, so the test passed locally) and in
+        # /usr/bin on the GitHub ubuntu runner (protected, so gh stayed
+        # visible and CI failed on a green local run). The shadow makes the
+        # two hosts run the same condition -- which is the point, since the
+        # host difference is what let this through review.
+        res = run_sourced(
+            'command_exists() { case "$1" in gh) return 1 ;; '
+            '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+            f"OS={os_name} create_symlinks",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        rendered = shell_env.home / ".config/git/os.gitconfig"
+        assert self.GH_HELPER not in rendered.read_text(encoding="utf-8"), (
+            f"OS={os_name} has no gh install path and no gh on PATH, so git "
+            "must not be told to call gh"
+        )
+
+    @pytest.mark.parametrize("os_name", ["linux", "windows"])
+    def test_rendered_config_wires_gh_when_it_is_already_installed(
+        self, shell_env, os_name
+    ):
+        """An OS install_gh cannot serve may still have gh from elsewhere.
+
+        Arch and Fedora ship gh in their own repositories, and Git Bash users
+        get it from winget/scoop; detect_os calls both `linux`/`windows`.
+        Gating the credential helper purely on the OS name would take the
+        helper away from those users -- who had it unconditionally while the
+        block lived in the tracked .gitconfig -- and drop them back to the
+        generic cache helper, re-prompting on every HTTPS operation. That is
+        a regression introduced by the fix, not by the original bug.
+        """
+        shell_env.stub("gh")
+        res = run_sourced(f"OS={os_name} create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        rendered = shell_env.home / ".config/git/os.gitconfig"
+        assert self.GH_HELPER in rendered.read_text(encoding="utf-8"), (
+            f"gh is installed on OS={os_name}, so the helper must be wired"
+        )
+
+    def test_generic_helper_still_follows_the_github_block(self, shell_env):
+        """Order is behaviour: the reset must not swallow the generic helper.
+
+        In the original .gitconfig the github block came first and the
+        generic helper arrived later via [include], so git's helper list for
+        a github URL was [gh, <generic>] -- gh first, the OS keychain/cache
+        behind it. Emitting the github block after the generic one instead
+        would put the `helper =` reset after it and leave [gh] alone.
+        """
+        res = run_sourced("OS=macos create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        rendered = shell_env.home / ".config/git/os.gitconfig"
+        text = rendered.read_text(encoding="utf-8")
+        assert text.index('[credential "https://github.com"]') < text.index(
+            "\n[credential]"
+        ), text
+        assert _git_config_all(rendered, "credential.helper") == ["osxkeychain"], text
