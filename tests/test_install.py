@@ -2919,8 +2919,21 @@ class TestGithubCredentialHelper:
         # gh must be genuinely absent, not merely unsupported: a developer
         # workstation has a real gh on PATH, and finding it is exactly what
         # the sibling test below asserts should wire the helper.
-        env = _without_commands(shell_env.env, "gh")
-        res = run_sourced(f"OS={os_name} create_symlinks", env)
+        #
+        # Shadowing command_exists rather than stripping PATH, for the reason
+        # _without_commands documents: it refuses to remove a protected system
+        # directory and stops there. gh sits in /opt/homebrew/bin on this
+        # author's Mac (strippable, so the test passed locally) and in
+        # /usr/bin on the GitHub ubuntu runner (protected, so gh stayed
+        # visible and CI failed on a green local run). The shadow makes the
+        # two hosts run the same condition -- which is the point, since the
+        # host difference is what let this through review.
+        res = run_sourced(
+            'command_exists() { case "$1" in gh) return 1 ;; '
+            '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+            f"OS={os_name} create_symlinks",
+            shell_env.env,
+        )
         assert res.returncode == 0, res.stderr
         rendered = shell_env.home / ".config/git/os.gitconfig"
         assert self.GH_HELPER not in rendered.read_text(encoding="utf-8"), (
