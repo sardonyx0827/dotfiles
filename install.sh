@@ -1205,6 +1205,18 @@ _seed_zsh_secrets() {
   # re-run must never clobber the keys already in it. The commented-out exports
   # are just a starting point, so an empty stub is still a success.
   local secrets="$HOME/.zsh_secrets"
+  # A symlink here is the user's redirect (an encrypted volume, a synced
+  # folder). `[ -e ]` is false once its target is gone, so it used to read as
+  # absent and the seed below wrote THROUGH it: a stub planted where the real
+  # keys belong or, with the target's directory gone too, a bare ENOENT under
+  # set -e that killed the installer with no [ERROR] line. Never write through
+  # it; ahead of the dry-run branch so the preview reports the same decision.
+  if [ -L "$secrets" ] && [ ! -e "$secrets" ]; then
+    local dry_prefix=""
+    [ "$DRY_RUN" -eq 1 ] && dry_prefix="[DRY-RUN] "
+    print_warning "${dry_prefix}Leaving $secrets alone: it is a dangling symlink (its target is missing)"
+    return 0
+  fi
   # Dry-run previews the decision it would actually make, not just the write:
   # a bare "would create" on a machine that already has the file would misreport
   # the plan the same way the hooks.json preview once did.
@@ -1260,6 +1272,8 @@ _render_git_local_config() {
     fi
     if [ -e "$git_user_config" ]; then
       print_info "[DRY-RUN] would keep existing git identity ($git_user_config)"
+    elif [ -L "$git_user_config" ]; then
+      print_warning "[DRY-RUN] would leave $git_user_config alone: it is a dangling symlink (its target is missing)"
     elif [ -n "$prior_git_name" ] && [ -n "$prior_git_email" ]; then
       print_info "[DRY-RUN] would render $git_user_config inheriting $prior_git_name <$prior_git_email>"
     else
@@ -1304,6 +1318,11 @@ _render_git_local_config() {
 
     if [ -e "$git_user_config" ]; then
       print_info "Keeping existing git identity ($git_user_config)"
+    elif [ -L "$git_user_config" ]; then
+      # Same trap as the dangling ~/.zsh_secrets in _seed_zsh_secrets: `[ -e ]`
+      # is false on a broken link, and both writers below then fail on it
+      # (git cannot take its lock) under set -e. The redirect is the user's.
+      print_warning "Leaving $git_user_config alone: it is a dangling symlink (its target is missing)"
     else
       local git_name="$prior_git_name" git_email="$prior_git_email"
       # Nothing to inherit (fresh machine, or an upgrade from the version that

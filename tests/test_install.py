@@ -571,6 +571,34 @@ class TestCreateSymlinks:
         # to move aside.
         assert not any(p.exists() for p in home.glob(".dotfiles_backup_*/.zsh_secrets"))
 
+    # `[ -e ]` is false for a symlink whose target is gone, so a redirected
+    # secrets file (an encrypted volume, a synced folder) looked absent and the
+    # seed wrote THROUGH the link. With the target's parent missing that write
+    # failed under set -e and the installer died with no [ERROR] line, before
+    # git config, the editor/Claude/Codex links, packages and chsh; with the
+    # parent present it planted a stub at a location the user chose for their
+    # real keys. The redirect is the user's either way: leave it untouched.
+    @pytest.mark.parametrize("parent_exists", [False, True])
+    def test_zsh_secrets_dangling_symlink_is_left_alone(
+        self, shell_env, tmp_path, parent_exists
+    ):
+        home = shell_env.home
+        target_dir = tmp_path / "unmounted-volume"
+        if parent_exists:
+            target_dir.mkdir()
+        target = target_dir / "zsh_secrets"
+        secrets = home / ".zsh_secrets"
+        secrets.symlink_to(target)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+
+        assert res.returncode == 0, res.stderr
+        assert secrets.is_symlink() and secrets.readlink() == target
+        assert not target.exists(), "the seed was written through the user's link"
+        assert "dangling" in res.stdout + res.stderr
+        # The steps after the seed still ran.
+        assert (home / ".config/git/os.gitconfig").is_file()
+
     # --- Git identity: rendered per machine, never tracked ------------------
 
     def test_git_identity_is_inherited_from_the_previous_config(
@@ -655,6 +683,29 @@ class TestCreateSymlinks:
         )
         assert "email = personal@example.com" in rendered
         assert "work@example.com" not in rendered
+
+    # Same defect as the dangling ~/.zsh_secrets above: `[ -e ]` is false on a
+    # broken link, and `git config --file` / the placeholder printf then failed
+    # on it (git cannot take the lock) under set -e.
+    def test_git_identity_dangling_symlink_is_left_alone(self, shell_env, tmp_path):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        target = tmp_path / "unmounted-volume/user.gitconfig"
+        user_config = home / ".config/git/user.gitconfig"
+        user_config.symlink_to(target)
+        prior = tmp_path / "prior-gitconfig"
+        prior.write_text(
+            "[user]\n\tname = Prior Person\n\temail = prior@example.com\n",
+            encoding="utf-8",
+        )
+        env = {**shell_env.env, "GIT_CONFIG_GLOBAL": str(prior)}
+
+        res = run_sourced("create_symlinks", env)
+
+        assert res.returncode == 0, res.stderr
+        assert user_config.is_symlink() and user_config.readlink() == target
+        assert "dangling" in res.stdout + res.stderr
+        assert (home / ".config/nvim").is_symlink(), "later steps did not run"
 
     def test_git_identity_is_never_overwritten(self, shell_env):
         home = shell_env.home
