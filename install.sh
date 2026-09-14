@@ -1903,7 +1903,12 @@ change_shell() {
     print_warning "zsh not found; skipping shell change. Install zsh, then run: chsh -s \$(which zsh)"
     return 0
   fi
-  if [ "$SHELL" != "$(which zsh)" ]; then
+  # "Is the login shell a zsh", not "is it THE zsh first on PATH". macOS logs
+  # in with /bin/zsh while install_brew_packages puts a homebrew zsh first on
+  # PATH, so comparing against `$(which zsh)` failed on every run: chsh was
+  # retried (a password prompt), refused /opt/homebrew/bin/zsh as absent from
+  # /etc/shells, and told a user already on zsh to go edit that file.
+  if [ "$(basename "${SHELL:-}")" != "zsh" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       print_info "[DRY-RUN] would change the default shell to zsh (chsh)"
       return 0

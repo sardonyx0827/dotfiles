@@ -2306,6 +2306,26 @@ class TestChangeShell:
         assert "[WARNING]" in res.stdout
         assert not any(c.startswith("chsh") for c in shell_env.calls)
 
+    @pytest.mark.parametrize("dry_run", ["0", "1"])
+    def test_a_login_shell_that_is_another_zsh_is_already_zsh(self, shell_env, dry_run):
+        """A second zsh earlier on PATH does not make the login shell "not zsh".
+
+        macOS logs in with /bin/zsh, and install_brew_packages itself puts a
+        homebrew zsh first on PATH, so `$SHELL != $(which zsh)` held on every
+        run: chsh was attempted again (a password prompt), failed because
+        /opt/homebrew/bin/zsh is not in /etc/shells, and printed advice to
+        add it there -- for a user whose shell never needed changing.
+        """
+        shell_env.stub("zsh")  # which zsh -> the stub dir, not /bin/zsh
+        env = {**shell_env.env, "SHELL": "/bin/zsh", "DRY_RUN": dry_run}
+
+        res = run_sourced("change_shell", env)
+
+        assert res.returncode == 0, res.stderr
+        assert "already zsh" in res.stdout
+        assert "would change" not in res.stdout
+        assert not any(c.startswith("chsh") for c in shell_env.calls)
+
     def test_missing_zsh_warns_in_dry_run_too(self, shell_env):
         env = {**shell_env.env, "DRY_RUN": "1", "SHELL": "/bin/bash"}
 
