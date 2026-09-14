@@ -11,8 +11,10 @@
 # PostToolUse に置いて即時フィードバックできる。
 #
 # したがって「整形済みの状態を lint する」という前提は Codex 版では成立
-# しない。整形前のコードを解析することになるが、フォーマッターで直る類の
-# 指摘(インデント等)は Stop 時に解消されるため実害は小さい。
+# しない。整形前のコードを解析するので、フォーマッターが Stop で直す類の指摘
+# (rubocop の Layout、ruff の import 整列) まで exit 2 で返り、エージェントに
+# 手で直させる無駄なターンが生じていた。そこで hook_lint_file に before-format
+# を渡し、共有側でそれらを対象から外す (_lint_common.sh の hook_lint_file 参照)。
 #
 # 意図的に `set -e` は使わない: このフックは fail-open 設計であり、個々の
 # linter が未導入/実行失敗でも他の言語のチェックやスクリプト全体を止めては
@@ -175,7 +177,7 @@ lint_file() {
   local target="$1"
   local file_errors="" base
   base=$(basename "$target")
-  if hook_lint_file "$target" file_errors "$LOG_FILE"; then
+  if hook_lint_file "$target" file_errors "$LOG_FILE" before-format; then
     return 0
   fi
   ALL_ERRORS="${ALL_ERRORS}Lint errors found in ${base}:\n---\n${file_errors}---\n"

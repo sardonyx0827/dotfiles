@@ -86,11 +86,17 @@ _go_dir_has_analyzable_package() {
   esac
 }
 
-# hook_lint_file <file> <errors_var_name> <log_file>
+# hook_lint_file <file> <errors_var_name> <log_file> [before-format]
 #
 # 1 ファイルを解析する。問題があれば errors_var_name で指定された変数に生の
 # エラー文字列を入れて 1 を返す。無ければ空文字を入れて 0 を返す。
 # 表示用の整形(ファイル名の見出しや区切り線)は呼び出し元の責務。
+#
+# 4 番目に before-format を渡すと、auto-format がまだ走っていないファイルとして
+# 扱い、フォーマッターが直す類の指摘 (rubocop の Layout、ruff の import 整列) を
+# 対象から外す。Claude は PostToolUse で auto-format → lint の順なので省略し、
+# auto-format を Stop に置く Codex だけが渡す。外さないと、Stop で直る指摘が
+# exit 2 でエージェントに返り、手で直させる無駄なターンになる。
 #
 # 注意: bash は動的スコープなので、errors_var_name にこの関数内の local と同じ
 # 名前(LINT_ERRORS 等)を渡すと local 側に書き込まれ、呼び出し元には何も届かない。
@@ -100,19 +106,22 @@ hook_lint_file() {
   local FILE_PATH="$1"
   local hook_out_var="$2"
   local hook_log_file="$3"
+  local hook_phase="${4:-}"
   local EXTENSION="${FILE_PATH##*.}"
   local BASENAME
   BASENAME=$(basename "$FILE_PATH")
   local LINT_ERRORS=""
   local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
   local GO_PKG_DIR eslint_dir eslint_root
+  local ruff_args=() rubocop_args=()
 
   # 出力変数名がこの関数の local と衝突すると、printf -v は local を書き換えて
   # しまい呼び出し元には何も返らない。黙って通るより落とす。
   case "$hook_out_var" in
   FILE_PATH | EXTENSION | BASENAME | LINT_ERRORS | PROJECT_ROOT | OUTPUT | \
     HAS_ESLINT_CONFIG | ESLINT_BIN | CONFIG | HAS_MYPY_CONFIG | RELATED | cfg | \
-    GO_PKG_DIR | eslint_dir | eslint_root | hook_out_var | hook_log_file)
+    GO_PKG_DIR | eslint_dir | eslint_root | ruff_args | rubocop_args | \
+    hook_out_var | hook_log_file | hook_phase)
     echo "hook_lint_file: output variable '$hook_out_var' collides with an internal local" >&2
     return 2
     ;;
@@ -205,7 +214,10 @@ hook_lint_file() {
     # ruff: flake8/isort/pyupgrade互換の高速オールインワンlinter
     if command -v ruff >/dev/null 2>&1; then
       echo "  Running ruff check..."
-      if ! OUTPUT=$(ruff check "$FILE_PATH" 2>&1); then
+      # I (import 整列) は auto-format の `ruff check --select I --fix` が直す。
+      # 整形前 (before-format) にだけ外す。--ignore は設定側の ignore を消さない。
+      [ "$hook_phase" = "before-format" ] && ruff_args=(--ignore I)
+      if ! OUTPUT=$(ruff check "${ruff_args[@]}" "$FILE_PATH" 2>&1); then
         LINT_ERRORS="${LINT_ERRORS}[ruff]\n${OUTPUT}\n"
       else
         echo "  ruff passed"
@@ -398,11 +410,14 @@ hook_lint_file() {
 
   # Ruby
   rb)
-    # rubocop: フォーマットとlintを兼ねる（auto-format.shでは--auto-correctのみ実行済み）
-    # ここでは修正できなかった残存エラーをCodexにフィードバック
+    # rubocop: フォーマットとlintを兼ねる。Claude では auto-format.sh の
+    # --auto-correct が先に走っているので、ここに残るのは直せなかった指摘だけ。
+    # Codex (before-format) ではまだ整形されていないので、Stop の --auto-correct
+    # が直す Layout を外し、それ以外をフィードバックする。
     if command -v rubocop >/dev/null 2>&1; then
       echo "  Running rubocop (lint only)..."
-      if ! OUTPUT=$(rubocop --no-color "$FILE_PATH" 2>&1); then
+      [ "$hook_phase" = "before-format" ] && rubocop_args=(--except Layout)
+      if ! OUTPUT=$(rubocop --no-color "${rubocop_args[@]}" "$FILE_PATH" 2>&1); then
         LINT_ERRORS="${LINT_ERRORS}[rubocop]\n${OUTPUT}\n"
       else
         echo "  rubocop passed"
