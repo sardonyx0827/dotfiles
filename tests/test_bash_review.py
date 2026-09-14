@@ -2658,6 +2658,35 @@ class TestHighRiskFlow:
         assert "--sandbox" in calls[0][0]
         assert "read-only" in calls[0][0]
 
+    def test_codex_leg_is_marked_as_a_oneshot(self, run_hook, monkeypatch):
+        """The nested `codex exec` must carry EDITOR_AI_ONESHOT=1.
+
+        The sandbox governs model-run commands, not Codex's own hooks: a real
+        `codex exec` still fires the Stop hooks in ~/.codex/hooks.json, and
+        auto-format.sh then rewrites every uncommitted file in the user's tree
+        while stop-audit.sh audits it -- for a run that only asked for a
+        verdict. Both hooks exit early on this marker, which is the guard
+        ai/backend.lua already sets for its identical one-shot.
+
+        Asserting presence, not absence: shell_env pops the marker from the
+        host env so stop-audit tests cannot pass vacuously, and the same
+        vacuous green must not hide a reviewer that stopped setting it.
+        """
+        monkeypatch.delenv("EDITOR_AI_ONESHOT", raising=False)
+        calls = []
+        run_hook(
+            HOOK,
+            hook_payload("npm install left-pad"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ALLOW", calls=calls),
+        )
+        env = calls[0][1].get("env")
+        assert env is not None, "codex exec was launched with the hook's own env"
+        assert env.get("EDITOR_AI_ONESHOT") == "1"
+        # Layered onto the inherited env, not a replacement for it: an env of
+        # just the marker would drop PATH, and `codex` would stop resolving.
+        assert env.get("PATH") == os.environ.get("PATH")
+
     def test_split_allow_ask_asks(self, run_hook):
         # One model unsure -> not a unanimous ALLOW -> human ask.
         res = run_hook(
