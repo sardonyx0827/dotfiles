@@ -593,6 +593,69 @@ class TestCreateSymlinks:
         assert "name = Prior Person" in rendered
         assert "email = prior@example.com" in rendered
 
+    def test_git_identity_is_inherited_through_an_include(self, shell_env, tmp_path):
+        """A [user] pulled in by [include] is part of the identity git resolves.
+
+        `git config --global <key>` does not follow includes -- git only does
+        that by default when no file or scope is named -- so the common
+        `[include] path = ~/.gitconfig.local` layout read back as empty. The
+        .gitconfig link then made that file unreachable, and the identity
+        dropped out of the effective config with one warning line.
+        """
+        local = tmp_path / "gitconfig.local"
+        local.write_text(
+            "[user]\n\tname = Included Person\n\temail = included@example.com\n",
+            encoding="utf-8",
+        )
+        prior = tmp_path / "prior-gitconfig"
+        prior.write_text(f"[include]\n\tpath = {local}\n", encoding="utf-8")
+        env = {**shell_env.env, "GIT_CONFIG_GLOBAL": str(prior)}
+
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+
+        rendered = (shell_env.home / ".config/git/user.gitconfig").read_text(
+            encoding="utf-8"
+        )
+        assert "name = Included Person" in rendered
+        assert "email = included@example.com" in rendered
+
+    def test_conditional_include_does_not_leak_into_the_global_identity(
+        self, shell_env, tmp_path
+    ):
+        """--includes also resolves includeIf, against the CURRENT repository.
+
+        install.sh is normally run from inside its own checkout, so a
+        `[includeIf "gitdir:~/work/"]` identity -- meant for that directory
+        only -- matched whenever the checkout lived under ~/work/, and was
+        baked into user.gitconfig as the identity for every repository.
+        """
+        work_config = tmp_path / "work-config"
+        work_config.write_text(
+            "[user]\n\tname = Work Person\n\temail = work@example.com\n",
+            encoding="utf-8",
+        )
+        work = tmp_path / "work"
+        repo = work / "checkout"
+        repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        prior = tmp_path / "prior-gitconfig"
+        prior.write_text(
+            "[user]\n\tname = Personal Person\n\temail = personal@example.com\n"
+            f'[includeIf "gitdir:{work}/"]\n\tpath = {work_config}\n',
+            encoding="utf-8",
+        )
+        env = {**shell_env.env, "GIT_CONFIG_GLOBAL": str(prior)}
+
+        res = run_sourced("create_symlinks", env, cwd=repo)
+        assert res.returncode == 0, res.stderr
+
+        rendered = (shell_env.home / ".config/git/user.gitconfig").read_text(
+            encoding="utf-8"
+        )
+        assert "email = personal@example.com" in rendered
+        assert "work@example.com" not in rendered
+
     def test_git_identity_is_never_overwritten(self, shell_env):
         home = shell_env.home
         (home / ".config/git").mkdir(parents=True)

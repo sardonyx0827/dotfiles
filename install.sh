@@ -1560,9 +1560,21 @@ create_symlinks() {
   # Read whatever identity git resolves right now, BEFORE the .gitconfig link
   # below replaces it. An upgrade from a real ~/.gitconfig that carried [user]
   # keeps its name/email this way instead of silently losing it.
+  #
+  # --includes is not optional: git follows [include] by default only when no
+  # file or scope is named, so a bare --global read the common
+  # `[include] path = ~/.gitconfig.local` layout back as empty -- and the link
+  # below then made that file unreachable, dropping the identity.
+  #
+  # `-C /` because --includes also resolves includeIf, and gitdir:/onbranch:
+  # are matched against the CURRENT repository -- which is normally this
+  # checkout. A `[includeIf "gitdir:~/work/"]` identity meant for that tree
+  # only would otherwise be baked into user.gitconfig for every repository.
+  # Outside any repository no conditional include matches, and a plain
+  # [include] is still followed.
   local prior_git_name prior_git_email
-  prior_git_name="$(git config --global user.name 2>/dev/null || true)"
-  prior_git_email="$(git config --global user.email 2>/dev/null || true)"
+  prior_git_name="$(git -C / config --global --includes user.name 2>/dev/null || true)"
+  prior_git_email="$(git -C / config --global --includes user.email 2>/dev/null || true)"
 
   # Backup existing files. In dry-run nothing is moved, so the dir is never
   # created (and the empty-dir cleanup at the end is skipped to match).
