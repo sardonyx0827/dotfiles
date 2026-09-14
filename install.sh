@@ -1520,13 +1520,19 @@ _link_codex_config() {
   # hooks.json: render from the template, substituting the placeholder for
   # this machine's real $HOME (Codex does not expand ~ or $HOME itself).
   if [ -f "$DOTFILES_DIR/.codex/hooks.json.template" ]; then
+    # $HOME lands in the sed REPLACEMENT, where `&` means "the matched text"
+    # and `|` closes the s||| expression: /Users/a&b rendered as the
+    # nonexistent /Users/a__HOME__b without a warning, and /home/a|b made sed
+    # fail under set -e. Escape both, and the backslash that escapes them.
+    local home_sed
+    home_sed="$(printf '%s\n' "$HOME" | sed 's/[\\&|]/\\&/g')"
     if [ "$DRY_RUN" -eq 1 ]; then
       # Read-only preview of the same diff check the real branch below
       # performs -- this used to unconditionally claim "would render" even
       # when the rendered output is byte-identical to what's already there.
       local dry_rendered_tmp
       dry_rendered_tmp="$(mktemp)"
-      sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
+      sed "s|__HOME__|$home_sed|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
         >"$dry_rendered_tmp"
       if [ ! -f "$HOME/.codex/hooks.json" ] ||
         ! cmp -s "$dry_rendered_tmp" "$HOME/.codex/hooks.json"; then
@@ -1538,7 +1544,7 @@ _link_codex_config() {
     else
       local rendered_tmp
       rendered_tmp="$(mktemp)"
-      sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
+      sed "s|__HOME__|$home_sed|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
         >"$rendered_tmp"
       # Only replace (and back up) when the rendered result actually changed, so
       # re-runs don't move an identical hooks.json into a fresh backup dir.

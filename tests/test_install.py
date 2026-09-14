@@ -2363,6 +2363,33 @@ class TestHooksJsonTemplate:
         assert "bash-review-launcher.sh'" in content
         assert "python '" not in content
 
+    @pytest.mark.parametrize("dry_run", ["0", "1"])
+    def test_sed_metacharacters_in_home_render_literally(
+        self, shell_env, tmp_path, dry_run
+    ):
+        """$HOME went into the sed REPLACEMENT unescaped.
+
+        `&` there means "the matched text", so /Users/a&b rendered as
+        /Users/a__HOME__b -- a path that does not exist, written without a
+        word of warning. `|` is the s||| delimiter, so /home/a|b made sed
+        fail ("bad flag in substitute command") and set -e took the whole
+        installer down. `&` is a legal Windows user name character.
+        """
+        home = tmp_path / "we&ird|home"
+        home.mkdir()
+        env = {**shell_env.env, "HOME": str(home), "DRY_RUN": dry_run}
+
+        res = run_sourced("_link_codex_config", env)
+
+        assert res.returncode == 0, res.stderr
+        if dry_run == "1":
+            assert "would render" in res.stdout
+            return
+        content = (home / ".codex/hooks.json").read_text(encoding="utf-8")
+        assert "__HOME__" not in content
+        assert f"{home}/.codex/hooks/" in content
+        assert json.loads(content)
+
     def test_rerun_regenerates_hooks_json(self, shell_env):
         home = shell_env.home
         (home / ".oh-my-zsh").mkdir()
