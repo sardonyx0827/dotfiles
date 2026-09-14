@@ -198,5 +198,6 @@ sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 `tests/test_hook_sync.py` が不変条件を固定する: `.codex` 側に複製もリンクも無い
 こと、`.codex/hooks` 配下に mode 120000 の追跡エントリが 1 つも無いこと、そして
 symlink 化されたフックディレクトリ経由でも共有ヘルパーが実際に読めること。
-解決に失敗した場合に備え、各 wrapper は読み込み後に関数の存在を確認して落ちる
-(INSTALL_PLATFORM.md 参照)。
+解決に失敗した場合に備え、共有ファイルを読む wrapper (`lint.sh` / `auto-format.sh`)
+は読み込み後に `declare -F` で関数の存在を確認し、未定義なら stderr に理由を出して
+exit 0 で抜ける (fail-open。確認箇所は各 wrapper の `SHARED_DIR` 直後)。

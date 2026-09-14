@@ -21,7 +21,7 @@
 - **fzf 連携関数**: `cf`（ディレクトリ移動）/ `vf`（プレビュー付きで開く）/ `sshs`（SSH ホスト選択）
 - **プロジェクト雛形**: `np [-n|--dry-run] [DIR]` — `scripts/new_project.sh` を呼んで雛形を用意し、作成先へ移動する（詳細は下記「ユーティリティスクリプト」）
 - **AI ツールのエイリアス / 関数**:
-  - `c` / `cl`: Claude Code、`cx`: Codex、`ge` / `g`: Gemini CLI、`cop`: GitHub Copilot CLI
+  - `c` / `cl`: Claude Code、`cx`: Codex、`ge`: Gemini CLI、`cop`: GitHub Copilot CLI
   - `mc`（補完付き）: `mc explain` / `mc translate` / `mc commit` / `mc push` など Claude を用途別モデルで起動
   - `commit` / `push` / `pull_request` / `translate`: Gemini CLI ベースの Git・翻訳ショートカット
   - `update_ai_tools`: `scripts/update_ai_tools.sh` を実行
