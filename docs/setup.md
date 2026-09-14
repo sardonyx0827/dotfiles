@@ -177,11 +177,21 @@ ln -sf ~/dotfiles/.config/nvim ~/.config/nvim
 # VS Code設定 (ユーザー設定の置き場所が OS 依存。macOS は ~/.config ではない)
 # User/ ディレクトリごとリンクせず個別ファイルにするのは、VS Code が同じ場所へ
 # globalStorage/ workspaceStorage/ 等の実行時データを書くため。
-if [ "$(uname -s)" = "Darwin" ]; then
-  vscode_user_dir="$HOME/Library/Application Support/Code/User"
-else
-  vscode_user_dir="$HOME/.config/Code/User"
-fi
+# Windows (Git Bash) の VS Code は %APPDATA%\Code\User しか読まないので、
+# ~/.config に張ったリンクは作成できても効かない。APPDATA が無い素の msys
+# シェルでは Linux と同じ場所に倒す (install.sh の _link_editor_configs と同じ分岐)。
+case "$(uname -s)" in
+  Darwin)
+    vscode_user_dir="$HOME/Library/Application Support/Code/User" ;;
+  MINGW* | MSYS* | CYGWIN*)
+    if [ -n "${APPDATA:-}" ]; then
+      vscode_user_dir="$APPDATA/Code/User"
+    else
+      vscode_user_dir="$HOME/.config/Code/User"
+    fi ;;
+  *)
+    vscode_user_dir="$HOME/.config/Code/User" ;;
+esac
 mkdir -p "$vscode_user_dir"
 for e in settings.json keybindings.json; do
   ln -sf ~/dotfiles/.config/Code/User/$e "$vscode_user_dir/$e"

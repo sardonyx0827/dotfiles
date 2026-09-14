@@ -115,6 +115,25 @@ def test_manual_setup_covers_every_install_sh_link():
     )
 
 
+_VSCODE_USER_DIR = re.compile(r'vscode_user_dir="(?P<dir>[^"]+)"')
+
+
+def test_manual_setup_uses_every_vscode_user_dir_install_sh_uses():
+    """The link SOURCES matching is not enough: the destinations are OS-branched.
+
+    install.sh gained a third VS Code location -- %APPDATA%\\Code\\User for Git
+    Bash, where the build never reads $HOME/.config -- after a Windows install
+    linked into a directory VS Code ignores. The manual recipe kept the old
+    two-way branch, so the same dead links awaited anyone following it, and
+    the source-set comparison above could not see it.
+    """
+    expected = set(_VSCODE_USER_DIR.findall(INSTALL_SH.read_text(encoding="utf-8")))
+    documented = set(_VSCODE_USER_DIR.findall(SETUP_DOC.read_text(encoding="utf-8")))
+    assert expected, "failed to parse vscode_user_dir out of install.sh"
+    missing = sorted(expected - documented)
+    assert not missing, f"docs/setup.md's VS Code recipe never links into: {missing}"
+
+
 def test_manual_setup_does_not_invent_links():
     """...and must not tell the reader to link something install.sh does not.
 
