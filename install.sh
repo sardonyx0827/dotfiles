@@ -1159,12 +1159,18 @@ link_entry() {
   # backup dir and `ln -sf` would leave a self-referential link in the working
   # tree -- while reporting success. install_oh_my_zsh carries the same
   # self-heal for ~/.oh-my-zsh/custom; this is the general form.
-  local src_real dest_parent_real
-  src_real="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"
-  dest_parent_real="$(cd "$(dirname "$dest")" 2>/dev/null && pwd -P)" ||
-    dest_parent_real=""
-  if [ -n "$dest_parent_real" ] &&
-    [ "$dest_parent_real/$(basename "$dest")" = "$src_real" ]; then
+  #
+  # Identity, not spelling: `-ef` asks whether the two parents are the same
+  # directory (device + inode). This compared `pwd -P` strings, but bash
+  # resolves symlinks textually and never canonicalises case, so on a
+  # case-insensitive filesystem (the macOS default) a link to `.../Dotfiles`
+  # and an installer run from `.../dotfiles` were two strings for one
+  # directory and the guard let the write through. The parents are compared
+  # rather than dest itself: an existing dest link to src (every re-run) must
+  # still be refreshed, and `-ef` on dest would follow it and match. A missing
+  # dest parent makes `-ef` false, which is correct -- nothing resolves there.
+  if [ "$(dirname "$dest")" -ef "$(dirname "$src")" ] &&
+    [ "$(basename "$dest")" = "$(basename "$src")" ]; then
     print_warning "Skipping $dest: it already resolves into the checkout ($src)"
     return 0
   fi
@@ -1283,10 +1289,10 @@ _render_git_local_config() {
     # Per-machine files, and the user's real name/email: if ~/.config itself
     # resolves into the checkout (the layout link_entry guards against), they
     # would land in the working tree as untracked files.
-    local cfg_home_real cfg_repo_real gh_host
-    cfg_home_real="$(cd "$HOME/.config" 2>/dev/null && pwd -P)" || cfg_home_real=""
-    cfg_repo_real="$(cd "$DOTFILES_DIR/.config" 2>/dev/null && pwd -P)" || cfg_repo_real=""
-    if [ -n "$cfg_home_real" ] && [ "$cfg_home_real" = "$cfg_repo_real" ]; then
+    # `-ef` (same directory), not a `pwd -P` string compare -- see link_entry
+    # for the case-insensitive filesystem that slipped past the string form.
+    local gh_host
+    if [ "$HOME/.config" -ef "$DOTFILES_DIR/.config" ]; then
       print_warning "Skipping git config render: $HOME/.config resolves into the checkout"
       return 0
     fi
@@ -1469,15 +1475,12 @@ _link_codex_config() {
   # hooks.json carrying this machine's $HOME and a seeded config.toml would
   # land in the working tree as untracked files -- exactly the "one `git add`
   # away from committing a token" trap the comments below describe.
-  local codex_home_real codex_repo_real
-  codex_home_real="$(cd "$HOME/.codex" 2>/dev/null && pwd -P)" || codex_home_real=""
-  # `|| var=""` like the probe above and the ~/.config pair in
-  # _render_git_local_config: the entry loop above deliberately tolerates a
-  # missing .codex, so failing to resolve it must not take `set -e` with it.
-  # An empty value is safe here -- the guard below requires codex_home_real
-  # to be non-empty before it compares the two.
-  codex_repo_real="$(cd "$DOTFILES_DIR/.codex" 2>/dev/null && pwd -P)" || codex_repo_real=""
-  if [ -n "$codex_home_real" ] && [ "$codex_home_real" = "$codex_repo_real" ]; then
+  #
+  # `-ef` (same directory), not a `pwd -P` string compare -- see link_entry
+  # for the case-insensitive filesystem that slipped past the string form. It
+  # is also a plain test, so a missing ~/.codex or checkout .codex (the entry
+  # loop above deliberately tolerates both) is simply false under set -e.
+  if [ "$HOME/.codex" -ef "$DOTFILES_DIR/.codex" ]; then
     print_warning "Skipping config.toml / hooks.json: $HOME/.codex resolves into the checkout"
     return 0
   fi

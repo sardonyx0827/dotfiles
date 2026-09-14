@@ -2865,6 +2865,35 @@ class TestLinkingThroughASymlinkedParent:
         )
         assert "resolves into the checkout" in res.stdout + res.stderr
 
+    # The guards compared `pwd -P` strings. bash resolves symlinks textually
+    # and never canonicalises case, so on a case-insensitive filesystem (the
+    # macOS default) a link spelled `.../CHECKOUT/.claude` and an installer run
+    # from `.../checkout` produced two different strings for one directory, and
+    # every guard above was bypassed. Only meaningful where the FS folds case;
+    # a case-sensitive FS cannot express the alias at all.
+    @pytest.mark.parametrize("rel", [".claude", ".codex", ".gemini", ".config"])
+    def test_a_case_differing_alias_of_the_checkout_is_still_detected(
+        self, shell_env, tmp_path, rel
+    ):
+        checkout = self._scratch_checkout(tmp_path)
+        alias = tmp_path / "CHECKOUT"
+        if not alias.exists():
+            pytest.skip("filesystem is case-sensitive")
+        (shell_env.home / rel).symlink_to(alias / rel)
+        before = self._shape(checkout / rel)
+
+        res = subprocess.run(
+            ["bash", "-c", f'source "{checkout / "install.sh"}"\ncreate_symlinks'],
+            capture_output=True,
+            text=True,
+            env=shell_env.env,
+            timeout=120,
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert self._shape(checkout / rel) == before, "the checkout was modified"
+        assert "resolves into the checkout" in res.stdout + res.stderr
+
 
 class TestDanglingParentSymlinks:
     """A stale symlink where a config directory belongs must be replaced, not fatal.
