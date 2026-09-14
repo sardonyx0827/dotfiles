@@ -2115,6 +2115,13 @@ def _call_codex(prompt: str) -> tuple[str, str]:
     ファイル書き込み・ネットワークを封じた審査専用の起動にする (審査中に
     誘導されても副作用を持てない)。CLI 不在 / タイムアウト / 非ゼロ終了は
     いずれも ERROR を返し、呼び出し側でフェイルクローズさせる。
+
+    EDITOR_AI_ONESHOT=1 を立てるのは、sandbox が縛るのはモデルが実行する
+    コマンドだけで Codex 自身のフックは縛らないため。入れ子の codex exec も
+    ~/.codex/hooks.json の Stop フックを発火し、auto-format.sh が利用者の
+    未コミットの変更をすべて整形し、stop-audit.sh がそれを監査する — 判定を
+    返すだけの呼び出しでは。両フックはこのマーカーで即終了する (ai/backend.lua
+    の ONESHOT_ENV と同じ約束)。os.environ に重ねるのは PATH を保つため。
     """
     try:
         result = subprocess.run(
@@ -2129,6 +2136,7 @@ def _call_codex(prompt: str) -> tuple[str, str]:
             capture_output=True,
             text=True,
             timeout=60,
+            env={**os.environ, "EDITOR_AI_ONESHOT": "1"},
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as err:
         return "ERROR", f"Codex invocation failed: {err}"

@@ -1458,12 +1458,18 @@ link_entry() {
   # backup dir and `ln -sf` would leave a self-referential link in the working
   # tree -- while reporting success. install_oh_my_zsh carries the same
   # self-heal for ~/.oh-my-zsh/custom; this is the general form.
-  local src_real dest_parent_real
-  src_real="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"
-  dest_parent_real="$(cd "$(dirname "$dest")" 2>/dev/null && pwd -P)" ||
-    dest_parent_real=""
-  if [ -n "$dest_parent_real" ] &&
-    [ "$dest_parent_real/$(basename "$dest")" = "$src_real" ]; then
+  #
+  # Identity, not spelling: `-ef` asks whether the two parents are the same
+  # directory (device + inode). This compared `pwd -P` strings, but bash
+  # resolves symlinks textually and never canonicalises case, so on a
+  # case-insensitive filesystem (the macOS default) a link to `.../Dotfiles`
+  # and an installer run from `.../dotfiles` were two strings for one
+  # directory and the guard let the write through. The parents are compared
+  # rather than dest itself: an existing dest link to src (every re-run) must
+  # still be refreshed, and `-ef` on dest would follow it and match. A missing
+  # dest parent makes `-ef` false, which is correct -- nothing resolves there.
+  if [ "$(dirname "$dest")" -ef "$(dirname "$src")" ] &&
+    [ "$(basename "$dest")" = "$(basename "$src")" ]; then
     print_warning "Skipping $dest: it already resolves into the checkout ($src)"
     return 0
   fi
@@ -1505,6 +1511,18 @@ _seed_zsh_secrets() {
   # re-run must never clobber the keys already in it. The commented-out exports
   # are just a starting point, so an empty stub is still a success.
   local secrets="$HOME/.zsh_secrets"
+  # A symlink here is the user's redirect (an encrypted volume, a synced
+  # folder). `[ -e ]` is false once its target is gone, so it used to read as
+  # absent and the seed below wrote THROUGH it: a stub planted where the real
+  # keys belong or, with the target's directory gone too, a bare ENOENT under
+  # set -e that killed the installer with no [ERROR] line. Never write through
+  # it; ahead of the dry-run branch so the preview reports the same decision.
+  if [ -L "$secrets" ] && [ ! -e "$secrets" ]; then
+    local dry_prefix=""
+    [ "$DRY_RUN" -eq 1 ] && dry_prefix="[DRY-RUN] "
+    print_warning "${dry_prefix}Leaving $secrets alone: it is a dangling symlink (its target is missing)"
+    return 0
+  fi
   # Dry-run previews the decision it would actually make, not just the write:
   # a bare "would create" on a machine that already has the file would misreport
   # the plan the same way the hooks.json preview once did.
@@ -1560,6 +1578,8 @@ _render_git_local_config() {
     fi
     if [ -e "$git_user_config" ]; then
       print_info "[DRY-RUN] would keep existing git identity ($git_user_config)"
+    elif [ -L "$git_user_config" ]; then
+      print_warning "[DRY-RUN] would leave $git_user_config alone: it is a dangling symlink (its target is missing)"
     elif [ -n "$prior_git_name" ] && [ -n "$prior_git_email" ]; then
       print_info "[DRY-RUN] would render $git_user_config inheriting $prior_git_name <$prior_git_email>"
     else
@@ -1569,10 +1589,10 @@ _render_git_local_config() {
     # Per-machine files, and the user's real name/email: if ~/.config itself
     # resolves into the checkout (the layout link_entry guards against), they
     # would land in the working tree as untracked files.
-    local cfg_home_real cfg_repo_real gh_host
-    cfg_home_real="$(cd "$HOME/.config" 2>/dev/null && pwd -P)" || cfg_home_real=""
-    cfg_repo_real="$(cd "$DOTFILES_DIR/.config" 2>/dev/null && pwd -P)" || cfg_repo_real=""
-    if [ -n "$cfg_home_real" ] && [ "$cfg_home_real" = "$cfg_repo_real" ]; then
+    # `-ef` (same directory), not a `pwd -P` string compare -- see link_entry
+    # for the case-insensitive filesystem that slipped past the string form.
+    local gh_host
+    if [ "$HOME/.config" -ef "$DOTFILES_DIR/.config" ]; then
       print_warning "Skipping git config render: $HOME/.config resolves into the checkout"
       return 0
     fi
@@ -1604,6 +1624,11 @@ _render_git_local_config() {
 
     if [ -e "$git_user_config" ]; then
       print_info "Keeping existing git identity ($git_user_config)"
+    elif [ -L "$git_user_config" ]; then
+      # Same trap as the dangling ~/.zsh_secrets in _seed_zsh_secrets: `[ -e ]`
+      # is false on a broken link, and both writers below then fail on it
+      # (git cannot take its lock) under set -e. The redirect is the user's.
+      print_warning "Leaving $git_user_config alone: it is a dangling symlink (its target is missing)"
     else
       local git_name="$prior_git_name" git_email="$prior_git_email"
       # Nothing to inherit (fresh machine, or an upgrade from the version that
@@ -1750,15 +1775,12 @@ _link_codex_config() {
   # hooks.json carrying this machine's $HOME and a seeded config.toml would
   # land in the working tree as untracked files -- exactly the "one `git add`
   # away from committing a token" trap the comments below describe.
-  local codex_home_real codex_repo_real
-  codex_home_real="$(cd "$HOME/.codex" 2>/dev/null && pwd -P)" || codex_home_real=""
-  # `|| var=""` like the probe above and the ~/.config pair in
-  # _render_git_local_config: the entry loop above deliberately tolerates a
-  # missing .codex, so failing to resolve it must not take `set -e` with it.
-  # An empty value is safe here -- the guard below requires codex_home_real
-  # to be non-empty before it compares the two.
-  codex_repo_real="$(cd "$DOTFILES_DIR/.codex" 2>/dev/null && pwd -P)" || codex_repo_real=""
-  if [ -n "$codex_home_real" ] && [ "$codex_home_real" = "$codex_repo_real" ]; then
+  #
+  # `-ef` (same directory), not a `pwd -P` string compare -- see link_entry
+  # for the case-insensitive filesystem that slipped past the string form. It
+  # is also a plain test, so a missing ~/.codex or checkout .codex (the entry
+  # loop above deliberately tolerates both) is simply false under set -e.
+  if [ "$HOME/.codex" -ef "$DOTFILES_DIR/.codex" ]; then
     print_warning "Skipping config.toml / hooks.json: $HOME/.codex resolves into the checkout"
     return 0
   fi
@@ -1798,13 +1820,19 @@ _link_codex_config() {
   # hooks.json: render from the template, substituting the placeholder for
   # this machine's real $HOME (Codex does not expand ~ or $HOME itself).
   if [ -f "$DOTFILES_DIR/.codex/hooks.json.template" ]; then
+    # $HOME lands in the sed REPLACEMENT, where `&` means "the matched text"
+    # and `|` closes the s||| expression: /Users/a&b rendered as the
+    # nonexistent /Users/a__HOME__b without a warning, and /home/a|b made sed
+    # fail under set -e. Escape both, and the backslash that escapes them.
+    local home_sed
+    home_sed="$(printf '%s\n' "$HOME" | sed 's/[\\&|]/\\&/g')"
     if [ "$DRY_RUN" -eq 1 ]; then
       # Read-only preview of the same diff check the real branch below
       # performs -- this used to unconditionally claim "would render" even
       # when the rendered output is byte-identical to what's already there.
       local dry_rendered_tmp
       dry_rendered_tmp="$(mktemp)"
-      sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
+      sed "s|__HOME__|$home_sed|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
         >"$dry_rendered_tmp"
       if [ ! -f "$HOME/.codex/hooks.json" ] ||
         ! cmp -s "$dry_rendered_tmp" "$HOME/.codex/hooks.json"; then
@@ -1816,7 +1844,7 @@ _link_codex_config() {
     else
       local rendered_tmp
       rendered_tmp="$(mktemp)"
-      sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
+      sed "s|__HOME__|$home_sed|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
         >"$rendered_tmp"
       # Only replace (and back up) when the rendered result actually changed, so
       # re-runs don't move an identical hooks.json into a fresh backup dir.
@@ -1888,9 +1916,21 @@ create_symlinks() {
   # Read whatever identity git resolves right now, BEFORE the .gitconfig link
   # below replaces it. An upgrade from a real ~/.gitconfig that carried [user]
   # keeps its name/email this way instead of silently losing it.
+  #
+  # --includes is not optional: git follows [include] by default only when no
+  # file or scope is named, so a bare --global read the common
+  # `[include] path = ~/.gitconfig.local` layout back as empty -- and the link
+  # below then made that file unreachable, dropping the identity.
+  #
+  # `-C /` because --includes also resolves includeIf, and gitdir:/onbranch:
+  # are matched against the CURRENT repository -- which is normally this
+  # checkout. A `[includeIf "gitdir:~/work/"]` identity meant for that tree
+  # only would otherwise be baked into user.gitconfig for every repository.
+  # Outside any repository no conditional include matches, and a plain
+  # [include] is still followed.
   local prior_git_name prior_git_email
-  prior_git_name="$(git config --global user.name 2>/dev/null || true)"
-  prior_git_email="$(git config --global user.email 2>/dev/null || true)"
+  prior_git_name="$(git -C / config --global --includes user.name 2>/dev/null || true)"
+  prior_git_email="$(git -C / config --global --includes user.email 2>/dev/null || true)"
 
   # Backup existing files. In dry-run nothing is moved, so the dir is never
   # created (and the empty-dir cleanup at the end is skipped to match).
@@ -2198,7 +2238,12 @@ change_shell() {
     print_warning "zsh not found; skipping shell change. Install zsh, then run: chsh -s \$(which zsh)"
     return 0
   fi
-  if [ "$SHELL" != "$(which zsh)" ]; then
+  # "Is the login shell a zsh", not "is it THE zsh first on PATH". macOS logs
+  # in with /bin/zsh while install_brew_packages puts a homebrew zsh first on
+  # PATH, so comparing against `$(which zsh)` failed on every run: chsh was
+  # retried (a password prompt), refused /opt/homebrew/bin/zsh as absent from
+  # /etc/shells, and told a user already on zsh to go edit that file.
+  if [ "$(basename "${SHELL:-}")" != "zsh" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       print_info "[DRY-RUN] would change the default shell to zsh (chsh)"
       return 0

@@ -628,6 +628,34 @@ class TestCreateSymlinks:
         # to move aside.
         assert not any(p.exists() for p in home.glob(".dotfiles_backup_*/.zsh_secrets"))
 
+    # `[ -e ]` is false for a symlink whose target is gone, so a redirected
+    # secrets file (an encrypted volume, a synced folder) looked absent and the
+    # seed wrote THROUGH the link. With the target's parent missing that write
+    # failed under set -e and the installer died with no [ERROR] line, before
+    # git config, the editor/Claude/Codex links, packages and chsh; with the
+    # parent present it planted a stub at a location the user chose for their
+    # real keys. The redirect is the user's either way: leave it untouched.
+    @pytest.mark.parametrize("parent_exists", [False, True])
+    def test_zsh_secrets_dangling_symlink_is_left_alone(
+        self, shell_env, tmp_path, parent_exists
+    ):
+        home = shell_env.home
+        target_dir = tmp_path / "unmounted-volume"
+        if parent_exists:
+            target_dir.mkdir()
+        target = target_dir / "zsh_secrets"
+        secrets = home / ".zsh_secrets"
+        secrets.symlink_to(target)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+
+        assert res.returncode == 0, res.stderr
+        assert secrets.is_symlink() and secrets.readlink() == target
+        assert not target.exists(), "the seed was written through the user's link"
+        assert "dangling" in res.stdout + res.stderr
+        # The steps after the seed still ran.
+        assert (home / ".config/git/os.gitconfig").is_file()
+
     # --- Git identity: rendered per machine, never tracked ------------------
 
     def test_git_identity_is_inherited_from_the_previous_config(
@@ -649,6 +677,92 @@ class TestCreateSymlinks:
         )
         assert "name = Prior Person" in rendered
         assert "email = prior@example.com" in rendered
+
+    def test_git_identity_is_inherited_through_an_include(self, shell_env, tmp_path):
+        """A [user] pulled in by [include] is part of the identity git resolves.
+
+        `git config --global <key>` does not follow includes -- git only does
+        that by default when no file or scope is named -- so the common
+        `[include] path = ~/.gitconfig.local` layout read back as empty. The
+        .gitconfig link then made that file unreachable, and the identity
+        dropped out of the effective config with one warning line.
+        """
+        local = tmp_path / "gitconfig.local"
+        local.write_text(
+            "[user]\n\tname = Included Person\n\temail = included@example.com\n",
+            encoding="utf-8",
+        )
+        prior = tmp_path / "prior-gitconfig"
+        prior.write_text(f"[include]\n\tpath = {local}\n", encoding="utf-8")
+        env = {**shell_env.env, "GIT_CONFIG_GLOBAL": str(prior)}
+
+        res = run_sourced("create_symlinks", env)
+        assert res.returncode == 0, res.stderr
+
+        rendered = (shell_env.home / ".config/git/user.gitconfig").read_text(
+            encoding="utf-8"
+        )
+        assert "name = Included Person" in rendered
+        assert "email = included@example.com" in rendered
+
+    def test_conditional_include_does_not_leak_into_the_global_identity(
+        self, shell_env, tmp_path
+    ):
+        """--includes also resolves includeIf, against the CURRENT repository.
+
+        install.sh is normally run from inside its own checkout, so a
+        `[includeIf "gitdir:~/work/"]` identity -- meant for that directory
+        only -- matched whenever the checkout lived under ~/work/, and was
+        baked into user.gitconfig as the identity for every repository.
+        """
+        work_config = tmp_path / "work-config"
+        work_config.write_text(
+            "[user]\n\tname = Work Person\n\temail = work@example.com\n",
+            encoding="utf-8",
+        )
+        work = tmp_path / "work"
+        repo = work / "checkout"
+        repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        prior = tmp_path / "prior-gitconfig"
+        prior.write_text(
+            "[user]\n\tname = Personal Person\n\temail = personal@example.com\n"
+            f'[includeIf "gitdir:{work}/"]\n\tpath = {work_config}\n',
+            encoding="utf-8",
+        )
+        env = {**shell_env.env, "GIT_CONFIG_GLOBAL": str(prior)}
+
+        res = run_sourced("create_symlinks", env, cwd=repo)
+        assert res.returncode == 0, res.stderr
+
+        rendered = (shell_env.home / ".config/git/user.gitconfig").read_text(
+            encoding="utf-8"
+        )
+        assert "email = personal@example.com" in rendered
+        assert "work@example.com" not in rendered
+
+    # Same defect as the dangling ~/.zsh_secrets above: `[ -e ]` is false on a
+    # broken link, and `git config --file` / the placeholder printf then failed
+    # on it (git cannot take the lock) under set -e.
+    def test_git_identity_dangling_symlink_is_left_alone(self, shell_env, tmp_path):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        target = tmp_path / "unmounted-volume/user.gitconfig"
+        user_config = home / ".config/git/user.gitconfig"
+        user_config.symlink_to(target)
+        prior = tmp_path / "prior-gitconfig"
+        prior.write_text(
+            "[user]\n\tname = Prior Person\n\temail = prior@example.com\n",
+            encoding="utf-8",
+        )
+        env = {**shell_env.env, "GIT_CONFIG_GLOBAL": str(prior)}
+
+        res = run_sourced("create_symlinks", env)
+
+        assert res.returncode == 0, res.stderr
+        assert user_config.is_symlink() and user_config.readlink() == target
+        assert "dangling" in res.stdout + res.stderr
+        assert (home / ".config/nvim").is_symlink(), "later steps did not run"
 
     def test_git_identity_is_never_overwritten(self, shell_env):
         home = shell_env.home
@@ -2763,6 +2877,26 @@ class TestChangeShell:
         assert "[WARNING]" in res.stdout
         assert not any(c.startswith("chsh") for c in shell_env.calls)
 
+    @pytest.mark.parametrize("dry_run", ["0", "1"])
+    def test_a_login_shell_that_is_another_zsh_is_already_zsh(self, shell_env, dry_run):
+        """A second zsh earlier on PATH does not make the login shell "not zsh".
+
+        macOS logs in with /bin/zsh, and install_brew_packages itself puts a
+        homebrew zsh first on PATH, so `$SHELL != $(which zsh)` held on every
+        run: chsh was attempted again (a password prompt), failed because
+        /opt/homebrew/bin/zsh is not in /etc/shells, and printed advice to
+        add it there -- for a user whose shell never needed changing.
+        """
+        shell_env.stub("zsh")  # which zsh -> the stub dir, not /bin/zsh
+        env = {**shell_env.env, "SHELL": "/bin/zsh", "DRY_RUN": dry_run}
+
+        res = run_sourced("change_shell", env)
+
+        assert res.returncode == 0, res.stderr
+        assert "already zsh" in res.stdout
+        assert "would change" not in res.stdout
+        assert not any(c.startswith("chsh") for c in shell_env.calls)
+
     def test_missing_zsh_warns_in_dry_run_too(self, shell_env):
         env = {**shell_env.env, "DRY_RUN": "1", "SHELL": "/bin/bash"}
 
@@ -2799,6 +2933,33 @@ class TestHooksJsonTemplate:
         # config itself must still never invoke bare `python`.
         assert "bash-review-launcher.sh'" in content
         assert "python '" not in content
+
+    @pytest.mark.parametrize("dry_run", ["0", "1"])
+    def test_sed_metacharacters_in_home_render_literally(
+        self, shell_env, tmp_path, dry_run
+    ):
+        """$HOME went into the sed REPLACEMENT unescaped.
+
+        `&` there means "the matched text", so /Users/a&b rendered as
+        /Users/a__HOME__b -- a path that does not exist, written without a
+        word of warning. `|` is the s||| delimiter, so /home/a|b made sed
+        fail ("bad flag in substitute command") and set -e took the whole
+        installer down. `&` is a legal Windows user name character.
+        """
+        home = tmp_path / "we&ird|home"
+        home.mkdir()
+        env = {**shell_env.env, "HOME": str(home), "DRY_RUN": dry_run}
+
+        res = run_sourced("_link_codex_config", env)
+
+        assert res.returncode == 0, res.stderr
+        if dry_run == "1":
+            assert "would render" in res.stdout
+            return
+        content = (home / ".codex/hooks.json").read_text(encoding="utf-8")
+        assert "__HOME__" not in content
+        assert f"{home}/.codex/hooks/" in content
+        assert json.loads(content)
 
     def test_rerun_regenerates_hooks_json(self, shell_env):
         home = shell_env.home
@@ -3321,6 +3482,35 @@ class TestLinkingThroughASymlinkedParent:
         assert not list(shell_env.home.glob(f".dotfiles_backup_*/{rel}")), (
             "the repository's own files were moved into the backup dir"
         )
+        assert "resolves into the checkout" in res.stdout + res.stderr
+
+    # The guards compared `pwd -P` strings. bash resolves symlinks textually
+    # and never canonicalises case, so on a case-insensitive filesystem (the
+    # macOS default) a link spelled `.../CHECKOUT/.claude` and an installer run
+    # from `.../checkout` produced two different strings for one directory, and
+    # every guard above was bypassed. Only meaningful where the FS folds case;
+    # a case-sensitive FS cannot express the alias at all.
+    @pytest.mark.parametrize("rel", [".claude", ".codex", ".gemini", ".config"])
+    def test_a_case_differing_alias_of_the_checkout_is_still_detected(
+        self, shell_env, tmp_path, rel
+    ):
+        checkout = self._scratch_checkout(tmp_path)
+        alias = tmp_path / "CHECKOUT"
+        if not alias.exists():
+            pytest.skip("filesystem is case-sensitive")
+        (shell_env.home / rel).symlink_to(alias / rel)
+        before = self._shape(checkout / rel)
+
+        res = subprocess.run(
+            ["bash", "-c", f'source "{checkout / "install.sh"}"\ncreate_symlinks'],
+            capture_output=True,
+            text=True,
+            env=shell_env.env,
+            timeout=120,
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert self._shape(checkout / rel) == before, "the checkout was modified"
         assert "resolves into the checkout" in res.stdout + res.stderr
 
 

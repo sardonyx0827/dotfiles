@@ -1338,3 +1338,61 @@ class TestLintHelperOutputVarGuard:
         )
         assert res.returncode == 2, f"{name}: {res.stdout} {res.stderr}"
         assert "collides" in res.stderr
+
+
+# (extension, linter stub, companions, the formatter-owned exclusion flag).
+FORMATTER_OWNED_FINDINGS = [
+    pytest.param("rb", "rubocop", [], "--except Layout", id="rubocop"),
+    pytest.param("py", "ruff", ["bandit", "mypy"], "--ignore I", id="ruff"),
+]
+
+
+class TestLintBeforeFormatSkipsFormatterOwnedFindings:
+    """Codex lints BEFORE auto-format runs; Claude lints after it.
+
+    Claude's PostToolUse runs auto-format then lint, so the shared lint module
+    was written against an already-formatted file ("auto-format.sh has already
+    run --auto-correct"). Codex moved auto-format to Stop (a reformat breaks
+    apply_patch), so its PostToolUse lint sees the raw edit: rubocop's Layout
+    cops and ruff's import sorting -- exactly what `rubocop --auto-correct` and
+    `ruff check --select I --fix` repair at Stop -- came back as exit 2, and
+    the agent spent a turn hand-fixing what the formatter was about to fix.
+
+    Each side is pinned: Codex must leave the formatter's findings to the
+    formatter, and Claude, whose file is already formatted, must keep them --
+    there they are the formatter's leftovers and are real.
+    """
+
+    @pytest.mark.parametrize("ext,tool,companions,flag", FORMATTER_OWNED_FINDINGS)
+    def test_codex_lint_leaves_formatter_findings_to_the_stop_hook(
+        self, shell_env, tmp_path, ext, tool, companions, flag
+    ):
+        _stub_linter(shell_env, tool)
+        for companion in companions:
+            shell_env.stub(companion)
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+
+        res = shell_env.run(CODEX_LINT, stdin=payload(target))
+
+        assert res.returncode == 0, res.stderr
+        calls = [c for c in shell_env.calls if c.startswith(f"{tool} ")]
+        assert calls, f"{tool} was never invoked: {shell_env.calls}"
+        assert all(flag in c for c in calls), calls
+
+    @pytest.mark.parametrize("ext,tool,companions,flag", FORMATTER_OWNED_FINDINGS)
+    def test_claude_lint_keeps_formatter_findings(
+        self, shell_env, tmp_path, ext, tool, companions, flag
+    ):
+        _stub_linter(shell_env, tool)
+        for companion in companions:
+            shell_env.stub(companion)
+        target = tmp_path / f"x.{ext}"
+        target.write_text("content\n", encoding="utf-8")
+
+        res = shell_env.run(CLAUDE_LINT, stdin=payload(target))
+
+        assert res.returncode == 0, res.stderr
+        calls = [c for c in shell_env.calls if c.startswith(f"{tool} ")]
+        assert calls, f"{tool} was never invoked: {shell_env.calls}"
+        assert not any(flag in c for c in calls), calls

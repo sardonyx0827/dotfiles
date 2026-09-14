@@ -11,8 +11,10 @@ on:
 permissions:
   contents: read
 
-# 同一 ref の古い実行はキャンセル。ただし main への push は
-# 途中中断しない（開発ブランチの実行は最後まで通す）
+# 同一 ref の古い実行はキャンセル (PR に push し直すと、その PR の実行中の CI は
+# 止まる。PR 時の github.ref は refs/pull/N/merge なので下の式は true)。ただし
+# main への push は途中中断せず、全コミットの実行を最後まで通す。push トリガーは
+# main だけなので、開発ブランチの CI は PR 経由でしか走らない
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -235,8 +237,11 @@ jobs:
   # するため意図的に入れず、luacheck を lint 専用で回して当該バグクラスだけを拾う。
   #
   # 助言的 (continue-on-error) から gating へ格上げした。Lua ツリーは
-  # このリポジトリ最大の未検証面であり、テストも無いので luacheck だけが
-  # 唯一の自動検査になる。非ブロックのままでは「赤くならない警告」を誰も読まず、
+  # このリポジトリ最大の未検証面であり、luacheck が唯一の自動検査になる部分が
+  # 大半を占める。tests/test_nvim_*.py (上の "Install Neovim (pinned)" 参照) は
+  # functions/ 配下のアプリケーションコードと lazy.lua の読み込み、キーマップ
+  # opts の綴りだけを押さえており、プラグイン spec・オプション・キーマップの
+  # 大半はテストが無い。非ブロックのままでは「赤くならない警告」を誰も読まず、
   # 検知できても退行を止められない。格上げの前提として、直近の main で
   # 0 warnings / 0 errors in 50 files を確認済み。
   #
