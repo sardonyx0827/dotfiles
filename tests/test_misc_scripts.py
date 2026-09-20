@@ -1533,3 +1533,38 @@ class TestZshHomebrewOnPath:
         assert entries.index(f"{prefix}/bin") < entries.index("/usr/bin"), (
             f"Homebrew was left behind the system dirs: {entries}"
         )
+
+
+class TestZshCompilerFlags:
+    """The prologue must not touch LDFLAGS / CPPFLAGS at all.
+
+    It used to, for a `php@8.4` keg: assigned rather than appended, and guarded
+    on the OS but not on the formula, so on macOS every interactive shell threw
+    away whatever ~/.zshenv, direnv or a parent shell had set and replaced it
+    with flags for a keg that is not installed -- exactly the hazard .zshrc's
+    opening comment describes. The block was then deleted rather than hardened:
+    install.sh pulls plain `php` in as a php-cs-fixer dependency and never
+    `php@8.4`, so on a machine this repo built the block could not run at all.
+
+    Both tests stand up a fake keg on purpose. With the keg absent, deleting
+    the block has no observable signature -- these would pass either way.
+    """
+
+    INHERITED = {
+        "LDFLAGS": "-L/somewhere/openssl@3/lib",
+        "CPPFLAGS": "-I/somewhere/openssl@3/include",
+    }
+
+    def test_sets_no_flags_even_with_the_keg_present(self, tmp_path):
+        out = ZshPrologueHarness(tmp_path, with_php_keg=True).run()
+        assert out["LDFLAGS"] == "", (
+            f"the prologue is setting compiler flags again: {out['LDFLAGS']!r}"
+        )
+        assert out["CPPFLAGS"] == "", out["CPPFLAGS"]
+
+    def test_inherited_flags_pass_through_untouched(self, tmp_path):
+        out = ZshPrologueHarness(tmp_path, with_php_keg=True).run(env=self.INHERITED)
+        assert out["LDFLAGS"] == self.INHERITED["LDFLAGS"], (
+            f"inherited LDFLAGS was modified: {out['LDFLAGS']!r}"
+        )
+        assert out["CPPFLAGS"] == self.INHERITED["CPPFLAGS"], out["CPPFLAGS"]

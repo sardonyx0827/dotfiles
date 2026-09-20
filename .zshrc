@@ -5,8 +5,10 @@
 typeset -U path PATH fpath FPATH
 
 # OS 判定。Homebrew / macOS 固有のパス・エイリアスを Linux/WSL でそのまま
-# 読み込むと、LDFLAGS/CPPFLAGS が存在しない /opt/homebrew を指してネイティブ
-# ビルド (pip の C 拡張ビルド等) を壊す実害があるため、uname でガードする。
+# 読み込むと存在しない /opt/homebrew を指してしまうため、uname でガードする。
+# この戒めは LDFLAGS/CPPFLAGS が存在しない keg を指してネイティブビルド
+# (pip の C 拡張ビルド等) を壊した事故に由来する。その 2 変数は下で設定しなく
+# なったが、ガード自体は brew shellenv と PKG_CONFIG_PATH をなお守っている。
 case "$(uname -s)" in
   Darwin) _os=macos ;;
   Linux) _os=linux ;;
@@ -65,11 +67,14 @@ path=(~/Library/Python/*/bin(N) $path)
 if [[ "$_os" == macos ]]; then
   # Homebrew (Apple Silicon) 固有のパス群。Linux には存在しないため読み込まない。
   export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
-  ## PHP (Homebrew php@8.4)
-  export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"
-  export PATH="/opt/homebrew/opt/php@8.4/sbin:$PATH"
-  export LDFLAGS="-L/opt/homebrew/opt/php@8.4/lib"
-  export CPPFLAGS="-I/opt/homebrew/opt/php@8.4/include"
+  # ここで LDFLAGS / CPPFLAGS は設定しない。以前は php@8.4 の keg 向けに
+  # 「代入」していたが、(1) install.sh が入れるのは php-cs-fixer の依存として
+  # 引かれる素の php であって php@8.4 ではなく、このリポジトリで構築した
+  # マシンでは一度も成立しない設定だった、(2) 代入なので ~/.zshenv / direnv /
+  # 親シェル (tmux ペイン、入れ子 zsh) が入れた値を毎回捨てていた。
+  # keg-only formula (openssl@3, zlib, readline ...) の brew info はまさに
+  # この 2 変数への設定を案内するため、捨てるとネイティブビルドが落ちる。
+  # 必要になったら ~/.zshenv 側で追記する形にすること。
 fi
 
 export ZSH="$HOME/.oh-my-zsh"
