@@ -451,10 +451,44 @@ end, { desc = "Get file and line info from visual selection", noremap = true, si
 ---------------------------------------------------------
 -- Close current buffer
 ---------------------------------------------------------
+-- Force only when there is nothing to lose. `force = true` unconditionally is
+-- `:bd!`: on a modified buffer it drops the unsaved edits *and* the undo
+-- history, with no prompt, no error and no message -- one stray <C-q> (next to
+-- <C-w>) and the work is gone with nothing to undo it back from. The sibling
+-- Vim config never did this (.vim/rc/80-custom.vim binds <C-q> to a plain
+-- `:bd`); only this side had drifted to the `!` form.
+--
+-- Keying the flag on 'modified' rather than dropping force outright is what
+-- keeps the fix from costing something else. A plain delete refuses whenever
+-- `:bd` would, and that is wider than unsaved text: a terminal buffer whose
+-- job is still running refuses too (measured: E89 "will be killed" with
+-- 'modified' false), so <C-q> would stop closing toggleterm windows -- a
+-- regression traded for the fix. 'modified' is exactly the "unwritten text
+-- exists" flag, it is false for a live terminal and false for a scratch
+-- buffer, and those are the ones that were always fine to force.
+--
+-- Refuse rather than ask: a `vim.fn.confirm` prompt blocks, and this tree runs
+-- headless (`nvim -l`) in its own CI, where a blocked prompt is a hang.
+-- The error is reported rather than matched on -- the delete can also fail for
+-- reasons that have nothing to do with unsaved changes (a locked buffer, say),
+-- and a message hardcoding "unsaved changes" would be a lie there. pcall gets
+-- the API function directly and not a closure around it, which is what keeps
+-- that error readable: wrap it in a `function() ... end` and Lua prefixes the
+-- message with this file's own "init.lua:NNN:", i.e. noise to the person who
+-- just pressed a key. Neovim has already put the real reason (E89) in the
+-- message area by then; this only adds the way out.
 local function close_current_buffer()
   local current_buf = vim.api.nvim_get_current_buf()
-  if vim.api.nvim_buf_is_loaded(current_buf) then
-    vim.api.nvim_buf_delete(current_buf, { force = true })
+  if not vim.api.nvim_buf_is_loaded(current_buf) then
+    return
+  end
+  local force = not vim.bo[current_buf].modified
+  local ok, err = pcall(vim.api.nvim_buf_delete, current_buf, { force = force })
+  if not ok then
+    vim.notify(
+      "Buffer not closed: " .. tostring(err) ..
+      "\nWrite it (:w), or discard the changes deliberately with :bd!.",
+      vim.log.levels.WARN)
   end
 end
 map("n", "<C-q>", close_current_buffer,
