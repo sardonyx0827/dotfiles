@@ -980,6 +980,72 @@ echo "$out"
         assert any(c.startswith("local-eslint ") for c in shell_env.calls)
         assert not any(c.startswith("eslint ") for c in shell_env.calls)
 
+    def _local_tsc_project(self, shell_env, git_repo, filename: str) -> Path:
+        """A project whose tsc lives in node_modules/.bin, reporting one error.
+
+        The standard npm layout: typescript is a devDependency, so the only
+        compiler the project owns is node_modules/.bin/tsc.
+        """
+        (git_repo / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+        target = git_repo / filename
+        target.write_text("export const x: number = 'no'\n", encoding="utf-8")
+        local_bin = git_repo / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True, exist_ok=True)
+        local_tsc = local_bin / "tsc"
+        diagnostic = (
+            f"src/{filename}(1,14): error TS2322: "
+            "Type 'string' is not assignable to type 'number'."
+        )
+        local_tsc.write_text(
+            "#!/bin/bash\n"
+            f'echo "local-tsc $*" >> "{shell_env.calls_file}"\n'
+            f'echo "{diagnostic}"\n'
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        local_tsc.chmod(0o755)
+        return target
+
+    def test_local_tsc_is_found_when_not_on_path(self, LINT, shell_env, git_repo):
+        """typescript is a devDependency, so tsc is normally NOT on PATH.
+
+        Resolving it with `command -v tsc` alone deletes the type check from
+        every ordinary npm project: a .ts file with a genuine type error and a
+        tsconfig.json beside it returned 0. "Absent" must be forced here -- the
+        stub dir only PREPENDS to the host PATH, and this machine really has a
+        global tsc, so without hiding it the test would pass for the wrong
+        reason.
+        """
+        env = _env_hiding(shell_env, "tsc")
+        if env is None:
+            pytest.skip("cannot hide tsc without also hiding jq on this host")
+        target = self._local_tsc_project(shell_env, git_repo, "bad.ts")
+        res = _run_with_env(LINT, payload(target), env)
+        # The discriminating assertion: rc alone cannot tell "ran the local
+        # tsc" apart from "skipped the whole block", since a skip also needs
+        # PROJECT_ROOT and would surface as a pass.
+        assert any(c.startswith("local-tsc ") for c in shell_env.calls), (
+            "the project-local tsc must run even though tsc is absent from PATH"
+        )
+        assert res.returncode == 2, "local tsc failed, so the hook must block"
+        assert "[TypeScript]" in res.stderr
+        assert "TS2322" in res.stderr
+
+    def test_local_tsc_preferred_over_path(self, LINT, shell_env, git_repo):
+        # Mirror of test_local_eslint_preferred_over_path: with both reachable,
+        # the project's own compiler (its TypeScript version, its tsconfig
+        # semantics) must win over whatever global copy is on PATH. This pins
+        # the invocation; the test above pins the lookup.
+        shell_env.stub("tsc", body='echo "from PATH"', exit_code=1)
+        target = self._local_tsc_project(shell_env, git_repo, "bad.ts")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert any(c.startswith("local-tsc ") for c in shell_env.calls)
+        assert not any(c.startswith("tsc ") for c in shell_env.calls), (
+            "the PATH tsc must not be invoked when the project ships its own"
+        )
+        assert res.returncode == 2
+        assert "TS2322" in res.stderr
+
 
 # (extension, formatter stub, expected argv prefix). One entry per branch of
 # auto-format.sh's dispatch table. Only py and sh had coverage before; the rest

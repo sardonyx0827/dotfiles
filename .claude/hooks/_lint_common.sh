@@ -111,7 +111,7 @@ hook_lint_file() {
   local BASENAME
   BASENAME=$(basename "$FILE_PATH")
   local LINT_ERRORS=""
-  local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
+  local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN TSC_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
   local GO_PKG_DIR eslint_dir eslint_root
   local ruff_args=() rubocop_args=()
 
@@ -119,7 +119,7 @@ hook_lint_file() {
   # しまい呼び出し元には何も返らない。黙って通るより落とす。
   case "$hook_out_var" in
   FILE_PATH | EXTENSION | BASENAME | LINT_ERRORS | PROJECT_ROOT | OUTPUT | \
-    HAS_ESLINT_CONFIG | ESLINT_BIN | CONFIG | HAS_MYPY_CONFIG | RELATED | cfg | \
+    HAS_ESLINT_CONFIG | ESLINT_BIN | TSC_BIN | CONFIG | HAS_MYPY_CONFIG | RELATED | cfg | \
     GO_PKG_DIR | eslint_dir | eslint_root | ruff_args | rubocop_args | \
     hook_out_var | hook_log_file | hook_phase)
     echo "hook_lint_file: output variable '$hook_out_var' collides with an internal local" >&2
@@ -178,9 +178,25 @@ hook_lint_file() {
     # TypeScriptの型チェック（tsconfig.jsonが存在する場合のみ）
     if [[ "$EXTENSION" == "ts" || "$EXTENSION" == "tsx" ]]; then
       if [ -n "$PROJECT_ROOT" ] && [ -f "$PROJECT_ROOT/tsconfig.json" ]; then
-        if command -v tsc >/dev/null 2>&1; then
-          echo "  Running tsc (type check)..."
-          if ! OUTPUT=$(cd "$PROJECT_ROOT" && tsc --noEmit 2>&1); then
+        # typescript は devDependency に入れるのが標準なので、tsc は PATH に
+        # 載らない。`command -v tsc` だけで探すと、tsconfig.json のある普通の
+        # npm プロジェクトで型チェックが丸ごと消え、型エラーのあるファイルに
+        # 対してゲートが緑を返す ——「問題を見つけたのに通す」ではなく
+        # 「そもそも見に行かない」版の、このファイル冒頭が戒めている壊れ方。
+        # 上の ESLint と同じく node_modules/.bin を先に見る。PATH 側は
+        # グローバル導入しかないプロジェクトのためのフォールバックとして残す。
+        TSC_BIN=""
+        if [ -x "$PROJECT_ROOT/node_modules/.bin/tsc" ]; then
+          TSC_BIN="$PROJECT_ROOT/node_modules/.bin/tsc"
+        elif command -v tsc >/dev/null 2>&1; then
+          TSC_BIN="tsc"
+        fi
+        # ローカル解決した側は $PROJECT_ROOT 由来の絶対パスなので、下の
+        # `cd "$PROJECT_ROOT"` を挟んでも解決先は変わらない。相対パスで持つと
+        # cd 先によって見つからなくなり、静かに型チェックが消える。
+        if [ -n "$TSC_BIN" ]; then
+          echo "  Running tsc (type check: $TSC_BIN)..."
+          if ! OUTPUT=$(cd "$PROJECT_ROOT" && "$TSC_BIN" --noEmit 2>&1); then
             # 変更ファイルに関連するエラーのみ抽出。
             # -F 必須: ファイル名はパターンではなくリテラルとして照合する。素の
             # grep だと BASENAME が ERE として解釈され、Next.js の動的ルート
