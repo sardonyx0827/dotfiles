@@ -1,5 +1,8 @@
-# PATH の重複エントリを自動除去する (ネストシェルでの肥大化防止)
-typeset -U path PATH
+# PATH / fpath の重複エントリを自動除去する (ネストシェルでの肥大化防止)。
+# fpath を含めるのは brew shellenv が FPATH を export するため: 子シェルへ
+# 継承された状態で下の `fpath=(~/.docker/completions $fpath)` が走ると、
+# ネストのたびに同じ要素が積み上がる。
+typeset -U path PATH fpath FPATH
 
 # OS 判定。Homebrew / macOS 固有のパス・エイリアスを Linux/WSL でそのまま
 # 読み込むと、LDFLAGS/CPPFLAGS が存在しない /opt/homebrew を指してネイティブ
@@ -9,6 +12,37 @@ case "$(uname -s)" in
   Linux) _os=linux ;;
   *) _os=other ;;
 esac
+
+# Homebrew を PATH に載せる。install_homebrew (install.sh) の
+# `eval "$(brew shellenv)"` はスクリプトのプロセス内限定で終了と同時に消えるため、
+# 下の ~/.local/bin 等とまったく同じ理由でここでも恒久化する。これが無いと
+# Apple Silicon (/opt/homebrew は /etc/paths に載らない) では install.sh 完走後に
+# 端末を開き直した時点で brew 本体と brew 導入物がまとめて PATH から消える。
+# Intel の /usr/local は元から /etc/paths に載るが、HOMEBREW_PREFIX 等を
+# 揃えるため同じ経路を通す。
+#
+# 下の PATH 追加より「前」に置くのが要点。shellenv は prepend するので、
+# 後ろに置くと Homebrew 版が ~/go/bin や ~/.local/bin を追い越してしまう。
+# 先に通しておけば Homebrew 公式手順 (~/.zprofile で eval) と同じ
+# 「ユーザ側が優先」の順序になる。
+#
+# 条件を `_os == macos` だけにし、HOMEBREW_PREFIX が既にあっても毎回 eval する。
+# 「設定済みなら省く」ガードを入れると入れ子の login シェルで壊れる: /etc/zprofile
+# の path_helper が継承 PATH を組み替えて /opt/homebrew/bin を末尾へ回すため、
+# 再 prepend を省いた瞬間 Homebrew が /usr/bin より後ろに落ちる (実測で
+# `git` が /usr/bin/git に解決された)。冪等性はガードではなく上の typeset -U と
+# 直下の typeset -xTU で型として持たせる — INFOPATH は素の文字列のままだと
+# 呼び直すたびに同じ要素が積み上がるので、配列に tie して重複除去させる。
+if [[ "$_os" == macos ]]; then
+  for _brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [ -x "$_brew" ]; then
+      typeset -xTU INFOPATH infopath
+      eval "$("$_brew" shellenv zsh)"
+      break
+    fi
+  done
+  unset _brew
+fi
 
 ## Go
 export PATH=~/go/bin:$PATH
