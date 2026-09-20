@@ -194,11 +194,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/auto-format.sh"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/lint.sh"
+            "command": "bash ~/.claude/hooks/format-then-lint.sh"
           }
         ]
       }
