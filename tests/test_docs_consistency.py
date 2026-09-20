@@ -19,6 +19,7 @@ These are string-level checks on purpose: the invariant IS the text.
 """
 
 import re
+import subprocess
 
 import pytest
 from conftest import REPO_ROOT
@@ -281,16 +282,43 @@ _SCRIPT_REF_RE = re.compile(
 _PROSE_DIRS = (".claude/skills", ".claude/commands", ".claude/agents")
 
 
+def _tracked_markdown(rel_dir: str) -> list:
+    """Markdown files git tracks under rel_dir.
+
+    Not rglob(): the working tree holds more than the repo owns. install.sh
+    links ~/.claude/skills at .claude/skills, so Claude Code's skill sync
+    drops third-party skills into that directory, and their prose is not ours
+    to hold to this invariant. Because CI runs from a fresh checkout where
+    they do not exist, a walk of the tree only ever failed on the author's
+    machine -- green in CI, red locally. tests/test_hook_sync.py reads the
+    tracked set the same way.
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--", rel_dir],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [REPO_ROOT / p for p in out.split("\0") if p.endswith(".md")]
+
+
 def test_prose_only_names_repo_scripts_that_exist():
     """A named `scripts/x.py` must be a file, or the reader chases a ghost."""
     missing = []
+    scanned = 0
     for rel_dir in _PROSE_DIRS:
-        for path in sorted((REPO_ROOT / rel_dir).rglob("*.md")):
+        for path in sorted(_tracked_markdown(rel_dir)):
+            scanned += 1
             for match in _SCRIPT_REF_RE.finditer(path.read_text(encoding="utf-8")):
                 ref = match.group(1)
                 if (REPO_ROOT / ref).is_file() or (path.parent / ref).is_file():
                     continue
                 missing.append(f"{path.relative_to(REPO_ROOT)} names {ref}")
+    # Narrowing the walk to tracked files is only safe while the tracked set is
+    # still the prose this guards; a pathspec typo would otherwise turn the
+    # assertion below into a no-op that passes forever.
+    assert scanned > 20, f"only {scanned} tracked .md files found in {_PROSE_DIRS}"
     assert not missing, "prose names scripts that do not exist: " + "; ".join(missing)
 
 
