@@ -1,9 +1,14 @@
-# PATH の重複エントリを自動除去する (ネストシェルでの肥大化防止)
-typeset -U path PATH
+# PATH / fpath の重複エントリを自動除去する (ネストシェルでの肥大化防止)。
+# fpath を含めるのは brew shellenv が FPATH を export するため: 子シェルへ
+# 継承された状態で下の `fpath=(~/.docker/completions $fpath)` が走ると、
+# ネストのたびに同じ要素が積み上がる。
+typeset -U path PATH fpath FPATH
 
 # OS 判定。Homebrew / macOS 固有のパス・エイリアスを Linux/WSL でそのまま
-# 読み込むと、LDFLAGS/CPPFLAGS が存在しない /opt/homebrew を指してネイティブ
-# ビルド (pip の C 拡張ビルド等) を壊す実害があるため、uname でガードする。
+# 読み込むと存在しない /opt/homebrew を指してしまうため、uname でガードする。
+# この戒めは LDFLAGS/CPPFLAGS が存在しない keg を指してネイティブビルド
+# (pip の C 拡張ビルド等) を壊した事故に由来する。その 2 変数は下で設定しなく
+# なったが、ガード自体は brew shellenv と PKG_CONFIG_PATH をなお守っている。
 case "$(uname -s)" in
   Darwin) _os=macos ;;
   Linux) _os=linux ;;
@@ -37,6 +42,37 @@ if [[ -o interactive ]] && [[ -z "$UIM_FEP_PID" ]] && [[ -z "$NO_UIM_FEP" ]] \
   exec uim-fep -e /usr/bin/zsh
 fi
 
+# Homebrew を PATH に載せる。install_homebrew (install.sh) の
+# `eval "$(brew shellenv)"` はスクリプトのプロセス内限定で終了と同時に消えるため、
+# 下の ~/.local/bin 等とまったく同じ理由でここでも恒久化する。これが無いと
+# Apple Silicon (/opt/homebrew は /etc/paths に載らない) では install.sh 完走後に
+# 端末を開き直した時点で brew 本体と brew 導入物がまとめて PATH から消える。
+# Intel の /usr/local は元から /etc/paths に載るが、HOMEBREW_PREFIX 等を
+# 揃えるため同じ経路を通す。
+#
+# 下の PATH 追加より「前」に置くのが要点。shellenv は prepend するので、
+# 後ろに置くと Homebrew 版が ~/go/bin や ~/.local/bin を追い越してしまう。
+# 先に通しておけば Homebrew 公式手順 (~/.zprofile で eval) と同じ
+# 「ユーザ側が優先」の順序になる。
+#
+# 条件を `_os == macos` だけにし、HOMEBREW_PREFIX が既にあっても毎回 eval する。
+# 「設定済みなら省く」ガードを入れると入れ子の login シェルで壊れる: /etc/zprofile
+# の path_helper が継承 PATH を組み替えて /opt/homebrew/bin を末尾へ回すため、
+# 再 prepend を省いた瞬間 Homebrew が /usr/bin より後ろに落ちる (実測で
+# `git` が /usr/bin/git に解決された)。冪等性はガードではなく上の typeset -U と
+# 直下の typeset -xTU で型として持たせる — INFOPATH は素の文字列のままだと
+# 呼び直すたびに同じ要素が積み上がるので、配列に tie して重複除去させる。
+if [[ "$_os" == macos ]]; then
+  for _brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [ -x "$_brew" ]; then
+      typeset -xTU INFOPATH infopath
+      eval "$("$_brew" shellenv zsh)"
+      break
+    fi
+  done
+  unset _brew
+fi
+
 ## Go
 export PATH=~/go/bin:$PATH
 export PATH=~/.npm-global/bin:$PATH
@@ -62,11 +98,14 @@ path=(~/Library/Python/*/bin(N) $path)
 if [[ "$_os" == macos ]]; then
   # Homebrew (Apple Silicon) 固有のパス群。Linux には存在しないため読み込まない。
   export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
-  ## PHP (Homebrew php@8.4)
-  export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"
-  export PATH="/opt/homebrew/opt/php@8.4/sbin:$PATH"
-  export LDFLAGS="-L/opt/homebrew/opt/php@8.4/lib"
-  export CPPFLAGS="-I/opt/homebrew/opt/php@8.4/include"
+  # ここで LDFLAGS / CPPFLAGS は設定しない。以前は php@8.4 の keg 向けに
+  # 「代入」していたが、(1) install.sh が入れるのは php-cs-fixer の依存として
+  # 引かれる素の php であって php@8.4 ではなく、このリポジトリで構築した
+  # マシンでは一度も成立しない設定だった、(2) 代入なので ~/.zshenv / direnv /
+  # 親シェル (tmux ペイン、入れ子 zsh) が入れた値を毎回捨てていた。
+  # keg-only formula (openssl@3, zlib, readline ...) の brew info はまさに
+  # この 2 変数への設定を案内するため、捨てるとネイティブビルドが落ちる。
+  # 必要になったら ~/.zshenv 側で追記する形にすること。
 fi
 
 export ZSH="$HOME/.oh-my-zsh"

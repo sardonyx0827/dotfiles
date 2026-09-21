@@ -57,7 +57,8 @@
 
 ### PostToolUse
 
-Matcher: `Write|Edit|MultiEdit` (runs in order):
+Matcher: `Write|Edit|MultiEdit`. One handler,
+**format-then-lint** (`hooks/format-then-lint.sh`), which runs in order:
 
 1. **auto-format** (`hooks/auto-format.sh`):
    Extracts the edited file path from hook JSON and runs the matching
@@ -66,6 +67,18 @@ Matcher: `Write|Edit|MultiEdit` (runs in order):
    Static analysis after formatting. Exits with code 2 to feed errors
    back to Claude and trigger self-correction. Logs to
    `~/.claude/logs/lint.log`.
+
+The wrapper exists because the order is load-bearing and listing the two as
+separate handlers does not buy it: Claude Code runs every handler matching an
+event in parallel ("Since hooks run in parallel, the order is
+non-deterministic"). When lint won that race it reported findings the
+formatter owns — ruff's import sort, rubocop's `Layout` — as exit 2, costing a
+hand-fix turn for work about to happen anyway. The two cannot simply be joined
+with `&&` either: both read the payload off stdin with `jq`, so the first
+would consume it and the second would find no file path and return 0, quietly
+removing the gate. `format-then-lint.sh` spools the payload to a temp file,
+feeds both, and lets lint's exit code be the hook's.
+`tests/test_format_then_lint.py` pins all of that.
 
 ### Stop
 

@@ -502,3 +502,40 @@ def test_parity_prose_names_every_known_global():
             f"{label} describes the known-globals set but never names "
             f"{missing}; it still describes an older set"
         )
+
+
+def _posttooluse_edit_hooks() -> list[dict]:
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    hooks = []
+    for entry in settings["hooks"].get("PostToolUse", []):
+        if entry.get("matcher") == "Write|Edit|MultiEdit":
+            hooks += entry["hooks"]
+    return hooks
+
+
+def test_posttooluse_edit_hook_is_a_single_ordered_handler():
+    """Formatting must precede linting, and only one handler can promise that.
+
+    Claude Code runs every handler matching an event in parallel -- its docs
+    say "Since hooks run in parallel, the order is non-deterministic" -- but
+    this repo is built on the opposite assumption. lint.sh's header declares it
+    expects to run after auto-format.sh, and _lint_common.sh reports findings
+    the formatter owns (ruff's import sort, rubocop's Layout) on that basis;
+    commit 132dbfd reasoned from the same premise when it gave the Codex copy a
+    `before-format` phase and left Claude's alone. Listing the two scripts side
+    by side in one `hooks` array therefore bought ordering that was never real,
+    and when lint won the race it handed the agent a hand-fix turn for work the
+    formatter was about to do. format-then-lint.sh restores the sequence; see
+    tests/test_format_then_lint.py for what it guarantees.
+    """
+    hooks = _posttooluse_edit_hooks()
+    # Anti-vacuity, same convention as the deny-rule tests above: renaming the
+    # matcher would empty this list and pass every assertion below while the
+    # formatting and linting gate is gone entirely.
+    assert hooks, "expected PostToolUse hooks under matcher 'Write|Edit|MultiEdit'"
+    commands = [hook["command"] for hook in hooks]
+    assert len(hooks) == 1, (
+        "two handlers under one matcher run in parallel, so the "
+        f"format-then-lint order is not guaranteed: {commands}"
+    )
+    assert "format-then-lint.sh" in commands[0], commands

@@ -1991,3 +1991,219 @@ class TestZshrcAliases:
         assert not re.search(r"^\s*alias g=", text, re.M), (
             "alias g= in .zshrc shadows the oh-my-zsh git plugin's g='git'"
         )
+
+
+def extract_zsh_env_prologue() -> str:
+    """Return .zshrc's environment prologue: everything before oh-my-zsh.
+
+    The prologue is the OS guard plus every PATH / compiler-flag export, and it
+    is the one part of .zshrc that can be sourced on its own -- `export ZSH=`
+    is immediately followed by the oh-my-zsh machinery the module docstring
+    explains cannot run here.
+    """
+    text = ZSHRC.read_text(encoding="utf-8")
+    index = text.find('export ZSH="$HOME/.oh-my-zsh"')
+    if index == -1:
+        raise AssertionError("no `export ZSH=` marker found in .zshrc")
+    prologue = text[:index]
+    # An empty or truncated prologue would let every assertion below pass
+    # vacuously, which is exactly the failure this class exists to prevent.
+    assert "_os" in prologue and "PATH" in prologue, (
+        f"extracted prologue looks wrong ({len(prologue)} chars)"
+    )
+    return prologue
+
+
+# Real `brew shellenv zsh` output, reduced to the parts .zshrc depends on.
+# INFOPATH/MANPATH deliberately keep Homebrew's own append-to-self shape --
+# that is what makes them grow without the typeset -U tie.
+_FAKE_BREW = """#!/bin/sh
+p={prefix}
+cat <<EOS
+export HOMEBREW_PREFIX="$p";
+export HOMEBREW_CELLAR="$p/Cellar";
+fpath[1,0]="$p/share/zsh/site-functions";
+export PATH="$p/bin:$p/sbin${{PATH+:$PATH}}";
+export MANPATH="$p/share/man${{MANPATH+:$MANPATH}}:";
+export INFOPATH="$p/share/info:${{INFOPATH:-}}";
+EOS
+"""
+
+
+class ZshPrologueHarness:
+    """Run .zshrc's macOS branch on any host, against a fake Homebrew prefix.
+
+    Without this the branch is unreachable off macOS, and *on* macOS the php
+    block is skipped because the keg is not installed -- so the assertions
+    below would pass no matter what the code said. A code review caught
+    exactly that: reverting the append back to an assignment left every test
+    green. Rewriting the absolute prefixes into tmp_path is what gives these
+    tests teeth on the ubuntu CI leg.
+    """
+
+    def __init__(self, tmp_path, *, with_php_keg: bool):
+        if shutil.which("zsh") is None:
+            pytest.skip("zsh not installed")
+        self.prefix = tmp_path / "hb"
+        (self.prefix / "bin").mkdir(parents=True)
+        (self.prefix / "sbin").mkdir()
+        if with_php_keg:
+            (self.prefix / "opt/php@8.4/lib").mkdir(parents=True)
+        brew = self.prefix / "bin/brew"
+        brew.write_text(_FAKE_BREW.format(prefix=self.prefix), encoding="utf-8")
+        brew.chmod(0o755)
+
+        # `uname -s` must say Darwin or the whole macOS branch is skipped.
+        self.stub_bin = tmp_path / "stub"
+        self.stub_bin.mkdir()
+        uname = self.stub_bin / "uname"
+        uname.write_text("#!/bin/sh\necho Darwin\n", encoding="utf-8")
+        uname.chmod(0o755)
+
+        self.home = tmp_path / "home"
+        self.home.mkdir()
+        script = extract_zsh_env_prologue()
+        assert "/opt/homebrew" in script, "precondition: prologue names /opt/homebrew"
+        self.script = script.replace("/opt/homebrew", str(self.prefix))
+
+    def run(self, *, repeats: int = 1, env: dict | None = None) -> dict:
+        """Source the prologue `repeats` times, then report the environment."""
+        report = (
+            'print -r -- "PATH=$PATH"\nprint -r -- "INFOPATH=$INFOPATH"\n'
+            'print -r -- "LDFLAGS=$LDFLAGS"\nprint -r -- "CPPFLAGS=$CPPFLAGS"\n'
+            'print -r -- "NFPATH=${#fpath}"'
+        )
+        res = subprocess.run(
+            ["zsh", "-f", "-c", f"{self.script * repeats}\n{report}"],
+            capture_output=True,
+            text=True,
+            env={
+                "HOME": str(self.home),
+                "PATH": f"{self.stub_bin}:/usr/bin:/bin",
+                **(env or {}),
+            },
+            timeout=30,
+        )
+        assert res.returncode == 0, res.stderr
+        out = dict(line.split("=", 1) for line in res.stdout.splitlines())
+        out["path_entries"] = out["PATH"].split(":")
+        return out
+
+
+class TestZshHomebrewOnPath:
+    """Homebrew must be on PATH from .zshrc, not only inside install.sh.
+
+    install_homebrew evals `brew shellenv`, but that is a process-local export
+    that dies with the script, install.sh appends to no shell rc, and the repo
+    ships no .zprofile. On Apple Silicon /opt/homebrew is not in /etc/paths
+    either, so following install.sh's own closing advice ("Restart your
+    terminal") dropped brew and every brew-installed package off PATH. .zshrc
+    already states this principle for ~/.local/bin and friends (see the
+    comment above the `export PATH=~/.local/bin` line) -- Homebrew's own bin
+    was the one omission.
+    """
+
+    def test_brew_lands_on_path(self, tmp_path):
+        out = ZshPrologueHarness(tmp_path, with_php_keg=False).run()
+        assert f"{tmp_path}/hb/bin" in out["path_entries"], out["PATH"]
+
+    def test_user_bin_dirs_outrank_homebrew(self, tmp_path):
+        """shellenv prepends, so the eval has to run *before* the user dirs.
+
+        Moving the block below them would silently put Homebrew's copy of a
+        tool ahead of the user's own.
+        """
+        harness = ZshPrologueHarness(tmp_path, with_php_keg=False)
+        entries = harness.run()["path_entries"]
+        brew_bin = f"{tmp_path}/hb/bin"
+        local_bin = f"{harness.home}/.local/bin"
+        for name in (brew_bin, local_bin, "/usr/bin"):
+            assert name in entries, f"{name} missing from PATH: {entries}"
+        assert entries.index(local_bin) < entries.index(brew_bin), (
+            f"Homebrew now outranks the user's own bin dirs: {entries}"
+        )
+        assert entries.index(brew_bin) < entries.index("/usr/bin"), (
+            f"Homebrew must still come before the system dirs: {entries}"
+        )
+
+    def test_re_sourcing_grows_nothing(self, tmp_path):
+        """Idempotence is carried by `typeset -U` / `typeset -xTU`, not by a
+        "skip if HOMEBREW_PREFIX is set" guard.
+
+        That guard was tried and reverted: in a nested *login* shell
+        /etc/zprofile's path_helper rewrites the inherited PATH and pushes
+        /opt/homebrew/bin to the end, so skipping the re-prepend left Homebrew
+        behind /usr/bin (measured: `git` resolved to /usr/bin/git). Re-running
+        shellenv every time is what keeps the order right, which is only safe
+        because the duplicates are removed by type.
+        """
+        harness = ZshPrologueHarness(tmp_path, with_php_keg=False)
+        once, thrice = harness.run(repeats=1), harness.run(repeats=3)
+        # Without this the comparison holds vacuously if the brew block never
+        # ran at all: "" == "" would pass while pinning nothing.
+        assert once["INFOPATH"], "the fake shellenv never ran; nothing is pinned"
+        for key in ("PATH", "INFOPATH", "NFPATH"):
+            assert once[key] == thrice[key], (
+                f"{key} grew across re-sources: {once[key]!r} -> {thrice[key]!r}"
+            )
+
+    def test_inherited_prefix_still_re_prepends(self, tmp_path):
+        """The regression that killed the `HOMEBREW_PREFIX` guard.
+
+        A nested *login* shell inherits HOMEBREW_PREFIX, and /etc/zprofile's
+        path_helper rewrites the inherited PATH so /opt/homebrew/bin lands at
+        the end. Re-running shellenv is what pulls it back in front of
+        /usr/bin; a "skip if HOMEBREW_PREFIX is set" guard leaves it behind
+        (measured on a real nested `zsh -l -i`: `git` resolved to
+        /usr/bin/git). The other tests here all start from a clean env, so the
+        guard slipped past every one of them -- this is the only one that
+        reproduces the inherited shape.
+        """
+        harness = ZshPrologueHarness(tmp_path, with_php_keg=False)
+        prefix = str(harness.prefix)
+        entries = harness.run(
+            env={
+                "HOMEBREW_PREFIX": prefix,
+                # path_helper's output shape: system dirs first, the inherited
+                # Homebrew entries demoted to the tail.
+                "PATH": f"{harness.stub_bin}:/usr/bin:/bin:{prefix}/bin:{prefix}/sbin",
+            }
+        )["path_entries"]
+        assert entries.index(f"{prefix}/bin") < entries.index("/usr/bin"), (
+            f"Homebrew was left behind the system dirs: {entries}"
+        )
+
+
+class TestZshCompilerFlags:
+    """The prologue must not touch LDFLAGS / CPPFLAGS at all.
+
+    It used to, for a `php@8.4` keg: assigned rather than appended, and guarded
+    on the OS but not on the formula, so on macOS every interactive shell threw
+    away whatever ~/.zshenv, direnv or a parent shell had set and replaced it
+    with flags for a keg that is not installed -- exactly the hazard .zshrc's
+    opening comment describes. The block was then deleted rather than hardened:
+    install.sh pulls plain `php` in as a php-cs-fixer dependency and never
+    `php@8.4`, so on a machine this repo built the block could not run at all.
+
+    Both tests stand up a fake keg on purpose. With the keg absent, deleting
+    the block has no observable signature -- these would pass either way.
+    """
+
+    INHERITED = {
+        "LDFLAGS": "-L/somewhere/openssl@3/lib",
+        "CPPFLAGS": "-I/somewhere/openssl@3/include",
+    }
+
+    def test_sets_no_flags_even_with_the_keg_present(self, tmp_path):
+        out = ZshPrologueHarness(tmp_path, with_php_keg=True).run()
+        assert out["LDFLAGS"] == "", (
+            f"the prologue is setting compiler flags again: {out['LDFLAGS']!r}"
+        )
+        assert out["CPPFLAGS"] == "", out["CPPFLAGS"]
+
+    def test_inherited_flags_pass_through_untouched(self, tmp_path):
+        out = ZshPrologueHarness(tmp_path, with_php_keg=True).run(env=self.INHERITED)
+        assert out["LDFLAGS"] == self.INHERITED["LDFLAGS"], (
+            f"inherited LDFLAGS was modified: {out['LDFLAGS']!r}"
+        )
+        assert out["CPPFLAGS"] == self.INHERITED["CPPFLAGS"], out["CPPFLAGS"]
