@@ -1,6 +1,7 @@
 #!/bin/bash
 # _hook_common.sh
-# lint.sh / auto-format.sh が共有するログ出力とデスクトップ通知。
+# lint.sh / auto-format.sh が共有するログ出力・デスクトップ通知・ローカル
+# node_modules/.bin 解決。
 #
 # このファイルが唯一の実体。.codex/hooks/ 側には複製もリンクも無く、あちらの
 # lint.sh / auto-format.sh が cd -P で ../../.claude/hooks を解決して直接読む。
@@ -95,4 +96,47 @@ hook_notify() {
   elif command -v notify-send >/dev/null 2>&1; then
     notify-send --expire-time "$((timeout * 1000))" "$title" "$message" 2>/dev/null
   fi
+}
+
+# hook_find_nearest_bin <start_dir> <root_dir> <bin_name>
+#
+# <start_dir> から <root_dir> まで遡りながら node_modules/.bin/<bin_name> を
+# 探し、最初に見つかった (= 呼び出し元に最も近い) 実行可能ファイルの絶対パスを
+# 標準出力に書いて 0 を返す。見つからなければ何も書かず 1 を返す。
+#
+# ESLint (_lint_common.sh) と Prettier (_format_common.sh) が同じ形の壊れ方を
+# していた: ローカルのバイナリを PROJECT_ROOT (または git root) 直下でしか
+# 見ておらず、npm ワークスペース/monorepo で実体が packages/<pkg>/node_modules
+# にしかない構成では見つからないまま PATH へフォールバックし、グローバル未導入
+# なら「見つからない」まま静かにスキップしていた (ESLint は「見つからない」を
+# 素通しして exit 0、Prettier はさらに、グローバル版が PATH にあるとそちらの
+# バージョンで整形してプロジェクトの固定版を無視する)。ESLint 設定ファイル探索
+# (_lint_common.sh の eslint_dir/eslint_root ループ) と同じ「近い方が勝つ」規則
+# で歩く。
+#
+# 呼び出しは必ず `X=$(hook_find_nearest_bin ...)` の形を取ること。command
+# substitution はサブシェルで実行されるため、この関数内の変数名が何であれ
+# 呼び出し元の変数と衝突しない (hook_lint_file の printf -v 方式とは違い、
+# 出力が変数名越しではなく stdout 越しなので、動的スコープの衝突問題自体が
+# 起きない。hook_lint_file 側の禁止名リストを更新する必要もない)。
+#
+# 物理パスで判定するのは _go_dir_has_analyzable_package や eslint_root と同じ
+# 理由: symlink 経由の論理パスのままだと <root_dir> との文字列比較がずれ、
+# ループが root に到達したと判定できず "/" まで遡り続ける。
+hook_find_nearest_bin() {
+  local dir root name candidate
+  dir=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+  root=$(cd "$2" 2>/dev/null && pwd -P) || return 1
+  name="$3"
+  while [ -n "$dir" ]; do
+    candidate="$dir/node_modules/.bin/$name"
+    if [ -x "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+    [ "$dir" = "$root" ] && return 1
+    [ "$dir" = "/" ] && return 1
+    dir=$(dirname "$dir")
+  done
+  return 1
 }

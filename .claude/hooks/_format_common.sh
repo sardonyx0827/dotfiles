@@ -36,6 +36,7 @@ hook_format_file() {
   BASENAME=$(basename "$FILE_PATH")
   local FORMATTED=false # フォーマッターが実際に実行され、かつ成功したか
   local err
+  local PRETTIER_BIN PROJECT_ROOT
 
   hook_log "$hook_log_file" "--- format start: $FILE_PATH ---"
   echo "Auto-formatting: $BASENAME"
@@ -44,9 +45,26 @@ hook_format_file() {
   case "$EXTENSION" in
   # JavaScript/TypeScript/JSON/CSS/HTML/Markdown
   js | jsx | ts | tsx | json | css | scss | less | html | htm | md | yaml | yml)
-    if command -v prettier >/dev/null 2>&1; then
-      echo "  Running Prettier..."
-      if err=$(prettier --write "$FILE_PATH" 2>&1); then
+    # ローカル解決: 編集ファイルのディレクトリから git root まで遡って一番
+    # 近い node_modules/.bin/prettier を探す (hook_find_nearest_bin、
+    # _hook_common.sh)。_lint_common.sh の ESLint/tsc と同じ壊れ方をしていた:
+    # `command -v prettier` だけでは (a) prettier がプロジェクトの
+    # node_modules にしか無い (= 標準的な devDependency 導入) と
+    # 「Prettier not found」のまま未整形で抜け、(b) ローカルと PATH の両方に
+    # あると PATH 側が勝ってプロジェクトの固定バージョンを無視していた。
+    # git リポジトリの外では遡る境界が無いので、編集ファイル自身のディレクトリ
+    # 1 段だけを見て、それ以降は PATH にフォールバックする(無制限に遡ると
+    # 無関係な node_modules まで拾いかねないため)。
+    PRETTIER_BIN=""
+    PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
+    [ -z "$PROJECT_ROOT" ] && PROJECT_ROOT=$(dirname "$FILE_PATH")
+    PRETTIER_BIN=$(hook_find_nearest_bin "$(dirname "$FILE_PATH")" "$PROJECT_ROOT" prettier)
+    if [ -z "$PRETTIER_BIN" ] && command -v prettier >/dev/null 2>&1; then
+      PRETTIER_BIN="prettier"
+    fi
+    if [ -n "$PRETTIER_BIN" ]; then
+      echo "  Running Prettier ($PRETTIER_BIN)..."
+      if err=$("$PRETTIER_BIN" --write "$FILE_PATH" 2>&1); then
         echo "  Prettier completed"
         FORMATTED=true
       else

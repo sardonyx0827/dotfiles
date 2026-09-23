@@ -1132,6 +1132,151 @@ echo "$out"
         assert any(c.startswith("local-eslint ") for c in shell_env.calls)
         assert not any(c.startswith("eslint ") for c in shell_env.calls)
 
+    def test_nearest_eslint_is_found_in_a_monorepo_package(
+        self, LINT, shell_env, git_repo
+    ):
+        """eslint installed only in the package, no root node_modules, no PATH copy.
+
+        Real monorepo shape: packages/web/node_modules/.bin/eslint, no root
+        node_modules and no global eslint. The binary was resolved only at
+        PROJECT_ROOT/node_modules/.bin/eslint, then PATH -- so this printed
+        "ESLint not found" and passed (exit 0) without ever invoking eslint.
+        """
+        shell_env.hide("eslint")
+        pkg = git_repo / "packages" / "web"
+        pkg.mkdir(parents=True)
+        (pkg / ".eslintrc.js").write_text("module.exports = {}\n", encoding="utf-8")
+        local_bin = pkg / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        local_eslint = local_bin / "eslint"
+        local_eslint.write_text(
+            f'#!/bin/bash\necho "local-eslint $*" >> "{shell_env.calls_file}"\nexit 1\n',
+            encoding="utf-8",
+        )
+        local_eslint.chmod(0o755)
+        target = pkg / "app.js"
+        target.write_text("var x = 1\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert any(c.startswith("local-eslint ") for c in shell_env.calls), (
+            "the package-local eslint must run even with no root node_modules "
+            "and no eslint on PATH"
+        )
+        assert res.returncode == 2
+        assert "[ESLint]" in res.stderr
+
+    def _package_eslint(self, shell_env, git_repo, config: str) -> Path:
+        """packages/web with its own `config` and eslint; returns packages/web.
+
+        The stub mimics ESLint 9's flat-config lookup, which starts from the
+        working directory rather than from the linted file, and records the
+        directory it ran in.
+        """
+        shell_env.hide("eslint")
+        pkg = git_repo / "packages" / "web"
+        local_bin = pkg / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        (pkg / config).write_text("module.exports = {}\n", encoding="utf-8")
+        local_eslint = local_bin / "eslint"
+        local_eslint.write_text(
+            "#!/bin/bash\n"
+            f'echo "eslint-cwd $PWD" >> "{shell_env.calls_file}"\n'
+            # A path eslint cannot open from its working directory is an error.
+            '[ -f "$1" ] || { echo "No files matching the pattern \\"$1\\""; exit 2; }\n'
+            # No flat config: an .eslintrc cascades from the file, cwd aside.
+            f'[ -f "{pkg}/eslint.config.js" ] || exit 0\n'
+            'd="$PWD"\n'
+            "while :; do\n"
+            '  [ -f "$d/eslint.config.js" ] && exit 0\n'
+            '  [ "$d" = / ] && break\n'
+            '  d=$(dirname "$d")\n'
+            "done\n"
+            'echo "ESLint couldn\'t find an eslint.config.(js|mjs|cjs) file."\n'
+            "exit 2\n",
+            encoding="utf-8",
+        )
+        local_eslint.chmod(0o755)
+        (pkg / "app.js").write_text("const x = 1\n", encoding="utf-8")
+        return pkg
+
+    def _eslint_cwds(self, shell_env) -> list[Path]:
+        prefix = "eslint-cwd "
+        return [
+            Path(c[len(prefix) :]).resolve()
+            for c in shell_env.calls
+            if c.startswith(prefix)
+        ]
+
+    def test_package_flat_config_is_found_by_eslint(self, LINT, shell_env, git_repo):
+        # ESLint 9 looks for eslint.config.js from its working directory, and
+        # the hook runs from the project root. Once the package-local eslint
+        # is found, running it from there fails with "couldn't find an
+        # eslint.config" and blocks a clean file; it has to run where its
+        # config is.
+        pkg = self._package_eslint(shell_env, git_repo, "eslint.config.js")
+        res = shell_env.run(LINT, stdin=payload(pkg / "app.js"), cwd=git_repo)
+        assert res.returncode == 0, res.stderr
+        assert self._eslint_cwds(shell_env) == [pkg.resolve()]
+
+    def test_package_flat_config_with_a_relative_file_path(
+        self, LINT, shell_env, git_repo
+    ):
+        # Moving eslint into the config's directory must not re-anchor a
+        # relative path to the edited file: packages/web/app.js resolved from
+        # packages/web names a file that does not exist.
+        pkg = self._package_eslint(shell_env, git_repo, "eslint.config.js")
+        res = shell_env.run(LINT, stdin=payload("packages/web/app.js"), cwd=git_repo)
+        assert res.returncode == 0, res.stderr
+        assert self._eslint_cwds(shell_env) == [pkg.resolve()]
+
+    def test_legacy_eslintrc_runs_from_the_hook_cwd(self, LINT, shell_env, git_repo):
+        # .eslintrc configs cascade from the linted file whatever the working
+        # directory, while .eslintignore is read from the working directory,
+        # so moving it would change which ignore file applies.
+        pkg = self._package_eslint(shell_env, git_repo, ".eslintrc.js")
+        res = shell_env.run(LINT, stdin=payload(pkg / "app.js"), cwd=git_repo)
+        assert res.returncode == 0, res.stderr
+        assert self._eslint_cwds(shell_env) == [git_repo.resolve()]
+
+    def test_nearest_eslint_wins_over_root_eslint(self, LINT, shell_env, git_repo):
+        """With a local eslint at BOTH the package and PROJECT_ROOT, the nearer wins.
+
+        Mirrors test_local_eslint_preferred_over_path (local beats PATH); this
+        pins that the search also prefers the package copy over the more
+        distant PROJECT_ROOT copy, not just "any" local copy it happens across.
+        """
+        pkg = git_repo / "packages" / "web"
+        pkg.mkdir(parents=True)
+        (pkg / ".eslintrc.js").write_text("module.exports = {}\n", encoding="utf-8")
+
+        root_bin = git_repo / "node_modules" / ".bin"
+        root_bin.mkdir(parents=True)
+        root_eslint = root_bin / "eslint"
+        root_eslint.write_text(
+            f'#!/bin/bash\necho "root-eslint $*" >> "{shell_env.calls_file}"\nexit 1\n',
+            encoding="utf-8",
+        )
+        root_eslint.chmod(0o755)
+
+        pkg_bin = pkg / "node_modules" / ".bin"
+        pkg_bin.mkdir(parents=True)
+        pkg_eslint = pkg_bin / "eslint"
+        pkg_eslint.write_text(
+            f'#!/bin/bash\necho "pkg-eslint $*" >> "{shell_env.calls_file}"\nexit 1\n',
+            encoding="utf-8",
+        )
+        pkg_eslint.chmod(0o755)
+
+        target = pkg / "app.js"
+        target.write_text("var x = 1\n", encoding="utf-8")
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert any(c.startswith("pkg-eslint ") for c in shell_env.calls), (
+            "the nearer package-local eslint must be preferred"
+        )
+        assert not any(c.startswith("root-eslint ") for c in shell_env.calls), (
+            "the more distant root eslint must not run when a nearer one exists"
+        )
+        assert res.returncode == 2
+
     def _local_tsc_project(self, shell_env, git_repo, filename: str) -> Path:
         """A project whose tsc lives in node_modules/.bin, reporting one error.
 
@@ -1317,6 +1462,140 @@ class TestAutoFormat:
         assert res.returncode == 0
         assert "No file path found" in res.stderr
 
+    def test_local_prettier_is_found_when_not_on_path(
+        self, FORMAT, shell_env, git_repo
+    ):
+        """prettier installed only in node_modules/.bin, not on PATH.
+
+        Resolved only via `command -v prettier`, so a project that pins
+        prettier as a devDependency (the standard npm layout) printed
+        "Prettier not found, skipping JS/TS formatting" and left the file
+        unformatted -- silent fail-open, not merely the wrong version.
+        """
+        shell_env.hide("prettier")
+        local_bin = git_repo / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        local_prettier = local_bin / "prettier"
+        local_prettier.write_text(
+            f'#!/bin/bash\necho "local-prettier $*" >> "{shell_env.calls_file}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        local_prettier.chmod(0o755)
+        target = git_repo / "x.js"
+        target.write_text("var x=1\n", encoding="utf-8")
+        res = shell_env.run(FORMAT, stdin=payload(target))
+        assert res.returncode == 0
+        assert any(c.startswith("local-prettier ") for c in shell_env.calls), (
+            "the project-local prettier must run even though prettier is "
+            "absent from PATH"
+        )
+        notified = [c for c in shell_env.calls if "Format Done" in c]
+        assert notified, "expected a Format Done notification"
+
+    def test_local_prettier_preferred_over_path(self, FORMAT, shell_env, git_repo):
+        # A project-local prettier must win over one merely on PATH, so the
+        # file is formatted with the project's pinned version/plugins.
+        shell_env.stub("prettier", body='echo "from PATH"', exit_code=0)
+        local_bin = git_repo / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        local_prettier = local_bin / "prettier"
+        local_prettier.write_text(
+            f'#!/bin/bash\necho "local-prettier $*" >> "{shell_env.calls_file}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        local_prettier.chmod(0o755)
+        target = git_repo / "x.js"
+        target.write_text("var x=1\n", encoding="utf-8")
+        res = shell_env.run(FORMAT, stdin=payload(target))
+        assert res.returncode == 0
+        assert any(c.startswith("local-prettier ") for c in shell_env.calls)
+        assert not any(c.startswith("prettier ") for c in shell_env.calls), (
+            "the PATH prettier must not be invoked when the project ships its own"
+        )
+
+    def test_nearest_prettier_is_found_in_a_monorepo_package(
+        self, FORMAT, shell_env, git_repo
+    ):
+        # Mirror of the ESLint monorepo case: prettier lives only in the
+        # package, no root node_modules and nothing on PATH.
+        shell_env.hide("prettier")
+        pkg = git_repo / "packages" / "web"
+        pkg.mkdir(parents=True)
+        local_bin = pkg / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        local_prettier = local_bin / "prettier"
+        local_prettier.write_text(
+            f'#!/bin/bash\necho "local-prettier $*" >> "{shell_env.calls_file}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        local_prettier.chmod(0o755)
+        target = pkg / "app.js"
+        target.write_text("var x=1\n", encoding="utf-8")
+        res = shell_env.run(FORMAT, stdin=payload(target))
+        assert res.returncode == 0
+        assert any(c.startswith("local-prettier ") for c in shell_env.calls), (
+            "the package-local prettier must run even with no root "
+            "node_modules and no prettier on PATH"
+        )
+
+    def test_nearest_prettier_wins_over_root_prettier(
+        self, FORMAT, shell_env, git_repo
+    ):
+        # Mirror of test_nearest_eslint_wins_over_root_eslint: with a local
+        # prettier at both the package and the git root, the nearer wins.
+        pkg = git_repo / "packages" / "web"
+        pkg.mkdir(parents=True)
+
+        root_bin = git_repo / "node_modules" / ".bin"
+        root_bin.mkdir(parents=True)
+        root_prettier = root_bin / "prettier"
+        root_prettier.write_text(
+            f'#!/bin/bash\necho "root-prettier $*" >> "{shell_env.calls_file}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        root_prettier.chmod(0o755)
+
+        pkg_bin = pkg / "node_modules" / ".bin"
+        pkg_bin.mkdir(parents=True)
+        pkg_prettier = pkg_bin / "prettier"
+        pkg_prettier.write_text(
+            f'#!/bin/bash\necho "pkg-prettier $*" >> "{shell_env.calls_file}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        pkg_prettier.chmod(0o755)
+
+        target = pkg / "app.js"
+        target.write_text("var x=1\n", encoding="utf-8")
+        res = shell_env.run(FORMAT, stdin=payload(target))
+        assert res.returncode == 0
+        assert any(c.startswith("pkg-prettier ") for c in shell_env.calls), (
+            "the nearer package-local prettier must be preferred"
+        )
+        assert not any(c.startswith("root-prettier ") for c in shell_env.calls), (
+            "the more distant root prettier must not run when a nearer one exists"
+        )
+
+    def test_prettier_outside_git_repo_uses_the_files_own_directory(
+        self, FORMAT, shell_env, tmp_path
+    ):
+        # Outside a git repo there is no root to bound a walk-up search, so
+        # only the edited file's own directory is checked locally before
+        # falling back to PATH.
+        shell_env.hide("prettier")
+        local_bin = tmp_path / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        local_prettier = local_bin / "prettier"
+        local_prettier.write_text(
+            f'#!/bin/bash\necho "local-prettier $*" >> "{shell_env.calls_file}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        local_prettier.chmod(0o755)
+        target = tmp_path / "x.js"
+        target.write_text("var x=1\n", encoding="utf-8")
+        res = shell_env.run(FORMAT, stdin=payload(target))
+        assert res.returncode == 0
+        assert any(c.startswith("local-prettier ") for c in shell_env.calls)
+
     def test_python_file_runs_ruff_and_not_isort(self, FORMAT, shell_env, tmp_path):
         # When ruff is available, imports are sorted via ruff (--select I --fix)
         # and formatted with ruff format. isort must NOT run afterwards: its
@@ -1433,6 +1712,28 @@ class TestCodexAutoFormat:
         assert res.returncode == 0
         assert any(c.startswith("shfmt -i 2 -w") for c in shell_env.calls)
 
+    def test_local_prettier_is_found_when_not_on_path(self, shell_env, git_repo):
+        # Same bug as the Claude copy, hit via the Stop hook's git-diff target
+        # collection instead of a payload path. node_modules is gitignored so
+        # the stub binary itself is never swept up as a format target.
+        shell_env.hide("prettier")
+        (git_repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+        local_bin = git_repo / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        local_prettier = local_bin / "prettier"
+        local_prettier.write_text(
+            f'#!/bin/bash\necho "local-prettier $*" >> "{shell_env.calls_file}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        local_prettier.chmod(0o755)
+        (git_repo / "x.js").write_text("var x=1\n", encoding="utf-8")
+        res = shell_env.run(CODEX_FORMAT, stdin="{}", cwd=git_repo)
+        assert res.returncode == 0
+        assert any(c.startswith("local-prettier ") for c in shell_env.calls), (
+            "the project-local prettier must run even though prettier is "
+            "absent from PATH"
+        )
+
     def test_formats_every_changed_file(self, shell_env, git_repo):
         # A single Codex turn routinely touches more than one file.
         shell_env.stub("shfmt")
@@ -1540,7 +1841,15 @@ class TestLintHelperOutputVarGuard:
 
     @pytest.mark.parametrize(
         "name",
-        ["OUTPUT", "GO_PKG_DIR", "RELATED", "tsc_line", "tsc_sep", "tsc_path"],
+        [
+            "OUTPUT",
+            "GO_PKG_DIR",
+            "RELATED",
+            "eslint_cwd",
+            "tsc_line",
+            "tsc_sep",
+            "tsc_path",
+        ],
     )
     def test_a_colliding_output_variable_is_rejected(self, shell_env, tmp_path, name):
         hooks = REPO_ROOT / ".claude/hooks"

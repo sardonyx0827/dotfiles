@@ -112,7 +112,7 @@ hook_lint_file() {
   BASENAME=$(basename "$FILE_PATH")
   local LINT_ERRORS=""
   local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN TSC_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
-  local GO_PKG_DIR eslint_dir eslint_root tsc_line tsc_sep tsc_path
+  local GO_PKG_DIR eslint_dir eslint_root eslint_cwd tsc_line tsc_sep tsc_path
   local ruff_args=() rubocop_args=()
 
   # 出力変数名がこの関数の local と衝突すると、printf -v は local を書き換えて
@@ -120,7 +120,8 @@ hook_lint_file() {
   case "$hook_out_var" in
   FILE_PATH | EXTENSION | BASENAME | LINT_ERRORS | PROJECT_ROOT | OUTPUT | \
     HAS_ESLINT_CONFIG | ESLINT_BIN | TSC_BIN | CONFIG | HAS_MYPY_CONFIG | RELATED | cfg | \
-    GO_PKG_DIR | eslint_dir | eslint_root | tsc_line | tsc_sep | tsc_path | ruff_args | rubocop_args | \
+    GO_PKG_DIR | eslint_dir | eslint_root | eslint_cwd | tsc_line | tsc_sep | tsc_path | \
+    ruff_args | rubocop_args | \
     hook_out_var | hook_log_file | hook_phase)
     echo "hook_lint_file: output variable '$hook_out_var' collides with an internal local" >&2
     return 2
@@ -155,16 +156,42 @@ hook_lint_file() {
       done
     fi
 
+    # ローカル解決は monorepo を考慮し、編集ファイルのディレクトリから
+    # PROJECT_ROOT まで遡って一番近い node_modules/.bin/eslint を探す
+    # (hook_find_nearest_bin, _hook_common.sh)。PROJECT_ROOT 直下しか見て
+    # いなかった頃は、eslint が packages/<pkg>/node_modules にしか無い構成で
+    # 「ESLint not found」のまま exit 0 を返していた — 上の設定探索は同じ
+    # monorepo 構成を既に想定しているのに、バイナリ解決だけがそれを知らなかった。
     ESLINT_BIN=""
-    if [ -n "$PROJECT_ROOT" ] && [ -x "$PROJECT_ROOT/node_modules/.bin/eslint" ]; then
-      ESLINT_BIN="$PROJECT_ROOT/node_modules/.bin/eslint"
-    elif command -v eslint >/dev/null 2>&1; then
+    if [ -n "$PROJECT_ROOT" ]; then
+      ESLINT_BIN=$(hook_find_nearest_bin "$(dirname "$FILE_PATH")" "$PROJECT_ROOT" eslint)
+    fi
+    if [ -z "$ESLINT_BIN" ] && command -v eslint >/dev/null 2>&1; then
       ESLINT_BIN="eslint"
     fi
 
     if $HAS_ESLINT_CONFIG && [ -n "$ESLINT_BIN" ]; then
       echo "  Running ESLint ($ESLINT_BIN)..."
-      if ! OUTPUT=$("$ESLINT_BIN" "$FILE_PATH" 2>&1); then
+      # flat config (eslint.config.*) を ESLint 9 は lint 対象ではなく作業
+      # ディレクトリから遡って探す。フックはプロジェクトルートで動くので、
+      # packages/<pkg>/ にだけ flat config と eslint がある monorepo では
+      # 「eslint.config が見つからない」で失敗し、問題の無いファイルを
+      # ブロックする。上のループが見つけた config のディレクトリで実行する。
+      # .eslintrc 系はファイル基準で探され、作業ディレクトリは .eslintignore
+      # の探索に効くので、従来どおり動かさない。
+      # 移動する前に対象を絶対パスにする (上の TSC_BIN と同じ理由): 相対パスの
+      # まま渡すと移動先基準で読み直され、存在しないファイルとして eslint が
+      # 失敗し、問題の無い編集をブロックする。$(...) 内の f は外に漏れない。
+      # $(...) の中で case を使わないこと: macOS の bash 3.2 はパターンの `)`
+      # をコマンド置換の終わりと誤読し、このファイルの読み込みごと失敗する
+      # (shellcheck は通るので CI の静的検査では見つからない)。
+      eslint_cwd="$PWD"
+      case "$cfg" in eslint.config.*) eslint_cwd="$eslint_dir" ;; esac
+      if ! OUTPUT=$(
+        f="$FILE_PATH"
+        [ "${f#/}" != "$f" ] || f="$PWD/$f"
+        cd "$eslint_cwd" && "$ESLINT_BIN" "$f" 2>&1
+      ); then
         LINT_ERRORS="${LINT_ERRORS}[ESLint]\n${OUTPUT}\n"
       else
         echo "  ESLint passed"
