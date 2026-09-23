@@ -34,12 +34,20 @@
   The summary is taken from the repository the push will actually run in:
   `git -C <dir>` and a literal `cd <dir>` ahead of the push both retarget it.
   When that directory cannot be determined for certain (a variable, `cd -`,
-  `pushd`, a subshell, several `cd`s), the prompt carries a note instead of
-  a summary — a summary of the wrong repository is worse than none.
+  `pushd`, a subshell, several `cd`s, a `cd` with options or extra operands,
+  a `..` component, a quoted `~`, a target that is not an existing
+  directory, any raw control character in the command, `--git-dir` /
+  `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` anywhere in it, or a plain
+  relative `cd` while `CDPATH` is set in the hook's environment or in the
+  command itself), the prompt
+  carries a note instead of a summary — a summary of the wrong repository
+  is worse than none.
   This entry used to carry `if: Bash(git push*)`. That filter prefix-matches
   each sub-command, so it never fired for the very forms this script exists
   to catch — `git -C <dir> push`, `git --no-pager push`, `git -c k=v push`,
-  `eval "git push …"` — leaving the script's own detection unreachable in
+  `eval "git push …"`, or an expansion among git's options such as
+  `git $OPTS push` (it could expand to any option, so it counts as a push)
+  — leaving the script's own detection unreachable in
   production while `permissions.allow` (`Bash(git:*)`, defaultMode `auto`)
   let those forms through with no confirmation at all. The Claude Code docs
   are explicit: "Because the filter is best-effort, use the permission system

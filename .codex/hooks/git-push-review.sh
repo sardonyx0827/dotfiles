@@ -270,14 +270,34 @@ fi
 # 境界に `/` を含める理由は上の executes_string_arg と同じ: パス指定の
 # `/usr/bin/git push` も同じコマンドで、`/` が境界でないと裸の `git push` は
 # 捕まるのにパス付きだけ素通りするという不整合な穴が残る。
-# shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル(展開させない)
-echo "$cmd_for_match" | grep -qiE '(^|[;&|[:space:](`/])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:];&|)<>`]|$)' || exit 0
+#
+# git とサブコマンドの間で `$` / バッククォートを含む語 (評価できない展開) を
+# オプション (とその値) になりうる語として読み飛ばす理由は .claude 側の同じ
+# 箇所を参照 (`D=--git-d; git ${D}ir=<B>/.git push` の検知漏れ = ゲート喪失)。
+# shellcheck disable=SC2016  # 正規表現中の $ とバッククォートはリテラル(展開させない)
+git_opt_unit='[[:space:]]+(-[^[:space:]]+|[^[:space:]]*[$`][^[:space:]]*)([[:space:]]+[^-[:space:]][^[:space:]]*)?'
+# shellcheck disable=SC2016  # 同上
+git_exp_unit='[[:space:]]+[^[:space:]]*[$`][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?'
+# shellcheck disable=SC2016  # 同上
+push_head='(^|[;&|[:space:](`/])git'
+# shellcheck disable=SC2016  # 同上
+push_tail='[[:space:]]+push([[:space:];&|)<>`]|$)'
+push_exp_re="${push_head}(${git_opt_unit})*${git_exp_unit}(${git_opt_unit})*${push_tail}"
+# クォート文字だけを落としたコピーに push_exp_re を追加で照合する理由
+# (`git "${OPT}" <dir> push` の検知漏れ、`echo "git $x push"` の過検知を許容)
+# は .claude 側の同じ箇所を参照。
+cmd_quotes_stripped=$(printf '%s' "$cmd_norm" | tr -d "\"'")
+if ! echo "$cmd_for_match" | grep -qiE "${push_head}(${git_opt_unit})*${push_tail}"; then
+  printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$push_exp_re" || exit 0
+fi
 
 # git_c_dir_from_words: `-C <dir>` を語単位で解決する設計根拠は
 # .claude/hooks/git-push-review.sh の同名関数のコメントを参照(ロジックは同一)。
+# バックスラッシュは POSIX 規則 ("..." 内で `\` がエスケープするのは $ ` " \ と
+# 改行だけ) で扱い、生の制御文字を含む入力では呼ばない前提も同じ。
 git_c_dir_from_words() {
   local s="$1"
-  local n=${#s} i=0 ch word="" in_word=0 in_s=0 in_d=0
+  local n=${#s} i=0 ch nx word="" in_word=0 in_s=0 in_d=0
   local -a toks=()
   local sep=$'\x01'
   while [ "$i" -lt "$n" ]; do
@@ -288,10 +308,32 @@ git_c_dir_from_words() {
       continue
     fi
     if [ "$ch" = "\\" ]; then
-      if [ "$i" -lt $((n - 1)) ]; then
-        word+=${s:i+1:1}
+      nx=${s:i+1:1}
+      if [ "$i" -ge $((n - 1)) ]; then
+        word+=$ch
         in_word=1
+        i=$((i + 1))
+        continue
       fi
+      if [ "$nx" = $'\n' ]; then
+        i=$((i + 2))
+        continue
+      fi
+      if [ "$in_d" -eq 1 ]; then
+        case "$nx" in
+        '$' | '`' | '"' | "\\")
+          word+=$nx
+          i=$((i + 2))
+          ;;
+        *)
+          word+=$ch
+          i=$((i + 1))
+          ;;
+        esac
+        continue
+      fi
+      word+=$nx
+      in_word=1
       i=$((i + 2))
       continue
     fi
@@ -399,13 +441,16 @@ git_c_dir_from_words() {
 # 判定材料が同じコマンド文字列である以上、strip_quoted_ranges/-C と同じ 4000
 # 文字上限を呼び出し側で共有する(この関数単体には上限を持たせない)。
 #
-# 出力形式・解決/解決不能のルールは .claude/hooks/git-push-review.sh の同名
-# 関数のコメントを参照(ロジックは同一)。
+# 出力形式・解決/解決不能のルール (行き先の制御文字、チルダの展開/リテラル/
+# 混在の区別、複数の被演算子・`-` で始まる語・`..` 成分・CDPATH 下の相対の
+# 行き先を解決不能とすること、
+# 呼び出し側が生の制御文字を弾いておく前提を含む) は
+# .claude/hooks/git-push-review.sh の同名関数のコメントを参照(ロジックは同一)。
 cd_target_from_words() {
-  local s="$1"
-  local n=${#s} i=0 ch word="" in_word=0 in_s=0 in_d=0
+  local s="$1" cdpath_live="${2:-0}"
+  local n=${#s} i=0 ch nx word="" in_word=0 in_s=0 in_d=0
   local -a toks=()
-  local sep=$'\x02' mark=$'\x03'
+  local sep=$'\x02' mark=$'\x03' tmix=$'\x0e'
   # `;`/改行、`&`/`&&`、`|`/`||`/`|&` はどれも同じ「区切り」ではない: 直後の
   # コマンドが確実に実行されるか (`;`)、失敗しても実行されるか (`&`, バック
   # グラウンド化するだけで cd の効果は現在のシェルに残らない)、条件付きか
@@ -418,15 +463,44 @@ cd_target_from_words() {
   while [ "$i" -lt "$n" ]; do
     ch=${s:i:1}
     if [ "$in_s" -eq 1 ]; then
-      if [ "$ch" = "'" ]; then in_s=0; else word+=$ch; fi
+      if [ "$ch" = "'" ]; then
+        in_s=0
+      elif [ -z "$word" ] && [ "$ch" = "~" ]; then
+        word="./~"
+      else
+        word+=$ch
+      fi
       i=$((i + 1))
       continue
     fi
     if [ "$ch" = "\\" ]; then
-      if [ "$i" -lt $((n - 1)) ]; then
-        word+=${s:i+1:1}
+      nx=${s:i+1:1}
+      if [ "$i" -ge $((n - 1)) ]; then
+        word+=$ch
         in_word=1
+        i=$((i + 1))
+        continue
       fi
+      if [ "$nx" = $'\n' ]; then
+        i=$((i + 2))
+        continue
+      fi
+      if [ "$in_d" -eq 1 ]; then
+        case "$nx" in
+        '$' | '`' | '"' | "\\")
+          word+=$nx
+          i=$((i + 2))
+          ;;
+        *)
+          word+=$ch
+          i=$((i + 1))
+          ;;
+        esac
+        continue
+      fi
+      case "$word" in '~'*/*) ;; '~'*) word=$tmix$word ;; esac
+      if [ -z "$word" ] && [ "$nx" = "~" ]; then word="./~"; else word+=$nx; fi
+      in_word=1
       i=$((i + 2))
       continue
     fi
@@ -445,6 +519,8 @@ cd_target_from_words() {
         in_d=0
         i=$((i + 2))
         continue
+      elif [ -z "$word" ] && [ "$ch" = "~" ]; then
+        word="./~"
       else
         word+=$ch
       fi
@@ -453,10 +529,12 @@ cd_target_from_words() {
     fi
     case "$ch" in
     "'")
+      case "$word" in '~'*/*) ;; '~'*) word=$tmix$word ;; esac
       in_s=1
       in_word=1
       ;;
     '"')
+      case "$word" in '~'*/*) ;; '~'*) word=$tmix$word ;; esac
       in_d=1
       in_word=1
       ;;
@@ -559,7 +637,12 @@ cd_target_from_words() {
       in_word=1
       ;;
     *)
-      word+=$ch
+      # 空クォートの直後の `~` (`''~/x`): bash はリテラル、zsh は展開 = 混在。
+      if [ -z "$word" ] && [ "$ch" = "~" ] && [ "$in_word" -eq 1 ]; then
+        word=$tmix$ch
+      else
+        word+=$ch
+      fi
       in_word=1
       ;;
     esac
@@ -571,7 +654,7 @@ cd_target_from_words() {
   local tok
   local seg_start=1 seg_git=0 seg_push=0 seg_cd=0
   local flags_ok=1 expect_val=0 c_val=""
-  local cd_arg_taken=0 cd_arg="" cd_bare=1
+  local cd_arg_taken=0 cd_arg="" cd_bare=1 cd_odd=0
   local seg_index=0 push_seg_index=-1 push_seg_c_val=""
   local -a cd_idx=() cd_dir=() cd_bad=() hidden_idx=() boundary_op=()
   local pushdpopd_seen=0
@@ -608,8 +691,11 @@ cd_target_from_words() {
     fi
     if [ "$tok" = "$sep" ]; then
       if [ "$seg_cd" -eq 1 ]; then
-        local resolved="" bad=0
-        if [ "$cd_bare" -eq 1 ]; then
+        local resolved="" bad=$cd_odd
+        case "$cd_arg" in *[[:cntrl:]]*) bad=1 ;; esac
+        if [ "$bad" -eq 1 ]; then
+          :
+        elif [ "$cd_bare" -eq 1 ]; then
           if [ -n "$HOME" ]; then resolved="$HOME"; else bad=1; fi
         elif [ "$cd_arg" = "-" ]; then
           bad=1
@@ -625,6 +711,27 @@ cd_target_from_words() {
           case "$cd_arg" in
           *'$'* | *'`'*) bad=1 ;;
           *) resolved="$cd_arg" ;;
+          esac
+        fi
+        # `..` を成分に含む行き先 (`link/..`, `../x`, `a/../b`, `~/..`) も解決
+        # 不能。シェルの既定の cd は論理的に `..` を畳む (link/.. は link を
+        # 含むディレクトリ) が、git -C は物理的に解決する (リンク先の親)。
+        # フックの cwd 自体がリンク経由で到達したパスである可能性もある。
+        case "/$resolved/" in */../*) bad=1 ;; esac
+        # CDPATH が効きうるなら (呼び出し側が第 2 引数 cdpath_live=1 で渡す:
+        # フック自身の環境に CDPATH がある、またはコマンド中に CDPATH/cdpath が
+        # 現れる)、`/`・`./`・`../` で始まらない相対の行き先 (`cd sub`) はシェルが
+        # まず CDPATH から探すので、git -C sub (cwd 基準) とは別の場所になりうる
+        # -> 解決不能。ユーザーのシェルの rc ファイルの中でだけ設定された
+        # CDPATH (zsh の cdpath を含む) はここからは分からない (未対応)。
+        # `./~…` はクォートされたチルダ (実際の被演算子は `~…`) なので対象に
+        # 含める。
+        if [ "$bad" -eq 0 ] && [ "$cdpath_live" = "1" ]; then
+          case "$resolved" in
+          /*) ;;
+          './~'*) bad=1 ;;
+          . | ./*) ;;
+          *) bad=1 ;;
           esac
         fi
         cd_idx+=("$seg_index")
@@ -647,6 +754,7 @@ cd_target_from_words() {
       cd_arg_taken=0
       cd_arg=""
       cd_bare=1
+      cd_odd=0
       continue
     fi
     if [ "$seg_start" -eq 1 ]; then
@@ -667,20 +775,21 @@ cd_target_from_words() {
     case "$tok" in
     cd | pushd | popd) hidden_idx+=("$seg_index") ;;
     esac
-    if [ "$seg_cd" -eq 1 ] && [ "$cd_arg_taken" -eq 0 ]; then
-      case "$tok" in
-      -)
-        cd_arg="-"
-        cd_arg_taken=1
-        cd_bare=0
-        ;;
-      -*) ;;
-      *)
+    # cd の語は最初の 1 つだけを被演算子として受け取る。2 つ目以降の語
+    # (`cd <dir> extra`: bash 3.2 は先頭を使い、bash 5 は "too many arguments"
+    # で失敗し、zsh は $PWD 内の置換と解釈する) と、`-` で始まる最初の語
+    # (`-x` 等の不正オプションは cd を失敗させ、`-L`/`-P`/`-e`/`-@`/`--` は
+    # 被演算子の解決方法を変える) は、どちらも解決不能 (cd_odd) に倒す。
+    # リダイレクト (`2>/dev/null`) も語として数えるので note に倒れるが、安全側。
+    if [ "$seg_cd" -eq 1 ]; then
+      if [ "$cd_arg_taken" -eq 1 ]; then
+        cd_odd=1
+      else
         cd_arg=$tok
         cd_arg_taken=1
         cd_bare=0
-        ;;
-      esac
+        case "$tok" in -*) cd_odd=1 ;; esac
+      fi
     fi
     if [ "$seg_git" -eq 1 ]; then
       # 判定順は git_c_dir_from_words と揃える: `-C` の値トークンを push 判定
@@ -825,6 +934,14 @@ cd_target_from_words() {
     *) final_dir="${relevant_dir}/${push_seg_c_val}" ;;
     esac
   fi
+  # `~/` 展開後や -C 値との合成後の最終形も見る (cd 引数だけの判定では
+  # `cd /a && git -C "sub<改行>x" push` の -C 側を取りこぼす)。
+  case "$final_dir" in
+  *[[:cntrl:]]*)
+    printf '1%s1%s' "$out_d" "$out_d"
+    return
+    ;;
+  esac
   printf '1%s0%s%s' "$out_d" "$out_d" "$final_dir"
 }
 
@@ -843,42 +960,88 @@ cd_target_from_words() {
 # 一切関与しない場合だけ、従来通り git_c_dir_from_words の -C 解決に
 # フォールバックする。判定の詳細は呼び出し元 (.claude 側の同ブロック) の
 # コメントを参照(ロジックは同一)。
+#
+# 生の制御文字 (タブ・改行以外。\r を含む) を含むコマンドでは行き先を解決しない
+# (トークナイザが帯域内で使う区切りバイトと衝突するため)、決まった行き先が実在
+# するディレクトリでなければ note にする、の 2 点も .claude 側と同一。
+# `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` の出現 (-C も cd も
+# 使わずに push 対象を差し替える) で note にするのも同一。
 git_c_opt=()
-cd_unresolvable=0
+unresolved_why=""
+cd_uncertain_why="the command changes directory in a way this hook cannot resolve with certainty"
 cd_push_found=0
 cd_status=""
 cd_dir_val=""
 use_legacy_c_lookup=0
-if [ "${#cmd_norm}" -le 4000 ]; then
-  cd_result=$(cd_target_from_words "$cmd_norm")
+ctrl_count=$(printf '%s' "$input" | jq -r '[(.tool_input.command // "") | explode[] | select((. < 32 and . != 9 and . != 10) or . == 127)] | length' 2>/dev/null)
+cmd_probe=$(printf '%s' "$cmd_norm" | tr -d '\\"'"'"'\n')
+git_dir_named=0
+case "$cmd_probe" in
+*--git-dir* | *--work-tree* | *GIT_DIR* | *GIT_WORK_TREE*) git_dir_named=1 ;;
+esac
+# CDPATH (フック自身の環境、またはコマンド中の CDPATH/cdpath) と、push の
+# グローバルオプション位置の評価できない展開の扱いは .claude 側と同一。
+cdpath_live=0
+[ -n "$CDPATH" ] && cdpath_live=1
+case "$cmd_probe" in
+*CDPATH* | *cdpath*) cdpath_live=1 ;;
+esac
+# 展開の照合はクォート文字だけを落としたコピー (上の検知で作成) にも掛ける
+# (ダブルクォート内の展開を見落とさないため。理由は .claude 側参照)。
+push_via_expansion=0
+if echo "$cmd_for_match" | grep -qiE "$push_exp_re" ||
+  printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$push_exp_re"; then
+  push_via_expansion=1
+fi
+if [ "$ctrl_count" != "0" ]; then
+  unresolved_why="the command contains raw control characters, which this hook does not parse"
+elif [ "$git_dir_named" -eq 1 ]; then
+  unresolved_why="the command sets --git-dir, --work-tree, GIT_DIR or GIT_WORK_TREE, which this hook does not follow"
+elif [ "$push_via_expansion" -eq 1 ]; then
+  unresolved_why="a word among git's options before push is an expansion this hook cannot evaluate"
+elif [ "${#cmd_norm}" -le 4000 ]; then
+  cd_result=$(cd_target_from_words "$cmd_norm" "$cdpath_live")
   IFS=$'\x1c' read -r cd_push_found cd_status cd_dir_val <<<"$cd_result"
 fi
 
-if [ "$cd_push_found" != "1" ]; then
+if [ -n "$unresolved_why" ]; then
+  :
+elif [ "$cd_push_found" != "1" ]; then
   # cmd_for_match ではなくクォート「文字」だけを落とした文字列を見る理由は
   # 呼び出し元 (.claude 側の同ブロック) のコメントを参照(ロジックは同一)。
-  cmd_quotes_stripped=$(printf '%s' "$cmd_norm" | tr -d "\"'")
   if printf '%s\n' "$cmd_quotes_stripped" | grep -qE '(^|[^[:alnum:]_])(cd|pushd|popd)([^[:alnum:]_]|$)'; then
-    cd_unresolvable=1
+    unresolved_why=$cd_uncertain_why
   else
     use_legacy_c_lookup=1
   fi
 else
   case "$cd_status" in
-  1) cd_unresolvable=1 ;;
+  1) unresolved_why=$cd_uncertain_why ;;
   0) git_c_opt=(-C "$cd_dir_val") ;;
   *) use_legacy_c_lookup=1 ;;
   esac
 fi
 
 if [ "$use_legacy_c_lookup" -eq 1 ] && [ "${#cmd_norm}" -le 4000 ]; then
-  git_c_dir=$(git_c_dir_from_words "$cmd_norm")
-  [ -n "$git_c_dir" ] && git_c_opt=(-C "$git_c_dir")
+  # 番兵 x で $(...) による末尾改行の削除を防ぐ (理由は .claude 側参照)。
+  git_c_dir=$(
+    git_c_dir_from_words "$cmd_norm"
+    printf x
+  )
+  git_c_dir=${git_c_dir%x}
+  case "$git_c_dir" in
+  *[[:cntrl:]]*) unresolved_why="the -C directory contains control characters" ;;
+  ?*) git_c_opt=(-C "$git_c_dir") ;;
+  esac
+fi
+
+if [ -z "$unresolved_why" ] && [ "${#git_c_opt[@]}" -gt 0 ] && [ ! -d "${git_c_opt[1]}" ]; then
+  unresolved_why="the directory this hook read as the push target does not exist"
 fi
 
 summary=""
-if [ "$cd_unresolvable" -eq 1 ]; then
-  summary="(target repository could not be determined: the command changes directory in a way this hook cannot resolve with certainty -- review the target manually before approving)"
+if [ -n "$unresolved_why" ]; then
+  summary="(target repository could not be determined: ${unresolved_why} -- review the target manually before approving)"
 elif git "${git_c_opt[@]}" rev-parse --is-inside-work-tree &>/dev/null; then
   branch=$(git "${git_c_opt[@]}" rev-parse --abbrev-ref HEAD 2>/dev/null)
   if git "${git_c_opt[@]}" rev-parse --abbrev-ref '@{upstream}' &>/dev/null; then
