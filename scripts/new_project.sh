@@ -135,7 +135,7 @@ readme_body() {
 }
 
 init_git() {
-  local toplevel home_abs
+  local toplevel
   if ! command -v git >/dev/null 2>&1; then
     warn "git not found; skipped repository initialization"
     return 0
@@ -146,8 +146,13 @@ init_git() {
   fi
   # 引数無しの np を $HOME でうっかり叩いたとき、ホーム全体がリポジトリに
   # なるのだけは避ける。ディレクトリと README は害が無いので作ってよい。
-  home_abs="$(cd "${HOME:-/nonexistent}" 2>/dev/null && pwd -P || printf '%s' "${HOME:-}")"
-  if [[ -n "$home_abs" && "$abs" == "$home_abs" ]]; then
+  # `-ef` (同一 inode か) で比べる。以前は `pwd -P` で作った文字列同士を
+  # `==` で比べていたが、bash の `pwd -P` はシンボリックリンクは辿っても
+  # 大文字小文字までは正規化しない。大文字小文字を区別しないファイルシステム
+  # (APFS の既定) では、$HOME の綴りをケース違いで踏んだだけで文字列が食い違い、
+  # このガードを素通りして $HOME 直下に git init してしまう (install.sh の
+  # link_entry を d68b0f1 で直したのと同じ症状)。綴りではなく実体で比べる。
+  if [[ -n "${HOME:-}" && "$root" -ef "${HOME:-}" ]]; then
     warn "refusing to run git init in \$HOME"
     return 0
   fi
@@ -194,18 +199,32 @@ if [[ -e "$root" && ! -d "$root" ]]; then
   exit 1
 fi
 
-# $root のうち実在する最も近い祖先。ドライランでは $root 自体がまだ無いので、
+# dirname は先頭の実在しない要素を辿り着けないと "." を返す。$root がドット
+# から始まる名前 (.hidden など) でまだ存在しないとき、この "." は「カレント
+# ディレクトリ」であって "$root" の先頭の "." (名前の一部) ではないのに、
+# 下の rest 計算はどちらも同じ1文字なので区別が付かない。素の $root からだと
+# ".hidden" から "." を剥がして "hidden" になってしまう (先頭の dot が消える)。
+# "./" を明示的に足しておけば、probe がその "." に潰れても間に "/" が挟まる
+# ので rest 側にちゃんと "/.hidden" が残る。既に /, ./, ../, ., .. のどれかで
+# 始まっている場合はそのまま (二重に足すと ".//foo" のような余計な形になる)。
+walk="$root"
+case "$walk" in
+/* | ./* | ../* | . | ..) ;;
+*) walk="./$walk" ;;
+esac
+
+# $walk のうち実在する最も近い祖先。ドライランでは $root 自体がまだ無いので、
 # cd / git -C の足場としてこちらを使う。パスは全て `--` 越しに渡す:
 # `--` はこのスクリプト自身がオプション終端として提供している以上、その先の
 # `-foo` を外部コマンドのオプションパーサに横取りされては意味がない。
-probe="$root"
+probe="$walk"
 while [[ ! -d "$probe" ]]; do
   probe="$(dirname -- "$probe")"
 done
 
 # 実在部分は cd で解決し、まだ無い残りを継ぎ足して絶対パスにする
 # (realpath -m や readlink -f は BSD userland に無い)。
-rest="${root#"$probe"}"
+rest="${walk#"$probe"}"
 
 # 実在部分の `..` は上の cd が物理解決するが、まだ無い部分に残った `..` は
 # 解決しようがない (subdir/newdir/.. の .. が何を指すかは newdir を作るまで
