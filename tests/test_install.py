@@ -2,6 +2,7 @@
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -2390,6 +2391,82 @@ class TestHooksJsonTemplate:
         assert f"{home}/.codex/hooks/" in content
         assert json.loads(content)
 
+    # $HOME lands in three nested languages at once: a shell single-quoted word
+    # ('__HOME__/...'), inside a JSON string, inside a sed replacement. Only the
+    # sed layer was escaped, so a `'` (a legal user name, e.g. o'brien on
+    # Windows/WSL) closed the shell quote in every hook command, and a `"` or
+    # `\` broke the JSON itself -- Codex would load no hooks at all.
+    _AWKWARD_HOMES = [
+        pytest.param("o'brien", id="single-quote"),
+        pytest.param('say "hi"', id="double-quote"),
+        pytest.param("back\\slash", id="backslash"),
+        pytest.param("a&b", id="ampersand"),
+        pytest.param("p|pe", id="pipe"),
+        pytest.param("with space", id="space"),
+        pytest.param('o\'b "q" \\ & | $x', id="all-at-once"),
+    ]
+
+    @staticmethod
+    def _hook_commands(data):
+        return [
+            hook["command"]
+            for groups in data["hooks"].values()
+            for group in groups
+            for hook in group["hooks"]
+        ]
+
+    @pytest.mark.parametrize("name", _AWKWARD_HOMES)
+    def test_awkward_home_renders_runnable_hook_commands(
+        self, shell_env, tmp_path, name
+    ):
+        home = tmp_path / name
+        home.mkdir()
+        env = {**shell_env.env, "HOME": str(home)}
+
+        res = run_sourced("_link_codex_config", env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        data = json.loads((home / ".codex/hooks.json").read_text(encoding="utf-8"))
+        commands = self._hook_commands(data)
+        assert commands
+        for cmd in commands:
+            syntax = subprocess.run(
+                ["bash", "-n", "-c", cmd], capture_output=True, text=True
+            )
+            assert syntax.returncode == 0, (cmd, syntax.stderr)
+            script = shlex.split(cmd)[-1]
+            assert script.startswith(f"{home}/.codex/hooks/"), (cmd, script)
+            # The literal path, reachable through the linked hooks dir.
+            assert Path(script).is_file(), script
+
+    # Both branches must render through ONE helper: the dry-run's cmp against
+    # what the real run wrote only reports "up to date" when the two renders
+    # are byte-identical, awkward characters included.
+    def test_dry_run_render_matches_the_real_render(self, shell_env, tmp_path):
+        home = tmp_path / 'o\'b "q" \\ & | $x'
+        home.mkdir()
+        env = {**shell_env.env, "HOME": str(home)}
+
+        real = run_sourced("_link_codex_config", env)
+        assert real.returncode == 0, real.stdout + real.stderr
+        assert json.loads((home / ".codex/hooks.json").read_text(encoding="utf-8"))
+
+        dry = run_sourced("_link_codex_config", {**env, "DRY_RUN": "1"})
+        assert dry.returncode == 0, dry.stdout + dry.stderr
+        assert "hooks.json already up to date" in dry.stdout, dry.stdout
+        assert "would render" not in dry.stdout, dry.stdout
+
+    # The shell-quoting layer assumes every placeholder sits inside a
+    # single-quoted word; JSON cannot carry a comment saying so.
+    def test_every_home_placeholder_is_inside_a_single_quoted_word(self):
+        text = (REPO_ROOT / ".codex/hooks.json.template").read_text(encoding="utf-8")
+        preceding = re.findall(r"(.)__HOME__", text)
+        assert preceding
+        assert set(preceding) == {"'"}, (
+            "install.sh escapes $HOME for a '...' shell word; a __HOME__ outside "
+            "one needs a different escape"
+        )
+
     def test_rerun_regenerates_hooks_json(self, shell_env):
         home = shell_env.home
         (home / ".oh-my-zsh").mkdir()
@@ -2427,7 +2504,10 @@ class TestHooksJsonDryRunDiff:
         assert second.returncode == 0, second.stderr
 
         lines = self._hooks_json_lines(second.stdout)
-        assert any("unchanged" in ln for ln in lines), second.stdout
+        # Match the message itself, not "unchanged": pytest names tmp_path
+        # after the test, so every line carrying $HOME contained that word
+        # and this assertion could not fail.
+        assert any("already up to date" in ln for ln in lines), second.stdout
         assert not any("would render" in ln for ln in lines), second.stdout
 
     def test_dry_run_reports_would_render_when_content_differs(self, shell_env):
@@ -2441,7 +2521,7 @@ class TestHooksJsonDryRunDiff:
 
         lines = self._hooks_json_lines(res.stdout)
         assert any("would render" in ln for ln in lines), res.stdout
-        assert not any("unchanged" in ln for ln in lines), res.stdout
+        assert not any("already up to date" in ln for ln in lines), res.stdout
 
     def test_dry_run_touches_nothing_either_way(self, shell_env):
         # The diff check itself must stay read-only: no write to HOME.
@@ -2571,6 +2651,104 @@ class TestDryRun:
         assert "[DRY-RUN] would keep existing" in res.stdout
         assert "would create" not in res.stdout
         assert secrets.read_text(encoding="utf-8") == "export GEMINI_API_KEY=real-key\n"
+
+    # The real run removes a config.toml symlink and then finds nothing there,
+    # so it seeds. The preview removed nothing, found the LIVE link still
+    # resolving, and reported "Keeping existing config.toml" -- the opposite
+    # plan, and without the [DRY-RUN] prefix.
+    def test_codex_config_symlink_preview_matches_the_real_seed(
+        self, shell_env, tmp_path
+    ):
+        old = tmp_path / "old-checkout-config.toml"
+        old.write_text("[old]\n", encoding="utf-8")
+        homes = {}
+        for mode in ("0", "1"):
+            home = tmp_path / f"home-dry{mode}"
+            (home / ".codex").mkdir(parents=True)
+            (home / ".codex/config.toml").symlink_to(old)
+            env = {**shell_env.env, "HOME": str(home), "DRY_RUN": mode}
+            res = run_sourced("_link_codex_config", env)
+            assert res.returncode == 0, res.stdout + res.stderr
+            homes[mode] = (home, res.stdout)
+
+        real_home, real_out = homes["0"]
+        assert "Seeded config.toml" in real_out
+        assert not (real_home / ".codex/config.toml").is_symlink()
+
+        dry_home, dry_out = homes["1"]
+        assert "[DRY-RUN] would seed" in dry_out
+        assert "Keeping existing config.toml" not in dry_out
+        assert (dry_home / ".codex/config.toml").readlink() == old
+        assert old.read_text(encoding="utf-8") == "[old]\n"
+
+    def test_codex_config_keep_is_previewed_as_a_dry_run_line(self, shell_env):
+        home = shell_env.home
+        (home / ".codex").mkdir(parents=True)
+        (home / ".codex/config.toml").write_text("[live]\n", encoding="utf-8")
+
+        res = run_sourced("_link_codex_config", {**shell_env.env, "DRY_RUN": "1"})
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        keep = [ln for ln in res.stdout.splitlines() if "config.toml" in ln]
+        assert keep and all("[DRY-RUN]" in ln for ln in keep), res.stdout
+        assert "would keep existing" in res.stdout
+
+    # An old-layout ~/.oh-my-zsh/custom symlink is replaced by a fresh, empty
+    # real directory before the theme is linked. The preview replaced nothing,
+    # so link_entry looked THROUGH the old link: into the checkout it reported
+    # the theme as skipped ("resolves into the checkout"), and into a directory
+    # elsewhere it announced a backup -- while the real run simply linked it.
+    # Driven against a COPY of the checkout: the `-ef` guard only fires for the
+    # sourced script's own tree, and the real branch must never touch the repo.
+    @pytest.mark.parametrize("link_into", ["checkout", "elsewhere"])
+    def test_symlinked_omz_custom_preview_matches_the_real_theme_link(
+        self, shell_env, tmp_path, link_into
+    ):
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        shutil.copy2(INSTALL, checkout / "install.sh")
+        shutil.copytree(REPO_ROOT / ".oh-my-zsh", checkout / ".oh-my-zsh")
+        themes = sorted(
+            p.name for p in (checkout / ".oh-my-zsh/custom/themes").iterdir()
+        )
+        assert themes
+        if link_into == "checkout":
+            custom_target = checkout / ".oh-my-zsh/custom"
+        else:
+            custom_target = tmp_path / "elsewhere/custom"
+            (custom_target / "themes").mkdir(parents=True)
+            for name in themes:
+                (custom_target / "themes" / name).write_text("hand-edited\n")
+
+        outputs = {}
+        for mode in ("0", "1"):
+            home = tmp_path / f"home-dry{mode}"
+            (home / ".oh-my-zsh").mkdir(parents=True)
+            (home / ".oh-my-zsh/custom").symlink_to(custom_target)
+            res = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'source "{checkout / "install.sh"}"\nlink_oh_my_zsh_theme',
+                ],
+                capture_output=True,
+                text=True,
+                env={**shell_env.env, "HOME": str(home), "DRY_RUN": mode},
+                timeout=120,
+            )
+            assert res.returncode == 0, res.stdout + res.stderr
+            outputs[mode] = res.stdout
+
+        for name in themes:
+            assert f"Linked {name}" in outputs["0"], outputs["0"]
+            assert re.search(
+                rf"\[DRY-RUN\] would link \S*/custom/themes/{re.escape(name)} ",
+                outputs["1"],
+            ), outputs["1"]
+        assert "Backing up" not in outputs["0"]
+        assert "would back up" not in outputs["1"], outputs["1"]
+        assert "resolves into the checkout" not in outputs["1"], outputs["1"]
+        assert (tmp_path / "home-dry1/.oh-my-zsh/custom").is_symlink()
 
     def test_change_shell_does_not_invoke_chsh(self, shell_env):
         shell_env.stub("zsh")
@@ -2912,6 +3090,32 @@ class TestLinkingThroughASymlinkedParent:
         )
         assert "resolves into the checkout" in res.stdout + res.stderr
 
+    # The -ef guard used to live only in the real branch of
+    # _render_git_local_config, so the preview promised to render
+    # os.gitconfig / user.gitconfig that the real run then skipped. Asserted
+    # on the git-specific wording: nvim's link_entry also prints "resolves
+    # into the checkout" here, which would pass without the fix.
+    def test_dry_run_previews_the_same_git_config_skip(self, shell_env, tmp_path):
+        checkout = self._scratch_checkout(tmp_path)
+        (shell_env.home / ".config").symlink_to(checkout / ".config")
+        before = self._shape(checkout / ".config")
+
+        res = subprocess.run(
+            ["bash", "-c", f'source "{checkout / "install.sh"}"\ncreate_symlinks'],
+            capture_output=True,
+            text=True,
+            env={**shell_env.env, "DRY_RUN": "1"},
+            timeout=120,
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert self._shape(checkout / ".config") == before
+        lines = res.stdout.splitlines()
+        assert any(
+            "[DRY-RUN]" in ln and "Skipping git config render" in ln for ln in lines
+        ), res.stdout
+        assert not [ln for ln in lines if ".config/git/" in ln], res.stdout
+
     # The guards compared `pwd -P` strings. bash resolves symlinks textually
     # and never canonicalises case, so on a case-insensitive filesystem (the
     # macOS default) a link spelled `.../CHECKOUT/.claude` and an installer run
@@ -2953,8 +3157,20 @@ class TestDanglingParentSymlinks:
     replace; the directory sites have to agree.
     """
 
+    # `.config/git` is the git config render's own directory: it sat behind a
+    # bare `mkdir -p` right after the ensure_dir for its parent, so a dangling
+    # ~/.config/git killed the run exactly the way the sites above used to.
     @pytest.mark.parametrize(
-        "rel", [".claude", ".codex", ".gemini", ".tmux", ".config", ".config/Code/User"]
+        "rel",
+        [
+            ".claude",
+            ".codex",
+            ".gemini",
+            ".tmux",
+            ".config",
+            ".config/Code/User",
+            ".config/git",
+        ],
     )
     def test_a_dangling_symlink_where_a_config_dir_belongs_is_replaced(
         self, shell_env, rel
@@ -2978,6 +3194,82 @@ class TestDanglingParentSymlinks:
 
         assert res.returncode == 0, res.stderr
         assert (home / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme").is_symlink()
+
+
+class TestOsGitconfigWrite:
+    """os.gitconfig's write must be checked, never assumed.
+
+    It is rendered by `{ ... } >"$HOME/.config/git/os.gitconfig"` -- a
+    redirect on a COMPOUND command -- and macOS /bin/bash 3.2 does not fire
+    errexit when that redirect fails: the group is skipped and the next line
+    printed "[SUCCESS] Rendered os.gitconfig" over a file that was never
+    written, leaving git with no credential helper. Both failures below are
+    built to behave the same on bash 3.2 and 5, so the tests do not depend on
+    which one runs them.
+    """
+
+    # The file is generated and rewritten on every run -- no user content
+    # lives in it -- so a symlink there, even a broken one, is ours to
+    # replace (the backup_if_real policy), unlike the dangling ~/.zsh_secrets
+    # and user.gitconfig redirects, which hold the user's own keys and
+    # identity and are left alone. Replacing also means never writing THROUGH
+    # the link: with the target's parent present, the redirect used to create
+    # a file at wherever the stale link happened to point.
+    @pytest.mark.parametrize("parent_exists", [False, True])
+    def test_a_dangling_link_is_replaced_with_the_generated_file(
+        self, shell_env, tmp_path, parent_exists
+    ):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        target_dir = tmp_path / "unmounted-volume"
+        if parent_exists:
+            target_dir.mkdir()
+        target = target_dir / "os.gitconfig"
+        rendered = home / ".config/git/os.gitconfig"
+        rendered.symlink_to(target)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert not rendered.is_symlink() and rendered.is_file()
+        assert "helper = " in rendered.read_text(encoding="utf-8")
+        assert not target.exists(), "the render was written through the stale link"
+        assert "dangling symlink" in res.stdout
+
+    def test_dry_run_previews_the_same_replacement(self, shell_env, tmp_path):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        target = tmp_path / "unmounted-volume/os.gitconfig"
+        rendered = home / ".config/git/os.gitconfig"
+        rendered.symlink_to(target)
+
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert any(
+            "[DRY-RUN]" in ln and "dangling symlink" in ln and "os.gitconfig" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+        assert rendered.is_symlink() and rendered.readlink() == target
+
+    # A directory where the file belongs: the redirect fails with EISDIR on
+    # every bash, and a directory is not ours to delete. create_symlinks is
+    # called bare -- on the left of `&&` errexit is suspended and a non-zero
+    # return would be swallowed.
+    def test_a_failed_write_is_an_error_not_a_success(self, shell_env):
+        home = shell_env.home
+        blocker = home / ".config/git/os.gitconfig"
+        blocker.mkdir(parents=True)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+
+        out = res.stdout + res.stderr
+        assert res.returncode != 0, out
+        assert any(
+            "[ERROR]" in ln and "os.gitconfig" in ln for ln in out.splitlines()
+        ), out
+        assert "Rendered os.gitconfig" not in out
+        assert blocker.is_dir() and not any(blocker.iterdir())
 
 
 class TestBackupsAreAnnounced:

@@ -172,6 +172,10 @@ Codex にはフックの信頼ゲートがあり、**`hooks.json` を変更す�
 sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 ```
 
+この sed は `$HOME` を無加工で埋め込むため、`$HOME` に `'` `"` `\` `&` `|` の
+いずれかを含む環境では壊れた `hooks.json` になる。`./install.sh` はシェルの引用・
+JSON・sed の 3 層をエスケープして生成するので、そうした環境ではそちらを使う。
+
 スクリプトは `~/.codex/hooks/` から本リポジトリの `.codex/hooks/` へシンボリック
 リンクを張る。
 
