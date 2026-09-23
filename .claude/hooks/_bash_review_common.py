@@ -212,7 +212,9 @@ _WRAPPER_EXECUTABLES = frozenset(
 # 値を取らないと分かるものだけを列挙する保守的な allowlist。
 _WRAPPER_VALUELESS_FLAGS = {
     "env": frozenset({"-i", "-0", "-v"}),  # -u/-C/-S 等は値付き → 判定不能へ
-    "command": frozenset({"-p", "-v", "-V"}),
+    # -v / -V は後続を実行しない検索フラグなので、ここではなく
+    # _WRAPPER_LOOKUP_FLAGS 側に置く (定義側の注記参照)。
+    "command": frozenset({"-p"}),
     "nohup": frozenset(),
     "nice": frozenset(),  # -n は値付き。無印 nice のみ透過
     # -a NAME は値付き → 未収録のまま判定不能 (None → ask) へ倒す
@@ -301,6 +303,23 @@ _WRAPPER_VALUELESS_FLAGS = {
             "-arm64e",
         }
     ),
+}
+
+# 「後続を実行せず、名前を検索して表示するだけ」にするフラグ。`command -v X` /
+# `command -V X` は bash / zsh / dash のいずれでも X のパスや定義を出力するだけで
+# X を起動しない。以前はこれを _WRAPPER_VALUELESS_FLAGS に載せて X まで剥がして
+# いたため、`command -v curl` / `command -V sudo` という走りもしないコマンドが
+# 層 1 のハード DENY に当たっていた。層 1 の誤検知は ask で覆せず作業を止める。
+#
+# script -p (再生モード、後続を exec しない) は同じ理由で未収録 = 判定不能 (ask)
+# に倒しているが、こちらは ask に倒さず `command` 自身を実行体として返す
+# (_split_prefix 参照)。`command -v python3` は存在確認として極めてありふれて
+# おり、毎回 2 モデルの ask にすると実用に耐えない。一方 `script -p` は稀で、
+# ask に倒すコストが安い。見た目が似ているからといって両者を揃えないこと。
+#
+# env -v / timeout -v は「冗長表示」で後続を実行するので、ここへ一般化しない。
+_WRAPPER_LOOKUP_FLAGS = {
+    "command": frozenset({"-v", "-V"}),
 }
 
 # フラグを剥がした後に「実行体ではない必須の位置引数」を取るラッパーと、その
@@ -574,7 +593,9 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
     - 実行体位置のリダイレクト (_REDIRECT_ALONE / _REDIRECT_GLUED): 演算子単独形は
       リダイレクト先ごと 2 トークン、密着形は 1 トークン読み飛ばす。
     - ラッパー (_WRAPPER_EXECUTABLES): `env` / `command` / `exec` 等。「値を取らない
-      既知フラグ」のみ読み飛ばす。
+      既知フラグ」のみ読み飛ばす。ただし検索フラグ (_WRAPPER_LOOKUP_FLAGS:
+      `command -v X`) を伴う形は X を実行しないので剥がさず、ラッパー自身から
+      始まる残余を返す。
 
     None は「実行体を確定できない」の意味で、呼び出し側に安全側 (DENY 側は
     レビューへ、高リスク側は ask へ) へ倒させる契約。None を返す条件は 3 つ:
@@ -713,14 +734,27 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         base = tok.rsplit("/", 1)[-1].casefold()
         if base in _WRAPPER_EXECUTABLES:
             valueless = _WRAPPER_VALUELESS_FLAGS.get(base, frozenset())
+            lookup = _WRAPPER_LOOKUP_FLAGS.get(base, frozenset())
+            wrapper_at = i
+            lookup_only = False
             i += 1
             while i < len(tokens) and tokens[i].startswith("-"):
                 # フラグ側は畳まない: `env -I` は `env -i` ではなく、`xargs -I` も
                 # `xargs -i` と別物。未知フラグを既知へ畳むと「実行体を確定できない
                 # → レビュー行き」という安全側の判定が働かなくなる。
-                if tokens[i] not in valueless:
+                if tokens[i] in lookup:
+                    lookup_only = True
+                elif tokens[i] not in valueless:
                     return None  # 値付き/未知フラグ: 実行体を確定できない
                 i += 1
+            # 検索フラグ (`command -v X`) は後続を実行しないので、ラッパー自身を
+            # 実行体として返す (_WRAPPER_LOOKUP_FLAGS の注記参照)。判定はフラグを
+            # 読み終えてから行うので `-p -v` / `-v -p` のどちらの順でも検索になり、
+            # 未知フラグが混じれば上で None に倒れる。`[]` (実行体が無い) を返さない
+            # のは、それが _high_risk_label で "" に写るフェイルオープン側の答え
+            # だから。こちらは「command という組み込みが走る」という事実どおりの答え。
+            if lookup_only:
+                return tokens[wrapper_at:]
             # フラグの後ろに続く必須の位置引数 (timeout の DURATION 等) を
             # 読み飛ばす。位置引数が展開を含むと、空展開時に後続トークンが
             # 位置引数の側へずれて実行体の特定がずれるため、確定できない
