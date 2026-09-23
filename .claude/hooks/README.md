@@ -171,7 +171,7 @@ latency low for the common case:
 2. **Secret pre-send scan (no external call).** Before any command is handed to
    an LLM, a static scan (`scan_secrets`) checks the command _and_ the full
    `tool_input` for raw credential **values** — known-format tokens (GitHub /
-   AWS / Google / OpenAI / Slack / Stripe), PEM private keys, JWTs,
+   AWS / Google / OpenAI / Slack / Stripe), PEM / OpenPGP private keys, JWTs,
    `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs, and
    credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`).
    A hit fails closed to `ask` (Claude) / block (Codex) **without calling Gemini

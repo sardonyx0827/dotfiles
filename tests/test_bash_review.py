@@ -3322,6 +3322,12 @@ FAKE_JWT = "eyJ" + "a" * 10 + ".eyJ" + "b" * 10 + "." + "c" * 10
 FAKE_BEARER = "e" * 24
 
 
+def _armor_header(kind: str) -> str:
+    """A PEM / OpenPGP armor BEGIN line, assembled at runtime so that no
+    literal key header sits in the source for a repository scanner to flag."""
+    return "-----BEGIN " + kind + "-----"
+
+
 class TestSecretScanUnit:
     """scan_secrets() is the static, pre-send guard: it flags credential
     VALUES sitting in the command (or anywhere in tool_input) so the hook can
@@ -3371,6 +3377,45 @@ class TestSecretScanUnit:
         found, label = hook_fns["scan_secrets"](command, {"command": command})
         assert found is False
         assert label == ""
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            # OpenPGP armor ends in "KEY BLOCK", not "KEY": the output of
+            # `gpg --export-secret-keys --armor` slipped past a pattern that
+            # required "PRIVATE KEY-----" and went to the LLMs as-is.
+            "PGP PRIVATE KEY BLOCK",
+            # The PEM spellings the pattern already caught. Regression guards
+            # for the widening above, not part of the bug.
+            "OPENSSH PRIVATE KEY",
+            "RSA PRIVATE KEY",
+            "EC PRIVATE KEY",
+            "ENCRYPTED PRIVATE KEY",
+            "PRIVATE KEY",
+        ],
+    )
+    def test_private_key_block_is_detected(self, hook_fns, kind):
+        command = f"cat > key.asc <<'EOF'\n{_armor_header(kind)}\nAAAA\nEOF"
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (True, "private key"), f"missed {kind!r}"
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            # Public material shares the armor shape. Accepting a trailing
+            # " BLOCK" must not start flagging it: pasting a public key or a
+            # signature is routine and leaks nothing.
+            "PGP PUBLIC KEY BLOCK",
+            "PUBLIC KEY",
+            "RSA PUBLIC KEY",
+            "CERTIFICATE",
+            "PGP SIGNATURE",
+        ],
+    )
+    def test_public_armor_block_is_not_flagged(self, hook_fns, kind):
+        command = f"cat > key.asc <<'EOF'\n{_armor_header(kind)}\nAAAA\nEOF"
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (False, ""), f"false positive on {kind!r}"
 
     def test_secret_in_non_command_field_is_detected(self, hook_fns):
         # The whole tool_input is serialized into the prompt, so a secret in a

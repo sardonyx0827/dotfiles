@@ -29,6 +29,14 @@ import secret_scan  # noqa: E402
 
 SCANNER = REPO_ROOT / "scripts" / "secret_scan.py"
 
+# An exported OpenPGP secret key, as `gpg --export-secret-keys --armor` writes it.
+# The header is assembled at runtime so no literal key header sits in the source.
+# Its armor line ends in "KEY BLOCK-----", which the "private key" pattern missed
+# while it required "KEY-----" -- the editors then sent the key to the AI tool.
+PGP_PRIVATE_KEY_PAYLOAD = (
+    "-----BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----\n\nlQdGBGU" + "A" * 40 + "\n"
+)
+
 
 def _stdin_from(data: bytes):
     """A stdin stand-in carrying the same text/`.buffer` pair the real one has."""
@@ -66,6 +74,7 @@ class TestMainInProcess:
             '{\n  "api_key": "abcdef1234567890"\n}',
             # The bare-positional shape of the secret-setting CLIs.
             "aws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123",
+            PGP_PRIVATE_KEY_PAYLOAD,
         ],
     )
     def test_credential_exits_1_with_generic_label(self, monkeypatch, capsys, text):
@@ -150,6 +159,12 @@ class TestCliSubprocess:
         r = self._run("token=" + "x" * 20)
         assert r.returncode == 1
         assert r.stdout.strip()
+
+    def test_pgp_private_key_on_stdin_exits_1(self):
+        # The reproduced miss, through the real `python3 secret_scan.py` path.
+        r = self._run(PGP_PRIVATE_KEY_PAYLOAD)
+        assert r.returncode == 1
+        assert r.stdout.strip() == "private key"
 
     def test_clean_on_stdin_exits_0(self):
         r = self._run("just some ordinary code without secrets")

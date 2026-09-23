@@ -2064,7 +2064,15 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ("OpenAI key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
     ("Slack token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}")),
     ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
-    ("private key", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),
+    # OpenPGP の armor は `PRIVATE KEY BLOCK-----` で終わる (gpg
+    # --export-secret-keys --armor の出力)。`KEY-----` 直結だけを見ていたため
+    # PEM 形式 (OPENSSH / RSA / EC / ENCRYPTED) だけが拾われ、PGP 秘密鍵は素通り
+    # して LLM へ送られていた。` BLOCK` は任意の接尾として足すだけに留め、
+    # `PGP PUBLIC KEY BLOCK` 等の公開側の armor まで拾わないようにする。
+    (
+        "private key",
+        re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"),
+    ),
     (
         "JWT",
         re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
