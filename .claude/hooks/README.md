@@ -31,6 +31,11 @@
   (permissionDecision: ask) with a summary of the branch, commits,
   and diffstat about to be pushed. Enforces the pre-push review step
   of `rules/git-workflow.md`.
+  The summary is taken from the repository the push will actually run in:
+  `git -C <dir>` and a literal `cd <dir>` ahead of the push both retarget it.
+  When that directory cannot be determined for certain (a variable, `cd -`,
+  `pushd`, a subshell, several `cd`s), the prompt carries a note instead of
+  a summary — a summary of the wrong repository is worse than none.
   This entry used to carry `if: Bash(git push*)`. That filter prefix-matches
   each sub-command, so it never fired for the very forms this script exists
   to catch — `git -C <dir> push`, `git --no-pager push`, `git -c k=v push`,

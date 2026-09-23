@@ -27,7 +27,11 @@ Matcher: `Bash`(実行順)
    扱い = fail-open になるため、ランチャーがそれらを exit 2 + stderr の
    ブロックへ変換する (正常系の exit 0 / exit 2 は素通し)。
 2. **git-push-review** (`hooks/git-push-review.sh`):
-   `git push` を検知し、対象コミットのサマリを添えてブロックする。
+   `git push` を検知し、対象コミットのサマリを添えてブロックする。サマリは
+   push が実際に走るリポジトリから取る(`git -C <dir>` と、push より前の
+   リテラルな `cd <dir>` の両方を追う)。変数・`cd -`・`pushd`・サブシェル・
+   複数の `cd` などで確実に決められないときは、サマリの代わりに注記を出す
+   (別リポジトリのサマリは無いより悪い)。
 
 ### PostToolUse
 
