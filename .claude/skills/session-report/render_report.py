@@ -60,7 +60,15 @@ ASSETS_DIR = Path.home() / ".claude/assets"
 ASSET_FILENAMES = {"mermaid": "mermaid.min.js", "marked": "marked.min.js"}
 
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
-_ATX_RE = re.compile(r"^#\s+(.+?)\s*$")
+# Up to 3 leading spaces, per CommonMark (and marked, which actually renders
+# the report): a plain space count, not `\s{0,3}`, since a tab always means
+# an indented code block regardless of how few of them there are.
+_ATX_RE = re.compile(r"^ {0,3}#\s+(.+?)\s*$")
+# A trailing run of `#`s is only the ATX closing sequence -- and gets
+# dropped -- when it is preceded by a space/tab, or is the whole heading
+# (nothing before it at all). `# Title#` and `# Learning C#` fail that test,
+# so their `#` stays as ordinary heading text; `# Title #` and `# #` pass it.
+_ATX_CLOSING_RE = re.compile(r"(?:[ \t]|^)#+$")
 
 
 def resolve_assets(assets_dir: Path = ASSETS_DIR) -> dict[str, str]:
@@ -102,7 +110,15 @@ def extract_title(markdown: str, fallback: str) -> str:
         heading = _ATX_RE.match(line)
         if heading:
             # `# Title #` is a closed ATX heading; the trailing run is syntax.
-            return heading.group(1).rstrip("#").rstrip() or fallback
+            # `# Title#` is not -- the `#` has no preceding space, so it is
+            # part of the title text, not a closing sequence.
+            title = heading.group(1)
+            closing = _ATX_CLOSING_RE.search(title)
+            if closing:
+                title = title[: closing.start()]
+            # A heading of only whitespace leaves one whitespace character in
+            # the lazy capture; a blank title is worse than the fallback.
+            return title.strip() or fallback
     return fallback
 
 

@@ -161,6 +161,12 @@ class TestExtractTitle:
     def test_falls_back_when_there_is_no_heading(self):
         assert render_report.extract_title("just text\n", "fallback") == "fallback"
 
+    @pytest.mark.parametrize("line", ["#  ", "#\t\t", "# \t "])
+    def test_falls_back_when_the_heading_is_only_whitespace(self, line):
+        # The lazy capture takes one whitespace character when there is
+        # nothing else, and a blank <title> is worse than the fallback.
+        assert render_report.extract_title(f"{line}\n", "fallback") == "fallback"
+
     def test_a_different_fence_marker_inside_a_block_does_not_close_it(self):
         # A shell example containing a heredoc marker is ordinary report content.
         md = "```bash\ncat <<~~~\n# ダミー見出し\n~~~\n```\n\n# 本物\n"
@@ -172,6 +178,46 @@ class TestExtractTitle:
 
     def test_closed_atx_heading_drops_the_trailing_hashes(self):
         assert render_report.extract_title("# タイトル #\n", "fallback") == "タイトル"
+
+    @pytest.mark.parametrize(
+        "prefix",
+        [" ", "  ", "   "],
+        ids=["one-space", "two-spaces", "three-spaces"],
+    )
+    def test_up_to_three_leading_spaces_still_count_as_a_heading(self, prefix):
+        # CommonMark allows 0-3 leading spaces before the `#`; marked (which
+        # actually renders the report) honours this too, so a heading indented
+        # this far must not silently fall back to the file name.
+        md = f"{prefix}# タイトル\n"
+        assert render_report.extract_title(md, "fallback") == "タイトル"
+
+    @pytest.mark.parametrize("prefix", ["    ", "\t"], ids=["four-spaces", "tab"])
+    def test_four_or_more_leading_spaces_is_a_code_block_not_a_heading(self, prefix):
+        # 4 spaces (or a single tab) is CommonMark's indented-code-block
+        # threshold; a `#` that far in is code, not the document's heading.
+        md = f"{prefix}# ダミー\n# 本物\n"
+        assert render_report.extract_title(md, "fallback") == "本物"
+
+    def test_a_closing_hash_run_needs_a_preceding_space_to_be_dropped(self):
+        # CommonMark: the closing `#` sequence must be preceded by a space (or
+        # tab); otherwise it is ordinary heading text. `Title#` is not
+        # `Title` -- marked renders the `#` as part of the visible heading.
+        assert render_report.extract_title("# タイトル#\n", "fallback") == "タイトル#"
+
+    def test_a_hash_that_is_part_of_the_title_text_is_kept(self):
+        assert (
+            render_report.extract_title("# Learning C#\n", "fallback") == "Learning C#"
+        )
+
+    def test_a_heading_that_is_only_hashes_falls_back(self):
+        # `# #` is an ATX heading whose content is empty and whose lone `#`
+        # is entirely the closing sequence -- there is no title text at all.
+        assert render_report.extract_title("# #\n", "fallback") == "fallback"
+
+    def test_a_hash_immediately_after_the_marker_is_not_a_heading(self):
+        # `#Title` has no space after the opening `#`, so CommonMark does not
+        # treat it as a heading at all.
+        assert render_report.extract_title("#Title\n", "fallback") == "fallback"
 
 
 class TestRender:
