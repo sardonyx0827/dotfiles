@@ -289,3 +289,101 @@ def test_without_jq_the_audit_never_blocks(shell_env, git_repo, hook):
         res = shell_env.run(hook, stdin=stdin, cwd=git_repo)
         assert res.returncode == 0, (stdin, res.stderr)
         assert res.stdout == ""
+
+
+# --- Unborn-branch audit (pre-first-commit HEAD) -----------------------------
+# `git diff --name-only -z HEAD` needs HEAD to resolve. On a brand new repo
+# (git init, before the first commit) it does not: the diff fails with
+# "fatal: ambiguous argument 'HEAD'" and is swallowed by `2>/dev/null`. Staged
+# files are not "others" either (that command is for untracked files), so a
+# file staged before the first commit fell out of BOTH collection commands and
+# was never audited. Reproduces with: git init, stage a.js with a
+# console.log, no commit -> exit 0 on both copies.
+def _init_unborn_repo(path):
+    """A git repo with `git init` run but no commit yet (HEAD unresolved)."""
+    from conftest import run_git
+
+    path.mkdir()
+    run_git(path, "init", "-q", "-b", "main")
+    run_git(path, "config", "user.email", "test@example.com")
+    run_git(path, "config", "user.name", "Test User")
+    run_git(path, "config", "commit.gpgsign", "false")
+    return path
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_staged_file_on_unborn_branch_is_audited(shell_env, tmp_path, variant, hook):
+    from conftest import run_git
+
+    repo = _init_unborn_repo(tmp_path / "repo")
+    (repo / "a.js").write_text('console.log("debug")\n', encoding="utf-8")
+    run_git(repo, "add", "a.js")
+    res = shell_env.run(hook, stdin="{}", cwd=repo)
+    if variant == "claude":
+        assert res.returncode == 0, variant
+        result = json.loads(res.stdout)
+        assert result["decision"] == "block", variant
+        assert "a.js" in result["reason"], variant
+    else:
+        assert res.returncode == 2, variant
+        assert "a.js" in res.stderr, variant
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_staged_python_file_on_unborn_branch_is_audited(
+    shell_env, tmp_path, variant, hook
+):
+    from conftest import run_git
+
+    repo = _init_unborn_repo(tmp_path / "repo")
+    # Split so this test file itself is not flagged by stop-audit.sh.
+    debug_stmt = "break" + "point()\n"
+    (repo / "app.py").write_text(debug_stmt, encoding="utf-8")
+    run_git(repo, "add", "app.py")
+    res = shell_env.run(hook, stdin="{}", cwd=repo)
+    if variant == "claude":
+        result = json.loads(res.stdout)
+        assert result["decision"] == "block"
+        assert "app.py" in result["reason"]
+    else:
+        assert res.returncode == 2
+        assert "app.py" in res.stderr
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_clean_staged_file_on_unborn_branch_passes(shell_env, tmp_path, variant, hook):
+    """A staged file with no debug statements must not block, even unborn."""
+    from conftest import run_git
+
+    repo = _init_unborn_repo(tmp_path / "repo")
+    (repo / "clean.js").write_text("const ok = 1\n", encoding="utf-8")
+    run_git(repo, "add", "clean.js")
+    res = shell_env.run(hook, stdin="{}", cwd=repo)
+    assert res.returncode == 0
+    if variant == "claude":
+        assert res.stdout == ""
+    else:
+        assert res.stderr == ""
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_staged_and_untracked_both_reported_on_unborn_branch(
+    shell_env, tmp_path, variant, hook
+):
+    """Staged (index) files and untracked files are both scanned, not just one."""
+    from conftest import run_git
+
+    repo = _init_unborn_repo(tmp_path / "repo")
+    (repo / "staged.js").write_text('console.log("staged")\n', encoding="utf-8")
+    run_git(repo, "add", "staged.js")
+    (repo / "untracked.js").write_text('console.log("untracked")\n', encoding="utf-8")
+    res = shell_env.run(hook, stdin="{}", cwd=repo)
+    if variant == "claude":
+        result = json.loads(res.stdout)
+        assert result["decision"] == "block"
+        assert "staged.js" in result["reason"]
+        assert "untracked.js" in result["reason"]
+    else:
+        assert res.returncode == 2
+        assert "staged.js" in res.stderr
+        assert "untracked.js" in res.stderr

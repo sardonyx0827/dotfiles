@@ -91,7 +91,9 @@ feeds both, and lets lint's exit code be the hook's.
   Final verification gate when Claude finishes a turn. Scans modified
   and untracked files for leftover debug statements (`console.log` /
   `debugger` in JS/TS, `breakpoint()` / `pdb.set_trace()` in Python)
-  and blocks once with the findings so Claude removes them.
+  and blocks once with the findings so Claude removes them. Before the
+  first commit (no `HEAD` yet) it scans the staged files instead of the
+  diff against `HEAD`.
   `stop_hook_active` guards against infinite loops.
   Skipped entirely when `EDITOR_AI_ONESHOT` is set — the marker the vim /
   nvim AI features put on their `claude -p` and `codex exec` calls. Those are

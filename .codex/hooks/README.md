@@ -55,6 +55,8 @@ Matcher: `Write|Edit|MultiEdit`
 2. **stop-audit** (`hooks/stop-audit.sh`):
    デバッグ文(`console.log` / `debugger` / `breakpoint()` 等)の残留を監査し、
    見つかれば exit 2 でブロックする。`stop_hook_active` で無限ループを防ぐ。
+   最初のコミット前(`HEAD` がまだ無い)は、`HEAD` との差分の代わりに
+   ステージ済みのファイルを監査する。
    `EDITOR_AI_ONESHOT` が立っていれば監査そのものを飛ばす — vim / nvim の AI
    機能が `codex exec` / `claude -p` を叩くときに付ける目印。あれは生成専用の
    一発呼び出しで、監査対象はエージェントが書いたコードではなくユーザ自身の
