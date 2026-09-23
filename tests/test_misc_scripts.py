@@ -443,6 +443,78 @@ class TestUpdateAiTools:
                 f"{call!r} never ran after an earlier tool failed"
             )
 
+    def test_skips_install_for_a_package_npm_does_not_manage(self, shell_env):
+        """run_if_installed only ever checked that npm itself existed, so running the
+        "update" script INSTALLED codex/gemini-cli for the first time on a machine
+        that never had them, and added a duplicate npm copy on a machine that got
+        them from Homebrew. "Installed" now means an npm-managed global
+        (`npm ls -g --depth=0 <pkg>` succeeds); anything else is left untouched.
+        """
+        # Every CLI the script touches must be a stub: `codex`/`gemini` exist for
+        # real on this host (e.g. installed for the Codex/Gemini MCP servers),
+        # and the script's final version-report section runs `codex --version`
+        # / `gemini --version` regardless of npm-managed status -- that check
+        # is unrelated to the npm ls logic under test here.
+        for tool in ("claude", "codex", "gemini", "copilot"):
+            shell_env.stub(tool)
+        # codex is npm-managed (`npm ls` succeeds); gemini-cli is not (came from
+        # Homebrew, or was never installed at all) and must be left alone.
+        shell_env.stub(
+            "npm",
+            body=(
+                'case "$1" in\n'
+                "  ls)\n"
+                '    case "$*" in\n'
+                "      *codex*) exit 0 ;;\n"
+                "      *gemini*) exit 1 ;;\n"
+                "    esac\n"
+                "    ;;\n"
+                "esac"
+            ),
+        )
+
+        res = shell_env.run(UPDATE_SCRIPT)
+
+        assert res.returncode == 0, res.stderr
+        assert "npm install -g @openai/codex@latest" in shell_env.calls
+        assert not any(
+            "npm install -g @google/gemini-cli@latest" in c for c in shell_env.calls
+        ), "gemini-cli was installed even though it is not npm-managed"
+        assert "@google/gemini-cli" in res.stderr, (
+            "no clear message explains why gemini-cli was skipped"
+        )
+        # Prove the stubs actually won the PATH lookup, not the real binaries.
+        assert "codex --version" in shell_env.calls
+        assert "gemini --version" in shell_env.calls
+
+    def test_a_failed_npm_managed_install_does_not_abort_the_rest(self, shell_env):
+        """The "one failure is reported, the rest continue" contract now lives in
+        update_npm_managed (the ls-then-install check no longer goes through
+        run_if_installed for codex/gemini-cli), so it needs its own coverage.
+        """
+        for tool in ("claude", "codex", "gemini", "copilot"):
+            shell_env.stub(tool)
+        shell_env.stub(
+            "npm",
+            body=(
+                'case "$1" in\n'
+                "  ls) exit 0 ;;\n"  # both packages are npm-managed
+                '  install) case "$*" in *codex*) exit 1 ;; esac ;;\n'
+                "esac"
+            ),
+        )
+
+        res = shell_env.run(UPDATE_SCRIPT)
+
+        assert res.returncode == 0, (
+            f"a failed npm-managed install aborted the script: {res.stderr}"
+        )
+        assert "npm install -g @openai/codex@latest" in shell_env.calls
+        assert "npm install -g @google/gemini-cli@latest" in shell_env.calls, (
+            "gemini-cli's install never ran after codex's failed"
+        )
+        assert "copilot update" in shell_env.calls
+
 
 class TestNewProject:
     """scripts/new_project.sh — 新規プロジェクトの雛形作成。
