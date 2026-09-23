@@ -882,6 +882,18 @@ def _iter_top_level(
                 current = []
                 i += 2
                 continue
+            # `a |& b` は `a 2>&1 | b` (bash4+/zsh)。& を区切る側では `|` と `&` に
+            # 割ると受け手 b の op_before が `&` になり、パイプ受け手と見なされない
+            # (`echo x |& bash` の stdin 実行を取りこぼす)。1 つのパイプとして読む。
+            # & を区切らない側は従来どおり `|` で割り、`& b` を残す: その断片を
+            # COMPLEX_SHELL_SYNTAX が拒むので、`ls 2>&1 | grep x` と同じく
+            # セーフスキップされない (ここで割ると `ls |& grep x` がスキップに化ける)。
+            if split_ampersand and cmd.startswith("|&", i):
+                yield op_before, "".join(current)
+                op_before = "|"
+                current = []
+                i += 2
+                continue
             if ch in (";|&" if split_ampersand else ";|"):
                 yield op_before, "".join(current)
                 op_before = ch
@@ -1025,20 +1037,158 @@ def _join_line_continuations(text: str) -> str:
     return _LINE_CONTINUATION.sub(r"\1", text)
 
 
+# クォート外でこの直後に来る `#` は単語の先頭 = コメント開始。bash の
+# メタ文字 (空白/改行/`;|&()<>`) の直後か、入力の先頭のときだけコメントになる。
+# `$#` / `${#x}` / `a#b` / `http://h/#frag` は語の途中なのでコメントではない。
+_WORD_BREAKS = frozenset(" \t\n;|&()<>")
+
+
+def _read_heredoc_delimiter(cmd: str, i: int) -> tuple[str, bool, int]:
+    """`<<` の直後 (i) からヒアドキュメントの終端語を読む。
+
+    (クォート除去済みの終端語, `<<-` か, 読み終えた位置) を返す。`'EOF'` /
+    `"EOF"` / `\\EOF` / `E"O"F` はどれも終端語 EOF。語が空なら終端語は "" で、
+    呼び出し側はヒアドキュメントとして扱わない。
+    """
+    n = len(cmd)
+    strip_tabs = cmd.startswith("-", i)
+    if strip_tabs:
+        i += 1
+    while i < n and cmd[i] in " \t":
+        i += 1
+    word: list[str] = []
+    while i < n and cmd[i] not in _WORD_BREAKS:
+        ch = cmd[i]
+        if ch in "'\"":
+            close = cmd.find(ch, i + 1)
+            close = n if close < 0 else close
+            word.append(cmd[i + 1 : close])
+            i = close + 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            word.append(cmd[i + 1])
+            i += 2
+            continue
+        word.append(ch)
+        i += 1
+    return "".join(word), strip_tabs, min(i, n)
+
+
+def _skip_heredoc_bodies(cmd: str, i: int, heredocs: list[tuple[str, bool]]) -> int:
+    """i (本体の先頭行) から、積まれた順に各ヒアドキュメントの本体を読み飛ばす。
+
+    終端語だけの行 (`<<-` は先頭タブを除いて比較) で 1 つ閉じる。終端行が無ければ
+    入力末尾まで本体 (bash も同じく EOF まで読む)。次に読むべき位置を返す。
+    """
+    n = len(cmd)
+    for delim, strip_tabs in heredocs:
+        while i < n:
+            nl = cmd.find("\n", i)
+            end = n if nl < 0 else nl
+            line = cmd[i:end]
+            i = end + 1
+            if (line.lstrip("\t") if strip_tabs else line) == delim:
+                break
+    return min(i, n)
+
+
+def _mask_inert_text(cmd: str) -> str:
+    """コメントとヒアドキュメント本体を取り除いた綴りを返す (改行は残す)。
+
+    どちらもシェルにとってはデータなのに、各走査器 (_iter_top_level /
+    _substitutions_at_level) はクォート状態をコマンド全体で追うため、
+    `# it's stale` の `'` が閉じないシングルクォートとして以降すべてを覆い、
+    後続の `;` / `&&` / `|` / `$(...)` を区切りとして認識できなくしていた
+    (`# it's\\ncd app && rm -rf ./build` の実行体が cd にしか見えず、DENY と
+    高リスクの両層を外れて単独モデルの fast path に落ちる)。エージェントが
+    自然に書くコメントや heredoc で起き、敵対的な入力を要しない。
+
+    結果は元の綴りを置き換えずに「もう 1 つの分類対象」として足す
+    (_classification_texts)。heredoc 本体は `bash <<EOF` ならコードなので、元の
+    綴りの行単位判定からは外さない。こちらで解釈を誤っても (算術 `$((1<<2))` を
+    heredoc と読む等) 追加の綴りが効かなくなるだけで、既存の検出は減らない。
+    """
+    out: list[str] = []
+    in_single = in_double = in_ansi = prev_dollar = False
+    at_word_start = True
+    heredocs: list[tuple[str, bool]] = []
+    i, n = 0, len(cmd)
+    while i < n:
+        ch = cmd[i]
+        # 走査規則は _iter_top_level と同じ ($'...' 内だけバックスラッシュが効く)
+        if ch == "\\" and (not in_single or in_ansi) and i + 1 < n:
+            out.append(cmd[i : i + 2])
+            i += 2
+            prev_dollar = at_word_start = False
+            continue
+        quoted = in_single or in_double
+        if not quoted and ch == "#" and at_word_start:
+            # 行末まで捨てる。改行そのものは次の周回で (heredoc 本体の起点として)
+            # 扱う。コメント末尾の `\\` は次行へ継続しない (bash / zsh とも)。
+            nl = cmd.find("\n", i)
+            i = n if nl < 0 else nl
+            continue
+        if not quoted and cmd.startswith("<<<", i):
+            # here-string は本体を持たない。3 文字まとめて進めないと、2 文字目
+            # からの `<<` を heredoc と読み、後続の行を本体として消してしまう。
+            out.append("<<<")
+            i += 3
+            prev_dollar = at_word_start = False
+            continue
+        if not quoted and cmd.startswith("<<", i):
+            delim, strip_tabs, end = _read_heredoc_delimiter(cmd, i + 2)
+            if delim:
+                heredocs.append((delim, strip_tabs))
+            out.append(cmd[i:end])
+            i = end
+            prev_dollar = at_word_start = False
+            continue
+        if not quoted and ch == "\n" and heredocs:
+            # 本体は heredoc 演算子のある行の、クォート外の改行の次から始まる
+            out.append(ch)
+            i = _skip_heredoc_bodies(cmd, i + 1, heredocs)
+            heredocs = []
+            prev_dollar = False
+            at_word_start = True
+            continue
+        if ch == "'" and not in_double:
+            in_ansi = prev_dollar if not in_single else False
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        prev_dollar = ch == "$" and not in_single and not in_double
+        at_word_start = not in_single and not in_double and ch in _WORD_BREAKS
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _classification_texts(cmd: str) -> list[str]:
-    """DENY / 高リスク判定が走査すべきテキスト列 (元 + 置換の中身 + 行継続畳み)。"""
-    texts = [cmd] + _substitution_bodies(cmd)
+    """DENY / 高リスク判定が走査すべきテキスト列。
+
+    元の綴りと置換の中身に、行継続を畳んだ綴りと、コメント・heredoc 本体を
+    除いた綴り (_mask_inert_text) を足す。どれも追加であって置換ではないので、
+    検出を増やす方向にしか働かない。除去は行継続を畳む前の綴りにも掛ける:
+    コメント末尾の `\\` は次行へ継続しないので、畳んだ後だと次行まで
+    コメントとして消えてしまう。
+    """
     joined = _join_line_continuations(cmd)
-    if joined != cmd:
-        texts += [joined] + _substitution_bodies(joined)
+    variants = dict.fromkeys(
+        (cmd, joined, _mask_inert_text(cmd), _mask_inert_text(joined))
+    )
+    texts: list[str] = []
+    for variant in variants:
+        texts += [variant] + _substitution_bodies(variant)
     return list(dict.fromkeys(texts))
 
 
 def _split_commands(cmd: str) -> list[str]:
     """セーフスキップと DENY/高リスク判定が共有するサブコマンド列を返す。
 
-    トップレベルの分割結果を基本とし、(1) 単独 & を含むパートはその両側、
-    (2) $() / `...` / <() の中身とその分割結果、を追加パートとして足す。
+    トップレベルの分割結果を基本とし、(1) 単独 & を含むパートはその両側
+    (`|&` の受け手側に残る `& cmd` の cmd も)、(2) $() / `...` / <() の中身と
+    その分割結果、(3) コメント・heredoc 本体を除いた綴りの分割結果
+    (_classification_texts)、を追加パートとして足す。
     元の未分割パートを残したまま増やす一方向の拡張なので、「全パートが安全な
     ときだけ成立する」セーフスキップは緩まない (& や置換を含む元パートは従来
     どおり COMPLEX_SHELL_SYNTAX がスキップを拒否する)。一方 DENY/高リスクは
@@ -1049,9 +1199,10 @@ def _split_commands(cmd: str) -> list[str]:
     for text in _classification_texts(cmd):
         for part in _split_top_level(text):
             parts.append(part)
-            amp = _split_top_level(part, split_ampersand=True)
-            if len(amp) > 1:
-                parts.extend(amp)
+            # 分割結果が 1 要素でも足す (重複は下で除く)。`ls |& curl x` の
+            # 受け手側パート `& curl x` は & で割ると `curl x` の 1 要素になり、
+            # 「増えていない」と捨てると curl が DENY/高リスクの両層を外れる。
+            parts.extend(_split_top_level(part, split_ampersand=True))
     # 順序を保って重複除去 (同一パートの多重判定と高リスクラベルの重複を避ける)
     return list(dict.fromkeys(parts))
 
@@ -1767,11 +1918,6 @@ def _bare_interpreter_stdin_label(segment: str, *, is_pipe_target: bool) -> str:
         ただしインタプリタへパイプしつつ --version を渡す形自体がほぼ無意味なので
         実害は無視できる。素の `node --version` (パイプ/リダイレクト無し) は stdin
         ソースが無いので対象外。
-      * `echo x |& bash` (bash/zsh の stdout+stderr パイプ) は _iter_top_level が
-        `|` と `&` を別々の区切りとして読み、受け手の op_before が `&` になるため
-        パイプ受け手と見なされない。ここを直すには共有分割器 _iter_top_level を
-        変える必要があり deny/safe 判定へ波及するので、非敵対の脅威モデル下では
-        触らない。
       * fd 番号付きリダイレクト `bash 0< evil.sh` / `bash 0<<< 'x'` はトークンが
         `<` で始まらないため has_input_redirect が拾わない。素の `<` (fd 0 既定) は
         検出する。

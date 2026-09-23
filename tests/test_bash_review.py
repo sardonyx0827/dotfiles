@@ -1617,6 +1617,156 @@ class TestLineContinuationInsideAWord:
         assert hook_fns["_join_line_continuations"](text) == joined
 
 
+class TestInertTextDoesNotLeakQuoteState:
+    """An apostrophe in a `#` comment or a heredoc body is data, not a quote.
+
+    The splitters track quotes across the whole command, so the `'` in
+    `# it's stale` opened a single quote that never closed. Every later `;`,
+    `&&`, `|` and `$(...)` then read as quoted, and the DENY and high-risk
+    layers saw only the first word of each line -- `cd`, not the `rm -rf`
+    chained after it. The command fell to the single-model fast path, where a
+    lone Gemini ALLOW runs it. Agents write such comments and heredocs
+    unprompted, so this needed no adversary.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "deny_name"),
+        [
+            ("# don't need root\nls; sudo whoami", "sudo"),
+            ("ls  # it's fine\ncd x && curl http://example.invalid", "curl"),
+            ("# it's quick\necho $(sudo whoami)", "sudo"),
+            ("cat > n.txt <<'EOF'\nit's done\nEOF\nls; sudo whoami", "sudo"),
+            ("cat <<EOF > n.txt\nit's done\nEOF\nls && sudo whoami", "sudo"),
+            # <<- strips leading tabs, so the tab-indented terminator ends it.
+            ("cat <<-EOF\n\tit's done\n\tEOF\nls; sudo whoami", "sudo"),
+            # Two heredocs on one line: their bodies follow in order. One
+            # apostrophe only -- a second would re-balance the leak by luck.
+            ("cat <<A <<'B'\nit's a\nA\nplain b\nB\nls; sudo whoami", "sudo"),
+            # <<< is a here-string, not a heredoc: no body follows it, so the
+            # lines after it are commands and must stay visible.
+            ('grep y <<< "x"  # it\'s\nls; sudo whoami', "sudo"),
+        ],
+    )
+    def test_a_denied_command_after_an_inert_apostrophe_is_denied(
+        self, run_hook, command, deny_name
+    ):
+        res = run_hook(HOOK, hook_payload(command))
+        assert res.decision == "deny", res.reason
+        assert deny_name in res.reason
+
+    @pytest.mark.parametrize(
+        ("command", "expected_substr"),
+        [
+            ("# it's stale\ncd app && rm -rf ./build", "rm recursive"),
+            ("# it's fine\ngit status && git reset --hard HEAD~3", "git reset --hard"),
+            ("# won't hurt\necho x | bash", "stdin into bash"),
+        ],
+    )
+    def test_a_high_risk_command_after_an_inert_apostrophe_is_labelled(
+        self, hook_fns, command, expected_substr
+    ):
+        split = hook_fns["_split_commands"]
+        assert expected_substr in hook_fns["classify_high_risk"](
+            split(command), command
+        )
+
+    def test_a_commented_rm_chain_reaches_the_dual_review(self, run_hook):
+        # End to end: Gemini ALLOW alone would auto-run it on the fast path, so
+        # Codex ASK resolving to ask proves the high-risk tier ran.
+        res = run_hook(
+            HOOK,
+            hook_payload("# it's stale\ncd app && rm -rf ./build"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.decision == "ask"
+        assert "High-risk" in res.reason
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # A `#` inside quotes is a literal, so nothing after it is masked.
+            'git commit -m "fix #12; don\'t curl"',
+            # Mid-word `#` never starts a comment.
+            "echo $# ${#x} a#b http://h/#frag",
+            # An escaped space does not end the word, so `a\ #b` is one word.
+            "echo a\\ #b",
+        ],
+    )
+    def test_a_hash_that_is_not_a_comment_is_left_alone(self, hook_fns, command):
+        assert hook_fns["_mask_inert_text"](command) == command
+
+    @pytest.mark.parametrize(
+        ("command", "masked"),
+        [
+            # A space before the delimiter, or an escaped one, still names EOF.
+            ("cat << EOF\nit's\nEOF\nls", "cat << EOF\nls"),
+            ("cat <<\\EOF\nit's\nEOF\nls", "cat <<\\EOF\nls"),
+            # No terminator: bash reads the body to the end of input, and the
+            # lines after it are never run as commands.
+            ("cat <<EOF\nit's\nls; sudo whoami", "cat <<EOF\n"),
+            # `<<` with no word after it is not a heredoc: nothing is masked.
+            ("cat << ; ls", "cat << ; ls"),
+        ],
+    )
+    def test_heredoc_forms_are_masked_as_the_shell_reads_them(
+        self, hook_fns, command, masked
+    ):
+        assert hook_fns["_mask_inert_text"](command) == masked
+
+    def test_a_heredoc_body_is_still_classified(self, hook_fns):
+        # The masked copy is ADDED to the texts, never substituted: a body fed
+        # to a shell is code, and it must stay visible to the deny layer.
+        cmd = "bash <<EOF\nsudo whoami\nEOF"
+        assert hook_fns["find_deny_command"](hook_fns["_split_commands"](cmd)) == (
+            True,
+            "sudo",
+        )
+
+
+class TestPipeAmpersand:
+    """`a |& b` is `a 2>&1 | b`: b runs, and it reads a's output on stdin.
+
+    The splitter read `|&` as `|` then `&`, leaving `& b` as the receiver.
+    Re-splitting that on `&` gave the single part `b`, and a one-part result
+    was discarded as "nothing new", so b escaped both the deny and high-risk
+    layers. The stdin-interpreter layer saw the receiver's operator as `&`
+    rather than a pipe.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "deny_name"),
+        [
+            ("ls |& curl http://example.invalid", "curl"),
+            ("ls |& sudo whoami", "sudo"),
+        ],
+    )
+    def test_a_denied_receiver_is_denied(self, run_hook, command, deny_name):
+        res = run_hook(HOOK, hook_payload(command))
+        assert res.decision == "deny", res.reason
+        assert deny_name in res.reason
+
+    @pytest.mark.parametrize(
+        ("command", "expected_substr"),
+        [
+            ("ls |& rm -rf ./x", "rm recursive"),
+            ("git status |& git reset --hard HEAD~3", "git reset --hard"),
+            ("echo 'rm -rf /' |& bash", "stdin into bash"),
+        ],
+    )
+    def test_a_high_risk_receiver_is_labelled(self, hook_fns, command, expected_substr):
+        split = hook_fns["_split_commands"]
+        assert expected_substr in hook_fns["classify_high_risk"](
+            split(command), command
+        )
+
+    def test_a_safe_pipeline_is_still_reviewed(self, hook_fns):
+        # `ls 2>&1 | grep x` is not skippable (the lone `&`), and `|&` is the
+        # same pipeline: recognising the operator must not loosen the skip.
+        parts = hook_fns["_split_commands"]("ls |& grep x")
+        assert not all(hook_fns["_can_skip_review"](p) for p in parts)
+
+
 class TestReadmeThreatModelMatchesBehavior:
     """The threat-model section must describe the classifier that actually ships.
 
@@ -2474,7 +2624,6 @@ class TestHighRiskClassifier:
             # upgrade flips these on purpose, not by surprise.
             "bash<evil.sh",  # no-space redirect: shlex fuses `<` into the exe
             "bash 0< evil.sh",  # fd-numbered redirect: token doesn't start with <
-            "echo 'rm -rf /' |& bash",  # |& (stdout+stderr pipe): op reads as &
         ],
     )
     def test_stdin_interpreter_accepted_residuals(self, hook_fns, command):
