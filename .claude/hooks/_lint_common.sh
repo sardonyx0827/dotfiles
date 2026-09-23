@@ -112,7 +112,7 @@ hook_lint_file() {
   BASENAME=$(basename "$FILE_PATH")
   local LINT_ERRORS=""
   local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN TSC_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
-  local GO_PKG_DIR eslint_dir eslint_root
+  local GO_PKG_DIR eslint_dir eslint_root tsc_line tsc_sep tsc_path
   local ruff_args=() rubocop_args=()
 
   # 出力変数名がこの関数の local と衝突すると、printf -v は local を書き換えて
@@ -120,7 +120,7 @@ hook_lint_file() {
   case "$hook_out_var" in
   FILE_PATH | EXTENSION | BASENAME | LINT_ERRORS | PROJECT_ROOT | OUTPUT | \
     HAS_ESLINT_CONFIG | ESLINT_BIN | TSC_BIN | CONFIG | HAS_MYPY_CONFIG | RELATED | cfg | \
-    GO_PKG_DIR | eslint_dir | eslint_root | ruff_args | rubocop_args | \
+    GO_PKG_DIR | eslint_dir | eslint_root | tsc_line | tsc_sep | tsc_path | ruff_args | rubocop_args | \
     hook_out_var | hook_log_file | hook_phase)
     echo "hook_lint_file: output variable '$hook_out_var' collides with an internal local" >&2
     return 2
@@ -197,15 +197,59 @@ hook_lint_file() {
         if [ -n "$TSC_BIN" ]; then
           echo "  Running tsc (type check: $TSC_BIN)..."
           if ! OUTPUT=$(cd "$PROJECT_ROOT" && "$TSC_BIN" --noEmit 2>&1); then
-            # 変更ファイルに関連するエラーのみ抽出。
-            # -F 必須: ファイル名はパターンではなくリテラルとして照合する。素の
-            # grep だと BASENAME が ERE として解釈され、Next.js の動的ルート
-            # `[id].tsx` は `[id]` が文字クラス (i か d の 1 文字) になって tsc
-            # 自身のエラー行に一致しない。すると RELATED が空になり、LINT_ERRORS
-            # へ何も積まれないまま return 0 ——「tsc が弾いたコードでゲートが緑を
-            # 返す」という、このファイル冒頭が戒めている最悪の壊れ方をする。
-            # -- は BASENAME が `-` で始まる場合にオプション扱いされないため。
-            RELATED=$(echo "$OUTPUT" | grep -F -- "$BASENAME")
+            # 色付き出力 (tsconfig の "pretty": true) は色コードを落としてから
+            # 扱う。残すとパスが `ESC[96msrc/a.ts ESC[0m:` と割れ、下の照合も
+            # 起動失敗の判定 (`.ts:` の有無) も外れて、他ファイルだけのエラーで
+            # tsc の全出力を報告してしまう。
+            OUTPUT=$(printf '%s\n' "$OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
+            # 変更ファイルに関連するエラーのみ抽出する。tsc は各診断を
+            # `<cwd からのパス>(行,列)` か `<パス>:行:列` で始める。basename の
+            # 部分一致だけで拾うと "index.ts" が "x.ts" を含むため x.ts の編集が
+            # index.ts のエラーでブロックされ、完全一致でも Next.js の
+            # app/*/page.tsx のような同名ファイルを区別できない。
+            # そこで basename を含む行を候補とし、行頭のパス (最初に現れる
+            # `<basename>(` / `<basename>:` までで、basename がパスの最終要素の
+            # もの) が編集ファイルと同じファイルかを `-ef` (device + inode) で
+            # 確かめる。綴りの比較にしないのは、tsc が include の glob でたどった
+            # 見かけのパス (リポジトリ内の symlink `src/shared -> ../packages/shared`
+            # なら src/shared/x.ts) で報告し、FILE_PATH も git の実パスもそれと
+            # 一致するとは限らないため。綴りがずれると診断が黙って消え、他の行が
+            # `.ts(` を含むので下の起動失敗判定も効かない = fail-open になる。
+            # パス中の `(` (route group の `app/(marketing)/`) やメッセージ本文の
+            # `(1,2)` に引きずられないよう、正規表現で切り出さず最初の出現で切る。
+            # basename はクォートしてリテラル照合にする: Next.js の動的ルート
+            # `[id].tsx` をパターンとして読むと `[id]` が文字クラスになり、自身の
+            # エラー行に一致せず RELATED が空のまま return 0 ——「tsc が弾いた
+            # コードでゲートが緑を返す」という、このファイル冒頭が戒めている
+            # 最悪の壊れ方をする。
+            RELATED=""
+            while IFS= read -r tsc_line; do
+              # 位置を持たない診断 (TS6059 "not under rootDir" 等) は行頭にパスが
+              # 無く、ファイルは本文の '...' でだけ名指しされる。他ファイルの
+              # 位置付き診断が 1 件でもあると下の起動失敗判定も効かないので、
+              # 引用パスの最終要素が basename なら拾う。同名の別ファイルを拾う
+              # 取り違えは報告過多 = 安全側に倒れる。
+              case "$tsc_line" in
+              "error TS"*)
+                case "$tsc_line" in
+                *"/$BASENAME'"* | *"'$BASENAME'"*) RELATED="${RELATED}${tsc_line}"$'\n' ;;
+                esac
+                continue
+                ;;
+              esac
+              for tsc_sep in "(" ":"; do
+                tsc_path="${tsc_line%%"$BASENAME$tsc_sep"*}"
+                [ "$tsc_path" != "$tsc_line" ] || continue
+                case "$tsc_path" in "" | */) ;; *) continue ;; esac
+                tsc_path="$tsc_path$BASENAME"
+                case "$tsc_path" in /*) ;; *) tsc_path="$PROJECT_ROOT/$tsc_path" ;; esac
+                if [ "$tsc_path" -ef "$FILE_PATH" ]; then
+                  RELATED="${RELATED}${tsc_line}"$'\n'
+                  break
+                fi
+              done
+            done < <(printf '%s\n' "$OUTPUT" | grep -F -- "$BASENAME")
+            RELATED="${RELATED%$'\n'}"
             # tsc が起動すらできなかった (壊れた tsconfig.json → TS5083 等) 場合、
             # 出力はどのファイルも名指ししない。空の RELATED を「関連エラー無し」
             # と読むと、型エラーのあるファイルでゲートが緑を返す。ファイル名を

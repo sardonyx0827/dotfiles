@@ -20,6 +20,7 @@ parametrized (see .codex/hooks/README.md for the full rationale):
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -884,6 +885,156 @@ echo "$out"
         res = shell_env.run(LINT, stdin=payload(target))
         assert res.returncode == 0, res.stderr
 
+    def _tsc_reports(self, shell_env, git_repo, target: Path, *lines: str) -> None:
+        """tsconfig.json at the root, `target` on disk, and a failing tsc."""
+        (git_repo / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("export const y = 1\n", encoding="utf-8")
+        body = "\n".join(f"printf '%b\\n' {shlex.quote(line)}" for line in lines)
+        shell_env.stub("tsc", body=body, exit_code=1)
+
+    def test_tsc_error_in_a_file_whose_name_contains_the_edited_one_does_not_block(
+        self, LINT, shell_env, git_repo
+    ):
+        # The filter was a substring match on the basename, and "index.ts"
+        # contains "x.ts": editing a clean x.ts blocked on index.ts's error.
+        target = git_repo / "x.ts"
+        self._tsc_reports(
+            shell_env, git_repo, target, "src/index.ts(1,14): error TS2322: bad."
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0, res.stderr
+
+    def test_tsc_error_in_a_same_named_file_elsewhere_does_not_block(
+        self, LINT, shell_env, git_repo
+    ):
+        # Next.js App Router names every route `page.tsx`, so a basename, even
+        # matched exactly, cannot tell this page's errors from another's.
+        target = git_repo / "app" / "a" / "page.tsx"
+        self._tsc_reports(
+            shell_env, git_repo, target, "app/b/page.tsx(1,14): error TS2322: bad."
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0, res.stderr
+
+    def test_tsc_pretty_error_in_the_edited_file_blocks(
+        self, LINT, shell_env, git_repo
+    ):
+        # `"pretty": true` in tsconfig.json colours the path and switches to
+        # the `file:line:col - error` form.
+        target = git_repo / "src" / "page.tsx"
+        self._tsc_reports(
+            shell_env,
+            git_repo,
+            target,
+            "\\033[96msrc/page.tsx\\033[0m:\\033[93m1\\033[0m:\\033[93m14\\033[0m"
+            " - \\033[91merror\\033[0m\\033[90m TS2322: \\033[0mbad.",
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "TS2322" in res.stderr
+
+    def test_tsc_pretty_error_only_in_another_file_does_not_block(
+        self, LINT, shell_env, git_repo
+    ):
+        # The colour codes also hid `.ts:` from the launch-failure check, which
+        # then reported tsc's whole output as if tsc had never started.
+        target = git_repo / "src" / "page.tsx"
+        self._tsc_reports(
+            shell_env,
+            git_repo,
+            target,
+            "\\033[96msrc/other.ts\\033[0m:\\033[93m1\\033[0m:\\033[93m14\\033[0m"
+            " - \\033[91merror\\033[0m\\033[90m TS2322: \\033[0mbad.",
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0, res.stderr
+
+    def test_tsc_error_blocks_when_the_path_goes_through_a_symlink(
+        self, LINT, shell_env, git_repo, tmp_path
+    ):
+        # tsc names files relative to the real project root, while the hook
+        # may be handed a path through a symlinked directory (macOS /tmp is
+        # one). The match must be on the path tsc prints, not the one given.
+        target = git_repo / "src" / "page.tsx"
+        self._tsc_reports(
+            shell_env, git_repo, target, "src/page.tsx(1,14): error TS2322: bad."
+        )
+        link = tmp_path / "repo-link"
+        link.symlink_to(git_repo, target_is_directory=True)
+        res = shell_env.run(LINT, stdin=payload(link / "src" / "page.tsx"))
+        assert res.returncode == 2
+        assert "TS2322" in res.stderr
+
+    @pytest.mark.parametrize("edited_via", ["packages/shared", "src/shared"])
+    def test_tsc_error_blocks_through_a_symlinked_directory_inside_the_repo(
+        self, LINT, shell_env, git_repo, edited_via
+    ):
+        # tsc names a file by the path its `include` glob walked, so a package
+        # linked in as src/shared is reported as src/shared/x.ts, while git
+        # reports the real packages/shared/. Comparing spellings from either
+        # side drops the diagnostic and the gate goes green; the file's
+        # identity is what has to match.
+        real = git_repo / "packages" / "shared" / "x.ts"
+        self._tsc_reports(
+            shell_env, git_repo, real, "src/shared/x.ts(1,14): error TS2322: bad."
+        )
+        (git_repo / "src").mkdir(exist_ok=True)
+        (git_repo / "src" / "shared").symlink_to(
+            Path("..") / "packages" / "shared", target_is_directory=True
+        )
+        res = shell_env.run(LINT, stdin=payload(git_repo / edited_via / "x.ts"))
+        assert res.returncode == 2, res.stdout
+        assert "TS2322" in res.stderr
+
+    def test_tsc_locationless_diagnostic_naming_the_edited_file_blocks(
+        self, LINT, shell_env, git_repo
+    ):
+        # Some diagnostics name the file only in the message (TS6059 "not under
+        # rootDir"), so no path starts the line. An error elsewhere with a
+        # location also defeats the launch-failure fallback, so this one must
+        # be picked up on its own or it vanishes.
+        target = git_repo / "x.ts"
+        self._tsc_reports(
+            shell_env,
+            git_repo,
+            target,
+            "src/other.ts(1,14): error TS2322: bad.",
+            f"error TS6059: File '{target}' is not under 'rootDir' '{git_repo}/src'.",
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "TS6059" in res.stderr
+
+    def test_tsc_locationless_diagnostic_naming_another_file_does_not_block(
+        self, LINT, shell_env, git_repo
+    ):
+        # The quoted path must END in the basename: index.ts is not x.ts.
+        target = git_repo / "x.ts"
+        self._tsc_reports(
+            shell_env,
+            git_repo,
+            target,
+            "src/other.ts(1,14): error TS2322: bad.",
+            f"error TS6059: File '{git_repo}/src/index.ts' is not under 'rootDir'.",
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 0, res.stderr
+
+    def test_tsc_error_blocks_for_a_route_group_path(self, LINT, shell_env, git_repo):
+        # Next.js route groups put parentheses in the directory name, ahead of
+        # the `(line,col)` that ends the path in tsc's diagnostic.
+        target = git_repo / "app" / "(marketing)" / "page.tsx"
+        self._tsc_reports(
+            shell_env,
+            git_repo,
+            target,
+            "app/(marketing)/page.tsx(1,14): error TS2322: bad.",
+        )
+        res = shell_env.run(LINT, stdin=payload(target))
+        assert res.returncode == 2
+        assert "TS2322" in res.stderr
+
     @pytest.mark.parametrize(
         "config", [".eslintrc.cjs", ".eslintrc.yaml", "eslint.config.ts"]
     )
@@ -920,7 +1071,8 @@ echo "$out"
     def _tsc_project(self, shell_env, git_repo, filename: str):
         """A tsc that reports one error against `filename`, exiting non-zero."""
         (git_repo / "tsconfig.json").write_text("{}\n", encoding="utf-8")
-        target = git_repo / filename
+        target = git_repo / "src" / filename
+        target.parent.mkdir(exist_ok=True)
         target.write_text("export const x: number = 'no'\n", encoding="utf-8")
         shell_env.stub(
             "tsc",
@@ -987,7 +1139,8 @@ echo "$out"
         compiler the project owns is node_modules/.bin/tsc.
         """
         (git_repo / "tsconfig.json").write_text("{}\n", encoding="utf-8")
-        target = git_repo / filename
+        target = git_repo / "src" / filename
+        target.parent.mkdir(exist_ok=True)
         target.write_text("export const x: number = 'no'\n", encoding="utf-8")
         local_bin = git_repo / "node_modules" / ".bin"
         local_bin.mkdir(parents=True, exist_ok=True)
@@ -1385,7 +1538,10 @@ class TestLintHelperOutputVarGuard:
     have written into the local -- the caller sees nothing, silently.
     """
 
-    @pytest.mark.parametrize("name", ["OUTPUT", "GO_PKG_DIR", "RELATED"])
+    @pytest.mark.parametrize(
+        "name",
+        ["OUTPUT", "GO_PKG_DIR", "RELATED", "tsc_line", "tsc_sep", "tsc_path"],
+    )
     def test_a_colliding_output_variable_is_rejected(self, shell_env, tmp_path, name):
         hooks = REPO_ROOT / ".claude/hooks"
         target = tmp_path / "x.txt"
