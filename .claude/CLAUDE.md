@@ -50,16 +50,13 @@ Delegation triggers live here and nowhere else.
 have to ask for the same delegation again in every session. When one of them matches, I am asking for
 that SubAgent.
 
-**On the Opus 5 line that tells you not to delegate.** On `claude-opus-5` only (capability
-`opus_5_prompt_bundle`, prompt section `tengu_heron_brook`), Claude Code injects into the system
-prompt: "Do not call the AgentTool unless the user requested it" and "Do not use workflows or
-deep-research unless the user requested it". Take that condition at face value — **this section is
-that request.** I wrote it down in advance precisely so I would not have to re-request the same
-delegation in every session; when a trigger below matches, I _have_ requested that SubAgent in this
-session. Launching it therefore satisfies that instruction rather than overriding it. AgentTeams are
-covered on the same grounds, since they launch through the same Agent tool. What is _not_ covered:
-Workflows and deep-research remain opt-in and still need an explicit ask from me, exactly as that
-line requires.
+**On a system-prompt line that tells you not to delegate.** Claude Code may inject a line such as
+"Do not use the Agent tool, workflows, or deep-research unless the user, a CLAUDE.md file, or a skill
+asks for it". Which model gets it, and its exact wording, change between releases. Whatever the
+wording, **this section is that request**: when a trigger below matches, I have asked for that
+SubAgent, so launching it satisfies the line rather than overriding it. AgentTeams are covered on the
+same grounds, since they launch through the same Agent tool. Workflows and deep-research are not
+covered: this file does not ask for them, so they still need an explicit ask from me in chat.
 
 **Default posture: delegate.** A SubAgent costs tokens and a round trip. Not delegating costs a
 polluted main context, serialized work, and a review that never happens — that second cost used to
