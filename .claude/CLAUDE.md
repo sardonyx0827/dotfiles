@@ -133,11 +133,16 @@ Two independent axes: **model tier** (capability ceiling) and **effort** (how mu
 
 ### Effort
 
-Set via `effortLevel` in `settings.json` (session-wide, currently `xhigh`), `/effort` for one session, or an `effort:` key in `.claude/agents/*.md` frontmatter (`low` | `medium` | `high` | `xhigh` | `max`, or an integer).
+Set via `settings.json` (top-level `effortLevel`, and per model under `modelSettings.<model id>.effortLevel`), `/effort` for one session, or an `effort:` key in `.claude/agents/*.md` frontmatter (`low` | `medium` | `high` | `xhigh` | `max`, or an integer).
 
 - On the current Opus, `low` and `medium` are far stronger than their names suggest — they often beat a previous generation's `high` at a fraction of the tokens and latency
-- `xhigh` is the right default for coding and agentic work (and the Claude Code default); `high` for other intelligence-sensitive work
-- Effort levels carried over from an older model are usually the wrong setting — sweep before trusting them
+- The main session's `xhigh` is a deliberate floor on whichever Opus or Fable model it runs, not a
+  default carried over from an older model: a task that is not worth `xhigh` is not worth running on
+  AI at all. Do not propose lowering it. It is pinned per model under `modelSettings`, so a model
+  used for the main session needs its own entry there
+- Effort levels carried over from an older model are usually the wrong setting — sweep before trusting
+  them. This applies to SubAgent `effort:` pins, not to the main-session floor above: SubAgents are
+  tuned separately for cost and speed, and the floor does not extend to them
 - Lower effort for mechanical SubAgents rather than dropping a tier: the capability ceiling stays available if the task turns out to need it
 - Pin `effort:` in an agent's frontmatter **only to go below the session default**. An agent that should
   track `effortLevel` leaves the key unset — pinning it everywhere silently disables `/effort` and the
