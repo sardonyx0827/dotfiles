@@ -50,16 +50,13 @@ Delegation triggers live here and nowhere else.
 have to ask for the same delegation again in every session. When one of them matches, I am asking for
 that SubAgent.
 
-**On the Opus 5 line that tells you not to delegate.** On `claude-opus-5` only (capability
-`opus_5_prompt_bundle`, prompt section `tengu_heron_brook`), Claude Code injects into the system
-prompt: "Do not call the AgentTool unless the user requested it" and "Do not use workflows or
-deep-research unless the user requested it". Take that condition at face value — **this section is
-that request.** I wrote it down in advance precisely so I would not have to re-request the same
-delegation in every session; when a trigger below matches, I _have_ requested that SubAgent in this
-session. Launching it therefore satisfies that instruction rather than overriding it. AgentTeams are
-covered on the same grounds, since they launch through the same Agent tool. What is _not_ covered:
-Workflows and deep-research remain opt-in and still need an explicit ask from me, exactly as that
-line requires.
+**On a system-prompt line that tells you not to delegate.** Claude Code may inject a line such as
+"Do not use the Agent tool, workflows, or deep-research unless the user, a CLAUDE.md file, or a skill
+asks for it". Which model gets it, and its exact wording, change between releases. Whatever the
+wording, **this section is that request**: when a trigger below matches, I have asked for that
+SubAgent, so launching it satisfies the line rather than overriding it. AgentTeams are covered on the
+same grounds, since they launch through the same Agent tool. Workflows and deep-research are not
+covered: this file does not ask for them, so they still need an explicit ask from me in chat.
 
 **Default posture: delegate.** A SubAgent costs tokens and a round trip. Not delegating costs a
 polluted main context, serialized work, and a review that never happens — that second cost used to
@@ -136,11 +133,16 @@ Two independent axes: **model tier** (capability ceiling) and **effort** (how mu
 
 ### Effort
 
-Set via `effortLevel` in `settings.json` (session-wide, currently `xhigh`), `/effort` for one session, or an `effort:` key in `.claude/agents/*.md` frontmatter (`low` | `medium` | `high` | `xhigh` | `max`, or an integer).
+Set via `settings.json` (top-level `effortLevel`, and per model under `modelSettings.<model id>.effortLevel`), `/effort` for one session, or an `effort:` key in `.claude/agents/*.md` frontmatter (`low` | `medium` | `high` | `xhigh` | `max`, or an integer).
 
 - On the current Opus, `low` and `medium` are far stronger than their names suggest — they often beat a previous generation's `high` at a fraction of the tokens and latency
-- `xhigh` is the right default for coding and agentic work (and the Claude Code default); `high` for other intelligence-sensitive work
-- Effort levels carried over from an older model are usually the wrong setting — sweep before trusting them
+- The main session's `xhigh` is a deliberate floor on whichever Opus or Fable model it runs, not a
+  default carried over from an older model: a task that is not worth `xhigh` is not worth running on
+  AI at all. Do not propose lowering it. It is pinned per model under `modelSettings`, so a model
+  used for the main session needs its own entry there
+- Effort levels carried over from an older model are usually the wrong setting — sweep before trusting
+  them. This applies to SubAgent `effort:` pins, not to the main-session floor above: SubAgents are
+  tuned separately for cost and speed, and the floor does not extend to them
 - Lower effort for mechanical SubAgents rather than dropping a tier: the capability ceiling stays available if the task turns out to need it
 - Pin `effort:` in an agent's frontmatter **only to go below the session default**. An agent that should
   track `effortLevel` leaves the key unset — pinning it everywhere silently disables `/effort` and the

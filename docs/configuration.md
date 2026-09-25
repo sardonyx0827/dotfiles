@@ -223,7 +223,9 @@ np -n ~/work/github/foo
 
 ### scripts/update_ai_tools.sh
 
-全てのAI開発ツールを一括で更新します。
+全てのAI開発ツールを一括で更新します。Codex と Gemini CLI は npm のグローバル導入
+(`npm ls -g --depth=0 <pkg>` に出るもの)だけを更新し、未導入のものや Homebrew
+など別経路で入れたものは飛ばします(更新のつもりで新規導入や二重導入をしないため)。
 
 ```bash
 # 実行

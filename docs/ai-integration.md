@@ -23,7 +23,7 @@ Claude Code が主エンジンとして駆動し、他の LLM は **第二意見
 
 ## 2. Bash 安全ゲート (bash-review)
 
-Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DENY` を決定します。まず **LLM へ渡す前の静的な秘密スキャン**を挟み、コマンドや `tool_input` に生の資格情報(既知トークン・PEM 秘密鍵・JWT・`Authorization: Bearer`/`Basic`・`user:pass@`・`SECRET=値`・`--password 値` 等)が載っていれば Gemini/Codex を一切呼ばず ask に倒します(値は理由文・通知・ローカルログのいずれにも残さず種別ラベルのみ。機密「パス」は値ではないため対象外=通常レビューへ)。危険度に応じた層構成では、高リスク層は Gemini と Codex を **並列 AND ゲート**にかけ、両者が一致して ALLOW/DENY した場合のみ自動判定、それ以外はすべて両判定を添えてユーザー確認 (ask) に回します。判定を出す前の例外は必ず ask に倒すフェイルセーフ設計です。
+Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DENY` を決定します。まず **LLM へ渡す前の静的な秘密スキャン**を挟み、コマンドや `tool_input` に生の資格情報(既知トークン・PEM / OpenPGP 秘密鍵・JWT・`Authorization: Bearer`/`Basic`・`user:pass@`・`SECRET=値`・`--password 値` 等)が載っていれば Gemini/Codex を一切呼ばず ask に倒します(値は理由文・通知・ローカルログのいずれにも残さず種別ラベルのみ。機密「パス」は値ではないため対象外=通常レビューへ)。危険度に応じた層構成では、高リスク層は Gemini と Codex を **並列 AND ゲート**にかけ、両者が一致して ALLOW/DENY した場合のみ自動判定、それ以外はすべて両判定を添えてユーザー確認 (ask) に回します。判定を出す前の例外は必ず ask に倒すフェイルセーフ設計です。
 
 <p align="center">
   <img src="../assets/bash-review-flow.svg" alt="bash-review 多層セーフティゲート フロー図 — 静的DENY→セーフスキップ→秘密の送信前スキャン→高リスク(Gemini∥Codex 並列ANDゲート)→低リスク(Gemini一次→Codex二次)、判定前例外はask" width="100%">

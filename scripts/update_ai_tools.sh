@@ -18,6 +18,28 @@ run_if_installed() {
   "$@" || echo "warning: $* failed (continuing)" >&2
 }
 
+# codex / gemini-cli だけの npm 版。`run_if_installed npm install -g <pkg>` は
+# npm 自体の有無しか見ておらず、npm はあるが <pkg> は入れたことがない機械でも
+# そのまま `npm install -g` してしまう ("update" のつもりが新規インストールに
+# なる)。しかも Homebrew などで既に入っている環境では、npm 管理の二重コピーが
+# 生える。「入っている」を「npm 管理のグローバルパッケージである
+# (`npm ls -g --depth=0 <pkg>` が成功する)」と定義し、そうでなければ何も
+# せずスキップする。`npm ls` はネットワークに出ないので、オフラインでも安全に
+# 判定できる。失敗を報告して次へ進む部分は run_if_installed と同じ設計。
+update_npm_managed() {
+  local pkg="$1"
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "skip: npm is not installed" >&2
+    return 0
+  fi
+  if ! npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then
+    echo "skip: $pkg is not an npm-managed global; leaving it alone" >&2
+    return 0
+  fi
+  npm install -g "$pkg@latest" ||
+    echo "warning: npm install -g $pkg@latest failed (continuing)" >&2
+}
+
 echo "Updating AI command-line tools..."
 echo "# claude code"
 run_if_installed claude update
@@ -27,9 +49,9 @@ run_if_installed claude update
 # reported success. install.sh installs both with `npm install -g`, and
 # @latest is the upgrade path both vendors document.
 echo "# codex"
-run_if_installed npm install -g @openai/codex@latest
+update_npm_managed @openai/codex
 echo "# gemini cli"
-run_if_installed npm install -g @google/gemini-cli@latest
+update_npm_managed @google/gemini-cli
 echo "# copilot cli"
 run_if_installed copilot update
 

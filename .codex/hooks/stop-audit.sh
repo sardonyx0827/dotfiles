@@ -44,6 +44,21 @@ git rev-parse --is-inside-work-tree &>/dev/null || exit 0
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$repo_root" ] && exit 0
 
+# HEAD が無い(= `git init` 直後、最初のコミット前の unborn branch)場合、
+# `diff --name-only -z HEAD` は "fatal: ambiguous argument 'HEAD'" で失敗し
+# `2>/dev/null` に握りつぶされる。かつ最初のコミット用にステージした内容は
+# `ls-files --others` (未追跡ファイル用) の対象外なので、下の2コマンドの
+# どちらにも一切現れず監査から漏れる。`diff --cached` は HEAD が無くても
+# index を空ツリーとの差分として扱える(=最初のコミットとしてステージした
+# 内容がそのまま出る)ので、unborn 時だけこちらに切り替える。born 側は
+# 変更概念(--cached はステージ済みしか見ない)が変わらないよう従来どおり
+# HEAD 相手の diff(ステージ済み・未ステージ両方)を使う。
+if git -C "$repo_root" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  diff_cmd=(git -C "$repo_root" diff --name-only -z HEAD)
+else
+  diff_cmd=(git -C "$repo_root" diff --name-only -z --cached)
+fi
+
 # 作業ツリーの変更ファイル + 未追跡ファイル(両者は排他なので重複しない)。
 #
 # -z が必須: 既定の core.quotePath が有効だと、引用符や非 ASCII を含むパスを
@@ -81,7 +96,7 @@ while IFS= read -r -d '' f; do
   esac
   [ -n "$hits" ] && findings="${findings}${f}:\n${hits}\n"
 done < <(
-  git -C "$repo_root" diff --name-only -z HEAD 2>/dev/null
+  "${diff_cmd[@]}" 2>/dev/null
   git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
 )
 

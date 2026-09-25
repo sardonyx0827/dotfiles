@@ -241,7 +241,10 @@ mkdir -p ~/.codex
 for e in AGENTS.md hooks agents skills; do
   ln -sf ~/dotfiles/.codex/$e ~/.codex/$e
 done
-# hooks.json はテンプレートから生成 (リポジトリに hooks.json 実体は無い)
+# hooks.json はテンプレートから生成 (リポジトリに hooks.json 実体は無い)。
+# この sed は $HOME を無加工で埋め込むので、$HOME に ' " \ & | のどれかを
+# 含む環境では壊れた hooks.json になる。その場合は ./install.sh に任せる
+# (シェルの引用・JSON・sed の 3 層をエスケープして生成する)
 sed "s|__HOME__|$HOME|g" ~/dotfiles/.codex/hooks.json.template > ~/.codex/hooks.json
 # config.toml も同様にテンプレートから「初回のみ」複製する。symlink にしない
 # のは、Codex が実行時にこのファイルへ mcp_servers の Authorization ヘッダ等を

@@ -27,7 +27,15 @@ Matcher: `Bash`(実行順)
    扱い = fail-open になるため、ランチャーがそれらを exit 2 + stderr の
    ブロックへ変換する (正常系の exit 0 / exit 2 は素通し)。
 2. **git-push-review** (`hooks/git-push-review.sh`):
-   `git push` を検知し、対象コミットのサマリを添えてブロックする。
+   `git push` を検知し、対象コミットのサマリを添えてブロックする。サマリは
+   push が実際に走るリポジトリから取る(`git -C <dir>` と、push より前の
+   リテラルな `cd <dir>` の両方を追う)。変数・`cd -`・`pushd`・サブシェル・
+   複数の `cd`・オプションや余分な引数付きの `cd`・`..` を含む行き先・
+   クォートされた `~`・実在しない行き先・コマンド中の生の制御文字・
+   `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` の指定・
+   フックの環境かコマンド中に `CDPATH` があるときの素の相対 `cd` などで
+   確実に決められないときは、サマリの代わりに注記を出す(別リポジトリの
+   サマリは無いより悪い)。
 
 ### PostToolUse
 
@@ -51,6 +59,8 @@ Matcher: `Write|Edit|MultiEdit`
 2. **stop-audit** (`hooks/stop-audit.sh`):
    デバッグ文(`console.log` / `debugger` / `breakpoint()` 等)の残留を監査し、
    見つかれば exit 2 でブロックする。`stop_hook_active` で無限ループを防ぐ。
+   最初のコミット前(`HEAD` がまだ無い)は、`HEAD` との差分の代わりに
+   ステージ済みのファイルを監査する。
    `EDITOR_AI_ONESHOT` が立っていれば監査そのものを飛ばす — vim / nvim の AI
    機能が `codex exec` / `claude -p` を叩くときに付ける目印。あれは生成専用の
    一発呼び出しで、監査対象はエージェントが書いたコードではなくユーザ自身の
@@ -165,6 +175,10 @@ Codex にはフックの信頼ゲートがあり、**`hooks.json` を変更す�
 ```bash
 sed "s|__HOME__|$HOME|g" .codex/hooks.json.template > ~/.codex/hooks.json
 ```
+
+この sed は `$HOME` を無加工で埋め込むため、`$HOME` に `'` `"` `\` `&` `|` の
+いずれかを含む環境では壊れた `hooks.json` になる。`./install.sh` はシェルの引用・
+JSON・sed の 3 層をエスケープして生成するので、そうした環境ではそちらを使う。
 
 スクリプトは `~/.codex/hooks/` から本リポジトリの `.codex/hooks/` へシンボリック
 リンクを張る。

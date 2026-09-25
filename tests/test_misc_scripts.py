@@ -464,6 +464,78 @@ class TestUpdateAiTools:
                 f"{call!r} never ran after an earlier tool failed"
             )
 
+    def test_skips_install_for_a_package_npm_does_not_manage(self, shell_env):
+        """run_if_installed only ever checked that npm itself existed, so running the
+        "update" script INSTALLED codex/gemini-cli for the first time on a machine
+        that never had them, and added a duplicate npm copy on a machine that got
+        them from Homebrew. "Installed" now means an npm-managed global
+        (`npm ls -g --depth=0 <pkg>` succeeds); anything else is left untouched.
+        """
+        # Every CLI the script touches must be a stub: `codex`/`gemini` exist for
+        # real on this host (e.g. installed for the Codex/Gemini MCP servers),
+        # and the script's final version-report section runs `codex --version`
+        # / `gemini --version` regardless of npm-managed status -- that check
+        # is unrelated to the npm ls logic under test here.
+        for tool in ("claude", "codex", "gemini", "copilot"):
+            shell_env.stub(tool)
+        # codex is npm-managed (`npm ls` succeeds); gemini-cli is not (came from
+        # Homebrew, or was never installed at all) and must be left alone.
+        shell_env.stub(
+            "npm",
+            body=(
+                'case "$1" in\n'
+                "  ls)\n"
+                '    case "$*" in\n'
+                "      *codex*) exit 0 ;;\n"
+                "      *gemini*) exit 1 ;;\n"
+                "    esac\n"
+                "    ;;\n"
+                "esac"
+            ),
+        )
+
+        res = shell_env.run(UPDATE_SCRIPT)
+
+        assert res.returncode == 0, res.stderr
+        assert "npm install -g @openai/codex@latest" in shell_env.calls
+        assert not any(
+            "npm install -g @google/gemini-cli@latest" in c for c in shell_env.calls
+        ), "gemini-cli was installed even though it is not npm-managed"
+        assert "@google/gemini-cli" in res.stderr, (
+            "no clear message explains why gemini-cli was skipped"
+        )
+        # Prove the stubs actually won the PATH lookup, not the real binaries.
+        assert "codex --version" in shell_env.calls
+        assert "gemini --version" in shell_env.calls
+
+    def test_a_failed_npm_managed_install_does_not_abort_the_rest(self, shell_env):
+        """The "one failure is reported, the rest continue" contract now lives in
+        update_npm_managed (the ls-then-install check no longer goes through
+        run_if_installed for codex/gemini-cli), so it needs its own coverage.
+        """
+        for tool in ("claude", "codex", "gemini", "copilot"):
+            shell_env.stub(tool)
+        shell_env.stub(
+            "npm",
+            body=(
+                'case "$1" in\n'
+                "  ls) exit 0 ;;\n"  # both packages are npm-managed
+                '  install) case "$*" in *codex*) exit 1 ;; esac ;;\n'
+                "esac"
+            ),
+        )
+
+        res = shell_env.run(UPDATE_SCRIPT)
+
+        assert res.returncode == 0, (
+            f"a failed npm-managed install aborted the script: {res.stderr}"
+        )
+        assert "npm install -g @openai/codex@latest" in shell_env.calls
+        assert "npm install -g @google/gemini-cli@latest" in shell_env.calls, (
+            "gemini-cli's install never ran after codex's failed"
+        )
+        assert "copilot update" in shell_env.calls
+
 
 class TestNewProject:
     """scripts/new_project.sh — 新規プロジェクトの雛形作成。
@@ -590,6 +662,50 @@ class TestNewProject:
         assert (shell_env.home / "docs").is_dir()
         assert "HOME" in res.stderr
 
+    def test_refuses_home_reached_through_a_case_differing_spelling(
+        self, shell_env, tmp_path
+    ):
+        """A case-insensitive filesystem lets `$HOME` be reached under an alias.
+
+        The guard used to compare `pwd -P` strings. bash's `pwd -P` resolves
+        symlinks but never canonicalises case, so on a case-insensitive
+        filesystem (APFS by default) `HOME` and `home` are two spellings of
+        one directory and the string compare missed it -- `git init` ran in
+        $HOME. Fixed the same way install.sh's checkout-alias guards were
+        (d68b0f1): compare identity (`-ef`), not spelling. `alias.exists()`
+        is itself the case-insensitivity probe: it is a distinct path from
+        `shell_env.home` that resolves to the same directory only when the
+        filesystem folds case, so the test is meaningless (and self-skips)
+        anywhere else, e.g. Linux CI.
+        """
+        alias = tmp_path / "HOME"
+        if not alias.exists():
+            pytest.skip("filesystem is case-sensitive; HOME cannot be aliased by case")
+
+        res = shell_env.run(NEW_PROJECT_SCRIPT, str(alias), cwd=tmp_path)
+
+        assert res.returncode == 0, res.stderr
+        assert not (shell_env.home / ".git").exists()
+        assert "refusing to run git init" in res.stderr
+
+    def test_refuses_home_reached_through_a_symlink_alias(self, shell_env, tmp_path):
+        """A symlink pointing AT $HOME must resolve to the same guard, portably.
+
+        Unlike the case-differing spelling above, bash's `pwd -P` already
+        dereferences a real symlink correctly, so this passed even before the
+        `-ef` fix -- it is a portable (works on case-sensitive filesystems,
+        e.g. Linux CI too) regression guard for the new identity-based
+        comparison, not a reproduction of the original bug.
+        """
+        alias = tmp_path / "home-link"
+        alias.symlink_to(shell_env.home)
+
+        res = shell_env.run(NEW_PROJECT_SCRIPT, str(alias), cwd=tmp_path)
+
+        assert res.returncode == 0, res.stderr
+        assert not (shell_env.home / ".git").exists()
+        assert "refusing to run git init" in res.stderr
+
     def test_non_directory_in_the_way_is_skipped_not_clobbered(
         self, shell_env, tmp_path
     ):
@@ -682,6 +798,54 @@ class TestNewProject:
 
         assert res.returncode == 0, res.stderr
         assert not (target / "docs" / ".gitkeep").exists()
+
+    @pytest.mark.parametrize(
+        "name",
+        [".hidden", ".a/b", "./.hidden", "hidden", "a/.b"],
+    )
+    def test_leading_dot_in_a_new_name_is_not_mistaken_for_the_cwd_marker(
+        self, shell_env, tmp_path, name
+    ):
+        # dirname returns "." (the current directory) once it walks past the
+        # first element that does not exist yet. For an unwritten dotted name
+        # like ".hidden", that "." is indistinguishable from the leading dot
+        # of the name itself, so a naive string-strip eats the dot along with
+        # it (".hidden" -> "hidden"). Check that the absolute path np() gets
+        # back via dir_file actually exists and matches the directory that
+        # was really created -- if this breaks, np() cd's into a directory
+        # that was never made.
+        work = tmp_path / f"work-{name.replace('/', '_')}"
+        work.mkdir()
+        dir_file = tmp_path / f"dir-{name.replace('/', '_')}.txt"
+        shell_env.env["NEW_PROJECT_DIR_FILE"] = str(dir_file)
+
+        res = shell_env.run(NEW_PROJECT_SCRIPT, name, cwd=work)
+
+        assert res.returncode == 0, res.stderr
+        target_dir = work / name
+        assert target_dir.is_dir(), f"'{name}' was not created where expected"
+        reported = dir_file.read_text(encoding="utf-8").strip()
+        assert os.path.isdir(reported), (
+            f"np() would cd into a nonexistent directory: {reported!r} "
+            f"(stdout: {res.stdout!r})"
+        )
+        assert os.path.realpath(reported) == os.path.realpath(target_dir)
+        assert reported in res.stdout
+
+    def test_leading_dot_in_an_already_existing_name_still_works(
+        self, shell_env, tmp_path
+    ):
+        # `./.hidden` already worked before the fix (per the bug report); this
+        # pins that an already-existing dotted directory works too.
+        target = tmp_path / "proj" / ".hidden"
+        target.mkdir(parents=True)
+
+        res = shell_env.run(NEW_PROJECT_SCRIPT, ".hidden", cwd=tmp_path / "proj")
+
+        assert res.returncode == 0, res.stderr
+        assert f"project: {target}\n" == res.stdout.splitlines(keepends=True)[0], (
+            res.stdout
+        )
 
     def test_dry_run_touches_nothing(self, shell_env, tmp_path):
         target = tmp_path / "planned"
