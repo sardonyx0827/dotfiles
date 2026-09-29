@@ -68,23 +68,21 @@
 ## 4. Execution Layer Selection (SubAgents / Single)
 
 **This section is the single source of truth for delegation.** The `description` fields in
-`.codex/agents/*.toml` ("Use PROACTIVELY", "MUST BE USED for all code changes", "Automatically
-activated") exist so the _right_ agent is picked once delegation is already warranted — they are
-capability advertisements, **not invocation mandates**, and they never override this section.
-Delegation triggers live here and nowhere else.
+`.codex/agents/*.toml` exist so the _right_ agent is picked once delegation is already warranted —
+they are capability advertisements, **not invocation mandates**, and they never override this
+section. Delegation triggers live here and nowhere else.
 
-**Default posture: delegate.** A SubAgent costs tokens and a round trip. Not delegating costs a
-polluted main context, serialized work, and a review that never happens — that second cost used to
-go unpriced here. Check the triggers below first; fall through to Single only when none match.
+A SubAgent costs tokens and a round trip. Not delegating costs a polluted main context, serialized
+work, and a review that never happens. Check the triggers below first; fall through to Single only
+when none match.
 
 ### SubAgents (launched via Codex's agent feature) — the default whenever a trigger matches
 
 These fire on the situation, not on a user request, and not on a fresh cost/benefit judgment.
-"I could probably do this inline" is not a reason to skip one.
 
 | Situation                                                                              | Agent                                                                      |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| A feature, fix, or refactor is complete, or a commit is about to be made               | `code-reviewer` (Go: `go-reviewer`; SQL / migrations: `database-reviewer`) |
+| A commit or PR is about to be made                                                     | `code-reviewer` (Go: `go-reviewer`; SQL / migrations: `database-reviewer`) |
 | A new feature, or a refactor spanning more than a couple of files, before writing code | `planner` (system-level: `architect`)                                      |
 | Build, type, or vet errors that are mechanical to clear                                | `build-error-resolver` (Go: `go-build-resolver`)                           |
 | Independent tickets, competing proposals, or distinct review angles                    | one SubAgent per track                                                     |
@@ -148,11 +146,14 @@ Pre-commit gate (at minimum):
 
 When implementing authentication, user input handling, secrets, API endpoints, payments, or file uploads,
 verify against the full checklist and vulnerability patterns by following the **security-review** skill.
+Before a commit or PR that touches those areas, or the secrets / permission / hook config guarding them,
+run the **security-reviewer** agent. Run it too after dependency updates or a known CVE, a security-tool
+alert, a user-reported concern, a production incident, or before a major release.
 
 If a security issue is found:
 
 1. Stop immediately
-2. Analyze the root cause
+2. Use the **security-reviewer** agent to analyze the root cause
 3. Fix CRITICAL issues before continuing
 4. Rotate any exposed secrets
 5. Review the entire codebase for similar issues
