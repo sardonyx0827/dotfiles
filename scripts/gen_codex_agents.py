@@ -23,10 +23,10 @@ Design constraints (learned the hard way -- do not relax without evidence)
   "Denormalized for Read Performance"), so a `Read` -> `read` style rule would
   corrupt prose while buying nothing. Runtime-specific wording is neutralized
   in the SSOT instead of being substituted here.
-* Literal (''') TOML strings only. Three agent bodies contain `\\*`, `` \\` ``
-  and `\\/`, which are invalid escapes in a basic (\"\"\") string -- tomllib
-  raises `TOMLDecodeError` on load rather than silently dropping them. A
-  literal string keeps the body byte-exact.
+* Literal (''') TOML strings only. Agent bodies contain Markdown escapes such as
+  `\\*` and `` \\` ``, which are invalid escapes in a basic (\"\"\")
+  string -- tomllib raises `TOMLDecodeError` on load rather than silently
+  dropping them. A literal string keeps the body byte-exact.
 * The generator never reformats. Quote style, semicolons and blank lines in
   the body are Prettier's business; touching them here would churn the output
   and change the meaning of code examples.

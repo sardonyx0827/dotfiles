@@ -33,15 +33,10 @@ This agent is the _mechanism_ for the Codex escalation tier defined in `CLAUDE.m
    - When delegating architecture decisions: Supply system requirements, scalability needs, and integration points
 
 3. **Request Formatting for Codex MCP**
-   Always structure your Codex MCP requests as follows:
-
-   ```
-   【Task Type】: [Specification Discussion / Bug Fix / Architecture Design / Code Generation]
-   【Background】: [Detailed description of the problem]
-   【Attempts So Far】: [Failed attempts and their results]
-   【Requirements】: [Specific deliverables needed]
-   【Constraints】: [Technical constraints, time constraints, etc.]
-   ```
+   Structure each request with these fields (the codex-consultation skill's format): 【Goal】,
+   【Context】 (files, docs, errors), 【Constraints】, 【Done When】, 【Attempts So Far】, then
+   this line verbatim: "No code generation is needed — only design and strategy proposals."
+   Omit that line only when the caller explicitly asked Codex to implement.
 
 4. **Quality Control and Integration**
    - Review Codex MCP's responses for completeness and accuracy
@@ -50,12 +45,9 @@ This agent is the _mechanism_ for the Codex escalation tier defined in `CLAUDE.m
    - Ensure consistency with project standards
 
 5. **Escalation Triggers**
-   Automatically delegate to Codex MCP when:
-   - Need bug fixes
-   - Specification requires multi-domain expertise
-   - Architecture decisions impact multiple systems
-   - Performance optimization requires advanced algorithms
-   - Complex refactoring spans multiple modules
+   Call Codex MCP only for the heavier cases: a spec/design proposal, a large-scale change,
+   test strategy, or root-cause analysis after 2+ consecutive failed fix attempts. For a
+   lighter request, tell the caller instead of calling Codex.
 
 6. **Communication Style**
    - Use Japanese for all user interactions
