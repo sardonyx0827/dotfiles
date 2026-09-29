@@ -1,10 +1,10 @@
 ---
-description: Generate and run end-to-end tests with Playwright. Creates test journeys, runs tests, captures screenshots/videos/traces, and uploads artifacts.
+description: Generate and run end-to-end tests with Vercel Agent Browser (preferred) and Playwright as the fallback. Creates test journeys, runs tests, captures screenshots/videos/traces, and uploads artifacts.
 ---
 
 # E2E Command
 
-This command invokes the **e2e-runner** agent to generate, maintain, and execute end-to-end tests using Playwright.
+This command invokes the **e2e-runner** agent to generate, maintain, and execute end-to-end tests using Vercel Agent Browser (preferred), with Playwright as the fallback. The agent decides when to drive the browser with Agent Browser; the generated specs and CI below are Playwright.
 
 ## What This Command Does
 
@@ -155,7 +155,7 @@ test.describe('Product Search and View Flow', () => {
     expect(finalCount).toBe(initialCount)
   })
 })
-````
+```
 
 ## Running Tests
 
@@ -209,10 +209,12 @@ View report: npx playwright show-report
 When tests run, the following artifacts are captured:
 
 **On All Tests:**
+
 - HTML Report with timeline and results
 - JUnit XML for CI integration
 
 **On Failure Only:**
+
 - Screenshot of the failing state
 - Video recording of the test
 - Trace file for debugging (step-by-step replay)
@@ -230,7 +232,7 @@ npx playwright show-trace artifacts/trace-abc123.zip
 
 # Screenshots are saved in artifacts/ directory
 open artifacts/search-results.png
-````
+```
 
 ## Flaky Test Detection
 
@@ -278,34 +280,17 @@ Add to your CI pipeline:
 
 - name: Upload artifacts
   if: always()
-  uses: actions/upload-artifact@v3
+  uses: actions/upload-artifact@<full-commit-SHA> # v4.x — resolve the SHA per the github-actions-ci skill
   with:
     name: playwright-report
     path: playwright-report/
 ```
 
-## Product-Specific Critical Flows
+## Critical Flows
 
-For this app, prioritize these E2E tests:
-
-**🔴 CRITICAL (Must Always Pass):**
-
-1. User can sign in via the auth provider
-2. User can browse products
-3. User can search products (semantic search)
-4. User can view product details
-5. User can place an order (with test payment)
-6. Order is fulfilled correctly
-7. User can request a refund
-
-**🟡 IMPORTANT:**
-
-1. Product creation flow
-2. User profile updates
-3. Real-time price updates
-4. Chart rendering
-5. Filter and sort products
-6. Mobile responsive layout
+Prioritize the journeys this project cannot ship broken: sign-in, its core transaction
+path, and anything that moves money. Identify them from the codebase and the request
+rather than assuming a domain.
 
 ## Best Practices
 

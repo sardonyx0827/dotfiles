@@ -15,19 +15,18 @@ Safely identify and remove dead code with test verification:
 
 2. Generate comprehensive report in .reports/dead-code-analysis.md
 
-3. Categorize findings by severity:
-   - SAFE: Test files, unused utilities
-   - CAUTION: API routes, components
-   - DANGER: Config files, main entry points
+3. Categorize findings by risk (as defined in agents/refactor-cleaner.md):
+   - SAFE: Unused exports, unused dependencies
+   - CAREFUL: Potentially used via dynamic imports
+   - RISKY: Public API, shared utilities
 
 4. Propose safe deletions only
 
-5. Before each deletion:
-   - Run full test suite
-   - Verify tests pass
-   - Apply change
-   - Re-run tests
-   - Rollback if tests fail
+5. Delete in small batches (as in agents/refactor-cleaner.md):
+   - Confirm the full test suite passes before starting
+   - Apply one batch
+   - Re-run the full test suite
+   - Roll back the batch if any test fails
 
 6. Show summary of cleaned items
 

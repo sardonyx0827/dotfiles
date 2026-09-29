@@ -4,7 +4,7 @@ description: Sync documentation from source of truth - scripts reference, enviro
 
 # Update Documentation
 
-This command invokes the **doc-updater** agent to sync documentation from source-of-truth. The agent does the work directly — it does not call this command back.
+This command invokes the **doc-updater** agent to sync documentation from source-of-truth.
 
 Sync documentation from source-of-truth:
 

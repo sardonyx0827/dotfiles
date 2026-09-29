@@ -27,31 +27,8 @@ Use `/go-review` when:
 
 ## Review Categories
 
-### CRITICAL (Must Fix)
-
-- SQL/Command injection vulnerabilities
-- Race conditions without synchronization
-- Goroutine leaks
-- Hardcoded credentials
-- Unsafe pointer usage
-- Ignored errors in critical paths
-
-### HIGH (Should Fix)
-
-- Missing error wrapping with context
-- Panic instead of error returns
-- Context not propagated
-- Unbuffered channels causing deadlocks
-- Interface not satisfied errors
-- Missing mutex protection
-
-### MEDIUM (Consider)
-
-- Non-idiomatic code patterns
-- Missing godoc comments on exports
-- Inefficient string concatenation
-- Slice not preallocated
-- Table-driven tests not used
+Severity tiers are defined by the go-reviewer agent (`agents/go-reviewer.md`); report its
+classification unchanged.
 
 ## Automated Checks Run
 
@@ -97,7 +74,7 @@ var cache = map[string]*Session{}  // Concurrent access!
 func GetSession(id string) *Session {
     return cache[id]  // Race condition
 }
-````
+```
 
 Fix: Use sync.RWMutex or sync.Map
 
@@ -136,15 +113,15 @@ return fmt.Errorf("get user %s: %w", userID, err)
 
 Recommendation: ❌ Block merge until CRITICAL issue is fixed
 
-```
+````
 
 ## Approval Criteria
 
-| Status | Condition |
-|--------|-----------|
-| ✅ Approve | No CRITICAL or HIGH issues |
+| Status     | Condition                               |
+| ---------- | --------------------------------------- |
+| ✅ Approve | No CRITICAL or HIGH issues              |
 | ⚠️ Warning | Only MEDIUM issues (merge with caution) |
-| ❌ Block | CRITICAL or HIGH issues found |
+| ❌ Block   | CRITICAL or HIGH issues found           |
 
 ## Integration with Other Commands
 
@@ -157,4 +134,3 @@ Recommendation: ❌ Block merge until CRITICAL issue is fixed
 
 - Agent: `agents/go-reviewer.md`
 - Skills: `skills/golang-patterns/`, `skills/golang-testing/`
-```
