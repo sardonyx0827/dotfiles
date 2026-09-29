@@ -180,13 +180,10 @@ Result: throttle.ts, middleware/index.ts, router-setup.ts
 Use in agent prompts:
 
 ```markdown
-When retrieving context for this task:
-
-1. Start with broad keyword search
-2. Evaluate each file's relevance (0-1 scale)
-3. Identify what context is still missing
-4. Refine search criteria and repeat (max 3 cycles)
-5. Return files with relevance >= 0.7
+When retrieving context for this task, start broad, learn the codebase's own terms
+from the first results, and refine toward what is still missing. Stop once you hold
+the files that implement or constrain the change; return each with one line on why
+it matters, plus any gap still open.
 ```
 
 ## Best Practices
@@ -200,5 +197,5 @@ When retrieving context for this task:
 ## Related
 
 - [The Longform Guide](https://x.com/affaanmustafa/status/2014040193557471352) - Subagent orchestration section
-- `continuous-learning` skill - For patterns that improve over time
+- `/learn` command - Extract reusable patterns from a session into skills
 - Agent definitions in `~/.claude/agents/`

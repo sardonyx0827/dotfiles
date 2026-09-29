@@ -1,7 +1,6 @@
 ---
 name: eval-harness
 description: Formal evaluation framework for Claude Code sessions implementing eval-driven development (EDD). Use this skill whenever defining success criteria for a feature before building it, writing capability / regression / quality evals, measuring pass@k reliability, or setting up eval-driven checks to catch regressions across changes.
-tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 # Eval Harness Skill
