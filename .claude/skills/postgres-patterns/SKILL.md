@@ -126,7 +126,7 @@ ORDER BY n_dead_tup DESC;
 
 ```sql
 -- Connection limits (adjust for RAM)
-ALTER SYSTEM SET max_connections = 100;
+ALTER SYSTEM SET max_connections = 100;  -- needs a server restart; pg_reload_conf() won't apply it
 ALTER SYSTEM SET work_mem = '8MB';
 
 -- Timeouts

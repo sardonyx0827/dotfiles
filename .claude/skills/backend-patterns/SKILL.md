@@ -202,10 +202,8 @@ BEGIN
   INSERT INTO products VALUES (product_data);
   INSERT INTO inventory VALUES (inventory_data);
   RETURN jsonb_build_object('success', true);
-EXCEPTION
-  WHEN OTHERS THEN
-    -- Rollback happens automatically
-    RETURN jsonb_build_object('success', false, 'error', SQLERRM);
+  -- No EXCEPTION handler: an error aborts the function, rolls back both inserts,
+  -- and rpc() returns it as `error`, so the caller's `if (error)` check fires.
 END;
 $$;
 ```

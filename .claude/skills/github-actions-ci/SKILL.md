@@ -9,6 +9,10 @@ Practical patterns for reliable, secure, and efficient GitHub Actions workflows.
 
 ## Workflow Anatomy & Sane Defaults
 
+Versions and SHAs in this skill are illustrative — pin what the repo already uses, or
+resolve the current release's SHA when writing the workflow; never copy a version or
+SHA from here.
+
 Every production workflow needs three top-level settings that GitHub omits by default:
 
 ```yaml

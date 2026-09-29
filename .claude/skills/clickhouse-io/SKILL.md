@@ -163,31 +163,23 @@ const clickhouse = new ClickHouse({
   },
 });
 
-// ✅ Batch insert (efficient)
+// ✅ Batch insert: one request, many rows, values passed as data (never string-built SQL)
 async function bulkInsertOrders(orders: Order[]) {
-  const values = orders
-    .map(
-      (order) => `(
-    '${order.id}',
-    '${order.product_id}',
-    '${order.user_id}',
-    ${order.amount},
-    '${order.timestamp.toISOString()}'
-  )`,
-    )
-    .join(",");
-
   await clickhouse
-    .query(
-      `
-    INSERT INTO orders (id, product_id, user_id, amount, timestamp)
-    VALUES ${values}
-  `,
+    .insert(
+      "INSERT INTO orders (id, product_id, user_id, amount, timestamp)",
+      orders.map((order) => ({
+        id: order.id,
+        product_id: order.product_id,
+        user_id: order.user_id,
+        amount: order.amount,
+        timestamp: order.timestamp.toISOString(),
+      })),
     )
     .toPromise();
 }
 
-// ❌ Individual inserts (slow)
+// ❌ Individual inserts (slow, and string-built SQL is injectable)
 async function insertOrder(order: Order) {
   // Don't do this in a loop!
   await clickhouse
@@ -420,8 +412,7 @@ pgClient.on("notification", async (msg) => {
 
 ### 2. Ordering Key
 
-- Put most frequently filtered columns first
-- Consider cardinality (high cardinality first)
+- Put the most frequently filtered columns first; among columns filtered about equally often, put lower cardinality first
 - Order impacts compression
 
 ### 3. Data Types
@@ -433,7 +424,7 @@ pgClient.on("notification", async (msg) => {
 ### 4. Avoid
 
 - SELECT \* (specify columns)
-- FINAL (merge data before query instead)
+- FINAL on large tables (it merges at query time; prefer argMax / GROUP BY dedup)
 - Too many JOINs (denormalize for analytics)
 - Small frequent inserts (batch instead)
 
