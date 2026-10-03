@@ -34,12 +34,10 @@ local function load_plugins()
       if type == "directory" then
         scan_dir(full_path)
       elseif type == "file" and name:match("%.lua$") then
-        -- Convert file path to module path. The prefix is removed with
-        -- string.sub, NOT gsub: gsub reads its first argument as a Lua
-        -- pattern, and a config path containing `-` (a lazy quantifier) or
-        -- `.` (any char) never matched itself, so every spec under
-        -- /Users/jane-doe/.config or a `dotfiles-main` worktree was skipped
-        -- and the editor started with no plugins at all.
+        -- Convert file path to module path. Strip the prefix with string.sub,
+        -- NOT gsub: gsub reads its first argument as a Lua pattern, so a config
+        -- path containing `-` or `.` would not match itself and every spec
+        -- would be skipped.
         local prefix = vim.fn.stdpath("config") .. "/lua/"
         local module = full_path:sub(#prefix + 1)
             :gsub("%.lua$", "")
@@ -48,12 +46,10 @@ local function load_plugins()
         if ok and plugin then
           table.insert(plugins, plugin)
         else
-          -- A spec that fails to load used to vanish from lazy.setup without a
-          -- trace: the plugin simply stopped existing. Nothing could catch it
-          -- either: luacheck now gates CI over this tree (see .config/nvim/.luacheckrc),
-          -- but it only catches undefined-global-style typos, not a require
-          -- that raises or returns nil, so a typo here degraded the editor
-          -- silently until noticed by hand.
+          -- Report the failure instead of letting the spec vanish from
+          -- lazy.setup: a typo here would degrade the editor silently, and
+          -- luacheck (see .config/nvim/.luacheckrc) only catches undefined
+          -- globals, not a require that raises or returns nil.
           -- Two distinct failures are folded together on purpose -- both mean
           -- "this file produced no usable spec":
           --   not ok   -> require raised (syntax error, runtime error)

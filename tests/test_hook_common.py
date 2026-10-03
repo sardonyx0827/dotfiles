@@ -62,13 +62,15 @@ class TestHookLog:
         assert "rc=0" in res.stdout
 
     def test_concurrent_rotation_keeps_the_log_and_stays_quiet(self, tmp_path):
-        """Regression: rotation used a fixed ${log}.tmp shared by every process.
+        """Rotation must not use a temp file shared by every process.
 
         Two hooks rotating at once (a Claude and a Codex session, or several
-        files in one turn) opened that same temp file and clobbered each
-        other's copy, so a 50-line cap collapsed to 15 lines. The loser of the
-        `mv` race then printed "No such file or directory" to stderr -- which
-        for lint.sh is the channel its findings are fed back to the model on.
+        files in one turn) would open the same temp file and clobber each
+        other's copy, collapsing the log far below its cap. The loser of the
+        `mv` race would also print "No such file or directory" to stderr --
+        which for lint.sh is the channel its findings are fed back to the
+        model on. See the comment on the rotation in `hook_log`
+        (_hook_common.sh).
         """
         log = tmp_path / "race.log"
         cap = 50
@@ -88,8 +90,8 @@ class TestHookLog:
 
         lines = log.read_text(encoding="utf-8").splitlines()
         assert len(lines) <= cap
-        # The bug's signature: the log collapses far below the cap because
-        # concurrent rotations truncate each other's snapshot.
+        # Concurrent rotations that truncate each other's snapshot collapse
+        # the log far below the cap.
         assert len(lines) >= cap * 0.8, (
             f"log collapsed to {len(lines)} lines under a {cap}-line cap"
         )

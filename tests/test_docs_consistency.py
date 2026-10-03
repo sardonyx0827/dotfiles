@@ -1,19 +1,15 @@
 """Docs must not contradict the code they describe.
 
-Every test here guards a contradiction that was actually found in the tree and
-that no other check could see. The suite already pins behaviour; nothing pinned
-prose, so prose drifted:
+The suite pins behaviour; these tests pin prose, which otherwise drifts silently:
 
 - ``docs/setup.md``'s manual-install recipe is the only path a user has when
-  they do not run ``install.sh``. It had fallen one entry behind the script
-  (the VS Code files), and nothing failed -- the recipe is documentation, so no
-  test executed it and no linter compared it to the script it mirrors.
-- ``.tmux.conf`` moved its prefix from ``C-b`` to ``C-a`` but two comments kept
-  quoting the old key, so the file documented keystrokes it does not bind.
-- ``.coveragerc`` explained an omission in terms of a
-  ``.codex/hooks/_bash_review_common.py`` symlink. ``test_hook_sync.py`` forbids
-  that file existing in any form, so the comment described a tree the suite
-  actively prevents.
+  they do not run ``install.sh``. It is documentation, so no test executes it
+  and no linter compares it to the script it mirrors.
+- ``.tmux.conf`` comments that quote a keystroke must quote the prefix the file
+  binds, not one it unbinds.
+- Config comments must not describe a ``.codex/hooks/_bash_review_common.py``
+  symlink. ``test_hook_sync.py`` forbids that file existing in any form, so
+  such a comment would describe a tree the suite actively prevents.
 
 These are string-level checks on purpose: the invariant IS the text.
 """
@@ -105,9 +101,8 @@ def test_manual_setup_covers_every_install_sh_link():
     """The manual recipe must not fall behind the script it mirrors.
 
     A user who follows docs/setup.md instead of running install.sh has to end
-    up with the same tree. When _link_editor_configs gained the VS Code files,
-    this recipe was not updated and those two configs were silently unmanaged
-    for anyone on the manual path.
+    up with the same tree. A link added to the script but not to the recipe
+    leaves that config silently unmanaged on the manual path.
     """
     missing = sorted(_install_sh_sources() - _setup_doc_sources())
     assert not missing, (
@@ -122,11 +117,10 @@ _VSCODE_USER_DIR = re.compile(r'vscode_user_dir="(?P<dir>[^"]+)"')
 def test_manual_setup_uses_every_vscode_user_dir_install_sh_uses():
     """The link SOURCES matching is not enough: the destinations are OS-branched.
 
-    install.sh gained a third VS Code location -- %APPDATA%\\Code\\User for Git
-    Bash, where the build never reads $HOME/.config -- after a Windows install
-    linked into a directory VS Code ignores. The manual recipe kept the old
-    two-way branch, so the same dead links awaited anyone following it, and
-    the source-set comparison above could not see it.
+    install.sh picks the VS Code user dir per OS, including %APPDATA%\\Code\\User
+    for Git Bash, where VS Code never reads $HOME/.config. A recipe missing one
+    branch links into a directory VS Code ignores, which the source-set
+    comparison above cannot see.
     """
     expected = set(_VSCODE_USER_DIR.findall(INSTALL_SH.read_text(encoding="utf-8")))
     documented = set(_VSCODE_USER_DIR.findall(SETUP_DOC.read_text(encoding="utf-8")))
@@ -161,9 +155,8 @@ _COMMENT_PREFIX_SEQUENCE = re.compile(
 def test_tmux_comments_quote_the_configured_prefix():
     """Comments must name the prefix the file sets, not the one it unbinds.
 
-    The prefix moved to C-a (and C-b is explicitly unbound), but the logging
-    comments still read `C-b C-p` / `C-b C-o` -- instructions for a keystroke
-    this config guarantees does nothing.
+    A comment quoting `C-b C-p` while the file sets another prefix and unbinds
+    C-b documents a keystroke this config guarantees does nothing.
     """
     text = TMUX_CONF.read_text(encoding="utf-8")
     configured = re.search(r"^set -g prefix (?P<key>\S+)", text, re.MULTILINE)
@@ -185,8 +178,8 @@ def test_tmux_comments_quote_the_configured_prefix():
 # No tracked file may name a .codex/hooks path that does not exist
 # --------------------------------------------------------------------------
 # test_hook_sync.py pins the tree (no copy, no link under .codex/hooks). This
-# pins the prose about it: .coveragerc and ci.yml both still explained the
-# coverage setup in terms of a .codex/hooks/_bash_review_common.py symlink that
+# pins the prose about it: .coveragerc and ci.yml must not explain the coverage
+# setup in terms of a .codex/hooks/_bash_review_common.py symlink that
 # test_hook_sync.py forbids from existing.
 
 CI_YML = REPO_ROOT / ".github/workflows/ci.yml"
@@ -219,21 +212,20 @@ def test_config_files_only_name_codex_hook_paths_that_exist(rel):
 # --------------------------------------------------------------------------
 # "This check is advisory" claims vs whether CI actually gates on it
 # --------------------------------------------------------------------------
-# luacheck shipped as continue-on-error, then was promoted to gating. ci.yml and
-# docs/testing.md were updated; .luacheckrc's own header still told the reader
-# the job was "NON-GATING in CI (advisory only)" -- the file a contributor reads
-# first when a luacheck warning appears, telling them it cannot break the build.
+# While no ci.yml job sets continue-on-error, a tool config's header must not
+# tell the reader its job is "NON-GATING in CI (advisory only)": the file a
+# contributor reads first when a warning appears would say it cannot break the
+# build.
 
 _ADVISORY_CLAIM = re.compile(r"NON-GATING|non-gating|advisory only|助言的")
 
-# An actual YAML key, not the word inside a comment. ci.yml's own prose says
-# "助言的 (continue-on-error) から gating へ格上げした", so a plain substring test
-# would see the promotion note itself and skip -- passing vacuously forever.
+# An actual YAML key, not the word inside a comment: a plain substring test
+# would also match prose that mentions continue-on-error, and skip -- passing
+# vacuously forever.
 _CONTINUE_ON_ERROR_KEY = re.compile(r"^\s*continue-on-error\s*:", re.MULTILINE)
 
-# Tool configs that describe how strictly CI treats them. ci.yml is deliberately
-# absent: it narrates the promotion in past tense, which is history, not a claim
-# about the current run.
+# Tool configs that describe how strictly CI treats them. ci.yml is absent: it
+# is the source the claims are checked against, not a claim itself.
 _CONFIGS_DESCRIBING_CI_STRICTNESS = [
     ".config/nvim/.luacheckrc",
     ".coveragerc",
@@ -262,19 +254,18 @@ def test_no_config_claims_a_ci_check_is_advisory_while_ci_gates_everything():
 # --------------------------------------------------------------------------
 # Prose must not name a repo script that does not exist
 # --------------------------------------------------------------------------
-# codex-image-gen/SKILL.md told the reader "A CLI fallback
-# (`scripts/image_gen.py`) exists". The script is real -- Codex ships it at
-# .codex/skills/.system/imagegen/scripts/image_gen.py -- but it has never sat
-# at the repo-root `scripts/` the sentence named, and bfbcc7a untracked that
-# whole tree, so an agent resolving the path as written found nothing. The
-# name alone is not enough: what makes a reference usable is that it resolves
-# from where the reader stands. Generalised rather than pinned to that one
-# name, since the same mistake is one rename away in any of these files.
+# A reader (or an agent) resolves a named script path as written, so the name
+# alone is not enough: it must resolve from where the reader stands. A skill
+# saying "a CLI fallback (`scripts/image_gen.py`) exists" is a ghost reference
+# when that script lives elsewhere (Codex ships it under
+# .codex/skills/.system/imagegen/scripts/), not at the repo-root `scripts/`.
+# Generalised rather than pinned to that one name, since the same mistake is
+# one rename away in any of these files.
 #
 # A reference is satisfied by the repo root OR by the file's own directory:
-# bundling a `scripts/` beside a SKILL.md is this repo's own layout (five of
-# the .codex system skills do it), so root-only resolution would fail a
-# skill whose script is right there next to it.
+# bundling a `scripts/` beside a SKILL.md is this repo's own layout, so
+# root-only resolution would fail a skill whose script is right there next to
+# it.
 _SCRIPT_REF_RE = re.compile(
     r"`((?:scripts|\.claude/hooks)/[A-Za-z0-9_.-]+\.(?:py|sh))`"
 )
@@ -325,13 +316,11 @@ def test_prose_only_names_repo_scripts_that_exist():
 # --------------------------------------------------------------------------
 # README's "what install.sh does" list vs the order main() actually runs
 # --------------------------------------------------------------------------
-# README listed symlink creation second-to-last, after every package and tool
-# install. main() runs create_symlinks FIRST, directly after detect_os, and
-# its comment says why: "Symlinks first: ... Everything below can fail on a
-# flaky network or a renamed formula; when it ran last, one such failure left
-# the machine with no dotfiles linked at all." The README never followed that
-# fix, so a reader hitting a network failure mid-run would guess exactly
-# backwards about whether their dotfiles are linked.
+# main() runs create_symlinks FIRST, directly after detect_os (see the
+# "Symlinks first" comment there): everything below it can fail on a flaky
+# network or a renamed formula. The README's list must say the same, or a
+# reader hitting a network failure mid-run would guess backwards about whether
+# their dotfiles are linked.
 #
 # Only that one invariant is pinned, not the whole sequence: the README list
 # mixes real function calls with steps that are not (platform detection, font

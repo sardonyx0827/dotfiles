@@ -1,17 +1,14 @@
 """The close-buffer mapping in `.config/nvim/lua/setup/functions/ai/init.lua`.
 
 `ai/init.lua` is the entry point that wires the AI features to keys; its
-siblings each already have a file here (test_nvim_ai_{backend,context,prompt}).
-This is the gap, and it opens on the one mapping in that file that can destroy
-work the user has not written yet: `close_current_buffer`, bound to both
-`<C-q>` and `<leader>bc`.
+siblings each have a file here (test_nvim_ai_{backend,context,prompt}). This
+one covers the mapping in that file that can destroy work the user has not
+written yet: `close_current_buffer`, bound to both `<C-q>` and `<leader>bc`.
 
-It used to call `nvim_buf_delete(buf, { force = true })`, i.e. `:bd!`. On a
-modified buffer that discards the edits *and* the undo history with no prompt,
-no error and no notification -- one stray `<C-q>` next to `<C-w>` and the work
-is gone with nothing to undo it back from. The tell was the asymmetry: the
-function checked `nvim_buf_is_loaded` and not `modified`, which reads as an
-omission rather than a decision.
+`nvim_buf_delete(buf, { force = true })`, i.e. `:bd!`, on a modified buffer
+discards the edits *and* the undo history with no prompt, no error and no
+notification -- one stray `<C-q>` next to `<C-w>` and the work is gone with
+nothing to undo it back from. So a modified buffer must be refused, not forced.
 
 Mechanism: the callback actually installed on the key, looked up with `maparg`
 and invoked, under `nvim -l` -- the shape test_nvim_file_functions.py uses, and
@@ -169,7 +166,7 @@ def press_close(tmp_path, key, *, modified, kind="file"):
 
 @pytest.mark.parametrize("key", CLOSE_KEYS)
 def test_a_modified_buffer_is_not_discarded(tmp_path, key):
-    """The regression: `force = true` wiped unsaved edits without asking.
+    """A modified buffer survives the key: `force = true` would wipe unsaved edits.
 
     Survival is asserted through the contents, not just validity -- a callback
     that threw before doing anything would leave a valid buffer too.
@@ -205,12 +202,12 @@ def test_the_refusal_says_how_to_override(tmp_path, key):
 
 @pytest.mark.parametrize("key", CLOSE_KEYS)
 def test_a_running_terminal_still_closes(tmp_path, key):
-    """The cost the fix must not pay.
+    """Refusing a modified buffer must not also refuse a live terminal.
 
-    Dropping force outright also refuses a terminal whose job is alive -- `:bd`
+    Dropping force outright would refuse a terminal whose job is alive -- `:bd`
     reports E89 "will be killed" there, with 'modified' false and no text at
-    stake -- which would have stopped <C-q> closing a toggleterm window. Keying
-    force on 'modified' keeps that working, and this pins it.
+    stake -- and stop <C-q> closing a toggleterm window. Keying force on
+    'modified' keeps that working, and this pins it.
     """
     res = press_close(tmp_path, key, modified=False, kind="terminal")
     assert res["ok"], res["err"]

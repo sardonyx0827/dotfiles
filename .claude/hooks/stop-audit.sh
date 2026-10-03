@@ -10,8 +10,8 @@
 input=$(cat)
 
 # jq が無いと stop_hook_active を読めない。読めないまま監査を続けると、block
-# からの継続でもフラグが空 = false 扱いで再び block し、Stop が終わらなくなる
-# (Codex 変種で実測)。lint.sh / auto-format.sh と同じく jq 不在は監査しない。
+# からの継続でもフラグが空 = false 扱いで再び block し、Stop が終わらなくなる。
+# lint.sh / auto-format.sh と同じく jq 不在は監査しない。
 command -v jq >/dev/null 2>&1 || {
   echo "stop-audit: jq not found on PATH; debug-statement audit skipped" >&2
   exit 0
@@ -51,8 +51,8 @@ repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
 # どちらにも一切現れず監査から漏れる。`diff --cached` は HEAD が無くても
 # index を空ツリーとの差分として扱える(=最初のコミットとしてステージした
 # 内容がそのまま出る)ので、unborn 時だけこちらに切り替える。born 側は
-# 変更概念(--cached はステージ済みしか見ない)が変わらないよう従来どおり
-# HEAD 相手の diff(ステージ済み・未ステージ両方)を使う。
+# --cached だとステージ済みしか見ないので、ステージ済み・未ステージ両方を
+# 拾える HEAD 相手の diff のままにする。
 if git -C "$repo_root" rev-parse -q --verify HEAD >/dev/null 2>&1; then
   diff_cmd=(git -C "$repo_root" diff --name-only -z HEAD)
 else
@@ -82,7 +82,7 @@ while IFS= read -r -d '' f; do
     # debugger 側の直後条件は `(;|$)` ではなく「識別子文字以外 or 行末」で判定する。
     # debugger は文ではなくキーワードなので `;` も行末も必須ではなく、
     # `if (x) { debugger }` や `debugger // remove me` のように同一行に他の
-    # トークンが続く形が実際に最も多い。`(;|$)` はそれらを丸ごと取りこぼしていた。
+    # トークンが続く形が実際に最も多く、`(;|$)` だとそれらを取りこぼす。
     # 融合判定の文字クラスに `_` と `$` を足すのは、JS の識別子文字だから
     # (`debugger_x` / `$debugger` は別の識別子であってデバッグ文ではない)。
     hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5)

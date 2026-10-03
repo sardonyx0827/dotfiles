@@ -4,18 +4,15 @@
 # このファイルが唯一の実体。.codex/hooks/ 側には複製もリンクも置かず、あちらの
 # エントリポイントが ../../.claude/hooks を自力で解決して読む。編集はここだけでよい。
 #
-# 共有方法は 3 世代目。それぞれ前の世代の失敗を潰している:
-#   1. バイト単位で同一の複製 2 つを tests/test_hook_sync.py で突き合わせる方式。
-#      事後検知であり、監視対象に名指ししたファイルしか見ない。実際 52fdba4 で
-#      「ガード導入の翌日に、共有ロジック約 80 行がガード外へ漏れていた」ことが判明。
-#   2. 相対 symlink。実体が 1 つになりドリフトは構造的に起こらなくなったが、
-#      core.symlinks=false (Git for Windows の既定) で clone すると git が symlink を
-#      「リンク先パスを書いたテキストファイル」として展開するため、import がその
-#      パス文字列をソースとして読んで落ちる。install.sh は OS="windows"
-#      (msys/cygwin) を宣言済みスコープに含むので、これは実在の退行だった。
-#   3. 現行。参照側 (.codex/hooks/bash-review.py) が realpath(__file__) から
-#      ../../.claude/hooks を sys.path に足す。実体は 1 つのままドリフト不能で、
-#      かつ checkout に git が特別扱いすべきものが何も残らない。
+# 共有方法: 参照側 (.codex/hooks/bash-review.py) が realpath(__file__) から
+# ../../.claude/hooks を sys.path に足す。実体は 1 つのままドリフト不能で、かつ
+# checkout に git が特別扱いすべきものが何も残らない。.codex 側に置いてはならないもの:
+#   - 複製: 2 つを置いてバイト比較で突き合わせる方式は事後検知で、名指ししたファイル
+#     しか見ないため、共有ロジックがガード外へ漏れる。
+#   - 相対 symlink: core.symlinks=false (Git for Windows の既定) で clone すると git が
+#     symlink を「リンク先パスを書いたテキストファイル」として展開し、import がその
+#     パス文字列をソースとして読んで落ちる。install.sh は OS="windows"
+#     (msys/cygwin) を宣言済みスコープに含む。
 #
 # realpath であって abspath でない点が要: install.sh は ~/.codex/hooks を
 # <repo>/.codex/hooks への symlink にするため、本番では __file__ の親が $HOME 側に
@@ -144,7 +141,7 @@ DENY_EXECUTABLES = frozenset(
         "wget",
         # nc / netcat / ncat は同じ道具の別パッケージ名 (BSD netcat は netcat、
         # ncat は nmap 版の書き直し)。nc だけを載せるのは能力ではなく綴りを
-        # 拒否しているだけで、残り 2 つは単独モデルの低リスク経路まで落ちていた。
+        # 拒否しているだけで、残り 2 つは単独モデルの低リスク経路まで落ちる。
         "nc",
         "netcat",
         "ncat",
@@ -180,24 +177,24 @@ _WRAPPER_EXECUTABLES = frozenset(
         "nice",
         "time",
         "stdbuf",
-        # 以下は「実行体を後続に取る」点で上と同じだが、剥がし対象から漏れて
-        # いた。timeout/xargs 等は日常的に使われるうえ AI 自身も自然に付ける
-        # ため、未対応のままでは `timeout 10 sudo rm -rf /` が DENY 層にも
-        # 高リスク層にも一致せず単独モデルの経路まで格下げされていた。
+        # 以下も「実行体を後続に取る」点で上と同じ。timeout/xargs 等は日常的に
+        # 使われるうえ AI 自身も自然に付けるため、剥がさないと
+        # `timeout 10 sudo rm -rf /` が DENY 層にも高リスク層にも一致せず
+        # 単独モデルの経路まで格下げされる。
         "timeout",
         "xargs",
         "setsid",
         "watch",
         "flock",
-        # macOS 標準 (いずれも /usr/bin に実在) で、後続を exec する点は上と同型
-        # なのに漏れていた。`caffeinate curl ...` / `script -q /dev/null sudo rm -rf /`
-        # / `arch -arm64 curl ...` はいずれも DENY 層にも高リスク層にも一致せず、
+        # macOS 標準 (いずれも /usr/bin に実在) で、後続を exec する点は上と同型。
+        # `caffeinate curl ...` / `script -q /dev/null sudo rm -rf /`
+        # / `arch -arm64 curl ...` は剥がさないと DENY 層にも高リスク層にも一致せず、
         # 裸の `curl ...` なら決定論的 DENY になる操作が、ラッパー名を 1 つ被せる
-        # だけで単独モデルの低リスク経路まで落ちていた (実測済み)。
+        # だけで単独モデルの低リスク経路まで落ちる (実測済み)。
         "caffeinate",
         # script はフラグの後ろに「出力ファイル」の位置引数を挟む点が他と違う。
         # 集合へ足すだけでは `script output.txt curl ...` が output.txt を実行体と
-        # 解決し、後ろの curl を見ないまま「判定済み」を名乗る = 未対応の今より
+        # 解決し、後ろの curl を見ないまま「判定済み」を名乗る = 未登録より
         # 悪化する。_WRAPPER_POSITIONAL_ARGS 側の登録と対で初めて正しくなる。
         "script",
         "arch",
@@ -307,9 +304,9 @@ _WRAPPER_VALUELESS_FLAGS = {
 
 # 「後続を実行せず、名前を検索して表示するだけ」にするフラグ。`command -v X` /
 # `command -V X` は bash / zsh / dash のいずれでも X のパスや定義を出力するだけで
-# X を起動しない。以前はこれを _WRAPPER_VALUELESS_FLAGS に載せて X まで剥がして
-# いたため、`command -v curl` / `command -V sudo` という走りもしないコマンドが
-# 層 1 のハード DENY に当たっていた。層 1 の誤検知は ask で覆せず作業を止める。
+# X を起動しない。_WRAPPER_VALUELESS_FLAGS に載せると X まで剥がされ、
+# `command -v curl` / `command -V sudo` という走りもしないコマンドが
+# 層 1 のハード DENY に当たる。層 1 の誤検知は ask で覆せず作業を止める。
 #
 # script -p (再生モード、後続を exec しない) は同じ理由で未収録 = 判定不能 (ask)
 # に倒しているが、こちらは ask に倒さず `command` 自身を実行体として返す
@@ -409,10 +406,10 @@ def _normalize_cmd(cmd: str) -> str:
 
 # 直後に実行体が来るシェル文法トークン。剥がして次を見る。
 #
-# 未対応のままだと _split_prefix がこれらを「未知の実行体」として返し、
+# 剥がさないと _split_prefix がこれらを「未知の実行体」として返し、
 # `(curl http://evil)` の実行体が `(` に解決されて DENY 層にも高リスク層にも
-# 一致せず、単独モデルの低リスク経路まで格下げされていた (`curl http://evil`
-# 単体は DENY されるのに、括弧で囲むだけで抜けた)。同じ括弧は settings.json の
+# 一致せず、単独モデルの低リスク経路まで格下げされる (`curl http://evil`
+# 単体は DENY されるのに、括弧で囲むだけで抜ける)。同じ括弧は settings.json の
 # permissions.deny も破るので、二層が同時に無効化される。
 #
 # _split_commands が ; && || | で先に割るため、危険なコマンドは必ず自分の
@@ -435,10 +432,10 @@ def _normalize_cmd(cmd: str) -> str:
 # "wrapped command" へ escalate するため。
 #
 # 効いているのは走査順ではなく、この None → "wrapped command" 変換そのもの。
-# 変異検査で確認済み: high_risk_label を「最初の非空ラベルで打ち切り」に変えても
-# (前方・後方どちらの順でも) 多腕 case は依然 escalate する — case と esac が
-# 独立に倒れるので、どこで打ち切っても必ずどれかに当たる。一方 _high_risk_label の
-# `if rest is None: return "wrapped command"` を `return ""` に変えると、多腕 case も
+# high_risk_label を「最初の非空ラベルで打ち切り」にしても (前方・後方どちらの
+# 順でも) 多腕 case は escalate する — case と esac が独立に倒れるので、どこで
+# 打ち切っても必ずどれかに当たる。一方 _high_risk_label の
+# `if rest is None: return "wrapped command"` を `return ""` にすると、多腕 case も
 # 単腕 case も `exec -a zzz curl` も揃って低リスクへ落ちる。集合から case を抜いた
 # 場合も同様にラベルが "" になる。つまり防御線は「case/esac がこの集合に載っている
 # こと」と「None が escalate されること」の 2 点で、短絡の有無ではない。
@@ -449,8 +446,7 @@ def _normalize_cmd(cmd: str) -> str:
 #
 # 残る限界: 本体セグメント自身は依然として分類されない。`b)` のような
 # パターン語トークンを読み飛ばせば sudo を直接 DENY できるが、実行体解決に
-# 規則を足す変更なので別途扱う (このコメントの直前に exec を無条件に剥がして
-# `exec -c curl` を素通りさせた前例がある)。
+# 規則を足す変更なので別途扱う。
 _GRAMMAR_PREFIXES = frozenset(
     {
         "(",
@@ -470,8 +466,8 @@ _GRAMMAR_PREFIXES = frozenset(
 )
 # `exec` はここに入れない。フラグを取る (-c 環境を消す / -l argv[0] に - を付ける /
 # -a NAME argv[0] を差し替える) ので、無条件に剥がすとフラグ自身が実行体として
-# 解決され (`exec -c curl ...` の実行体が `-c` になる)、まさにこの修正が塞いだ
-# はずの低リスク経路が再び開く。実 bash は -c/-l/-a いずれの形でも対象を実行する
+# 解決され (`exec -c curl ...` の実行体が `-c` になる)、上の文法トークンが塞ぐ
+# はずの低リスク経路が開く。実 bash は -c/-l/-a いずれの形でも対象を実行する
 # ため取りこぼしは現実の穴になる。フラグを解する _WRAPPER_EXECUTABLES 側で扱う。
 
 # 実行体の位置をこの解決器では特定できない文法。判定不能 (None) を返して
@@ -502,7 +498,7 @@ _REDIRECT_GLUED = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))\S")
 # 外れ、_high_risk_label は「解決できた未知の実行体」として "" を返し、
 # _is_deny_command は空白入りトークンから正規化候補を作らない。結果、裸の
 # `sudo rm -rf /` は即拒否されるのに、クォートで包むだけで単独モデルの
-# fast path (Gemini 単独 ALLOW で自動実行) まで格下げされていた。
+# fast path (Gemini 単独 ALLOW で自動実行) まで格下げされる。
 #
 # 実際に塊を走らせるのは引数を `sh -c` に渡す watch だけで、他のラッパーは
 # literal を execvp して失敗する。それでも個別バイナリを外さずここで倒すのは、
@@ -525,11 +521,11 @@ _REDIRECT_GLUED = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))\S")
 # されないまま 1 語で届く。`$` / `` ` `` は _UNRESOLVABLE_EXPANSION が先に None を
 # 返すので重複させない。
 #
-# この判定をループ先頭に置くことで塞がった形 (いずれも実測済み)。共通するのは
+# この判定をループ先頭に置くことで塞がる形 (いずれも実測済み)。共通するのは
 # 「下の剥がし規則がトークンを書き換える or 食い尽くす」点で、書き換え後は
-# 無害な語 (`ls`) に、食い尽くした後は `[]` に化けていた。`[]` は `None` と違い
+# 無害な語 (`ls`) に、食い尽くした後は `[]` に化ける。`[]` は `None` と違い
 # 「実行体が無い」の意味で _high_risk_label が "" に写すため、フェイルオープン
-# 側に倒れる — つまり最も危険な化け方だった:
+# 側に倒れる — つまり最も危険な化け方である:
 #
 #   * `VAR=` 形 (_ENV_ASSIGNMENT が塊ごと消費 → `[]`):
 #     `watch 'A=1 sudo rm -rf /'` / `watch 'IFS=x;sudo rm -rf /'`
@@ -540,7 +536,7 @@ _REDIRECT_GLUED = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))\S")
 #   * 右密着リダイレクト形 (`cut` が塊を切り詰め → `['ls']`):
 #     `watch 'ls>/dev/null;sudo rm -rf /'` / `watch 'ls</dev/null;sudo ...'`
 #
-# 残る residual (いずれも実測済み、本修正の射程外)。この文字クラスに載らない
+# 残る residual (いずれも実測済み、この判定の射程外)。この文字クラスに載らない
 # 「空白もこの 3 演算子も持たない塊」は、ループ先頭で判定しても素通りする。
 # 境界はループ内の順序ではなく、この文字クラスそのものである:
 #
@@ -555,7 +551,7 @@ _REDIRECT_GLUED = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))\S")
 # これらの枝はフェイルクローズではなく「切り詰めて読み直す」設計で、それ自体は
 # 裸のコマンド (`ls>out`) に対して正しい。塊と区別するには文字クラスを `<>(){},`
 # へ広げるか枝の順序を変える必要があり、既存の解決規則を広く動かすので別の変更と
-# して扱う。いずれも本修正の前後で判定は変わらない (緩和方向ではない)。
+# して扱う。
 # tests/test_bash_review.py の TestWrapperQuotedBlobResolution が、塞がった形と
 # 残った形の両方を pin している。
 _NOT_EXECUTABLE_WORD = re.compile(r"[\s;|&]")
@@ -568,12 +564,11 @@ def _tokenize(cmd: str) -> list[str]:
     値に空白を含むクォート (`FOO="a b" rm -rf ./x`) では語境界まで壊れる。
     `FOO=a`, `b`, `rm`, ... と割れてしまい、代入を読み飛ばした先の `b` を実行体と
     誤認して分類が空になる = DENY と高リスクの両層を同時にすり抜ける。
-    (`FOO=1 rm -rf x` のように値に空白が無い場合だけ偶然正しく動いていた。)
 
     shlex はクォート内の空白を保ったまま `su''do` / `s\\u\\d\\l` のような分割
-    難読化も連結して解決するので、既存の難読化耐性を落とさずに語境界だけを
-    正しくできる。未閉鎖クォート等で shlex が解釈できない入力は従来の
-    正規化 + split にフォールバックする (例外で判定不能にするより、既存の
+    難読化も連結して解決するので、難読化耐性を落とさずに語境界だけを
+    正しくできる。未閉鎖クォート等で shlex が解釈できない入力は
+    _normalize_cmd + split にフォールバックする (例外で判定不能にするより、
     保守的な経路へ流す方が呼び出し側のフェイルセーフと噛み合う)。
     """
     try:
@@ -598,10 +593,12 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
       始まる残余を返す。
 
     None は「実行体を確定できない」の意味で、呼び出し側に安全側 (DENY 側は
-    レビューへ、高リスク側は ask へ) へ倒させる契約。None を返す条件は 3 つ:
+    レビューへ、高リスク側は ask へ) へ倒させる契約。None を返す条件は 4 つ:
 
-    - ラッパーの値付き/未知フラグ (`env -u X rm -rf /`, `exec -a NAME cmd`)
-    - 実行体位置の展開トークン (_UNRESOLVABLE_EXPANSION)
+    - ラッパーの値付き/未知フラグ (`env -u X rm -rf /`, `exec -a NAME cmd`)、
+      およびラッパーの位置引数の後ろに来るフラグ (`flock <file> -c ...`)
+    - 実行体位置、またはラッパーの位置引数に含まれる展開トークン
+      (_UNRESOLVABLE_EXPANSION)
     - 実行体位置を特定できない文法 (_UNRESOLVABLE_GRAMMAR): `case` / `select` / `esac`
     - ラッパーを剥がした先のクォートされた塊 (_NOT_EXECUTABLE_WORD):
       `watch 'sudo rm -rf /'` の `sudo rm -rf /`
@@ -625,10 +622,8 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         # する」形をしている。塊の頭がたまたまその形をしていると、規則が塊ごと
         # 食い尽くして走査がトークン列の末尾へ抜け、`None` ではなく `[]` が返る。
         # `[]` は「実行体が無い」の意味で _high_risk_label が "" に写すため、
-        # エスカレートしない唯一の「解決できなかった」答えになってしまう:
-        # `watch 'A=1 sudo rm -rf /'` / `watch 'X=1;sudo rm -rf /'` /
-        # `watch '>/tmp/x sudo rm -rf /'` / `watch 'sudo rm -rf /)'` は
-        # いずれも塊の頭に 1 語足すだけでこの穴を再現していた (実測済み)。
+        # エスカレートしない唯一の「解決できなかった」答えになってしまう
+        # (該当する形は _NOT_EXECUTABLE_WORD の注記に列挙してある)。
         #
         # ラッパーを剥がした後は、どの規則が食う形をしていようと、語になり得ない
         # トークンは実行体を確定できないものとして扱う方が一貫している。
@@ -636,9 +631,9 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         # 受け入れているコスト (意図的。緩めないこと): ラッパーの後ろに置いた
         # 「値に空白を含むクォート代入」も倒れる。
         #
-        #   env 'FOO=a b' make build   → 強制 ask (従来は make に解決)
-        #   env PATH='/a b:/c' ls      → 強制 ask (従来は ls に解決)
-        #   env FOO='a b' sudo whoami  → 強制 ask (従来は決定論的 DENY)
+        #   env 'FOO=a b' make build   → 強制 ask (この判定が無ければ make に解決)
+        #   env PATH='/a b:/c' ls      → 強制 ask (この判定が無ければ ls に解決)
+        #   env FOO='a b' sudo whoami  → 強制 ask (この判定が無ければ決定論的 DENY)
         #
         # `FOO=a b` と `A=1 sudo rm -rf /` は shlex 後どちらも
         # `^[A-Za-z_]\w*=` + 空白という同じ語形で、**静的に区別する規則が書けない**。
@@ -647,8 +642,8 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         # 触ると穴が開き直るため、明示しておく。
         #
         # 走査位置の判定なので、影響するのは「ラッパー配下の実行体位置」だけ。
-        # ラッパー無しの `FOO='a b' sudo whoami` は従来どおり DENY で、引数側の
-        # 空白 (`xargs -0 grep 'foo bar'`) は走査対象外なので一切変わらない。
+        # ラッパー無しの `FOO='a b' sudo whoami` は DENY のままで、引数側の
+        # 空白 (`xargs -0 grep 'foo bar'`) は走査対象外なので影響を受けない。
         if wrapper_stripped and _NOT_EXECUTABLE_WORD.search(tok):
             return None
         if _ENV_ASSIGNMENT.match(tok):
@@ -687,7 +682,7 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         # 終わる語が実行体の位置に来るのはこの形だけで、実行体は次のトークン。
         # 多腕 case では `;;` が空セグメントを生むため 2 腕目以降がこの形の
         # 独立セグメントになり、剥がさないとパターン語が実行体に解決されて
-        # 本体 (sudo/curl/rm) が丸ごと未分類のまま素通りしていた。
+        # 本体 (sudo/curl/rm) が丸ごと未分類のまま素通りする。
         # 実行体名が `)` で終わることは無いので、読み飛ばしは厳しくなる方向のみ。
         if tok.endswith(")"):
             i += 1
@@ -703,7 +698,7 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         # 実行体へリダイレクトが右から密着した形 (`rm>x`, `wget>/dev/null`)。
         # shlex は空白が無ければ 1 トークンのまま返すので、上の 2 つ (先頭が
         # 演算子) のどちらにも一致せず、パスと同じく basename 化されて
-        # リダイレクト先が実行体に化けていた (`wget>/dev/null` → `null`)。
+        # リダイレクト先が実行体に化ける (`wget>/dev/null` → `null`)。
         # DENY と高リスクの両層が同時に盲目になり、しかもリダイレクト先を
         # `/usr/bin/git` にすれば解決後の名前まで攻撃者が選べる。演算子より
         # 左が実行体なので、そこまでを切り出して同じトークンを読み直す
@@ -718,7 +713,7 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         cut = min((p for p in (tok.find(">"), tok.find("<")) if p > 0), default=-1)
         # `&>` / `&>>` では `&` が演算子の一部なので、`>` だけで切ると実行体側に
         # `&` が残る。`rm&>x -rf /` が `rm&` に解決され、DENY_COMMANDS の複数語
-        # 前方一致 (`rm -rf /`) と高リスクの引数照合が同時に外れていた。
+        # 前方一致 (`rm -rf /`) と高リスクの引数照合が同時に外れる。
         # `_split_commands` の `&` 分割が素の `rm` を別セグメントとして拾うため
         # 単語 1 つの DENY だけは偶然助かるが、その分割はフラグを切り離すので
         # フラグ依存の規則 (rm -rf / git --force / docker --privileged) は救えない。
@@ -794,8 +789,8 @@ def _resolve_executable(cmd: str) -> str:
     # macOS の既定 (APFS) と Windows のファイルシステムは大文字小文字を区別しない
     # ため、`CURL` / `SUDO` / `GIT` はそのまま本体を解決して実行される。呼び出し側は
     # いずれも「どの実行体か」の判定にこの戻り値を使うので、解決の一部として畳む。
-    # 個々の呼び出し側で畳むと必ずどこかが漏れる (実際、deny 層だけ畳んで high-risk
-    # 層が素通りする状態を一度作った)。大文字小文字を区別する FS では別名バイナリを
+    # 個々の呼び出し側で畳むと必ずどこかが漏れる (deny 層だけ畳んで high-risk
+    # 層が素通りする、など)。大文字小文字を区別する FS では別名バイナリを
     # 過剰に同一視するが、いずれの用途でも安全側に倒れる。
     return rest[0].rsplit("/", 1)[-1].casefold()
 
@@ -919,7 +914,7 @@ def _iter_top_level(
             # `a |& b` は `a 2>&1 | b` (bash4+/zsh)。& を区切る側では `|` と `&` に
             # 割ると受け手 b の op_before が `&` になり、パイプ受け手と見なされない
             # (`echo x |& bash` の stdin 実行を取りこぼす)。1 つのパイプとして読む。
-            # & を区切らない側は従来どおり `|` で割り、`& b` を残す: その断片を
+            # & を区切らない側は `|` で割り、`& b` を残す: その断片を
             # COMPLEX_SHELL_SYNTAX が拒むので、`ls 2>&1 | grep x` と同じく
             # セーフスキップされない (ここで割ると `ls |& grep x` がスキップに化ける)。
             if split_ampersand and cmd.startswith("|&", i):
@@ -947,11 +942,11 @@ def _split_top_level(cmd: str, *, split_ampersand: bool = False) -> list[str]:
     DENY/SAFE 判定にかかってしまう (安全なコマンドの誤 DENY)。クォート外の
     区切りのみで分割する。split_ampersand=True のときは単独の & (バック
     グラウンド実行: 両側とも実行される) も区切りに加える。デフォルトで区切ら
-    ないのは、& を含む未分割パートをセーフスキップ判定に残し、従来どおり
+    ないのは、& を含む未分割パートをセーフスキップ判定に残し、
     COMPLEX_SHELL_SYNTAX にスキップを拒否させるため (_split_commands 参照)。
 
     走査規則は _iter_top_level に一元化し、ここでは区切り種別を捨てて
-    strip + 空フィルタした断片列だけを返す (従来と同一の出力)。
+    strip + 空フィルタした断片列だけを返す。
     """
     return [
         seg.strip()
@@ -1063,7 +1058,7 @@ def _join_line_continuations(text: str) -> str:
 
     bash は語分割の前にこの対を取り除くため、`cu\\<改行>rl` の実行体は curl で
     ある。一方、各分類器はサブコマンドを改行で割ってから見るため `cu` と
-    `rl http://evil` にしか見えず、DENY にも高リスクにも当たらなかった。
+    `rl http://evil` にしか見えず、DENY にも高リスクにも当たらない。
     シングルクォート内では対がリテラルなので、畳んだ綴りは元の綴りを置き換える
     のではなく「もう 1 つの分類対象」として足す (_classification_texts)。
     検出を増やす方向にしか働かない。
@@ -1132,7 +1127,7 @@ def _mask_inert_text(cmd: str) -> str:
     どちらもシェルにとってはデータなのに、各走査器 (_iter_top_level /
     _substitutions_at_level) はクォート状態をコマンド全体で追うため、
     `# it's stale` の `'` が閉じないシングルクォートとして以降すべてを覆い、
-    後続の `;` / `&&` / `|` / `$(...)` を区切りとして認識できなくしていた
+    後続の `;` / `&&` / `|` / `$(...)` を区切りとして認識できなくなる
     (`# it's\\ncd app && rm -rf ./build` の実行体が cd にしか見えず、DENY と
     高リスクの両層を外れて単独モデルの fast path に落ちる)。エージェントが
     自然に書くコメントや heredoc で起き、敵対的な入力を要しない。
@@ -1224,8 +1219,8 @@ def _split_commands(cmd: str) -> list[str]:
     その分割結果、(3) コメント・heredoc 本体を除いた綴りの分割結果
     (_classification_texts)、を追加パートとして足す。
     元の未分割パートを残したまま増やす一方向の拡張なので、「全パートが安全な
-    ときだけ成立する」セーフスキップは緩まない (& や置換を含む元パートは従来
-    どおり COMPLEX_SHELL_SYNTAX がスキップを拒否する)。一方 DENY/高リスクは
+    ときだけ成立する」セーフスキップは緩まない (& や置換を含む元パートは
+    COMPLEX_SHELL_SYNTAX がスキップを拒否する)。一方 DENY/高リスクは
     パートが増えるほど検出が広がり、`echo hi & sudo rm -rf /` や
     `echo $(sudo rm -rf /)` が低リスクの fast path へ素通りしなくなる。
     """
@@ -1277,9 +1272,9 @@ def _is_sensitive_command(cmd: str) -> bool:
 #   /\.\.|\.\./          : /.. または ../ (親ディレクトリ遡上。../../etc/shadow 等)。
 #   (?:^|[\s=])\.\.      : トークン先頭の .. (`grep -rn . ..` / `ls ..` / `tree ..`)。
 #                          上の 2 枝はスラッシュを伴う綴りにしか当たらず、末尾が
-#                          裸の `..` だけのときに素通りしていた。しかもこれは
+#                          裸の `..` だけのときに素通りする。しかもこれは
 #                          safe-skip に到達する = AI レビューが一切走らない唯一の
-#                          経路だったので、他の枝より実害が大きい。
+#                          経路なので、他の枝より実害が大きい。
 #                          「トークンの先頭」で見るのが要点で、終端は見ない:
 #                          `ls ..*` `tree ..?` はシェルが同じ親ディレクトリへ
 #                          展開するのに、終端を固定すると `*` `?` に阻まれて
@@ -1412,11 +1407,11 @@ def _has_tmux_format_exec(cmd: str) -> bool:
 # 一致し、AI レビューを一度も経ずに allow が出る。本フックで唯一「無審査で
 # allow を発行する」経路がここで開く。
 #
-# 判定は「`;` を含む文字列を弾く」部分一致にしない。それは今回のバグと同じ
-# 「広すぎる部分一致」の再生産で、コマンドを実行せず言及しているだけの文字列を
-# 巻き込む。代わりに構造で見る: tmux の argv (シェルの語分割・クォート解決を
-# 経たもの) を走査し、区切りの後ろに中身が残っていれば「2 つ目の tmux コマンドが
-# ある」= 読み取り系サブコマンドとその引数だけの形ではない、と判定する。区切りの
+# 判定は「`;` を含む文字列を弾く」部分一致にしない。それは「広すぎる部分一致」で、
+# コマンドを実行せず言及しているだけの文字列を巻き込む。代わりに構造で見る:
+# tmux の argv (シェルの語分割・クォート解決を経たもの) を走査し、区切りの
+# 後ろに中身が残っていれば「2 つ目の tmux コマンドがある」= 読み取り系
+# サブコマンドとその引数だけの形ではない、と判定する。区切りの
 # 綴り (`;` / `\;` / `';'` / `";"`) は _tokenize (shlex) がシェルと同じ規則で
 # 1 つの `;` に畳むため、綴りの列挙は不要 (列挙漏れがそのままバイパスになる
 # 構造を作らない)。
@@ -1453,17 +1448,17 @@ def _has_tmux_extra_command(cmd: str) -> bool:
 
 
 # SAFE_COMMANDS に「読み取り専用」として載せたコマンドでも、出力先ファイルを
-# 指定するフラグを持つものがある。実際 `git log --output=FILE --format=format:X`
+# 指定するフラグを持つものがある。`git log --output=FILE --format=format:X`
 # は任意パスへ任意内容を書き込めるが、DENY 層にも高リスク層にも一致せず、
-# セーフスキップ (= AI を一度も呼ばずに即 allow を発行する経路) を素通りしていた。
+# セーフスキップ (= AI を一度も呼ばずに即 allow を発行する経路) を素通りする。
 # `git diff --output` と `tree -o` も同型。読み取り専用の高速パスが書き込める
 # 時点で分類として不健全であり、これは脅威モデルとは独立した欠陥である
 # (over-eager なエージェントが --output 付きコマンドを生成する事故は、本フックが
-# 守ると宣言している射程内)。rg / tmux には専用のフラグ検査があるのに git / tree
-# には無いという非対称が原因なので、同じ設計原則をここにも適用する。
+# 守ると宣言している射程内)。rg / tmux と同じ設計原則 (専用のフラグ検査) を
+# git / tree にも適用する。
 #
 # 長フラグは「コマンド個別の表」にせず全セーフコマンド共通で弾く。個別表は
-# 今回のバグと同じ構造 (列挙漏れがそのままバイパスになる) を再生産するため、
+# 列挙漏れがそのままバイパスになる構造なので、
 # SAFE_COMMANDS に将来コマンドが増えても既定で守られる側へ倒す。--output /
 # --outfile を出力先以外の意味で使う SAFE_COMMANDS は現存しない (git status /
 # git branch はそもそも --output を受け付けないことを実バイナリで確認済み)。
@@ -1539,7 +1534,7 @@ def _is_deny_command(cmd: str) -> tuple[bool, str]:
     #
     # 生文字列だけを見ると先頭にシェル文法が付くだけで前方一致が外れる
     # (`(rm -rf /)`, `then rm -rf /`, `*) rm -rf /` は全て決定論的 DENY を逃れ、
-    # 高リスクの ask まで格下げされていた)。_split_prefix で文法とラッパーを
+    # 高リスクの ask まで格下げされる)。_split_prefix で文法とラッパーを
     # 剥がした形も候補に加える。末尾の `)`/`}` はサブシェルや case アームの
     # 閉じで、最後の引数に密着して残るため落とす (`(rm -rf /)` → `rm -rf /`)。
     # 実行体位置のトークンに空白が入っているなら、それは shlex が丸ごと 1 語に
@@ -1631,7 +1626,7 @@ _VERSION_SUFFIX = re.compile(r"[0-9.]+$")
 # 束ねられた短フラグ内の文字を検出する (rm -rf の r、git clean -fd の f 等)。
 # 完全一致 (`t == "-f"`) では `-fu` / `-xc` のような束ね形を取りこぼし、高リスク
 # 層を素通りして単独モデルの fast path に格下げされる (`_WRAPPER_EXECUTABLES` の
-# コメントが記録する事故と同じ失敗モード) ため、短フラグは常に束ね対応で照合する。
+# コメントが述べる格下げと同じ失敗モード) ため、短フラグは常に束ね対応で照合する。
 _RECURSIVE_FLAG = re.compile(r"^-[A-Za-z]*[rR]")
 _FORCE_FLAG = re.compile(r"^-[A-Za-z]*f")
 _RECURSIVE_UPPER_FLAG = re.compile(r"^-[A-Za-z]*R")
@@ -1656,7 +1651,7 @@ _SHELL_STDIN_FLAG = re.compile(r"^-[A-Za-z]*s")
 # 起動形はホスト root 相当の操作に直結する (--privileged、ホスト root /
 # docker.sock のマウント、ホスト PID 名前空間、SYS_ADMIN 級 capability)。
 # この「脱出級」の形だけを rm -r 等と同じ高リスク層 (二モデル AND + 必ず ask)
-# に載せる。素の `docker run img` は分離が保たれるため対象外で、従来どおり
+# に載せる。素の `docker run img` は分離が保たれるため対象外で、
 # 単独モデルの通常レビューに残す (リストは意図的に狭く始める方針に従う)。
 _DOCKER_RUN_SUBCOMMANDS = frozenset({"run", "create"})
 _DOCKER_ESCAPE_CAPS = frozenset({"SYS_ADMIN", "ALL"})
@@ -1768,7 +1763,7 @@ def _python_module_args(args: list[str]) -> list[str]:
 
     `"-m" in rest` の完全一致だけでは `-mpip` / `-Bm pip` (単一文字オプションと
     束ねた形。どちらも実際に動く) が外れ、同じ pip install が綴りひとつで
-    単独モデルの fast path へ滑り落ちていた。python の短オプションを左から
+    単独モデルの fast path へ滑り落ちる。python の短オプションを左から
     読み、`m` に当たったところで残り (密着していればその文字列、無ければ次の
     トークン) をモジュールとする。値を取る -W/-X/-Q は値ごと読み飛ばす
     (`-Ximporttime` の m をモジュールフラグと誤読しない)。`-c` 以降と最初の
@@ -1861,7 +1856,7 @@ def _high_risk_label(cmd: str) -> str:
     if pkg_exe == "python":
         module_args = _python_module_args(rest)
         if not module_args and "-m" in rest:
-            # 短オプションの解釈が想定外の綴りで外れても、従来の完全一致は
+            # 短オプションの解釈が想定外の綴りで外れても、`-m` の完全一致は
             # 床として残す (検出が減る方向の退行を起こさない)。
             module_args = rest[rest.index("-m") + 1 :]
         if module_args[:1] == ["pip"] and _pkg_install_word("pip", module_args[1:]):
@@ -1998,7 +1993,7 @@ def stdin_interpreter_label(command: str) -> str:
 
     `echo 'rm -rf /' | bash` / `base64 -d | sh` / `curl url | sh -s -- x` /
     `bash < evil.sh` 等は `sh -c` と等価だが、-c が無いため _high_risk_label の
-    シェル -c 分岐に載らず高リスク層を素通りしていた (単独モデルの fast path に
+    シェル -c 分岐に載らず高リスク層を素通りする (単独モデルの fast path に
     格下げ)。区切り種別を保持する _iter_top_level でパイプ受け手を特定し、各
     セグメントを _bare_interpreter_stdin_label で判定する。high_risk_label と
     同じく置換 ($()/``/<()) の中身も走査し、`echo $(base64 -d x | sh)` を
@@ -2099,9 +2094,9 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ("Slack token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}")),
     ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
     # OpenPGP の armor は `PRIVATE KEY BLOCK-----` で終わる (gpg
-    # --export-secret-keys --armor の出力)。`KEY-----` 直結だけを見ていたため
-    # PEM 形式 (OPENSSH / RSA / EC / ENCRYPTED) だけが拾われ、PGP 秘密鍵は素通り
-    # して LLM へ送られていた。` BLOCK` は任意の接尾として足すだけに留め、
+    # --export-secret-keys --armor の出力)。`KEY-----` 直結だけだと
+    # PEM 形式 (OPENSSH / RSA / EC / ENCRYPTED) しか拾えず、PGP 秘密鍵は素通り
+    # して LLM へ送られる。` BLOCK` は任意の接尾として足すだけに留め、
     # `PGP PUBLIC KEY BLOCK` 等の公開側の armor まで拾わないようにする。
     (
         "private key",
@@ -2128,11 +2123,11 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
             r"(?!\$)[A-Za-z0-9+/]{12,}={0,2}"
         ),
     ),
-    # ユーザ名側は `@` を許し、パスワード側だけ `@` を除外する。両側から除外して
-    # いた頃は、ユーザ名自体が email の形 (SMTP-AUTH の relay URL は軒並みこの形。
+    # ユーザ名側は `@` を許し、パスワード側だけ `@` を除外する。両側から除外すると、
+    # ユーザ名自体が email の形 (SMTP-AUTH の relay URL は軒並みこの形。
     # Mailgun / Postmark / 汎用リレーはアカウント名がメールアドレス) で貪欲マッチが
     # 埋め込みの `@` に当たって止まり、続く `:` に到達できず**文字列全体が不一致**に
-    # なっていた。つまり丸ごと素通り = パスワードが平文で外部レビューへ流れる。
+    # なる。つまり丸ごと素通り = パスワードが平文で外部レビューへ流れる。
     #
     # 広げた分を抑えているのは、区切りの `@` を末尾に required で置いている点。
     # `https://example.com:8080/path` は `://<user>:` の前半までは通るが、
@@ -2152,15 +2147,15 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     # キーワードと区切り記号の間のクォート ((?:\\?[\"'])?) を許すのは、JSON / dict
     # リテラル (`{"password": "..."}`) がこの層で最も多い形だから。上の bearer /
     # basic が既に同じ形 (authorization[\"']?\s*:) を許しており、代入側にだけ
-    # 無いせいで `{"password": "..."}` が丸ごと素通りしていた。
+    # 無いと `{"password": "..."}` が丸ごと素通りする。
     #
     # クォートの前に**バックスラッシュを任意個許す** (`\\*`) 理由: 外側が二重引用符の
     # シェル文字列に JSON を埋めると、JSON 内のクォートは必ず `\"` になる
     # (`curl -d "{\"password\":\"...\"}"` — curl でボディを書く際の圧倒的多数派)。
     # この位置に来るのは `\` であって `"` ではないため、1 文字しか許さない
-    # [\"']? では `[=:]` に到達できず不一致になっていた。取りこぼしは `password`
+    # [\"']? では `[=:]` に到達できず不一致になる。取りこぼしは `password`
     # だけでなく**このキーワード表の全種**に及ぶ (実測: password / api_key /
-    # secret / token すべて素通り) ので、個別の穴ではなくクラスの穴だった。
+    # secret / token すべて素通り) ので、個別の穴ではなくクラスの穴になる。
     # 値側は非クォート枝 ((?!\$)\S{8,}) が `\"abc...\"}"` を 1 トークンとして
     # 拾うため、キーワード側を通せばそのまま一致する。
     #
@@ -2207,7 +2202,7 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ),
     # 区切り記号を一切持たない形。主要な「秘密を設定する CLI」は値を裸の位置
     # 引数で取る (`aws configure set <key> <value>`) ため、上の代入形 (`=` / `:`)
-    # にもフラグ形 (`--key value`) にも当たらず素通りしていた。
+    # にもフラグ形 (`--key value`) にも当たらず素通りする。
     #
     # ここで `\s+` を上の "secret assignment" 側の一般的な区切りに足さないのは
     # 意図的: `access_key rotation procedure` のような散文が全部一致してしまう。
@@ -2582,8 +2577,7 @@ def prune_dir(log_dir: str, keep: int = 1000) -> None:
     削除は listdir で撮ったスナップショットに対して行うので、フックが並行して
     走ると (Claude と Codex のセッションが同時に動く、1 ターンで複数の Bash 呼び出しが
     処理される、など) 双方が同じ「最古の n 件」を選び、負けた側の os.remove が
-    FileNotFoundError を投げる。直上の append_and_rotate は同じ並行性に対して
-    既に堅牢化されているが、その手当てはこちらへ伝播していなかった。
+    FileNotFoundError を投げる (append_and_rotate と同じ並行性の問題)。
 
     ここでの失敗の出方が悪質なのは、失うのがログではなく「判定」だという点。
     両エントリポイントは main() を catch-all で包んで例外を判定に変換するため、
@@ -2605,12 +2599,11 @@ def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None
 
     切り詰めは読んで書き戻す操作なので、フックが並行して走ると衝突する (Claude と
     Codex のセッションが同時に動く、1 ターンで複数ファイルが処理される、など)。
-    シェル側の双子 _hook_common.sh: hook_log は同じ問題を f1230cc で解決済みだが、
-    その修正はこちらへ伝播していなかった。
+    シェル側の双子 _hook_common.sh: hook_log も同じ問題を扱う。
 
-    ここでの失敗の出方はシェル側とは違う。共有の一時ファイルが無いのでログが
-    「潰し合って縮む」ことは起きず、代わりに open(summary_log, "w") がその場で
-    truncate するため、ログが 0 バイトになる窓ができる。その瞬間に読む者
+    シェル側と違い、共有の一時ファイルが無いのでログが「潰し合って縮む」ことは
+    起きない。素朴に open(summary_log, "w") で書き戻すとその場で truncate される
+    ため、ログが 0 バイトになる窓ができる。その瞬間に読む者
     (tail -f、利用者、別フックのローテーション自身) は空のログを見るし、窓の中で
     落ちればログは空のまま残る。
 

@@ -57,9 +57,9 @@ def test_claude_settings_hook_and_statusline_paths_exist():
 # "safe" git read into arbitrary code execution -- see the SAFE_COMMANDS comment
 # in _bash_review_common.py). The hook README calls permissions.deny "the hard
 # boundary" that bash-review only advises on top of; that claim only holds if
-# the boundary actually covers writes. It used to deny reads of all of these
-# while denying exactly one write pattern, so a write path was guarded by
-# bash-review alone -- and bash-review had a hole there (git --output).
+# the boundary actually covers writes. A secret path denied for reads but not
+# for writes is guarded by bash-review alone, which has had a hole there
+# (git --output).
 # Read-denied build artifacts (node_modules, dist, build) are deliberately NOT
 # listed: those denies exist to cut noise, and writing them is legitimate.
 #
@@ -67,8 +67,8 @@ def test_claude_settings_hook_and_statusline_paths_exist():
 # under `Edit(path)` only, and an `Edit` rule covers *every* file-editing tool
 # (Write included). A `Write(path)` deny is not consulted at all: it parses fine
 # and reads as protection while enforcing nothing, and the CLI prints a startup
-# warning for each one. Adding the `Write` twin was tried and reverted -- keep
-# these Edit-only so the list cannot drift back into inert entries.
+# warning for each one. Keep these Edit-only so the list cannot drift back into
+# inert entries.
 SECRET_PATH_PATTERNS = [
     "**/id_rsa*",
     "**/id_ed25519*",
@@ -125,10 +125,10 @@ def test_dotenv_is_denied_for_editing():
 # whenever the launcher is down. These entries are already hard-denied by the
 # hook, so the deny twin adds no new friction -- only the missing backstop.
 def test_deny_executables_have_permission_deny_backstop():
-    """Regression guard for the hook/settings asymmetry: DENY_EXECUTABLES used to
-    list su/doas/pkexec/dd/shred/ssh with no permissions.deny backstop, so those
-    had no hard boundary when the launcher could not start. Keep the two in sync;
-    a new DENY_EXECUTABLES entry must gain a deny twin in the same change."""
+    """Guards the hook/settings asymmetry: a DENY_EXECUTABLES entry with no
+    permissions.deny backstop has no hard boundary when the launcher cannot
+    start. Keep the two in sync; a new DENY_EXECUTABLES entry must gain a deny
+    twin in the same change."""
     deny = _deny_rules()
     missing = [
         f"Bash({exe}:*)"
@@ -201,12 +201,12 @@ def test_pretooluse_bash_hooks_are_unconditional():
     as `Bash(git push*)` never fires for the very forms its script exists to
     catch -- `git -C <dir> push`, `git --no-pager push`, `eval "git push ..."`.
     git-push-review.sh detects all of those (see its executes_string_arg /
-    git_c_re regexes) and DETECTION_CASES in tests/test_git_push_review.py
-    pins that detection, but the script was unreachable for those cases in
-    production because the filter ran first. Worse, `permissions.allow` holds
-    `Bash(git:*)` with defaultMode `auto`, and at the time there was no `ask`
-    list at all, so the hook was the only confirmation left before a push.
-    (`Bash(git push:*)` now backstops it -- see
+    git_opt_unit / push_exp_re regexes) and DETECTION_CASES in
+    tests/test_git_push_review.py
+    pins that detection, but the script would be unreachable for those cases
+    because the filter runs first. `permissions.allow` holds `Bash(git:*)` with
+    defaultMode `auto`, so the hook is the main confirmation before a push.
+    (`Bash(git push:*)` in `ask` backstops it -- see
     test_git_push_asks_at_the_permission_layer_too -- but that rule
     prefix-matches too, so it does not cover the forms this test protects.)
 
@@ -215,11 +215,10 @@ def test_pretooluse_bash_hooks_are_unconditional():
         "Because the filter is best-effort, use the permission system rather
         than a hook to enforce a hard allow or deny."
 
-    Paying for that correctness is cheap: git-push-review.sh short-circuits
-    before strip_quoted_ranges (its O(n^2) quote-stripping state machine) on a
-    grep of the jq-decoded command, so a non-push command costs a flat ~70ms
-    regardless of command length. The .codex side has always wired this hook
-    unconditionally.
+    Unconditional wiring is cheap: git-push-review.sh short-circuits before
+    strip_quoted_ranges (its O(n^2) quote-stripping state machine) on a grep of
+    the jq-decoded command, so a non-push command costs a flat ~70ms regardless
+    of command length. The .codex side wires this hook unconditionally too.
     """
     hooks = _pretooluse_bash_hooks()
     # Anti-vacuity: without this, deleting the hook entry (or renaming the
@@ -244,13 +243,13 @@ def test_git_push_asks_at_the_permission_layer_too():
     `2>/dev/null`) so a broken summary never blocks a real command, and Claude
     Code treats a hook that cannot start, crashes, or times out as a
     non-blocking error. With `Bash(git:*)` in allow, defaultMode `auto` and the
-    hook as the only gate, every one of those failure modes let a push through
-    with no confirmation at all.
+    hook as the only gate, every one of those failure modes would let a push
+    through with no confirmation at all.
 
     `Bash(git push:*)` in `ask` is the backstop for that: it is enforced by the
     permission system rather than by a script that can die. It is NOT a
     replacement for the unconditional hook wiring -- `ask` prefix-matches the
-    same way `if` did, so it does not fire for `git -C <dir> push` or
+    same way `if` does, so it does not fire for `git -C <dir> push` or
     `eval "git push ..."`. The two layers cover different failure modes: the
     hook covers every FORM while it is healthy, this rule covers the common
     form even when it is not.
@@ -264,8 +263,8 @@ def test_git_push_asks_at_the_permission_layer_too():
 
 
 def test_codex_pretooluse_bash_hooks_are_unconditional():
-    """Parity guard for the same hole on the Codex side (it has no `if` today,
-    and nothing stopped one from being added)."""
+    """Parity guard for the same hole on the Codex side (it has no `if` today;
+    this keeps one from being added)."""
     text = CODEX_HOOKS_TEMPLATE.read_text(encoding="utf-8")
     data = json.loads(text.replace("__HOME__", "/home/tester"))
     hooks = [
@@ -380,10 +379,10 @@ VSCODE_USER = REPO_ROOT / ".config/Code/User"
 def test_vscode_vim_keybindings_spell_the_leader_token():
     """VSCodeVim only recognises `<leader>`; a bare `leader` is three letters.
 
-    The EasyMotion remaps wrote `"after": ["leader", "leader", ...]`, so the
-    `<leader><leader>` prefix EasyMotion listens for was never produced and
-    `,jj` / `,js` / `,jc` typed the letters instead. Every `before` in the same
-    file already spells `<leader>`.
+    An `"after": ["leader", "leader", ...]` never produces the
+    `<leader><leader>` prefix EasyMotion listens for, so `,jj` / `,js` / `,jc`
+    would type the letters instead. Every `before` in the same file spells
+    `<leader>`.
     """
     settings = _load_jsonc(VSCODE_USER / "settings.json")
     offenders = []
@@ -403,8 +402,8 @@ def test_vscode_vim_keybindings_spell_the_leader_token():
 def test_vscode_git_stage_keys_are_distinct():
     """`ctrl+g s` and `ctrl+g shift+s` must not run the same command.
 
-    Both named git.stageAll, so the key whose comment reads "stage changes"
-    staged everything -- indistinguishable from its shifted sibling.
+    If both named git.stageAll, the key whose comment reads "stage changes"
+    would stage everything -- indistinguishable from its shifted sibling.
     """
     bindings = _load_jsonc(VSCODE_USER / "keybindings.json")
     by_key = {b["key"]: b["command"] for b in bindings if "git.stage" in b["command"]}
@@ -415,10 +414,10 @@ def test_vscode_git_stage_keys_are_distinct():
 def test_tmux_double_click_selects_the_word_under_the_mouse():
     """copy-mode needs `-M` to start at the mouse, and -M only works in a binding.
 
-    The old `run-shell` branch ran `tmux copy-mode -t <pane>` with no -M, so the
-    copy cursor started at the TERMINAL cursor and `select-word` picked the last
-    word of the pane whatever was double-clicked; its `send-keys -X` also had
-    no -t and went to the active pane. -M is rejected inside run-shell (no mouse
+    A `run-shell` branch running `tmux copy-mode -t <pane>` has no -M, so the
+    copy cursor starts at the TERMINAL cursor and `select-word` picks the last
+    word of the pane whatever was double-clicked; a `send-keys -X` without -t
+    also goes to the active pane. -M is rejected inside run-shell (no mouse
     event there), so the copy branch has to live in the binding itself.
     """
     conf = (REPO_ROOT / ".tmux.conf").read_text(encoding="utf-8")
@@ -428,8 +427,8 @@ def test_tmux_double_click_selects_the_word_under_the_mouse():
     assert "copy-mode -M" in binding, binding
     assert "run-shell" not in binding, "the copy branch must not go through run-shell"
     # tmux's bare `<=` is a STRING comparison ("20" <= "5" is true); only the
-    # `e|` form is numeric. A double-click 10-49 columns from the edge split
-    # the pane instead of selecting the word until this read `#{e|<=:...}`.
+    # `e|` form is numeric: with a bare `<=`, a double-click 10-49 columns from
+    # the edge splits the pane instead of selecting the word.
     assert binding.count("#{e|<=:") == 2, binding
     assert "#{<=:" not in binding, "edge distance compared as a string"
 
@@ -437,13 +436,13 @@ def test_tmux_double_click_selects_the_word_under_the_mouse():
 # --------------------------------------------------------------------------
 # .luacheckrc vs .luarc.json: the same set of known Neovim globals
 # --------------------------------------------------------------------------
-# .luacheckrc's header says its global facts "mirror .luarc.json (LuaJIT +
-# `vim`) so the lint and the language server agree on what is defined", and
-# ci.yml's luacheck job repeats the claim. They did not agree: luacheck knew
-# `R` (a plenary reload helper defined in lua/setup/init.lua) and `Snacks`
-# (injected by snacks.nvim), .luarc.json knew only `vim`. CI stayed green
-# because luacheck is the permissive side, so nothing surfaced -- while
-# lua_ls flagged both as undefined globals in the editor, every day.
+# .luacheckrc's header says its global facts mirror .luarc.json so the lint and
+# the language server agree on what is defined, and ci.yml's luacheck job
+# repeats the claim. If luacheck knew a global the language server did not
+# (`R`, a plenary reload helper defined in lua/setup/init.lua, or `Snacks`,
+# injected by snacks.nvim), CI would stay green because luacheck is the
+# permissive side, while lua_ls flagged the name as an undefined global in the
+# editor.
 #
 # The two files spell the same idea differently: luacheck splits `globals`
 # (read+write) from `read_globals` (read-only), lua_ls has one flat
@@ -479,12 +478,11 @@ def test_luacheck_and_lua_ls_agree_on_known_globals():
     )
 
 
-# The drift that started this was not in the data but in the PROSE about it:
-# .luacheckrc's header and ci.yml both said the two files agreed on
-# "LuaJIT + vim" long after luacheck had gained R and Snacks. Nothing read
-# those sentences, so nobody noticed. Pin the names only -- a substring check
-# per global, not a wording match -- so the sentences stay free to be
-# rewritten but cannot go on naming a stale set.
+# Drift can also hide in the PROSE about the data: a .luacheckrc header or ci.yml
+# sentence naming the known globals goes stale when a global is added, and
+# nothing else reads it. Pin the names only -- a substring check per global, not
+# a wording match -- so the sentences stay free to be rewritten but cannot go on
+# naming a stale set.
 def test_parity_prose_names_every_known_global():
     """Whoever adds a global must fix the two comments that list them."""
     globals_ = _luacheck_known_globals()
@@ -521,12 +519,11 @@ def test_posttooluse_edit_hook_is_a_single_ordered_handler():
     this repo is built on the opposite assumption. lint.sh's header declares it
     expects to run after auto-format.sh, and _lint_common.sh reports findings
     the formatter owns (ruff's import sort, rubocop's Layout) on that basis;
-    commit 132dbfd reasoned from the same premise when it gave the Codex copy a
-    `before-format` phase and left Claude's alone. Listing the two scripts side
-    by side in one `hooks` array therefore bought ordering that was never real,
-    and when lint won the race it handed the agent a hand-fix turn for work the
-    formatter was about to do. format-then-lint.sh restores the sequence; see
-    tests/test_format_then_lint.py for what it guarantees.
+    the Codex copy's `before-format` phase rests on the same premise. Listing
+    the two scripts side by side in one `hooks` array would buy ordering that is
+    not real: when lint wins the race it hands the agent a hand-fix turn for
+    work the formatter is about to do. format-then-lint.sh provides the
+    sequence; see tests/test_format_then_lint.py for what it guarantees.
     """
     hooks = _posttooluse_edit_hooks()
     # Anti-vacuity, same convention as the deny-rule tests above: renaming the

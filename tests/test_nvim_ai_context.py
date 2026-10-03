@@ -207,10 +207,9 @@ class TestDefinitionAtCursor:
     # `local f = function() end` and `M.f = function() end` are not
     # `function_declaration`s: tree-sitter-lua nests the literal as
     # function_definition < expression_list < assignment_statement < ... , so
-    # the climb has to pass through every one of those wrappers. When it
-    # stopped at the bare literal the failure was silent and total for this
-    # form -- no name, and the doc comment left behind, because the literal's
-    # previous sibling is not the comment.
+    # the climb has to pass through every one of those wrappers. Stopping at the
+    # bare literal fails silently for this form -- no name, and the doc comment
+    # left behind, because the literal's previous sibling is not the comment.
     ASSIGNED_LITERAL_FORMS = {
         "local": [
             "-- Add one to a number.",

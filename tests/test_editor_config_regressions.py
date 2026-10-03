@@ -1,14 +1,15 @@
 """Text-level guards for editor-config bugs that no linter in this repo can see.
 
 luacheck reads names and scopes; it has no model of another plugin's argv grammar.
-Nothing at all checks Vimscript -- `.vim/rc/` is the one tree in this repository with
-neither a linter nor a test. Both bugs pinned here passed every gate while being plainly
-wrong at runtime, and both were found by reading rather than by any automated check.
+Nothing lints Vimscript -- `.vim/rc/` has no linter, so its checks live here. The bugs
+pinned here pass every other gate while being plainly wrong at runtime.
 
-These are content assertions, not behavior tests: driving real toggleterm keymaps or a
-real `:saveas` would need a live Neovim/Vim session with plugins installed, which this
-suite deliberately does not build. The assertions are written against the specific
-malformed shapes so they stay meaningful rather than merely present.
+The toggleterm and Copilot-guard checks are content assertions, not behavior tests:
+driving real toggleterm keymaps or a real `:saveas` would need a live Neovim/Vim session
+with plugins installed, which this suite deliberately does not build. The assertions are
+written against the specific malformed shapes so they stay meaningful rather than merely
+present. The 70-ai.vim port tests further down do drive a real Vim (no plugins needed)
+and skip when none is available.
 """
 
 import re
@@ -75,10 +76,10 @@ def test_toggleterm_count_prefix_is_not_glued_to_an_option_name():
     )
 
 
-# The Copilot sensitive-path guard only re-runs on the events in its augroup, so a
-# buffer renamed in place (`:saveas ~/.env`) fires BufFilePre/BufFilePost, none of which
-# were originally watched. See the AICopilotSensitiveGuard augroup's own comment in
-# 70-ai.vim for why BufFilePost had to be added.
+# The Copilot sensitive-path guard only re-runs on the events in its augroup, and a
+# buffer renamed in place (`:saveas ~/.env`) fires only BufFilePre/BufFilePost, so
+# BufFilePost has to be watched. See the AICopilotSensitiveGuard augroup's own comment
+# in 70-ai.vim.
 def test_copilot_sensitive_guard_rechecks_after_a_buffer_rename():
     text = VIM_AI_RC.read_text(encoding="utf-8")
     assert "AICopilotSensitiveGuard" in text, (
@@ -100,12 +101,12 @@ def test_copilot_sensitive_guard_rechecks_after_a_buffer_rename():
     )
 
 
-# The vim AI replace path is an independent port of the Neovim one, and it was left
-# behind when 59cfcf9 fixed how a failed run is reported. job_start() registered out_cb
-# but no err_cb, so the tool's own stderr -- the part that says WHY, e.g. "command not
-# found" or a connection error -- was discarded, and every failure was rendered as a bare
-# `[<tool> failed (exit code N)]`, including exit code 0 (ran fine, printed nothing),
-# which states a success as the cause of a failure.
+# The vim AI replace path is an independent port of the Neovim one and must report a
+# failed run the same way. job_start() needs an err_cb (or err_io), or the tool's own
+# stderr -- the part that says WHY, e.g. "command not found" or a connection error -- is
+# discarded and every failure renders as a bare `[<tool> failed (exit code N)]`,
+# including exit code 0 (ran fine, printed nothing), which states a success as the
+# cause of a failure.
 def test_vim_ai_jobs_capture_stderr():
     text = VIM_AI_RC.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -207,12 +208,10 @@ def _run_vim_script(binary: str, script: str, extra_source: str | None) -> str:
 class TestVimOllamaFailureOrdering:
     """The transport's exit code must win over the response-body parse error.
 
-    The vim AI path is an independent port of the Neovim one and carried the same
-    precedence bug: the parse error was preferred unconditionally, and a body that never
-    arrived fails to parse just as surely as a malformed one, so "could not reach the
-    server" always surfaced as a parse complaint. The nvim side has this pinned by
-    TestOllamaFailureReason; the vim port originally got the fix with no test at all --
-    reverting the ordering left every test green.
+    The vim AI path is an independent port of the Neovim one and must keep the same
+    precedence: a body that never arrived fails to parse just as surely as a malformed
+    one, so a parse-error-first reason would report "could not reach the server" as a
+    parse complaint. The nvim side pins this in TestOllamaFailureReason.
 
     Driven through a real Vim rather than asserted as source text, because the shape of
     the condition is not the behaviour: what matters is which reason comes out.
@@ -312,15 +311,14 @@ class TestVimOneShotInvocationShape:
 class TestFailureDetailClipParity:
     """Both ports must quote the same amount of a failing tool's stderr.
 
-    They did not: Neovim allowed 500 characters and classic Vim 200. That cost
-    nothing while every message was a short "command not found", and started to
-    matter once gemini began surfacing Google's own error text -- its "models/X
-    is not found for API version v1beta ..." runs past 200 characters, so one
-    editor showed the half that says what to do and the other did not.
+    A differing limit is harmless for short messages like "command not found" but
+    matters once gemini surfaces Google's own error text -- its "models/X is not
+    found for API version v1beta ..." runs past 200 characters, so one editor would
+    show the half that says what to do and the other not.
 
     Compared mechanically rather than by reading both constants, because the
-    two are independent ports and the numbers are what drifted. The markers make
-    the boundary observable through the different wrappers each side adds.
+    two are independent ports and the numbers are what can drift. The markers
+    make the boundary observable through the different wrappers each side adds.
     """
 
     LIMIT = 500
@@ -368,8 +366,7 @@ class TestVimGeminiApiShape:
 
     Its Neovim twin is pinned by TestGeminiApiPath in test_nvim_ai_backend.py.
     Re-checked here because the two command builders are independent ports and
-    have drifted before: the failure-message formatting was fixed on the Neovim
-    side and the identical bug sat in this file for another two commits.
+    can drift apart.
 
     Driven through a real Vim rather than grepped out of the source, because
     what matters is the string that reaches `sh -c`.
@@ -698,19 +695,19 @@ class TestAcceptNeverDeletesTheSelection:
     Every write to that number then returns 1 (failure) and says nothing: no
     exception, no message, and `setbufvar` will not even resurrect it.
 
-    Each finish callback wrote `status = 'done'` BEFORE rendering, so the render
-    no-oped and the tab still claimed success. `y` gates on `status ==# 'done'`
-    and nothing re-validates the buffer, so `getbufline()` on the dead number
-    returned `[]`, `s:AI_Apply` checked only `bufexists(target)` and
-    `changedtick`, and `s:AI_SetLines` took its `l:new < l:old` branch --
-    `deletebufline(target, start, end)`. The user's selected lines were deleted
-    with no replacement, and the command line said 'Selection replaced.'
+    Each finish callback must write `status = 'done'` only AFTER the render
+    lands. Written first, a no-oped render leaves the tab claiming success, and
+    `y` gates on `status ==# 'done'`. `getbufline()` on the dead number returns
+    `[]`, which s:AI_Apply must refuse: left alone, `s:AI_SetLines` would take its
+    `l:new < l:old` branch -- `deletebufline(target, start, end)` -- and the
+    user's selected lines would be deleted with no replacement while the command
+    line says 'Selection replaced.'
 
     Driven through a real Vim because not one step of that chain is visible in
     the source text: it is entirely about which of two writes happens first and
-    what a silent return code means. This is the same ordering defect fb3fc08
-    fixed on the Neovim side (status written before the buffer write was known
-    to have landed); the two are independent ports and this one was missed.
+    what a silent return code means. The Neovim side pins the same ordering
+    (TestFixFlowNeverAcceptsTheLoadingPlaceholder in test_nvim_ai_prompt.py);
+    the two are independent ports.
     """
 
     @pytest.fixture(scope="class")
@@ -843,10 +840,10 @@ class TestAcceptNeverDeletesTheSelection:
 def test_no_deprecated_vim_highlight_calls_in_the_lua_tree():
     """`vim.highlight` was deprecated in 0.11 and is scheduled for removal.
 
-    The tree was swept for deprecated 0.12 APIs (see tests/test_nvim_keymap_opts.py
-    for the commit), but the TextYankPost handler in setup/init.lua kept calling
-    `vim.highlight.on_yank`, which warns on every yank on 0.12 and will simply
-    fail once the alias is removed. `vim.hl` is the replacement.
+    The TextYankPost handler in setup/init.lua must call `vim.hl.on_yank`:
+    `vim.highlight.on_yank` warns on every yank on 0.12 and will simply fail once
+    the alias is removed. See tests/test_nvim_keymap_opts.py for the sibling
+    deprecated-0.12 check.
     """
     offenders = sorted(
         str(path.relative_to(REPO_ROOT))

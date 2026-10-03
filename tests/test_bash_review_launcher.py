@@ -1,15 +1,14 @@
 """Tests for bash-review-launcher.sh (fail-closed startup wrapper,
 .claude JSON-ask variant and .codex exit-2 variant).
 
-The launchers exist because a bare `python3 .../bash-review.py` hook command
-fails OPEN when the review cannot happen at all: both runtimes treat a hook
-that cannot start (python3 missing, script missing) or that crashes with an
-unexpected exit code as a non-blocking error and run the Bash command anyway.
-Each launcher converts every "review never happened" condition into its
-runtime's fail-closed vocabulary -- an explicit `ask` decision for Claude,
-exit 2 + stderr for Codex (which has no `ask`, and parses stdout as
-structured output, so the fail path must not print there) -- and passes the
-hook's normal vocabulary (exit 0 / exit 2 + stderr) through untouched.
+A bare `python3 .../bash-review.py` hook command fails OPEN when the review
+cannot happen at all (see the header of bash-review-launcher.sh). Each launcher
+converts every "review never happened" condition (python3 missing, script
+missing, crash with an unexpected exit code) into its runtime's fail-closed
+vocabulary -- an explicit `ask` decision for Claude, exit 2 + stderr for Codex
+(which has no `ask`, and parses stdout as structured output, so the fail path
+must not print there) -- and passes the hook's normal vocabulary (exit 0 /
+exit 2 + stderr) through untouched.
 
 A launcher resolves bash-review.py next to itself, so these tests copy it
 into an isolated directory with a controllable fake sibling instead of
@@ -152,7 +151,7 @@ class TestCodexVariant:
         assert res.returncode == 0
 
     def test_exit_zero_stdout_passes_through(self, shell_env, tmp_path):
-        # bash-review.py never prints on allow today, but the launcher's
+        # bash-review.py never prints on allow, but the launcher's
         # contract is verbatim pass-through of a completed hook's stdout
         # (e.g. an authoritative deny JSON) -- pin it on this variant too.
         hook = 'print(\'{"decision": "deny"}\')\n'

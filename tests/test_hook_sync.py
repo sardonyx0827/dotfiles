@@ -1,21 +1,14 @@
 """Structural guard: .codex's hooks reach .claude's shared libraries by path.
 
-Three designs have held this invariant, each replacing the previous one's
-failure mode:
-
-1. Byte-identical tracked pairs kept in step by a drift test. Reactive -- it
-   only caught divergence once someone ran the suite, and it only watched the
-   file it named (52fdba4 landed ~80 lines of shared review logic outside the
-   guard the day after the guard itself landed).
-2. Relative symlinks. Divergence became structurally impossible (one file), but
-   every checkout with core.symlinks=false -- Git for Windows' default -- broke:
-   git materialises a symlink as a *text file holding its target path*, so the
-   import/`source` reads that path as source code and the hook dies. install.sh
-   declares Windows (msys/cygwin) in scope, so that was a real regression.
-3. What this file now pins: .codex/hooks holds no copy at all. Its entry points
-   resolve ../../.claude/hooks from their own *physical* location and load the
-   single real file from there. Divergence stays impossible, and the checkout
-   contains nothing git has to special-case.
+.codex/hooks holds no copy of those libraries and no link to them. A copy can
+drift from the original; a symlink breaks every checkout with
+core.symlinks=false -- Git for Windows' default -- because git materialises a
+symlink as a *text file holding its target path*, so the import/`source` reads
+that path as source code and the hook dies (install.sh declares Windows
+(msys/cygwin) in scope). Instead the entry points resolve ../../.claude/hooks
+from their own *physical* location and load the single real file from there:
+divergence is impossible and the checkout contains nothing git has to
+special-case.
 
 Physical resolution is the load-bearing detail. install.sh links
 ~/.codex/hooks -> <repo>/.codex/hooks, so in production the hooks run from a
@@ -24,12 +17,12 @@ land on ~/.claude/hooks and only resolve because install.sh happens to link
 that too. `cd -P` / os.path.realpath() drop that hidden second dependency.
 
 The end-to-end proof that the shell helpers load lives here (through a
-symlinked hooks dir, the production shape). For the Python module, the 30+
-tests in test_codex_variant_bash_review.py already execute .codex's
-bash-review.py with __file__ set to its real path, so the import path is
-covered there; what those cannot show -- that resolution survives a symlinked
-parent -- is pinned below without running the hook, because the hook's log dir
-is a hardcoded /tmp path and this suite never writes outside tmp_path.
+symlinked hooks dir, the production shape). For the Python module, the tests in
+test_codex_variant_bash_review.py already execute .codex's bash-review.py with
+__file__ set to its real path, so the import path is covered there; what those
+cannot show -- that resolution survives a symlinked parent -- is pinned below
+without running the hook, because the hook's log dir is a hardcoded /tmp path
+and this suite never writes outside tmp_path.
 """
 
 import os
@@ -85,9 +78,9 @@ class TestSharedFileHasNoCodexCopy:
         assert not real.is_symlink(), f"{name}: the .claude copy must be the real file"
 
     def test_codex_side_has_no_entry_at_all(self, name, loader, functions):
-        # A regular file here is a resurrected duplicate (drift is back); a
-        # symlink is design 2 (breaks core.symlinks=false checkouts). Neither is
-        # allowed -- the .codex entry points reach the .claude file by path.
+        # A regular file here is a duplicate that can drift; a symlink breaks
+        # core.symlinks=false checkouts. Neither is allowed -- the .codex entry
+        # points reach the .claude file by path.
         entry = CODEX_HOOKS / name
         assert not os.path.lexists(entry), (
             f"{name}: .codex must not carry its own copy or link; "
@@ -98,9 +91,9 @@ class TestSharedFileHasNoCodexCopy:
 def test_codex_hooks_tree_carries_no_tracked_symlink():
     """A core.symlinks=false checkout must be byte-identical in this subtree.
 
-    This is the property the previous design lost. Asserting it on the git
-    index (not the working tree) is what makes it meaningful: mode 120000 is
-    exactly what Git for Windows materialises as a path-bearing text file.
+    Asserting it on the git index (not the working tree) is what makes it
+    meaningful: mode 120000 is exactly what Git for Windows materialises as a
+    path-bearing text file.
     """
     assert _tracked_symlinks(".codex/hooks") == []
 

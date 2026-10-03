@@ -138,7 +138,7 @@ class TestBuildRequest:
         assert "secret-key" not in req.full_url
 
     def test_the_instruction_and_the_payload_stay_separate(self):
-        """Mirrors the CLI split this replaced (`-p INSTRUCTION` plus stdin).
+        """Mirrors the `gemini` CLI split (`-p INSTRUCTION` plus stdin).
 
         Collapsing them into one blob would quietly change what every prompt in
         ai/prompt.lua means, since each is written as an instruction ABOUT the
@@ -360,11 +360,8 @@ class TestRequestGenerate:
     def test_a_truncated_body_is_retried_like_a_transport_failure(self, monkeypatch):
         """A connection dropped mid-body surfaces as http.client.IncompleteRead.
 
-        That is an HTTPException, not an OSError, so the transport arm used to
-        miss it -- despite its own comment claiming to cover "a connection
-        reset raised while reading the body". Fixed in 0ad9b15, which widened
-        the catch to `(OSError, http.client.HTTPException)`; this pins that
-        fix so the regression cannot come back.
+        That is an HTTPException, not an OSError, so the transport arm has to
+        catch `(OSError, http.client.HTTPException)` to retry it.
         """
         calls = []
         body = self.call(
@@ -500,9 +497,8 @@ class TestMain:
         """The contract is "one line on stderr", with no exceptions.
 
         The editors render stderr straight into a diff or report window, so a
-        traceback there is what the user reads instead of a reason. This is the
-        backstop for a failure mode that does not exist yet rather than one that
-        has been seen -- which is exactly when it is cheap to install.
+        traceback there is what the user reads instead of a reason. This is a
+        backstop for failure modes not yet seen.
         """
 
         def boom(*_a, **_k):
@@ -592,17 +588,17 @@ class TestApiKeyNeverLeaks:
 
     `http.client.putheader` refuses a header value containing CR or LF and
     raises `ValueError("Invalid header value %r" % value)` -- with the RAW
-    value in the message, and LOCALLY, before any socket is opened.
-    `request_generate` used to end its retry loop with a catch-all
-    `except ValueError` meant for a body that is not JSON, so that exception
-    was caught and re-raised as `GeminiError(f"invalid JSON response: {exc}")`
-    -- key and all. main() then hands that string to _fail(), which writes it
-    to stderr, which is the channel the editors render straight into a report
-    window. The key therefore ended up in a buffer the user is looking at.
+    value in the message, and LOCALLY, before any socket is opened. A
+    catch-all `except ValueError` in `request_generate` (meant for a body that
+    is not JSON) would catch that exception and re-raise it as
+    `GeminiError(f"invalid JSON response: {exc}")` -- key and all. main() hands
+    that string to _fail(), which writes it to stderr, the channel the editors
+    render straight into a report window.
 
-    Same class of failure the gemini-consultant MCP server fixed in 12bb5b3,
-    and the same remedy: refuse the value up front, name the problem and never
-    the value, and narrow the arm that used to swallow it.
+    The same class of failure applies to the gemini-consultant MCP server (see
+    test_gemini_consultant_server.py), with the same remedy: refuse the value
+    up front, name the problem and never the value, and keep the JSON arm
+    narrow.
     """
 
     def _generate(self, key):
@@ -622,7 +618,7 @@ class TestApiKeyNeverLeaks:
 
         As a bare ValueError it would be indistinguishable from
         json.JSONDecodeError (a ValueError subclass) and from putheader's
-        value-carrying ValueError -- which is how the leak survived. It IS a
+        value-carrying ValueError -- which is how a leak survives. It IS a
         GeminiError, so main's existing handler reports it as the one stderr
         line the contract promises rather than as a traceback.
         """
@@ -683,10 +679,10 @@ class TestApiKeyNeverLeaks:
     ):
         """The narrowed arm, tested directly.
 
-        The catch-all `except ValueError` was the leak path itself: it turned a
-        credential-carrying exception into a GeminiError message. Nothing that
-        is not a JSON parse failure may be converted here, whatever the guard
-        upstream does -- the two halves have to hold independently.
+        A catch-all `except ValueError` would be the leak path itself: it turns
+        a credential-carrying exception into a GeminiError message. Nothing
+        that is not a JSON parse failure may be converted here, whatever the
+        guard upstream does -- the two halves have to hold independently.
         """
 
         def boom(*_a, **_k):

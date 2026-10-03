@@ -73,7 +73,7 @@ class TestClaudeVariant:
         self, shell_env, git_repo
     ):
         # `git -C <dir> push` / `git --git-dir <dir> push`: the flag value is a
-        # separate token, which the old regex failed to match (bypass).
+        # separate token, which a naive regex fails to match (bypass).
         for command in (
             "git -C /tmp/repo push",
             "git --git-dir /tmp/repo/.git push origin main",
@@ -117,8 +117,8 @@ class TestClaudeVariant:
     def test_apostrophe_in_double_quoted_message_does_not_hide_real_push(
         self, shell_env, git_repo
     ):
-        # Regression: a naive "remove '...' then remove \"...\"" pass lets
-        # the apostrophe in "it's" pair up with the *next* single quote
+        # A naive "remove '...' then remove \"...\"" pass would let the
+        # apostrophe in "it's" pair up with the *next* single quote
         # (opening 'done'), eating everything between them - including the
         # real, unquoted `git push` - and hiding it from detection.
         res = shell_env.run(
@@ -133,7 +133,7 @@ class TestClaudeVariant:
     def test_double_quote_in_single_quoted_message_does_not_hide_real_push(
         self, shell_env, git_repo
     ):
-        # Mirror-image case: swapping quote kinds must not resurrect the bug.
+        # Mirror-image case: swapping quote kinds must not hide the push either.
         res = shell_env.run(
             CLAUDE_HOOK,
             stdin=payload('git commit -m \'it"s fine\' && git push && echo "done"'),
@@ -159,7 +159,7 @@ class TestClaudeVariant:
     ):
         # bash DOES execute $(...) inside double quotes, so a push placed
         # there is a real push, not inert quoted text. Stripping the whole
-        # double-quoted range used to hide it from detection (bypass).
+        # double-quoted range would hide it from detection (bypass).
         res = shell_env.run(
             CLAUDE_HOOK,
             stdin=payload('echo "log: $(git push origin main)"'),
@@ -215,7 +215,7 @@ class TestClaudeVariant:
 
     def test_push_followed_by_semicolon_is_detected(self, shell_env, git_repo):
         # `push` can be terminated by `;` `&` `|` `)` as well as whitespace;
-        # requiring whitespace/EOL after `push` let `git push;true` through.
+        # requiring whitespace/EOL after `push` would let `git push;true` through.
         res = shell_env.run(
             CLAUDE_HOOK,
             stdin=payload("git push;true"),
@@ -296,8 +296,8 @@ class TestClaudeVariant:
         self, shell_env, tmp_path
     ):
         # A `-C` belonging to an earlier command in the chain (e.g. grep's
-        # context-lines flag) must not shadow the push target's own -C. The
-        # leftmost-match extraction used to grab `grep -C 3`'s value and run
+        # context-lines flag) must not shadow the push target's own -C. A
+        # leftmost-match extraction would grab `grep -C 3`'s value and run
         # `git -C 3 ...`, blanking (or misdirecting) the summary.
         target = make_target_repo(tmp_path)
         outside = tmp_path / "not-a-repo"
@@ -315,10 +315,10 @@ class TestClaudeVariant:
         assert "target repo commit" in reason
 
     def test_push_still_asks_when_jq_is_unavailable(self, shell_env, git_repo):
-        # Without jq the command string cannot be extracted, so the push
-        # detection below it silently matched nothing and the hook exited 0 --
-        # the one gate in front of `git push` disappeared without a trace.
-        # Absence must degrade to a coarse ask, never to a silent pass.
+        # Without jq the command string cannot be extracted, so push detection
+        # would silently match nothing and the hook exit 0 -- the one gate in
+        # front of `git push` would vanish without a trace. Absence must
+        # degrade to a coarse ask, never to a silent pass.
         shell_env.hide("jq")
         res = shell_env.run(
             CLAUDE_HOOK, stdin=payload("git push origin main"), cwd=git_repo
@@ -450,9 +450,8 @@ class TestCodexVariant:
 # --- Detection parity across BOTH variants -----------------------------------
 # The quote / substitution / flag parsing is identical in the two copies; only
 # the SIGNAL differs (claude emits a JSON "ask", codex exits 2 with stderr).
-# Previously only the claude copy exercised these bypass regressions, so a
-# detection regression in the codex copy would ship green. Run every case
-# against both — the same drift guard rationale as test_hook_sync.py.
+# Every case runs against both copies so a detection regression in either one
+# cannot ship green — the same drift-guard rationale as test_hook_sync.py.
 DETECTION_CASES = [
     # (command, should_detect)
     ("git push origin main", True),
@@ -462,9 +461,9 @@ DETECTION_CASES = [
     ("git --git-dir /tmp/repo/.git push origin main", True),
     ("git -c user.name=x push", True),
     ("git push;true", True),
-    # A redirect glued to `push` is still a push. The end-of-token class had
-    # `;&|)` and the backtick but neither `>` nor `<`, so `git push>/dev/null`
-    # slipped past both variants while `git push </dev/null` was caught.
+    # A redirect glued to `push` is still a push. The end-of-token class needs
+    # `>` and `<` as well as `;&|)` and the backtick, or `git push>/dev/null`
+    # slips past while `git push </dev/null` is caught.
     ("git push>/dev/null 2>&1", True),
     ("git push</dev/null", True),
     ("git push>log", True),
@@ -565,13 +564,12 @@ def test_detection_parity(shell_env, git_repo, variant, hook, command, should_de
 
 
 # Detection parity above says both variants decide the SAME. It says nothing about what
-# deciding COSTS, and the two had drifted badly apart there: commit 982c9be measured
-# 4.5s for a 20KB command and added two guards to the .claude copy only -- an early
-# "no `push` substring => exit 0" short-circuit, and a fast path that skips the
-# character-at-a-time strip_quoted_ranges when the command holds no quote or backslash.
-# The .codex copy is wired unconditionally on matcher "Bash" (.codex/hooks.json.template),
-# so every Bash call in a Codex session paid the full O(n^2) scan. Measured here before
-# the port: .claude 0.074s vs .codex 4.523s on the same input.
+# deciding COSTS. Two guards keep it cheap in both copies: an early "no `push` substring
+# => exit 0" short-circuit, and a fast path that skips the character-at-a-time
+# strip_quoted_ranges when the command holds no quote or backslash. The .codex copy is
+# wired unconditionally on matcher "Bash" (.codex/hooks.json.template), so without them
+# every Bash call in a Codex session would pay the full O(n^2) scan (~4.5s for a 20KB
+# command).
 #
 # The bound is deliberately loose (a shared CI runner is noisy, and this asserts an
 # algorithmic class, not a stopwatch figure): an unguarded quadratic scan lands in
@@ -626,10 +624,11 @@ def _summary_text(res, variant):
 def test_dash_c_summary_survives_a_quoted_path(shell_env, tmp_path, variant, hook):
     """`git -C "/path with space" push` must summarise THAT repo.
 
-    The -C value was read off cmd_for_match, i.e. AFTER strip_quoted_ranges had
-    removed every quoted range -- the path included. The regex then took the
-    next token (`push`) as the directory, `git -C push rev-parse` failed, and
-    the confirmation carried an empty summary: an ask the user cannot judge.
+    The -C value must not be read off cmd_for_match, i.e. AFTER
+    strip_quoted_ranges has removed every quoted range -- the path included:
+    the regex would then take the next token (`push`) as the directory,
+    `git -C push rev-parse` would fail, and the confirmation would carry an
+    empty summary: an ask the user cannot judge.
     """
     base = tmp_path / "has space"
     base.mkdir()
@@ -649,8 +648,8 @@ def test_large_quoted_push_command_stays_fast(shell_env, git_repo, variant, hook
 
     The "no push substring" short-circuit and the "no quote" fast path both
     miss a long heredoc or commit message chained to a push -- the common
-    shape -- and the O(n^2) quote scan ran in full (17s measured at 40KB) on
-    every such Bash call. Past a size cap the scan falls back to dropping the
+    shape -- and the O(n^2) quote scan would run in full (17s measured at 40KB)
+    on every such Bash call. Past a size cap the scan falls back to dropping the
     quote characters, which can only ADD detections, never lose one.
     """
     big = 'echo "' + ("x" * 40_000) + '" && git push'
@@ -670,8 +669,8 @@ def test_dash_c_of_an_unrelated_chained_git_call_does_not_supply_the_summary(
 ):
     """The -C that counts is the one on the git call that pushes.
 
-    A regex over the whole command took the leftmost quoted `-C` it could
-    find, so `git -C "/gone" push && git -C "decoy" status` summarised the
+    A regex over the whole command would take the leftmost quoted `-C` it can
+    find, so `git -C "/gone" push && git -C "decoy" status` would summarise the
     decoy's commits as if they were about to be pushed. With the push
     target missing the honest answer is a note, never the decoy's summary.
     """
@@ -690,10 +689,10 @@ def test_a_directory_named_push_in_cwd_cannot_hijack_the_summary(
 ):
     """`git -C "real" push` with a sibling directory literally named `push`.
 
-    The quote-stripped command reads `git -C  push`, and a preference for a
-    -C value that is an existing directory then picked `push/` -- a decoy
-    repo -- over the real quoted target. Word-splitting sees the quoted value
-    and never consults the filesystem to choose.
+    The quote-stripped command reads `git -C  push`; preferring a -C value
+    that is an existing directory would pick `push/` -- a decoy repo -- over
+    the real quoted target. Word-splitting sees the quoted value and never
+    consults the filesystem to choose.
     """
     from conftest import run_git
 
@@ -712,29 +711,17 @@ def test_a_directory_named_push_in_cwd_cannot_hijack_the_summary(
     assert "target repo commit" in reason, reason
 
 
-# --- `cd <dir>` retargets the summary (bug #4) --------------------------------
+# --- `cd <dir>` retargets the summary -----------------------------------------
 # `-C` is not the only way a chained command changes the repo a push lands in:
 # a plain `cd <dir> && git push` (shell builtin, no -C at all) changes the real
-# cwd for every later command in the same shell, and neither the detection
-# regex nor git_c_dir_from_words ever looked at `cd`. The confirmation summary
-# was generated for the hook's OWN cwd regardless -- the same "wrong summary is
-# worse than no summary" gate defect as the -C case, just via a different verb.
+# cwd for every later command in the same shell. A summary generated for the
+# hook's OWN cwd regardless would be the same "wrong summary is worse than no
+# summary" gate defect as the -C case, just via a different verb.
 #
-# Design decisions (see cd_target_from_words in both hook files for the full
-# rationale):
-#   - bare `cd` (no argument) resolves to $HOME, matching real shell behaviour.
-#   - `~` / `~/rest` resolve against $HOME (plain tilde expansion); `~user` is
-#     treated as unresolvable (needs a password-database lookup).
-#   - Anything the hook cannot resolve with certainty (variables, command
-#     substitution, `cd -`, `~user`, pushd/popd, a subshell, a heredoc/comment
-#     line that merely LOOKS like a cd, or more than one cd before the push)
-#     emits NO summary plus a short note -- never a fallback to the cwd summary.
-#   - A subshell anywhere in the command is treated as disqualifying even when
-#     it does not actually scope the push away from the cd (e.g.
-#     `cd X && git push -u origin $(git branch --show-current)`): telling
-#     "same subshell as the push" apart from "sibling/unrelated subshell"
-#     needs real parsing this hook does not do. Known tradeoff: such commands
-#     get the note instead of a real summary.
+# What the hook resolves with certainty, and what it gives up on (NO summary plus a
+# short note, never a fallback to the cwd summary), is documented on
+# cd_target_from_words in .claude/hooks/git-push-review.sh (the .codex copy points
+# there); the cases below pin it.
 def _repo_at(path, commit_message, branch="custom-branch"):
     """A throwaway repo at an exact path, with a caller-chosen distinguishing
     commit message/branch so tests can tell which of several repos a summary
@@ -969,12 +956,12 @@ def test_cd_target_from_words_desync_with_quoted_cd_still_caught(
     shell_env, git_repo, variant, hook
 ):
     """When cd_target_from_words loses the push segment (desync), the
-    fallback used to grep cmd_for_match -- strip_quoted_ranges output, which
+    fallback must not grep cmd_for_match -- strip_quoted_ranges output, which
     DELETES quoted ranges' contents -- for cd/pushd/popd. A quoted `"cd"`
     (quoting a command name doesn't stop the shell recognising it as the cd
-    builtin) disappeared from that string entirely, so the wrong (hook cwd)
-    summary was shown. The fallback must look at the command with quote
-    CHARACTERS stripped but quoted CONTENTS kept, so a real `"cd"` still
+    builtin) would disappear from that string entirely, so the wrong (hook
+    cwd) summary would be shown. The fallback must look at the command with
+    quote CHARACTERS stripped but quoted CONTENTS kept, so a real `"cd"` still
     shows up (over-matching plain commit-message text only costs a note).
     """
     cmd = 'git commit -m "v $(date)" && "cd" /tmp/decoy && git push'
@@ -999,10 +986,10 @@ CD_AMBIGUOUS_CASES = [
     "(cd /tmp) && git push",
     'bash -c "cd /tmp && git push"',
     'git commit -m "v $(date)" && cd /tmp && git push',
-    # `cd`/`pushd`/`popd` that is not the FIRST word of its segment: the
-    # tokenizer only checked the first word, so a cd hiding behind a group,
-    # a builtin-dispatch prefix, or a leading assignment was invisible and
-    # the summary silently kept the (wrong) cwd data.
+    # `cd`/`pushd`/`popd` that is not the FIRST word of its segment: a
+    # tokenizer that only checks the first word would miss a cd hiding behind
+    # a group, a builtin-dispatch prefix, or a leading assignment, and the
+    # summary would silently keep the (wrong) cwd data.
     "{ cd /tmp; } && git push",
     "command cd /tmp && git push",
     "builtin cd /tmp && git push",
@@ -1034,8 +1021,8 @@ CD_AMBIGUOUS_CASES = [
     # just the operator directly after cd's own segment. `&` has LOWER
     # precedence than `&&`/`||`, so a trailing `&` backgrounds the WHOLE
     # `cd X && true` list as one job -- the push then runs in the hook's
-    # cwd, not X. Walking only one boundary past cd (the old check) missed
-    # this because that boundary is AND, not BG.
+    # cwd, not X. Walking only one boundary past cd would miss this because
+    # that boundary is AND, not BG.
     "cd /tmp && true & git push",
     "cd /tmp && true || false & git push",
 ]
@@ -1080,8 +1067,7 @@ def test_cd_target_from_words_desync_falls_back_to_legacy_dash_c(
     quote/command-substitution desync inside an unrelated -m value, not cd's
     fault -- no cd is involved here at all), it must not silently default to
     the empty git_c_opt (which means the cwd summary): it must still fall
-    back to the pre-existing git_c_dir_from_words -C lookup, exactly as it
-    did before this fix existed.
+    back to the git_c_dir_from_words -C lookup.
     """
     target = make_target_repo(tmp_path)
     cmd = (
@@ -1256,24 +1242,18 @@ def test_cd_certainty_oracle_sweep(shell_env, tmp_path, variant, hook):
 # --- Quoting, escaping and raw control bytes in the target --------------------
 # The tokenizer that finds `cd <dir>` / `-C <dir>` only helps if it splits words
 # exactly as the shell does; where it differs, the summary names a directory the
-# push never runs in. The rules pinned here (bash 3.2, bash 5 and zsh agree):
+# push never runs in. The rules (bash 3.2, bash 5 and zsh agree) are documented on
+# cd_target_from_words and at the raw-control-byte check in
+# .claude/hooks/git-push-review.sh; the cases below pin them:
 #   - Inside "...", a backslash escapes only $ ` " \ and newline; before any other
 #     character it stays literal, so `cd "/x/a\b"` enters `a\b`, not `ab`.
 #     Backslash-newline is removed (line continuation) unquoted and inside "...",
 #     but is literal inside '...'.
-#   - A target holding a newline or any other control character is never
-#     resolved. The hook's own plumbing cut such a name at the newline, which is
-#     how `cd "<repo>\n/nonexistent"` came to show <repo>'s summary.
 #   - A leading `~` expands only when it is unquoted and nothing up to the first
-#     unquoted `/` is quoted. `"~/x"`, `'~/x'` and `\~/x` are literal. Mixed
-#     forms such as `~"/x"` and `''~/x` split the shells (bash keeps them
-#     literal, zsh expands them), so they get the note.
-#   - A raw control byte anywhere in the command (other than tab and newline)
-#     can collide with the tokenizers' in-band separators (\x01-\x08, \x1c), so
-#     its presence turns target resolution off altogether. \r is included: bash
-#     treats it as an ordinary word byte, and a terminal does not show it.
-#   - A target that is not an existing directory gets the note as well, because
-#     that `cd` fails and the push then runs somewhere else.
+#     unquoted `/` is quoted; mixed forms (`~"/x"`, `''~/x`) split the shells.
+#   - Those mixed forms, a target holding a newline or other control character, a raw
+#     control byte anywhere in the command, and a target that is not an existing
+#     directory (that `cd` fails and the push runs elsewhere) all get the note.
 NOTE = "could not be determined"
 
 
@@ -1291,8 +1271,8 @@ def test_cd_target_with_a_quoted_newline_is_unresolvable(
     shell_env, tmp_path, variant, hook
 ):
     # The real cd fails (no such directory) and the push runs in the hook's
-    # non-repo cwd. The hook read the target back through `read`, which stops
-    # at the newline, and summarised <repo> instead.
+    # non-repo cwd. Reading the target back through `read` would stop at the
+    # newline and summarise <repo> instead.
     target = make_target_repo(tmp_path)
     outside = tmp_path / "not-a-repo"
     outside.mkdir()
@@ -1307,7 +1287,7 @@ def test_double_quoted_backslash_before_a_letter_stays_literal(
 ):
     # `"...target-\repo"`: the shell keeps the backslash, so the directory does
     # not exist, cd fails and the push runs in cwd. Dropping the backslash (the
-    # unquoted rule) made the hook summarise the real target-repo instead.
+    # unquoted rule) would make the hook summarise the real target-repo instead.
     target = str(make_target_repo(tmp_path))
     outside = tmp_path / "not-a-repo"
     outside.mkdir()
@@ -1362,9 +1342,9 @@ CONTINUATION_CASES = [
 def test_backslash_newline_in_the_target_follows_line_continuation(
     shell_env, tmp_path, variant, hook, cmd_tmpl, expected
 ):
-    # `cd <outer>/\<newline>inner` is `cd <outer>/inner` to the shell. The hook
-    # kept the newline in the word, then cut it there when reading it back, and
-    # summarised <outer> -- a real, different repository.
+    # `cd <outer>/\<newline>inner` is `cd <outer>/inner` to the shell. Keeping
+    # the newline in the word and cutting it there when reading it back would
+    # summarise <outer> -- a real, different repository.
     outer = _repo_at(tmp_path / "outer", "OUTER_DIR_COMMIT", branch="outer-branch")
     _repo_at(outer / "inner", "INNER_DIR_COMMIT", branch="inner-branch")
     outside = tmp_path / "not-a-repo"
@@ -1397,8 +1377,8 @@ def test_only_an_unquoted_tilde_prefix_expands_to_home(
     shell_env, tmp_path, variant, hook, cd_arg, expands
 ):
     # `cd "~/proj"` fails in the shell (there is no directory literally named
-    # `~`), so the push runs in cwd. The tokenizer had already dropped the
-    # quotes and applied tilde expansion anyway, summarising $HOME/proj.
+    # `~`), so the push runs in cwd. Dropping the quotes and applying tilde
+    # expansion anyway would summarise $HOME/proj.
     _repo_at(shell_env.home / "proj", "HOME_PROJ_COMMIT", branch="proj-branch")
     outside = tmp_path / "not-a-repo"
     outside.mkdir()
@@ -1459,8 +1439,9 @@ def test_raw_control_byte_turns_target_resolution_off(
     shell_env, tmp_path, variant, hook, ch
 ):
     # `echo x <0x02> cd <repo> && git push`: to the shell, `cd <repo>` is just
-    # more of echo's arguments. The tokenizer used 0x02 as its own segment
-    # separator, so it saw `cd <repo>` as a command and summarised <repo>.
+    # more of echo's arguments. The tokenizer uses 0x02 as its own segment
+    # separator, so unguarded it would see `cd <repo>` as a command and
+    # summarise <repo>.
     target = make_target_repo(tmp_path)
     outside = tmp_path / "not-a-repo"
     outside.mkdir()
@@ -1473,9 +1454,9 @@ def test_raw_control_byte_turns_target_resolution_off(
 def test_raw_separator_byte_cannot_forge_a_dash_c_push_segment(
     shell_env, tmp_path, git_repo, variant, hook
 ):
-    # The -C resolver has the same weakness with its own separator, 0x01: the
-    # forged `git -C <repo> push` inside echo's arguments supplied the summary
-    # while the real push (the second one) runs in cwd.
+    # The -C resolver has the same weakness with its own separator, 0x01: a
+    # forged `git -C <repo> push` inside echo's arguments must not supply the
+    # summary while the real push (the second one) runs in cwd.
     target = make_target_repo(tmp_path)
     cmd = f"echo x \x01 git -C {target} push origin main; git push origin main"
     res = shell_env.run(hook, stdin=payload(cmd), cwd=git_repo)
@@ -1491,7 +1472,7 @@ def test_dash_c_value_with_a_control_character_is_unresolvable(
 ):
     # `git -C "<repo>\n" push` pushes from a directory whose name ends in a
     # newline. Command substitution strips that newline when the hook captures
-    # the value, which left exactly <repo>.
+    # the value, which would leave exactly <repo>.
     target = make_target_repo(tmp_path)
     outside = tmp_path / "not-a-repo"
     outside.mkdir()
@@ -1501,19 +1482,13 @@ def test_dash_c_value_with_a_control_character_is_unresolvable(
 
 
 # --- cd operand shapes that the hook does not model --------------------------
-# Three more ways the real `cd` ends up somewhere other than the literal operand:
-#   - More than one operand: bash 3.2 uses the first, bash 5 fails with "too many
-#     arguments", zsh treats `cd old new` as a substitution in $PWD (and fails
-#     here). Redirections such as `2>/dev/null` count as operands for the hook
-#     too -- a note in a case the shell would have resolved is acceptable.
-#   - An option word (`-x`, `-L`, `-P`, `-e`, `-@`, `--`): invalid options make
-#     cd fail (the hook used to skip them and read a bare `cd` as $HOME), and the
-#     valid ones change how the operand is resolved.
-#   - A `..` component: the shells' default cd is logical (`link/..` is the
-#     directory holding `link`), while `git -C` resolves physically (the parent
-#     of the link's target), and the hook's own cwd may be reached through
-#     symlinks as well.
-# All of them get the note. Bare `cd` -> $HOME and `cd -` -> note stay as they are.
+# More than one operand (the shells disagree), an option word (`-x`, `-L`, `-P`, `-e`,
+# `-@`, `--`: invalid ones make cd fail, valid ones change how the operand resolves) and
+# a `..` component (the shells' cd is logical, `git -C` physical) each send the real
+# `cd` somewhere other than the literal operand; see cd_target_from_words. All of them
+# get the note. Redirections such as `2>/dev/null` count as operands for the hook too --
+# a note where the shell would have resolved is acceptable. Bare `cd` -> $HOME and
+# `cd -` -> note are unaffected.
 @pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
 @pytest.mark.parametrize(
     "cd_part",
@@ -1552,7 +1527,7 @@ def test_cd_with_only_an_invalid_option_does_not_mean_home(
     shell_env, tmp_path, variant, hook
 ):
     # `cd -x` fails in bash and zsh and the push runs in cwd. Skipping the
-    # option left a bare `cd`, which the hook resolves to $HOME.
+    # option would leave a bare `cd`, which the hook resolves to $HOME.
     _repo_at(shell_env.home, "HOME_REPO_COMMIT", branch="home-branch")
     outside = tmp_path / "not-a-repo"
     outside.mkdir()
@@ -1599,10 +1574,10 @@ def test_cd_target_with_a_dotdot_component_is_unresolvable(
 
 # --- The repository chosen by something other than -C or cd -----------------
 # `--git-dir` / `GIT_DIR` pick the repository the push acts on without any -C or
-# cd, and `--work-tree` / `GIT_WORK_TREE` travel with them. The summary followed
-# only -C, so these showed the hook cwd's repository while the push acted on
-# another one. Any mention of the four names -- even inside quoted text, and
-# after dropping quotes/backslashes that the shell would remove -- gets the note.
+# cd, and `--work-tree` / `GIT_WORK_TREE` travel with them. A summary that follows
+# only -C would show the hook cwd's repository while the push acts on another one.
+# Any mention of the four names -- even inside quoted text, and after dropping
+# quotes/backslashes that the shell would remove -- gets the note.
 GIT_DIR_FORMS = [
     "git --git-dir={b}/.git push origin main",
     "git --git-dir {b}/.git push origin main",
@@ -1730,9 +1705,9 @@ def test_cdpath_set_inside_the_command_makes_a_plain_relative_cd_unresolvable(
 # The detection regex lets only `-flag [value]` words sit between `git` and the
 # subcommand. A word holding `$` or a backtick can expand to anything -- an
 # option, an option plus its value -- so `D=--git-d; git ${D}ir=<B>/.git push`
-# is a real push that the hook let through with no confirmation at all. Such a
-# word now counts as a global option; the push is gated (ask / exit 2) and, as
-# the repository it selects is unknown, the summary is a note.
+# is a real push that must not go through with no confirmation at all. Such a
+# word counts as a global option; the push is gated (ask / exit 2) and, as the
+# repository it selects is unknown, the summary is a note.
 EXPANSION_PUSH_FORMS = [
     "D=--git-d; git ${{D}}ir={b}/.git push origin main",
     "git $OPTS push origin main",
@@ -1773,17 +1748,17 @@ def test_expansion_without_a_push_subcommand_stays_quiet(
     _assert_push_not_detected(res, variant, command)
 
 
-# The same expansion inside double quotes still expands, but the summary check ran
-# on the quote-stripped copy, where the quoted word is gone -- so the hook cwd's
-# summary was shown while the push acted on <B>. The check now also looks at the
-# command with only the quote characters dropped (a `$` inside '...' is literal to
-# the shell; over-matching it only costs a note).
+# The same expansion inside double quotes still expands, but a summary check on the
+# quote-stripped copy, where the quoted word is gone, would show the hook cwd's
+# summary while the push acts on <B>. The check therefore also looks at the command
+# with only the quote characters dropped (a `$` inside '...' is literal to the
+# shell; over-matching it only costs a note).
 QUOTED_EXPANSION_PUSH_FORMS = [
     'D=--git-d; git "${{D}}ir={b}/.git" push origin main',
     'git "$GIT_OPTS" push origin main',
-    # Detection itself used to miss this one: without the quoted word the quote-
+    # Detection itself has to catch this one: without the quoted word the quote-
     # stripped command reads `git  <dir> push`, and `<dir>` is neither a flag nor
-    # an expansion -- yet with OPT=-C it is a real push, and nothing was asked.
+    # an expansion -- yet with OPT=-C it is a real push.
     'git "${{OPT}}" {b} push origin main',
 ]
 
@@ -1803,7 +1778,7 @@ def test_quoted_expansion_among_git_global_options_gets_the_note(
 def test_quoted_git_expansion_push_text_is_an_intentional_over_ask(
     shell_env, git_repo, variant, hook
 ):
-    # Detection now also reads the command with only the quote characters
+    # Detection also reads the command with only the quote characters
     # dropped, looking for `git <expansion...> push`. That cannot tell a quoted
     # string from a real command, so this echo is asked about too. Accepted on
     # purpose: an extra confirmation is the safe side, a missed push is not.

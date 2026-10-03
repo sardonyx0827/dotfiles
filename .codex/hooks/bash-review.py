@@ -1,14 +1,6 @@
 # ~/.codex/hooks/bash-review.py
-# 判定の 3 層構造 (詳細は _bash_review_common.py のヘッダー参照):
-#   1. 静的 DENY: sudo / curl 等、文脈を問わず危険 → 即拒否
-#   2. 高リスク層: rm -r / force push / パッケージ導入等、文脈次第で正当
-#      → Gemini と Codex を並列実行する AND ゲート。両モデル ALLOW 一致時のみ
-#        許可 (exit 0)、それ以外 (両 DENY/判定割れ/ASK/ERROR) は両判定を添えて
-#        ブロック (exit 2)。片方説得での自動実行 (OR ゲート化) はしない。
-#   3. 低リスク層: Gemini (高スループット) が ALLOW なら即許可。
-#      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。意見を伴う Gemini 判定
-#      (明示的 DENY / 要確認 ASK) は Codex の ALLOW 単独で自動上書きしない
-#      (両判定を添えてブロック)。ERROR (無意見) のみ Codex ALLOW で解消。
+# 判定の 3 層構造 (静的 DENY / 高リスク層の二モデル AND ゲート / 低リスク層の
+# Gemini 一次 + Codex 二次) は _bash_review_common.py のヘッダー参照。
 # Codex は permissionDecision の allow/deny は解釈するが ask は未サポートで、
 # ask を返すとフックがエラー扱いになり fail-open する (実測 Codex 0.144.5:
 # "PreToolUse hook returned unsupported permissionDecision:ask")。Claude の ask
@@ -28,8 +20,8 @@ import os
 import sys
 import time
 
-# 共有モジュールの実体は .claude/hooks/_bash_review_common.py 一本 (経緯と
-# realpath を使う理由は同ファイルのヘッダー docstring 参照)。以下はその参照側。
+# 共有モジュールの実体は .claude/hooks/_bash_review_common.py 一本 (共有方法と
+# realpath を使う理由は同ファイルのヘッダーコメント参照)。以下はその参照側。
 sys.path.insert(
     0,
     os.path.join(
@@ -89,11 +81,8 @@ def emit_block(reason: str) -> None:
     print(reason + _AGENT_BLOCK_DIRECTIVE, file=sys.stderr)
 
 
-# 共有モジュールの関数を、この入口のモジュールグローバル
-# (summary_log / command / log_file / tool_name / tool_input / prompt / api_key
-# / gemini_model / gemini_fallback_model) を閉じ込めた薄いラッパーで包む。
-# これらのグローバルは try 内で stdin を読んでから設定されるが、ラッパーは
-# それ以降にしか呼ばれないため実行時に解決される。
+# 共有モジュールの関数を、この入口のモジュールグローバルを閉じ込めた薄い
+# ラッパーで包む (理由は .claude/hooks/bash-review.py の同箇所参照)。
 def log_summary(
     decision: str, stage: str, reason: str, *, redact_command: bool = False
 ) -> None:
@@ -137,9 +126,7 @@ try:
     # 詳細ログ (コマンドごとに1ファイル)
     log_dir = "/tmp/codex_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
     os.makedirs(log_dir, exist_ok=True)
-    # ナノ秒 + PID でファイル名を一意化する。秒粒度 (int(time.time())) だと
-    # 同一秒内に複数コマンドをレビューした際に同名となり、後のログが前を上書き
-    # して監査ログが失われる。
+    # ナノ秒 + PID でファイル名を一意化する (理由は .claude/hooks/bash-review.py 参照)。
     log_file = os.path.join(log_dir, f"bash_cmd_{time.time_ns()}_{os.getpid()}.log")
     prune_dir(log_dir)  # 1000件を超えたら古いものから削除
 
@@ -153,10 +140,8 @@ try:
     sub_commands = _split_commands(command)
 
     # --- 秘密スキャン (静的解析) ---
-    # 判定 (deny/safe-skip/secret-block) の優先順位は変えないが、結果はどの分岐で
-    # ログを書く場合でも redact のスイッチとして先に使う。deny される curl の
-    # bearer や safe-skip される echo <key> も、秘密が載っていればローカルログ
-    # (ディスク常駐) には生コマンドを残さない。
+    # 判定 (deny/safe-skip/secret-block) の優先順位は変えず、結果は redact の
+    # スイッチとして先に使う (理由は .claude/hooks/bash-review.py の同箇所参照)。
     secret_found, secret_label = scan_secrets(command, tool_input)
 
     # --- 危険コマンドの即時拒否 (改行分割は find_deny_command が捌く) ---
@@ -301,9 +286,8 @@ try:
         sys.exit(2)
 
     elif codex_verdict == "ALLOW":
-        # ここに来るのは gemini==ERROR (Gemini 不可用 = 唯一の意見が Codex) のみ。
-        # DENY/ASK は上の分岐で捌き済み。無意見なので graceful degradation として
-        # 単独 Codex ALLOW で解消してよい。
+        # gemini==ERROR (無意見) のみここに来る。単独 Codex ALLOW で解消してよい理由は
+        # .claude/hooks/bash-review.py の同分岐参照。
         decided_exit = 0
         write_detail_log(
             {

@@ -17,9 +17,7 @@ return {
   },
   config = function()
     local harpoon = require("harpoon")
-    -- REQUIRED
     harpoon:setup()
-    -- REQUIRED
     harpoon:extend({
       UI_CREATE = function(cx)
         vim.keymap.set("n", "<C-v>", function()

@@ -16,26 +16,23 @@ command -v jq >/dev/null 2>&1 || exit 0
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_hook_common.sh
 . "$HOOK_DIR/_hook_common.sh"
-# 言語別マトリクスは Codex 版と共有する。実体はこの .claude/hooks/ 側だけで、
-# Codex 側は複製もリンクも持たず ../../.claude/hooks を自力で解決して読む。
+# 言語別マトリクスは Codex 版と共有する(実体の置き場は _lint_common.sh のヘッダ)。
 # shellcheck source=_lint_common.sh
 . "$HOOK_DIR/_lint_common.sh"
-# 読み込めていなければ fail-open で抜ける。shellcheck は関数の存在までは見ない
-# ので、ここで確認しないと実行時まで気付けない。ここで止めないと、後段の
+# 読み込めていなければ fail-open で抜ける。ここで止めないと、後段の
 # hook_lint_file 呼び出しが「command not found」で false 扱いになり if 分岐が
-# 失敗側へ落ち、指摘が 1 件も無いのに "Lint Failed" として exit 2 を返してしまう。
+# 失敗側へ落ち、指摘が 1 件も無いのに "Lint Failed" として exit 2 を返してしまう
+# (shellcheck は関数の存在までは見ない)。
 if ! declare -F hook_log >/dev/null 2>&1 ||
   ! declare -F hook_lint_file >/dev/null 2>&1; then
   echo "lint.sh: could not load shared hook helpers from $HOOK_DIR" >&2
   exit 0
 fi
 
-# ログ設定
 LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/lint.log"
 mkdir -p "$LOG_DIR"
 
-# JSONからファイルパスを取得（auto-format.shと同じ方法）
 FILE_PATH=$(jq -r '.tool_input.file_path // empty' 2>/dev/null)
 
 if [ -z "$FILE_PATH" ]; then

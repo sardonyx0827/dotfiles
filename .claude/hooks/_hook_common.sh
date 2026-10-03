@@ -23,10 +23,9 @@
 #
 # ■ なぜログファイルを引数で渡すか
 #
-# 以前は各 wrapper が $LOG_FILE を暗黙の global として持ち、log() がそれを読んで
-# いた。共有すると「どの変数が設定済みでなければならないか」がファイルを跨いで
-# 見えなくなるため、明示的に渡す。宛先が .claude/logs と .codex/logs で分かれる
-# のは wrapper 側の関心事。
+# 暗黙の global ($LOG_FILE) だと、共有したときに「どの変数が設定済みでなければ
+# ならないか」がファイルを跨いで見えなくなるため、明示的に渡す。宛先が
+# .claude/logs と .codex/logs で分かれるのは wrapper 側の関心事。
 
 # hook_log <log_file> <message...>
 #
@@ -45,13 +44,10 @@ hook_log() {
 
   # ローテーションは読んで書き戻す操作なので、フックが並行して走ると衝突する
   # (Claude と Codex のセッションが同時に動く、1 ターンで複数ファイルが処理
-  # される、など珍しくない)。
-  #
-  # 固定名の ${log_file}.tmp を使っていた頃は、2 つのプロセスが同じ中間ファイル
-  # を開いて互いの内容を潰し合い、上限 50 行のログが 15 行まで削れた。さらに
-  # 先に mv した側に負けたプロセスの `mv: ... No such file or directory` が
-  # stderr へ漏れていた。lint.sh の stderr はモデルへの指摘を返す経路なので、
-  # これは lint の出力に化ける。
+  # される、など珍しくない)。固定名の中間ファイルだと、2 つのプロセスが互いの
+  # 内容を潰し合ってログが大きく削れ、先に mv した側に負けたプロセスの
+  # `mv: ... No such file or directory` が stderr へ漏れる。lint.sh の stderr は
+  # モデルへの指摘を返す経路なので、それは lint の出力に化ける。
   #
   # プロセスごとに一意な中間ファイルを作れば衝突しない。mv は同一ディレクトリ内
   # なので rename(2) 相当で不可分に差し替わり、ログは常にどちらかの完全な
@@ -104,13 +100,12 @@ hook_notify() {
 # 探し、最初に見つかった (= 呼び出し元に最も近い) 実行可能ファイルの絶対パスを
 # 標準出力に書いて 0 を返す。見つからなければ何も書かず 1 を返す。
 #
-# ESLint (_lint_common.sh) と Prettier (_format_common.sh) が同じ形の壊れ方を
-# していた: ローカルのバイナリを PROJECT_ROOT (または git root) 直下でしか
-# 見ておらず、npm ワークスペース/monorepo で実体が packages/<pkg>/node_modules
-# にしかない構成では見つからないまま PATH へフォールバックし、グローバル未導入
-# なら「見つからない」まま静かにスキップしていた (ESLint は「見つからない」を
-# 素通しして exit 0、Prettier はさらに、グローバル版が PATH にあるとそちらの
-# バージョンで整形してプロジェクトの固定版を無視する)。ESLint 設定ファイル探索
+# ESLint (_lint_common.sh) と Prettier (_format_common.sh) が使う。ローカルの
+# バイナリを PROJECT_ROOT (または git root) 直下でしか見ないと、npm ワーク
+# スペース/monorepo のように実体が packages/<pkg>/node_modules にしかない構成
+# では見つからず、PATH へフォールバックしてしまう。グローバル未導入なら静かに
+# スキップし (ESLint は exit 0)、Prettier はグローバル版があればそちらの
+# バージョンで整形してプロジェクトの固定版を無視する。ESLint 設定ファイル探索
 # (_lint_common.sh の eslint_dir/eslint_root ループ) と同じ「近い方が勝つ」規則
 # で歩く。
 #

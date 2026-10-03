@@ -20,8 +20,6 @@ config.font_size = 14
 config.color_scheme = 'rose-pine'
 -- When set to true, if a glyph cannot be found for a given codepoint, then the configuration error window will be shown with a pointer to the font configuration docs (default: true)
 config.warn_about_missing_glyphs = true
--- window (default: "TITLE | RESIZE")
--- remove tab bar
 config.hide_tab_bar_if_only_one_tab = true
 -- background_opacity (no bg image)
 config.window_background_opacity = 0.9

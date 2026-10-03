@@ -5,18 +5,16 @@ schedule in-tree:
 
     TODO(skewb1k): soft-deprecate `buffer` option in 0.13, remove in 0.15.
 
-Commit de046d2 ("refactor: migrate deprecated Neovim 0.12 APIs") swept the whole
-tree and its message spells the rule out: "Rename `buffer` to `buf` in
-vim.keymap.set/del opts (deprecated-0.12)". Nothing then held the line, and two
-later commits reintroduced the old spelling in code written after the sweep --
-ad938a4 (ai/init.lua) and 51cb2a8 (ai/ui.lua), 22 sites between them. Both files
-are inside luacheck's scope; luacheck reads names and scopes, not table keys, so
-it cannot see an option key that is merely wrong. Only a text-level check can,
-which is why this lives here rather than in .luacheckrc.
+The whole tree is on `buf` (the sweep to the Neovim 0.12 APIs), and `ai/init.lua`
+and `ai/ui.lua` -- application code written after that sweep -- are the likeliest
+place for the old spelling to creep back in. Both files are inside luacheck's
+scope; luacheck reads names and scopes, not table keys, so it cannot see an option
+key that is merely wrong. Only a text-level check can, which is why this lives
+here rather than in .luacheckrc.
 
 The check is an allowlist, not a pattern match on the call: `ai/init.lua` binds
 keys through a `local map = vim.keymap.set` alias, so a rule keyed on the text
-`keymap.set` would have a hole at exactly the two sites that drifted. Instead
+`keymap.set` would have a hole in exactly the file that drifted. Instead
 every `buffer =` in the Lua tree is flagged and only `nvim_create_autocmd` --
 where `buffer` is the correct and only spelling -- is excused.
 

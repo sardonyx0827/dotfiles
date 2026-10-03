@@ -55,7 +55,7 @@ def _without_commands(env: dict, *names: str) -> dict:
                 break
             parent = Path(found).parent
             if parent.name == "stub-bin":
-                # The shared stub dir (which now carries backstop stubs for
+                # The shared stub dir (which carries backstop stubs for
                 # system-mutating tools) must not be dropped wholesale — that
                 # would silently discard every other stub the test set up.
                 # Delete just this stub to make the tool absent.
@@ -161,11 +161,11 @@ class TestFetchSiteInventory:
 
     TestPinnedUpstreamRefs above verifies the pins that exist. It cannot see a
     fetch that was never pinned in the first place, because its regex only
-    matches raw.githubusercontent.com. That asymmetry is how three `git clone`
-    calls (tpm, zsh-autosuggestions, zsh-syntax-highlighting) and one
-    `uvx --from git+https://` (serena) came to sit outside both the pin policy
-    and its test, while the policy comment at the top of install.sh recites a
-    fetch inventory that does not mention any of them.
+    matches raw.githubusercontent.com. Three `git clone` calls (tpm,
+    zsh-autosuggestions, zsh-syntax-highlighting) and one
+    `uvx --from git+https://` (serena) sit outside both the pin policy and its
+    test, and the policy comment at the top of install.sh recites a fetch
+    inventory that does not mention any of them.
 
     This test inverts the direction of enumeration: it starts from every
     https:// URL appearing in an executable (non-comment) line of install.sh
@@ -198,9 +198,10 @@ class TestFetchSiteInventory:
         "VIM_PLUG_REF",
     )
 
-    # Fetches deliberately left unpinned, with the reason install.sh:52-56
-    # gives: these vendor redirectors expose no immutable ref, so pinning them
-    # would mean a content hash re-pinned on every upstream release.
+    # Fetches deliberately left unpinned, with the reason the "vendor
+    # redirectors" paragraph of install.sh's `Pinned upstream bootstrap
+    # scripts` header comment gives: these expose no immutable ref, so pinning
+    # them would mean a content hash re-pinned on every upstream release.
     UNPINNED_BY_DESIGN = {
         "https://astral.sh/uv/install.sh": "vendor redirector, no immutable ref",
         "https://pyenv.run": "vendor redirector, no immutable ref",
@@ -288,7 +289,8 @@ class TestFetchSiteInventory:
         """Map each https:// URL to the first executable line it appears on.
 
         Comment-only lines are skipped so the pin-refresh recipe and the policy
-        prose at install.sh:35-79 do not register as fetches. Lines with a
+        prose in install.sh's `Pinned upstream bootstrap scripts` header
+        comment do not register as fetches. Lines with a
         trailing comment are NOT stripped: erring toward including a URL keeps
         this fail-closed, which is the property worth protecting.
         """
@@ -401,9 +403,8 @@ class TestDetectOs:
         # WSL always reports OSTYPE=linux-gnu, so it is caught by the
         # linux-gnu branch (and classified ubuntu/linux there) before the
         # windows branch is ever reached. Setting WSL_DISTRO_NAME must not
-        # flip detection to "windows" -- this locks in the longstanding
-        # "WSL is treated as Ubuntu" behavior after removing the dead
-        # WSL_DISTRO_NAME check from the windows branch.
+        # flip detection to "windows" -- this locks in the "WSL is treated as
+        # Ubuntu" behavior.
         marker = tmp_path / "debian_version"
         marker.write_text("13\n", encoding="utf-8")
         res = run_sourced(
@@ -488,9 +489,9 @@ class TestCreateSymlinks:
 
     # --- Codex config.toml: seeded, never linked, never clobbered -----------
     # Codex owns this file at runtime: `codex mcp add` writes mcp_servers into
-    # it, Authorization headers included, plus projects/ and plugin state. The
-    # old symlink pointed it straight at the checkout, so everything Codex
-    # wrote landed in the working tree, one `git add` from committing a token.
+    # it, Authorization headers included, plus projects/ and plugin state. A
+    # symlink straight at the checkout would land everything Codex writes in
+    # the working tree, one `git add` from committing a token.
 
     def test_codex_config_is_seeded_as_a_real_file_not_a_symlink(self, shell_env):
         home = shell_env.home
@@ -572,13 +573,14 @@ class TestCreateSymlinks:
         # to move aside.
         assert not any(p.exists() for p in home.glob(".dotfiles_backup_*/.zsh_secrets"))
 
-    # `[ -e ]` is false for a symlink whose target is gone, so a redirected
-    # secrets file (an encrypted volume, a synced folder) looked absent and the
-    # seed wrote THROUGH the link. With the target's parent missing that write
-    # failed under set -e and the installer died with no [ERROR] line, before
-    # git config, the editor/Claude/Codex links, packages and chsh; with the
-    # parent present it planted a stub at a location the user chose for their
-    # real keys. The redirect is the user's either way: leave it untouched.
+    # `[ -e ]` is false for a symlink whose target is gone, so without a guard
+    # a redirected secrets file (an encrypted volume, a synced folder) looks
+    # absent and the seed writes THROUGH the link. With the target's parent
+    # missing that write fails under set -e and the installer dies with no
+    # [ERROR] line, before git config, the editor/Claude/Codex links, packages
+    # and chsh; with the parent present it plants a stub at a location the user
+    # chose for their real keys. The redirect is the user's either way: leave
+    # it untouched.
     @pytest.mark.parametrize("parent_exists", [False, True])
     def test_zsh_secrets_dangling_symlink_is_left_alone(
         self, shell_env, tmp_path, parent_exists
@@ -627,9 +629,9 @@ class TestCreateSymlinks:
 
         `git config --global <key>` does not follow includes -- git only does
         that by default when no file or scope is named -- so the common
-        `[include] path = ~/.gitconfig.local` layout read back as empty. The
-        .gitconfig link then made that file unreachable, and the identity
-        dropped out of the effective config with one warning line.
+        `[include] path = ~/.gitconfig.local` layout would read back as empty.
+        The .gitconfig link then makes that file unreachable, and the identity
+        drops out of the effective config with one warning line.
         """
         local = tmp_path / "gitconfig.local"
         local.write_text(
@@ -656,7 +658,7 @@ class TestCreateSymlinks:
 
         install.sh is normally run from inside its own checkout, so a
         `[includeIf "gitdir:~/work/"]` identity -- meant for that directory
-        only -- matched whenever the checkout lived under ~/work/, and was
+        only -- would match whenever the checkout lives under ~/work/, and be
         baked into user.gitconfig as the identity for every repository.
         """
         work_config = tmp_path / "work-config"
@@ -685,8 +687,8 @@ class TestCreateSymlinks:
         assert "email = personal@example.com" in rendered
         assert "work@example.com" not in rendered
 
-    # Same defect as the dangling ~/.zsh_secrets above: `[ -e ]` is false on a
-    # broken link, and `git config --file` / the placeholder printf then failed
+    # Same hazard as the dangling ~/.zsh_secrets above: `[ -e ]` is false on a
+    # broken link, and `git config --file` / the placeholder printf then fail
     # on it (git cannot take the lock) under set -e.
     def test_git_identity_dangling_symlink_is_left_alone(self, shell_env, tmp_path):
         home = shell_env.home
@@ -817,7 +819,7 @@ class TestCreateSymlinks:
 
     def test_migration_off_copies_backs_up_rather_than_deletes(self, shell_env):
         # THE safety invariant, under the linked-directory layout: install.sh
-        # never DELETES under $HOME. Upgrading from the old copy-based install
+        # never DELETES under $HOME. Upgrading from an older copy-based install
         # finds a REAL ~/.codex/skills, and linking the directory moves the whole
         # thing aside -- our stale copies, Codex's managed .system, and any
         # hand-written skill alike. That is the unavoidable cost of linking the
@@ -907,12 +909,12 @@ class TestCreateSymlinks:
             assert (vscode_user / name).is_symlink()
 
     def test_links_vscode_configs_on_windows(self, shell_env):
-        """detect_os yields "windows" for msys/cygwin, and that branch was missing.
+        """detect_os yields "windows" for msys/cygwin, and that needs its own branch.
 
-        VS Code on Windows reads user settings from %APPDATA%\\Code\\User. The function
-        only distinguished macOS from "everything else", so a Git Bash install landed
-        them under $HOME/.config/Code/User, where the Windows build never looks -- the
-        symlinks were created and had no effect. Not verified against a real Windows VS
+        VS Code on Windows reads user settings from %APPDATA%\\Code\\User. Only
+        distinguishing macOS from "everything else" would land a Git Bash install's
+        links under $HOME/.config/Code/User, where the Windows build never looks -- the
+        symlinks would exist and have no effect. Not verified against a real Windows VS
         Code from here; this pins the path the branch is supposed to produce.
         """
         home = shell_env.home
@@ -936,8 +938,7 @@ class TestCreateSymlinks:
         """Git Bash normally exports APPDATA, but a bare msys shell may not.
 
         Falling back to the Linux-style path keeps the installer from aborting under
-        `set -u`; it is the same place the pre-fix code always used, so this is a
-        degradation, not a regression.
+        `set -u`; that is a degradation, not a regression.
         """
         home = shell_env.home
         (home / ".oh-my-zsh").mkdir()
@@ -963,17 +964,17 @@ class TestInstallAiTools:
 
 
 class TestInstallVimPlugins:
-    """`vim +PlugInstall +qall || true` used to swallow vim being absent
-    (exit 127) the same as a real PlugInstall failure, then printed
-    print_success unconditionally either way."""
+    """Vim being absent (exit 127) and a real PlugInstall failure must each warn
+    instead of printing print_success; a bare `vim +PlugInstall +qall || true`
+    would swallow both."""
 
     def test_missing_vim_warns_and_skips(self, shell_env):
         # macOS ships its own /usr/bin/vim alongside a homebrew one, so a
         # PATH strip can't make `vim` genuinely unresolvable without also
         # taking dirname/touch/sudo (also under /usr/bin) down with it.
-        # Shadow `vim` as a function instead (blocks the old code's direct
-        # invocation too, so a real vim is never spawned either way) and
-        # make command_exists agree it is absent (drives the new guard).
+        # Shadow `vim` as a function instead (that blocks a direct invocation
+        # too, so a real vim is never spawned either way) and make
+        # command_exists agree it is absent (drives the guard).
         res = run_sourced(
             "vim() { return 127; }; "
             'command_exists() { [ "$1" = "vim" ] && return 1 '
@@ -1006,12 +1007,11 @@ class TestInstallVimPlugins:
 
 
 # `curl -o` streams into its target, so a connection dropped mid-transfer leaves a
-# partial plug.vim behind rather than nothing. That is the whole bug: the existence
-# check below the download then reports success over the corpse, and -- worse -- the
-# `[ ! -f ]` guard above it makes every future run skip the download entirely, so no
-# rerun of install.sh ever repairs it. fetch_and_run (used for every other download in
-# this file) already refuses truncated and empty bodies; install_vim_plug never got that
-# treatment, and had no test of any kind.
+# partial plug.vim behind rather than nothing. The existence check below the download
+# would then report success over the corpse, and -- worse -- the `[ ! -f ]` guard above
+# it would make every future run skip the download entirely, so no rerun of install.sh
+# could ever repair it. fetch_and_run (used for the other downloads) refuses truncated
+# and empty bodies; install_vim_plug has to as well.
 _CURL_TRUNCATED = """
 for arg in "$@"; do
   if [ "$prev" = "-fLo" ]; then mkdir -p "$(dirname "$arg")"; printf 'partial' > "$arg"; fi
@@ -1074,25 +1074,25 @@ class TestInstallVimPlug:
 class TestOptionalEntryLoopsDoNotAbortTheInstaller:
     """A missing OPTIONAL entry must not take the whole installer down.
 
-    Each `_link_*_config` used to walk an array and link the entries that
-    exist with:
+    Each `_link_*_config` walks an array and links the entries that exist. The
+    loop body must not take this form:
 
         for entry in "${entries[@]}"; do
           [ -e "$DOTFILES_DIR/.x/$entry" ] && link_entry ...
         done
 
-    The `[ -e ]` guard was there precisely to tolerate an absent entry -- and
-    it did, for every element except the LAST. When the final element was
-    missing, `&&` short-circuited, the for-loop's exit status was that of the
-    failed test, and because the loop was the function's last command the
-    function returned 1. Under `set -eo pipefail` (install.sh:14) that killed
-    the run, and main() exited 1 having printed NO error at all: a silent,
-    unexplained failure in the middle of an install.
+    The `[ -e ]` guard tolerates an absent entry for every element except the
+    LAST. When the final element is missing, `&&` short-circuits, the for-loop's
+    exit status is that of the failed test, and because the loop is the
+    function's last command the function returns 1. Under `set -eo pipefail`
+    (the `set` line near the top of install.sh) that kills the run, and main()
+    exits 1 having printed NO error at all: a silent, unexplained failure in
+    the middle of an install.
 
-    That `&&` form is gone now -- each `_link_*_config` uses
-    `if [ -e ... ]; then link_entry ...; fi` instead, which does not carry a
-    missing last entry's failed test into the loop's exit status. This test
-    pins that fix against a regression back to the `&&` form.
+    Each `_link_*_config` therefore uses `if [ -e ... ]; then link_entry ...;
+    fi`, which does not carry a missing last entry's failed test into the
+    loop's exit status. This test pins that against a regression back to the
+    `&&` form.
 
     Reachable from a sparse/partial clone, a zip export, a user who deleted the
     Gemini config -- or simply from someone appending a new optional entry to
@@ -1166,13 +1166,10 @@ class TestCodexConfigWithoutACodexTree:
     """_link_codex_config must survive a checkout that has no .codex at all.
 
     Its entry loop is written with `if [ -e "$DOTFILES_DIR/.codex/$entry" ]`
-    precisely so a missing entry is skipped rather than fatal. But the
-    resolution right below it,
-    `codex_repo_real="$(cd "$DOTFILES_DIR/.codex" && pwd -P)"`, carried
-    neither the `2>/dev/null` nor the `|| var=""` that both of its siblings
-    have (the ~/.codex probe on the line above, and the ~/.config pair in
-    _render_git_local_config). With .codex absent the cd fails, `set -e`
-    takes the whole installer down mid-way, and the run ends with the
+    precisely so a missing entry is skipped rather than fatal, and the
+    "~/.codex resolves into the checkout" guard right below it is a plain
+    `-ef` test for the same reason. If either step failed under `set -e` with
+    .codex absent, the whole installer would go down mid-way, ending with the
     top-level dotfiles and .claude linked, no [ERROR] line, and no hint that
     anything was skipped.
     """
@@ -1220,11 +1217,10 @@ class TestStrictMode:
 #      exit 128. An existing but EMPTY DEST is accepted, which is why
 #      reclaim_aborted_clone only has to empty a directory, never remove it;
 #   2. a successful clone leaves the plugin's own files behind, not merely the
-#      directory. The earlier stub ran `mkdir -p DEST` and nothing else, so
-#      every test that re-ran an installer was asserting against a state no
-#      real clone ever produces -- which is exactly the blind spot that let a
-#      guard keyed on the DIRECTORY look idempotent in tests while wedging on
-#      a real machine.
+#      directory. A stub that only ran `mkdir -p DEST` would make every test
+#      that re-runs an installer assert against a state no real clone ever
+#      produces -- the blind spot that lets a guard keyed on the DIRECTORY look
+#      idempotent in tests while wedging on a real machine.
 #
 # DEST's own basename plus a `.zsh` sibling covers all three clone sites
 # (tpm/tpm, zsh-autosuggestions/zsh-autosuggestions.zsh,
@@ -1255,12 +1251,12 @@ class TestInstallOhMyZsh:
     def _mark_omz_installed(self, home):
         """Make install_oh_my_zsh consider Oh My Zsh already present.
 
-        It tests for the oh-my-zsh.sh entry point rather than the directory,
-        because create_symlinks now runs first and creates
-        ~/.oh-my-zsh/custom/themes/ to land the theme -- a directory test would
-        skip the install forever. These tests cover the custom/ handling, not
-        the download, so short-circuit the install the same way a real machine
-        with Oh My Zsh already on it would.
+        It tests for the oh-my-zsh.sh entry point rather than the directory
+        (see the comment at the top of install_oh_my_zsh in install.sh): a
+        directory test would skip the install forever once ~/.oh-my-zsh exists
+        without an install, e.g. a half-made $ZSH. These tests cover the
+        custom/ handling, not the download, so short-circuit the install the
+        same way a real machine with Oh My Zsh already on it would.
         """
         omz = home / ".oh-my-zsh"
         omz.mkdir(exist_ok=True)
@@ -1269,7 +1265,7 @@ class TestInstallOhMyZsh:
     def test_heals_symlinked_custom_dir_before_cloning_plugins(
         self, shell_env, tmp_path
     ):
-        # A previous buggy install symlinked $HOME/.oh-my-zsh/custom straight
+        # An older install may have symlinked $HOME/.oh-my-zsh/custom straight
         # into the dotfiles checkout, which only ships themes/ (no plugins/).
         # install_oh_my_zsh must convert it back to a real directory BEFORE
         # cloning plugins, or the clone lands inside the checkout.
@@ -1360,13 +1356,13 @@ fi
 class TestOhMyZshFreshInstallOrdering:
     """A true first-ever install must not abort under set -eo pipefail.
 
-    Bug: create_symlinks used to `mkdir -p "$HOME/.oh-my-zsh/custom/themes"`
-    to land the theme symlink, which -- on a machine with no prior Oh My Zsh
-    -- created $HOME/.oh-my-zsh as a real directory before Oh My Zsh's own
+    create_symlinks must not `mkdir -p "$HOME/.oh-my-zsh/custom/themes"` to
+    land the theme symlink: on a machine with no prior Oh My Zsh that would
+    create $HOME/.oh-my-zsh as a real directory before Oh My Zsh's own
     installer ever ran. The official installer refuses to run when $ZSH
-    already exists, so install_oh_my_zsh's unguarded fetch_and_run call
-    returned non-zero and set -eo pipefail took the whole script down. The
-    theme-linking block is now its own function (link_oh_my_zsh_theme),
+    already exists, so install_oh_my_zsh's unguarded fetch_and_run call would
+    return non-zero and set -eo pipefail would take the whole script down. The
+    theme-linking block is therefore its own function (link_oh_my_zsh_theme),
     called from main() only after install_oh_my_zsh.
     """
 
@@ -1406,11 +1402,11 @@ class TestOhMyZshFreshInstallOrdering:
         silently, because --unattended suppressed the confirmation prompt
         without setting KEEP_ZSHRC.
 
-        The install then reports success while none of the repo's zsh config is
-        live: no aliases, no PATH, no plugin list, no ~/.zsh_secrets sourcing,
-        no px-rose-pine theme. Only a second full run repairs it (Oh My Zsh
-        short-circuits on oh-my-zsh.sh, create_symlinks relinks), which is
-        exactly why this went unnoticed.
+        The install would then report success while none of the repo's zsh
+        config is live: no aliases, no PATH, no plugin list, no ~/.zsh_secrets
+        sourcing, no px-rose-pine theme. Only a second full run repairs it (Oh
+        My Zsh short-circuits on oh-my-zsh.sh, create_symlinks relinks), which
+        hides the problem.
         """
         shell_env.stub("curl", body=_OMZ_OFFICIAL_INSTALLER_STUB)
         self._stub_git_clone(shell_env)
@@ -1429,9 +1425,9 @@ class TestOhMyZshFreshInstallOrdering:
         assert not (home / ".zshrc.pre-oh-my-zsh").exists()
 
     def test_create_symlinks_alone_does_not_create_oh_my_zsh_dir(self, shell_env):
-        # The root cause, isolated: create_symlinks must not touch
-        # ~/.oh-my-zsh at all on a fresh machine -- that is now entirely
-        # link_oh_my_zsh_theme's job, run after install_oh_my_zsh.
+        # create_symlinks must not touch ~/.oh-my-zsh at all on a fresh
+        # machine -- that is entirely link_oh_my_zsh_theme's job, run after
+        # install_oh_my_zsh.
         home = shell_env.home
         res = run_sourced("create_symlinks", shell_env.env)
         assert res.returncode == 0, res.stderr
@@ -1441,19 +1437,20 @@ class TestOhMyZshFreshInstallOrdering:
 class TestOhMyZshFetchFailureIsRecoverable:
     """A failed Oh My Zsh download must stay recoverable on the next run.
 
-    Bug: install_oh_my_zsh warned and continued past a failed fetch_and_run
-    (correct -- one optional component must not stop the run), but everything
-    after the failure branch treated $ZSH as if it existed:
-    `mkdir -p ~/.oh-my-zsh/custom`, the two plugin clones under it, and the
-    `mkdir -p ~/.oh-my-zsh/custom/themes` that main() reaches later via
-    link_oh_my_zsh_theme. Any one of them materialises $HOME/.oh-my-zsh.
+    install_oh_my_zsh warns and continues past a failed fetch_and_run (one
+    optional component must not stop the run), but nothing after the failure
+    branch may treat $ZSH as if it existed: `mkdir -p ~/.oh-my-zsh/custom`, the
+    two plugin clones under it, and the `mkdir -p ~/.oh-my-zsh/custom/themes`
+    that main() reaches later via link_oh_my_zsh_theme would each materialise
+    $HOME/.oh-my-zsh.
 
     Oh My Zsh's own installer refuses to run when $ZSH already exists (see
-    _OMZ_OFFICIAL_INSTALLER_STUB), so that leftover directory made the
-    failure permanent: every later ./install.sh reprinted the same warning
-    and never installed. change_shell has meanwhile made zsh the login shell,
-    so `source $ZSH/oh-my-zsh.sh` in .zshrc fails on every login -- no theme,
-    no plugins, no completions -- and only `rm -rf ~/.oh-my-zsh` repairs it.
+    _OMZ_OFFICIAL_INSTALLER_STUB), so that leftover directory would make the
+    failure permanent: every later ./install.sh would reprint the same warning
+    and never install. change_shell has meanwhile made zsh the login shell,
+    so `source $ZSH/oh-my-zsh.sh` in .zshrc would fail on every login -- no
+    theme, no plugins, no completions -- and only `rm -rf ~/.oh-my-zsh`
+    would repair it.
     """
 
     def _stub_git_clone(self, shell_env):
@@ -1462,7 +1459,7 @@ class TestOhMyZshFetchFailureIsRecoverable:
     def test_failed_fetch_leaves_nothing_behind_so_a_later_run_installs(
         self, shell_env
     ):
-        """The two-stage regression: fail, then retry in the SAME $HOME.
+        """Two stages: fail, then retry in the SAME $HOME.
 
         Stage 2 is the half that matters. Asserting only "mkdir was not
         called" would miss link_oh_my_zsh_theme's own mkdir; asserting that a
@@ -1547,12 +1544,13 @@ class TestOhMyZshFetchFailureIsRecoverable:
         """A $ZSH directory with no entry point is "not installed" -- and not
         ours to delete.
 
-        This is the state machines poisoned by the old bug are already in, and
-        it is also what an installer killed mid-run leaves. install_oh_my_zsh
-        must treat it as absent (no plugin clones, no success claim) so the
-        next run still sees work to do, while leaving whatever the user has
-        under it untouched: recovering by `rm -rf`-ing a directory that may
-        hold their own custom/ files is the user's call, not the script's.
+        This is the state a machine poisoned by an earlier failed fetch is
+        already in, and it is also what an installer killed mid-run leaves.
+        install_oh_my_zsh must treat it as absent (no plugin clones, no success
+        claim) so the next run still sees work to do, while leaving whatever
+        the user has under it untouched: recovering by `rm -rf`-ing a
+        directory that may hold their own custom/ files is the user's call,
+        not the script's.
         """
         self._stub_git_clone(shell_env)
         shell_env.stub("curl", exit_code=1)
@@ -1570,8 +1568,8 @@ class TestOhMyZshFetchFailureIsRecoverable:
         assert mine.read_text(encoding="utf-8") == "# hand-written\n"
 
     def test_successful_fetch_still_creates_custom_plugins_and_themes(self, shell_env):
-        # Regression guard on the happy path: the new guards must not skip the
-        # work they are guarding when Oh My Zsh really did install.
+        # Happy path: the guards must not skip the work they are guarding when
+        # Oh My Zsh really did install.
         self._stub_git_clone(shell_env)
         shell_env.stub("curl", body=_OMZ_OFFICIAL_INSTALLER_STUB)
         home = shell_env.home
@@ -1618,20 +1616,19 @@ class TestOhMyZshFetchFailureIsRecoverable:
 class TestInterruptedCloneIsRetried:
     """A hard-interrupted `git clone` must not wedge every later run.
 
-    install.sh clones three plugins whose guards all tested the TARGET
-    DIRECTORY: tpm, zsh-autosuggestions, zsh-syntax-highlighting. An ordinary
-    clone failure (bad URL, no DNS) is invisible to such a guard, because git
-    removes the directory it created on its way out. A HARD interrupt does
-    not: SIGKILL, an OOM kill, or the laptop suspending mid-fetch leaves the
-    target behind holding nothing but the half-written `.git` that git lays
-    down first.
+    install.sh clones three plugins -- tpm, zsh-autosuggestions,
+    zsh-syntax-highlighting -- whose guards must not test the TARGET DIRECTORY.
+    An ordinary clone failure (bad URL, no DNS) is invisible to such a guard,
+    because git removes the directory it created on its way out. A HARD
+    interrupt is not: SIGKILL, an OOM kill, or the laptop suspending mid-fetch
+    leaves the target behind holding nothing but the half-written `.git` that
+    git lays down first.
 
-    From then on `[ -d ... ]` reported "already installed" and the clone was
-    never retried, while `.tmux.conf`'s `run '~/.tmux/plugins/tpm/tpm'` and
+    A `[ -d ... ]` guard would then report "already installed" and never retry
+    the clone, while `.tmux.conf`'s `run '~/.tmux/plugins/tpm/tpm'` and
     .zshrc's plugin list kept sourcing files that were never fetched. Only a
-    manual `rm -rf` repaired it -- the same shape commit 5236098 fixed for Oh
-    My Zsh by keying the guard on the ENTRY POINT instead, which was never
-    propagated to these three siblings.
+    manual `rm -rf` would repair it -- the same shape install_oh_my_zsh avoids
+    by keying its guard on the ENTRY POINT instead.
 
     The load-bearing assertion here is that the entry point EXISTS after the
     run, not merely that `git clone` was called: a guard-only fix still calls
@@ -1790,9 +1787,9 @@ class TestInterruptedCloneIsRetried:
 
         A checkout that lost only its entry point, or a directory the user
         put something of their own into, is out of scope for an automatic
-        repair -- 5236098 took the same stance on an already-populated $ZSH.
-        It must still be SAID out loud, because silence is the actual bug
-        being fixed here.
+        repair -- install_oh_my_zsh takes the same stance on an
+        already-populated $ZSH. It must still be SAID out loud, because
+        silence is the failure this guards against.
         """
         self._stub_git_clone(shell_env)
         home = shell_env.home
@@ -1940,11 +1937,11 @@ class TestOptionalInstallerFailures:
         assert "[WARNING]" in res.stdout
 
     def test_oh_my_zsh_download_failure_does_not_abort_script(self, shell_env):
-        # The Oh My Zsh installer download was the one optional installer whose
-        # fetch_and_run was unguarded. Under `set -eo pipefail` a transient
-        # network failure there aborted main() outright, so everything after it
-        # (vim-plug, tmux plugins, Neovim setup, AI tools, MCP registration, the
-        # theme symlink and the shell change) silently never ran.
+        # An unguarded fetch_and_run for the Oh My Zsh installer download
+        # would, under `set -eo pipefail`, abort main() outright on a transient
+        # network failure, so everything after it (vim-plug, tmux plugins,
+        # Neovim setup, AI tools, MCP registration, the theme symlink and the
+        # shell change) would silently never run.
         shell_env.stub("git")
         res = run_sourced(
             'fetch_and_run() { return 1; }; install_oh_my_zsh; echo "AFTER_OMZ"',
@@ -1969,11 +1966,8 @@ class TestAptAliasSymlinks:
     only links in the script that skip create_symlinks' backup step --
     link_debian_alias hand-rolls its own guard instead of calling
     `backup_if_real` (these are generated aliases, not dotfiles worth backing
-    up into $backup_dir). `backup_if_real` used to be nested inside
-    create_symlinks and out of scope here; it has since been hoisted to top
-    level, but link_debian_alias still does not call it. Before its own guard
-    was added, a real user binary at that path was destroyed with no backup
-    and no warning."""
+    up into $backup_dir). Without that guard a real user binary at that path
+    would be destroyed with no backup and no warning."""
 
     def _prepare(self, shell_env):
         shell_env.stub("batcat")
@@ -2018,15 +2012,15 @@ class TestAptAliasSymlinks:
 
 
 class TestInstallHomebrew:
-    """The Homebrew bootstrap was the last unguarded fetch_and_run in the file.
+    """The Homebrew bootstrap must not be a bare `fetch_and_run`.
 
-    Under `set -eo pipefail` a bare `fetch_and_run <homebrew installer>` took
-    the whole run down the moment the download failed: main() entered
-    install_os_packages and never came back, so every later step (WezTerm,
+    Under `set -eo pipefail` a bare `fetch_and_run <homebrew installer>` would
+    take the whole run down the moment the download failed: main() would enter
+    install_os_packages and never come back, so every later step (WezTerm,
     fonts, Node, gh, pyenv, uv, glow, Docker, MCP, linters, Oh My Zsh,
-    vim-plug, tmux plugins, AI tools, the shell change) was silently skipped
-    with no completion message. The arm is macOS-only, so the ubuntu-latest
-    CI never executed it.
+    vim-plug, tmux plugins, AI tools, the shell change) would be silently
+    skipped with no completion message. The arm is macOS-only, so the
+    ubuntu-latest CI never executes it.
     """
 
     # conftest's shell_env installs a backstop `brew` stub, so
@@ -2040,9 +2034,9 @@ class TestInstallHomebrew:
     )
 
     def test_bootstrap_failure_returns_nonzero_and_warns(self, shell_env):
-        # `if` rather than a bare call: after the fix the non-zero return is
-        # the contract, and a bare call would trip the harness's own `set -e`
-        # before the assertions could read the status.
+        # `if` rather than a bare call: the non-zero return is the contract,
+        # and a bare call would trip the harness's own `set -e` before the
+        # assertions could read the status.
         res = run_sourced(
             self._BREW_ABSENT + "fetch_and_run() { return 1; }; "
             'if install_homebrew; then echo "RC=0"; else echo "RC=$?"; fi',
@@ -2076,9 +2070,9 @@ class TestInstallHomebrew:
 class TestInstallOsPackages:
     """OS-specific package installation, extracted from main()'s inline
     case so the dispatch is unit-testable on its own. A bash `case` with no
-    matching arm is a silent no-op: a non-Debian Linux (OS="linux", set by
-    detect_os when /etc/debian_version is absent) used to fall through with
-    no warning and no packages installed."""
+    matching arm is a silent no-op, so a non-Debian Linux (OS="linux", set by
+    detect_os when /etc/debian_version is absent) must warn instead of falling
+    through with no packages installed."""
 
     def test_non_debian_linux_warns_instead_of_silently_skipping(self, shell_env):
         res = run_sourced(
@@ -2199,9 +2193,10 @@ class TestGoInstallPathExport:
     """install_nodejs/install_uv export PATH right after their own install
     so the immediately-following command_exists check sees what was just
     installed. install_glow and install_linters_formatters's Ubuntu
-    branches did not: `go install` places binaries under ~/go/bin, which
+    branches must too: `go install` places binaries under ~/go/bin, which
     is not on PATH until exported, so the following command_exists check
-    (and anything later in the same run) falsely reports the tool missing."""
+    (and anything later in the same run) would falsely report the tool
+    missing."""
 
     def test_glow_ubuntu_go_install_path_is_exported(self, shell_env):
         # This dev machine has a real glow on PATH; it must not mask the
@@ -2243,14 +2238,13 @@ class TestGoInstallPathExport:
     def test_linters_formatters_macos_go_installed_tools_visible_afterward(
         self, shell_env
     ):
-        """The macOS branch has the same defect the Ubuntu one was fixed for.
+        """The macOS branch needs the same ~/go/bin export as the Ubuntu one.
 
         macOS gets staticcheck from brew, so only goimports arrives through
-        `go install` there -- and that branch never exported ~/go/bin. The
-        `command_exists goimports` guard right above the install therefore
-        stayed false forever, so every re-run of install.sh fetched and
-        rebuilt goimports from scratch, and nothing later in the run could
-        see it either.
+        `go install` there. Without the export, the `command_exists goimports`
+        guard right above the install would stay false forever, so every
+        re-run of install.sh would fetch and rebuild goimports from scratch,
+        and nothing later in the run could see it either.
         """
         env = _without_commands(shell_env.env, "goimports", "npm", "pip", "php")
         shell_env.stub("go", body=_GO_INSTALL_STUB)
@@ -2283,7 +2277,7 @@ class TestChangeShell:
     # one, so a PATH strip can't make `zsh` genuinely unresolvable without
     # also taking /bin -- and therefore bash itself -- off PATH. Shadow the
     # two lookup mechanisms `change_shell` actually uses instead: `which`
-    # (the old code's `$(which zsh)`) and `command_exists` (the new guard).
+    # (`$(which zsh)`) and `command_exists` (the guard).
     _ZSH_ABSENT = (
         'which() { [ "$1" = "zsh" ] && return 1 || command which "$@"; }; '
         'command_exists() { [ "$1" = "zsh" ] && return 1 '
@@ -2293,7 +2287,7 @@ class TestChangeShell:
     def test_missing_zsh_warns_and_never_invokes_chsh(self, shell_env):
         # Without a `command_exists zsh` guard, `$(which zsh)` resolves to
         # "" when zsh isn't installed, and `[ "$SHELL" != "" ]` is true, so
-        # the old code proceeded straight to `chsh -s ""`.
+        # the function would proceed straight to `chsh -s ""`.
         shell_env.stub("chsh")
         env = dict(shell_env.env)
         env["SHELL"] = "/bin/bash"
@@ -2312,10 +2306,10 @@ class TestChangeShell:
         """A second zsh earlier on PATH does not make the login shell "not zsh".
 
         macOS logs in with /bin/zsh, and install_brew_packages itself puts a
-        homebrew zsh first on PATH, so `$SHELL != $(which zsh)` held on every
-        run: chsh was attempted again (a password prompt), failed because
-        /opt/homebrew/bin/zsh is not in /etc/shells, and printed advice to
-        add it there -- for a user whose shell never needed changing.
+        homebrew zsh first on PATH, so a `$SHELL != $(which zsh)` comparison
+        holds on every run: chsh would be attempted again (a password prompt),
+        fail because /opt/homebrew/bin/zsh is not in /etc/shells, and print
+        advice to add it there -- for a user whose shell never needed changing.
         """
         shell_env.stub("zsh")  # which zsh -> the stub dir, not /bin/zsh
         env = {**shell_env.env, "SHELL": "/bin/zsh", "DRY_RUN": dry_run}
@@ -2358,7 +2352,7 @@ class TestHooksJsonTemplate:
         # bash-review is launched through the fail-closed launcher (wiring
         # pinned in test_config_wiring.py). The python3-not-bare-python rule
         # (bare `python` does not exist on stock Ubuntu or Homebrew installs,
-        # same rationale as the MCP registration) now lives inside the
+        # same rationale as the MCP registration) lives inside the
         # launcher, exercised by test_bash_review_launcher.py; the rendered
         # config itself must still never invoke bare `python`.
         assert "bash-review-launcher.sh'" in content
@@ -2368,12 +2362,12 @@ class TestHooksJsonTemplate:
     def test_sed_metacharacters_in_home_render_literally(
         self, shell_env, tmp_path, dry_run
     ):
-        """$HOME went into the sed REPLACEMENT unescaped.
+        """$HOME must be escaped in the sed REPLACEMENT.
 
-        `&` there means "the matched text", so /Users/a&b rendered as
+        `&` there means "the matched text", so /Users/a&b would render as
         /Users/a__HOME__b -- a path that does not exist, written without a
-        word of warning. `|` is the s||| delimiter, so /home/a|b made sed
-        fail ("bad flag in substitute command") and set -e took the whole
+        word of warning. `|` is the s||| delimiter, so /home/a|b would make sed
+        fail ("bad flag in substitute command") and set -e would take the whole
         installer down. `&` is a legal Windows user name character.
         """
         home = tmp_path / "we&ird|home"
@@ -2392,10 +2386,10 @@ class TestHooksJsonTemplate:
         assert json.loads(content)
 
     # $HOME lands in three nested languages at once: a shell single-quoted word
-    # ('__HOME__/...'), inside a JSON string, inside a sed replacement. Only the
-    # sed layer was escaped, so a `'` (a legal user name, e.g. o'brien on
-    # Windows/WSL) closed the shell quote in every hook command, and a `"` or
-    # `\` broke the JSON itself -- Codex would load no hooks at all.
+    # ('__HOME__/...'), inside a JSON string, inside a sed replacement. Each
+    # layer needs its own escape: an unescaped `'` (a legal user name, e.g.
+    # o'brien on Windows/WSL) closes the shell quote in every hook command, and
+    # a `"` or `\` breaks the JSON itself -- Codex would load no hooks at all.
     _AWKWARD_HOMES = [
         pytest.param("o'brien", id="single-quote"),
         pytest.param('say "hi"', id="double-quote"),
@@ -2483,10 +2477,9 @@ class TestHooksJsonTemplate:
 
 
 class TestHooksJsonDryRunDiff:
-    """The DRY_RUN branch used to unconditionally print "would render",
-    regardless of whether the rendered output actually differs from what is
-    already on disk -- unlike the real branch, which already does the
-    cmp -s check to skip a no-op re-render."""
+    """The DRY_RUN branch must not unconditionally print "would render": like
+    the real branch's `cmp -s` check that skips a no-op re-render, it reports
+    "already up to date" when the rendered output matches what is on disk."""
 
     @staticmethod
     def _hooks_json_lines(stdout: str) -> list:
@@ -2505,8 +2498,8 @@ class TestHooksJsonDryRunDiff:
 
         lines = self._hooks_json_lines(second.stdout)
         # Match the message itself, not "unchanged": pytest names tmp_path
-        # after the test, so every line carrying $HOME contained that word
-        # and this assertion could not fail.
+        # after the test, so every line carrying $HOME contains that word
+        # and the assertion could not fail.
         assert any("already up to date" in ln for ln in lines), second.stdout
         assert not any("would render" in ln for ln in lines), second.stdout
 
@@ -2625,13 +2618,13 @@ class TestDryRun:
         assert "Dry-run complete" in res.stdout
 
     def test_unstubbed_package_managers_hit_the_backstop(self, shell_env):
-        # Regression: a mid-development dry-run gate once let install.sh reach
-        # the REAL host `brew` with HOME inside the pytest tmp dir — Homebrew
-        # "upgraded" the font cask by relocating the user's real font files
-        # into the doomed tmp HOME. The shell_env backstop stubs must
-        # intercept system-mutating tools even when a test forgets to stub
-        # them. (No RED phase for this one: observing the failure means
-        # executing the real package manager and mutating the host.)
+        # The shell_env backstop stubs must intercept system-mutating tools
+        # even when a test forgets to stub them: otherwise a leaky dry-run gate
+        # could reach the REAL host `brew` with HOME inside the pytest tmp dir,
+        # and Homebrew would "upgrade" the font cask by relocating the user's
+        # real font files into the doomed tmp HOME. (This cannot be shown
+        # failing first: observing it means executing the real package manager
+        # and mutating the host.)
         res = run_sourced("OS=macos install_fonts", shell_env.env)
         assert res.returncode == 0, res.stderr
         assert any(c.startswith("brew install --cask") for c in shell_env.calls), (
@@ -2641,7 +2634,8 @@ class TestDryRun:
     def test_zsh_secrets_preview_reflects_an_existing_file(self, shell_env):
         # The preview must announce the decision it would make, not just the
         # write -- "would create" on a machine that already has the file is
-        # the same misreport the hooks.json preview once carried.
+        # the same misreport the hooks.json preview must avoid (see
+        # TestHooksJsonDryRunDiff).
         secrets = shell_env.home / ".zsh_secrets"
         secrets.write_text("export GEMINI_API_KEY=real-key\n", encoding="utf-8")
 
@@ -2653,9 +2647,9 @@ class TestDryRun:
         assert secrets.read_text(encoding="utf-8") == "export GEMINI_API_KEY=real-key\n"
 
     # The real run removes a config.toml symlink and then finds nothing there,
-    # so it seeds. The preview removed nothing, found the LIVE link still
-    # resolving, and reported "Keeping existing config.toml" -- the opposite
-    # plan, and without the [DRY-RUN] prefix.
+    # so it seeds. The preview removes nothing, so it must not take the LIVE
+    # link, still resolving, for an existing file and report "Keeping existing
+    # config.toml" -- the opposite plan, and without the [DRY-RUN] prefix.
     def test_codex_config_symlink_preview_matches_the_real_seed(
         self, shell_env, tmp_path
     ):
@@ -2694,10 +2688,11 @@ class TestDryRun:
         assert "would keep existing" in res.stdout
 
     # An old-layout ~/.oh-my-zsh/custom symlink is replaced by a fresh, empty
-    # real directory before the theme is linked. The preview replaced nothing,
-    # so link_entry looked THROUGH the old link: into the checkout it reported
-    # the theme as skipped ("resolves into the checkout"), and into a directory
-    # elsewhere it announced a backup -- while the real run simply linked it.
+    # real directory before the theme is linked. The preview replaces nothing,
+    # so link_entry would look THROUGH the old link: into the checkout it would
+    # report the theme as skipped ("resolves into the checkout"), and into a
+    # directory elsewhere it would announce a backup -- while the real run
+    # simply links it.
     # Driven against a COPY of the checkout: the `-ef` guard only fires for the
     # sourced script's own tree, and the real branch must never touch the repo.
     @pytest.mark.parametrize("link_into", ["checkout", "elsewhere"])
@@ -2771,7 +2766,7 @@ class TestDryRun:
     def test_non_numeric_dry_run_is_rejected(self, shell_env):
         """A typo'd DRY_RUN must abort, not silently do the real work.
 
-        All 22 guards spell `[ "$DRY_RUN" -eq 1 ]`, an INTEGER comparison.
+        Every guard spells `[ "$DRY_RUN" -eq 1 ]`, an INTEGER comparison.
         Given `DRY_RUN=true`, `[` fails with "integer expression expected"
         and, because the guard sits in a condition, `set -e` does not fire --
         every one of them falls through to the real branch. The header
@@ -2888,7 +2883,7 @@ exit 0
 
 class TestPipInstallUser:
     """pip_install_user survives PEP 668 and surfaces real failures instead
-    of the old `pip install --user ... 2>/dev/null` (which both fails on
+    of a bare `pip install --user ... 2>/dev/null` (which both fails on
     externally-managed Python and hides the reason)."""
 
     def test_plain_user_install_is_not_broken_for_managed_flag(self, shell_env):
@@ -2940,9 +2935,9 @@ class TestPipInstallUser:
         assert "Failed to install mcp" not in res.stdout
 
     def test_source_has_no_stderr_swallowing_user_install(self):
-        # Regression guard encoding the actual bug: no raw `pip install --user
-        # ... 2>/dev/null` may remain, both --user sites must route through the
-        # helper, and the PEP 668 remedy must be present.
+        # Source guard: no raw `pip install --user ... 2>/dev/null` may
+        # remain, both --user sites must route through the helper, and the
+        # PEP 668 remedy must be present.
         text = INSTALL.read_text(encoding="utf-8")
         assert not re.search(r"install --user.*2>/dev/null", text)
         assert "pip_install_user()" in text
@@ -2953,7 +2948,7 @@ class TestPipInstallUser:
 
 class TestTryInstall:
     """try_install runs a tool-install command quietly on success but surfaces
-    the installer's own error on failure, replacing the repeated
+    the installer's own error on failure, instead of the repeated
     `<installer> ... 2>/dev/null || print_warning "Failed to install X"`
     pattern across every package manager."""
 
@@ -2982,7 +2977,7 @@ class TestTryInstall:
 
     def test_tree_sitter_install_surfaces_npm_failure(self, shell_env):
         # A real caller (install_tree_sitter_cli) must report why npm failed
-        # instead of the old bare "Failed to install tree-sitter CLI".
+        # instead of a bare "Failed to install tree-sitter CLI".
         shell_env.stub("npm", body='echo "npm ERR! 403 Forbidden" >&2\nexit 1')
         res = run_sourced(
             'command_exists() { case "$1" in tree-sitter) return 1 ;; '
@@ -3011,8 +3006,8 @@ class TestTryInstall:
         for pat in swallowing_mutations:
             assert not re.search(pat, text), f"still swallowing stderr: {pat}"
         # Unified: no package-manager install pairs directly with a
-        # print_warning fallback anymore -- they all route through try_install,
-        # including the previously line-wrapped nodejs apt install.
+        # print_warning fallback -- they all route through try_install,
+        # including the line-wrapped nodejs apt install.
         assert not re.search(r"brew install[^\n]*\|\| print_warning", text)
         assert not re.search(r"apt-get install -y [^\n|]*\|\|", text)
         # Probes must still discard output -- they only care about exit status.
@@ -3030,14 +3025,15 @@ class TestLinkingThroughASymlinkedParent:
     """A parent that already resolves INTO the checkout must never be written through.
 
     `ln -s ~/dotfiles/.claude ~/.claude` is a common pre-existing layout.
-    `mkdir -p` no-ops on that symlink, so every dest resolved back onto its own
-    src: backup_if_real saw a real entry and MOVED the repo's own file into the
-    backup dir, and `ln -sf` left a self-referential link in the working tree --
-    while printing [SUCCESS]. _link_codex_config went further and wrote the
-    rendered hooks.json and a seeded config.toml straight into the checkout.
+    `mkdir -p` no-ops on that symlink, so every dest resolves back onto its own
+    src: backup_if_real would see a real entry and MOVE the repo's own file
+    into the backup dir, and `ln -sf` would leave a self-referential link in
+    the working tree -- while printing [SUCCESS]. _link_codex_config would go
+    further and write the rendered hooks.json and a seeded config.toml
+    straight into the checkout.
 
-    Driven against a COPY of the checkout: with the defect present, the test
-    would otherwise relocate the real repository's files.
+    Driven against a COPY of the checkout: a regression here would otherwise
+    relocate the real repository's files.
     """
 
     @staticmethod
@@ -3065,8 +3061,8 @@ class TestLinkingThroughASymlinkedParent:
         }
 
     # `.config` covers the git identity render: with ~/.config resolving into
-    # the checkout, os.gitconfig and the user's real name/email were written
-    # into the working tree as untracked files.
+    # the checkout, os.gitconfig and the user's real name/email would be
+    # written into the working tree as untracked files.
     @pytest.mark.parametrize("rel", [".claude", ".codex", ".gemini", ".config"])
     def test_a_config_dir_already_linked_into_the_checkout_is_left_alone(
         self, shell_env, tmp_path, rel
@@ -3090,11 +3086,11 @@ class TestLinkingThroughASymlinkedParent:
         )
         assert "resolves into the checkout" in res.stdout + res.stderr
 
-    # The -ef guard used to live only in the real branch of
-    # _render_git_local_config, so the preview promised to render
-    # os.gitconfig / user.gitconfig that the real run then skipped. Asserted
-    # on the git-specific wording: nvim's link_entry also prints "resolves
-    # into the checkout" here, which would pass without the fix.
+    # The -ef guard must cover the dry-run branch of _render_git_local_config
+    # too, or the preview promises to render os.gitconfig / user.gitconfig that
+    # the real run then skips. Asserted on the git-specific wording: nvim's
+    # link_entry also prints "resolves into the checkout" here, which would
+    # pass without the guard.
     def test_dry_run_previews_the_same_git_config_skip(self, shell_env, tmp_path):
         checkout = self._scratch_checkout(tmp_path)
         (shell_env.home / ".config").symlink_to(checkout / ".config")
@@ -3116,12 +3112,12 @@ class TestLinkingThroughASymlinkedParent:
         ), res.stdout
         assert not [ln for ln in lines if ".config/git/" in ln], res.stdout
 
-    # The guards compared `pwd -P` strings. bash resolves symlinks textually
-    # and never canonicalises case, so on a case-insensitive filesystem (the
-    # macOS default) a link spelled `.../CHECKOUT/.claude` and an installer run
-    # from `.../checkout` produced two different strings for one directory, and
-    # every guard above was bypassed. Only meaningful where the FS folds case;
-    # a case-sensitive FS cannot express the alias at all.
+    # The guards must compare identity, not `pwd -P` strings. bash resolves
+    # symlinks textually and never canonicalises case, so on a case-insensitive
+    # filesystem (the macOS default) a link spelled `.../CHECKOUT/.claude` and
+    # an installer run from `.../checkout` produce two different strings for
+    # one directory, bypassing every guard above. Only meaningful where the FS
+    # folds case; a case-sensitive FS cannot express the alias at all.
     @pytest.mark.parametrize("rel", [".claude", ".codex", ".gemini", ".config"])
     def test_a_case_differing_alias_of_the_checkout_is_still_detected(
         self, shell_env, tmp_path, rel
@@ -3150,16 +3146,16 @@ class TestDanglingParentSymlinks:
     """A stale symlink where a config directory belongs must be replaced, not fatal.
 
     `[ "$DRY_RUN" -eq 1 ] || mkdir -p "$HOME/.claude"` is an OR-list, so the
-    mkdir IS the command `set -e` watches: on a dangling ~/.claude it failed
-    with a bare "No such file or directory" and the installer died mid-run,
-    before packages, MCP registration or chsh -- with no [ERROR] line.
+    mkdir IS the command `set -e` watches: on a dangling ~/.claude it would
+    fail with a bare "No such file or directory" and the installer would die
+    mid-run, before packages, MCP registration or chsh -- with no [ERROR] line.
     backup_if_real already treats a symlink, even a broken one, as ours to
     replace; the directory sites have to agree.
     """
 
-    # `.config/git` is the git config render's own directory: it sat behind a
-    # bare `mkdir -p` right after the ensure_dir for its parent, so a dangling
-    # ~/.config/git killed the run exactly the way the sites above used to.
+    # `.config/git` is the git config render's own directory: behind a bare
+    # `mkdir -p` right after the ensure_dir for its parent, a dangling
+    # ~/.config/git would kill the run exactly the way the sites above would.
     @pytest.mark.parametrize(
         "rel",
         [
@@ -3202,7 +3198,7 @@ class TestOsGitconfigWrite:
     It is rendered by `{ ... } >"$HOME/.config/git/os.gitconfig"` -- a
     redirect on a COMPOUND command -- and macOS /bin/bash 3.2 does not fire
     errexit when that redirect fails: the group is skipped and the next line
-    printed "[SUCCESS] Rendered os.gitconfig" over a file that was never
+    would print "[SUCCESS] Rendered os.gitconfig" over a file that was never
     written, leaving git with no credential helper. Both failures below are
     built to behave the same on bash 3.2 and 5, so the tests do not depend on
     which one runs them.
@@ -3213,8 +3209,8 @@ class TestOsGitconfigWrite:
     # replace (the backup_if_real policy), unlike the dangling ~/.zsh_secrets
     # and user.gitconfig redirects, which hold the user's own keys and
     # identity and are left alone. Replacing also means never writing THROUGH
-    # the link: with the target's parent present, the redirect used to create
-    # a file at wherever the stale link happened to point.
+    # the link: with the target's parent present, the redirect would otherwise
+    # create a file at wherever the stale link points.
     @pytest.mark.parametrize("parent_exists", [False, True])
     def test_a_dangling_link_is_replaced_with_the_generated_file(
         self, shell_env, tmp_path, parent_exists
@@ -3278,10 +3274,10 @@ class TestBackupsAreAnnounced:
     ):
         """create_symlinks reports the backup dir only for ITS OWN backups.
 
-        With nothing else to back up it rmdir'd the empty dir and said nothing;
-        link_oh_my_zsh_theme (called later from main) then re-created it for
-        the user's hand-edited theme and printed only "Backing up existing ...",
-        so the one file that was moved was moved to a location never shown.
+        With nothing else to back up it rmdirs the empty dir and says nothing;
+        link_oh_my_zsh_theme (called later from main) then re-creates it for
+        the user's hand-edited theme, and must still announce where the moved
+        file went rather than printing only "Backing up existing ...".
         """
         home = shell_env.home
         themes = home / ".oh-my-zsh/custom/themes"
@@ -3311,10 +3307,10 @@ class TestGitIdentityRendering:
     ):
         """The rendered [user] block must read back exactly as it was given.
 
-        A raw printf wrote the values unquoted: `#` and `;` start a comment
-        (so `Taro #1` became `Taro`), a `"` was swallowed, and a trailing
-        backslash CONTINUED the line -- the name absorbed the email line and
-        user.email was left unset, so git refused to commit.
+        A raw printf would write the values unquoted: `#` and `;` start a
+        comment (so `Taro #1` becomes `Taro`), a `"` is swallowed, and a
+        trailing backslash CONTINUES the line -- the name absorbs the email
+        line and user.email is left unset, so git refuses to commit.
         """
         prior = tmp_path / "prior-gitconfig"
         for key, value in (("user.name", name), ("user.email", "t@example.com")):
@@ -3352,14 +3348,12 @@ def _git_config_all(path, key):
 class TestGithubCredentialHelper:
     """`gh auth git-credential` may only be wired where gh is installable.
 
-    The tracked .gitconfig hard-coded it for github.com and gist.github.com,
-    but install_gh only has an install path for macos and ubuntu. detect_os
-    also produces OS=linux (non-Debian) and OS=windows, and install_gh returns
-    quietly there -- so git called a `gh` that was never installed on every
-    HTTPS operation. That is the same failure the file's own comment says was
-    fixed for osxkeychain by moving the OS-dependent helper out of the tracked
-    file and into the rendered ~/.config/git/os.gitconfig; the gh block was
-    left behind.
+    The tracked .gitconfig must not hard-code it for github.com and
+    gist.github.com: install_gh only has an install path for macos and ubuntu,
+    while detect_os also produces OS=linux (non-Debian) and OS=windows, where
+    install_gh returns quietly -- so git would call a `gh` that was never
+    installed on every HTTPS operation. The OS-dependent helper therefore
+    lives in the rendered ~/.config/git/os.gitconfig, as osxkeychain does.
     """
 
     GH_HELPER = "!gh auth git-credential"
@@ -3404,12 +3398,10 @@ class TestGithubCredentialHelper:
         #
         # Shadowing command_exists rather than stripping PATH, for the reason
         # _without_commands documents: it refuses to remove a protected system
-        # directory and stops there. gh sits in /opt/homebrew/bin on this
-        # author's Mac (strippable, so the test passed locally) and in
-        # /usr/bin on the GitHub ubuntu runner (protected, so gh stayed
-        # visible and CI failed on a green local run). The shadow makes the
-        # two hosts run the same condition -- which is the point, since the
-        # host difference is what let this through review.
+        # directory and stops there. gh sits in /opt/homebrew/bin on the
+        # author's Mac (strippable) but in /usr/bin on the GitHub ubuntu runner
+        # (protected, so gh would stay visible and CI would fail on a green
+        # local run). The shadow makes the two hosts run the same condition.
         res = run_sourced(
             'command_exists() { case "$1" in gh) return 1 ;; '
             '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
@@ -3432,10 +3424,8 @@ class TestGithubCredentialHelper:
         Arch and Fedora ship gh in their own repositories, and Git Bash users
         get it from winget/scoop; detect_os calls both `linux`/`windows`.
         Gating the credential helper purely on the OS name would take the
-        helper away from those users -- who had it unconditionally while the
-        block lived in the tracked .gitconfig -- and drop them back to the
-        generic cache helper, re-prompting on every HTTPS operation. That is
-        a regression introduced by the fix, not by the original bug.
+        helper away from those users and drop them back to the generic cache
+        helper, re-prompting on every HTTPS operation.
         """
         shell_env.stub("gh")
         res = run_sourced(f"OS={os_name} create_symlinks", shell_env.env)
@@ -3448,11 +3438,11 @@ class TestGithubCredentialHelper:
     def test_generic_helper_still_follows_the_github_block(self, shell_env):
         """Order is behaviour: the reset must not swallow the generic helper.
 
-        In the original .gitconfig the github block came first and the
-        generic helper arrived later via [include], so git's helper list for
-        a github URL was [gh, <generic>] -- gh first, the OS keychain/cache
-        behind it. Emitting the github block after the generic one instead
-        would put the `helper =` reset after it and leave [gh] alone.
+        The github block comes first and the generic helper arrives later via
+        [include], so git's helper list for a github URL is [gh, <generic>] --
+        gh first, the OS keychain/cache behind it. Emitting the github block
+        after the generic one instead would put the `helper =` reset after it
+        and leave [gh] alone.
         """
         res = run_sourced("OS=macos create_symlinks", shell_env.env)
         assert res.returncode == 0, res.stderr

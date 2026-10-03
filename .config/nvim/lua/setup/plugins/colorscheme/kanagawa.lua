@@ -8,7 +8,6 @@ return {
     require("kanagawa").setup({
       colors = {
         theme = {
-          -- change specific usages for a certain theme, or for all of them
           wave = {
             ui = {
               float = {

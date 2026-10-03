@@ -60,13 +60,11 @@ end
 -- of the pipe: gemini reaches Google over HTTPS through a local helper rather
 -- than through the `gemini` CLI. They are kept apart because the credential
 -- gate in M.run keys off `kind`, and folding gemini in with the LOCAL "ollama"
--- transport is exactly the mistake that would send buffers to Google unscanned.
+-- transport would send buffers to Google unscanned.
 local TOOLS = {
   claude  = { kind = "cli", default_model = "sonnet" },
   codex   = { kind = "cli", default_model = nil },
-  -- No default_model: the helper resolves $GEMINI_MODEL when the child runs.
-  -- Pinning one here would freeze it at `require` time and, worse, put the two
-  -- editors on different answers -- the VimScript port has no such table.
+  -- No default_model: see gemini_model.
   gemini  = { kind = "api", default_model = nil },
   copilot = { kind = "cli", default_model = "gpt-5-mini" },
   gemma   = { kind = "ollama", default_model = "gemma4:e4b" },
@@ -96,11 +94,11 @@ local function scan_payload(text)
   -- scanner has to degrade to "unavailable" (fail open with a warning), never
   -- to a python3 error that the caller would read as a failed scan.
   local scanner = repo_script("secret_scan.py")
-  -- Fail OPEN when python3 is absent (e.g. a GUI-launched nvim that did not
-  -- inherit the shell's PATH). executable() must be checked FIRST: vim.fn.system
-  -- with a LIST arg raises E475 (not a v:shell_error) when the binary is
-  -- missing, so a bare call would throw past this guard instead of degrading to
-  -- "unavailable". pcall wraps the call as a further backstop.
+  -- Fail OPEN (see the banner above) when python3 is absent. executable() must
+  -- be checked FIRST: vim.fn.system with a LIST arg raises E475 (not a
+  -- v:shell_error) when the binary is missing, so a bare call would throw past
+  -- this guard instead of degrading to "unavailable". pcall is a further
+  -- backstop.
   if vim.fn.filereadable(scanner) ~= 1 or vim.fn.executable("python3") ~= 1 then
     return "unavailable"
   end
@@ -184,11 +182,10 @@ local MAX_STDERR_CHARS = 500
 -- Without it the audit fires on a `<leader>cm` run and blocks with "remove
 -- console.log / debugger": the agent takes that as an instruction, EDITS THE
 -- USER'S WORKING TREE, and returns "removed the debug statement" as the commit
--- message. Both halves are wrong -- the generated text is destroyed and changes
--- nobody asked for land in the repo. The audit belongs to interactive sessions,
--- where the agent wrote the code it is being asked to clean up; here it is
--- auditing the user's own uncommitted work, which is exactly what a commit
--- message is FOR.
+-- message -- the generated text is lost and changes nobody asked for land in the
+-- repo. The audit belongs to interactive sessions, where the agent wrote the
+-- code it is asked to clean up; here it would audit the user's own uncommitted
+-- work, which is exactly what a commit message is FOR.
 --
 -- Prefixed onto the command string rather than passed through jobstart's `env`
 -- so the whole contract lives in one testable string, and so .vim/rc/70-ai.vim
@@ -230,12 +227,9 @@ local function build_cli_cmd(tool, model, instruction, tmpfile, input, skip_git_
     -- is read by the child out of its own environment -- never passed here,
     -- which is what keeps it off argv (and out of `ps aux`) and off disk.
     --
-    -- `--model` appears only when a caller pinned one. Left off, the helper
-    -- resolves $GEMINI_MODEL at request time, so the command for the one
-    -- feature both editors share -- replace a selection, which pins nothing --
-    -- comes out byte-identical to the VimScript port's. Passing a frozen
-    -- default here instead would put the two editors on different answers the
-    -- moment that variable changed.
+    -- `--model` appears only when a caller pinned one. Left off (see
+    -- gemini_model), the command for replace-a-selection, the one feature both
+    -- editors share, is byte-identical to the VimScript port's.
     local with_model = model and (" --model " .. vim.fn.shellescape(model)) or ""
     return string.format("cat %s | python3 %s%s --system %s",
       esc_file, vim.fn.shellescape(repo_script("gemini_api.py")),
@@ -283,15 +277,14 @@ end
 --- The exit code alone is a poor message. It does not say WHICH tool is
 --- missing or misconfigured -- a tool that is not installed exits 127 and puts
 --- "command not found" on stderr, which is the whole diagnosis -- and for a
---- run that exited 0 with no output it produced "exit code 0", stating a
---- success as the reason for a failure.
+--- run that exited 0 with no output it would state a success as the reason for
+--- a failure.
 ---
 --- @param exit_code integer
 --- @param stderr string[]|nil captured stderr lines
 --- @return string
 local function cli_failure_reason(exit_code, stderr)
   local detail = vim.trim(table.concat(stderr or {}, "\n"))
-  -- Long tracebacks push the useful first line out of view in the report.
   -- Measured and cut in CHARACTERS, not bytes: CLIs localise their errors, and
   -- `:sub` at a byte offset lands mid-character for anything outside ASCII,
   -- emitting invalid UTF-8 into the buffer.
@@ -310,11 +303,10 @@ end
 
 --- Why a failed Ollama request failed.
 ---
---- `err or ("exit code %d"):format(code)` looked right and was unreachable in the
---- branch that mattered: parse_ollama returns a non-nil error for ANY unusable body,
---- and an unreachable server yields an empty body, so the parse error always won and
---- "could not connect" surfaced as "invalid JSON response". Transport first, parse
---- error only once the transport actually succeeded.
+--- Transport first, parse error only once the transport actually succeeded:
+--- parse_ollama returns a non-nil error for ANY unusable body, and an
+--- unreachable server yields an empty body, so checking the parse error first
+--- would report "could not connect" as "invalid JSON response".
 ---
 --- Delegates to cli_failure_reason so both backends phrase a failure identically
 --- (stderr folded in, exit 0 never stated as the cause, truncation by characters).
@@ -359,9 +351,8 @@ local function run_cli(tool, model, instruction, input, skip_git_check, done)
         result = prompt.clean_cli_lines(data)
       end
     end,
-    -- Without this the tool's own explanation is discarded and the report can
-    -- only quote a number. run_ollama has parse_ollama to fall back on; a CLI
-    -- has nothing else to say why it failed.
+    -- A CLI has nothing but stderr to say why it failed; without it the report
+    -- can only quote a number.
     on_stderr = function(_, data)
       if data then
         stderr = data
@@ -486,7 +477,8 @@ end
 
 --- Run a request with ordered fallbacks: try each spec in turn, stopping at the
 --- first success. On success `done` fires with that spec's tool; if every spec
---- fails it fires with the last error and the last tool tried.
+--- fails it fires with every attempt's reason ("a: ... | b: ...", or the bare
+--- error when only one attempt ran) and the last tool tried.
 ---
 --- Returns a mutable handle `{ job = <id>, cancelled = <bool> }` instead of a
 --- plain job id: `.job` is updated to whichever attempt is currently in flight,
@@ -497,8 +489,7 @@ end
 ---
 --- `.cancelled` is the other half of that contract and belongs to the canceller:
 --- it says "this request was called off", which jobstop alone cannot express.
---- The branch below is where it is read; see the comment there for what went
---- wrong without it.
+--- The branch below is where it is read; see the comment there for why.
 --- @param specs table[] list of run specs (see M.run), tried in order
 --- @param done fun(ok: boolean, lines: string[], err: string|nil, tool: string|nil)
 --- @return table|nil handle { job: integer|nil, cancelled: boolean }
@@ -532,22 +523,21 @@ function M.run_with_fallback(specs, done)
   -- cancel_job). Defaulting it the other way would turn every ordinary failure
   -- into a cancellation and kill the fallback this function exists for.
   local handle = { job = nil, cancelled = false }
-  -- Every attempt's reason is kept, not just the last one. Reporting only the
-  -- final failure was survivable while gemini was a CLI that usually worked;
-  -- it stopped being so once gemini can fail for a reason of its own that has
-  -- nothing to do with the request. With GEMINI_API_KEY unset -- the normal
-  -- state of a GUI-launched editor -- EVERY claude outage came out as
-  -- "exit code 2: GEMINI_API_KEY is not set", discarding what the tool the user
-  -- actually asked for had said and pointing the reader at the wrong problem.
+  -- Every attempt's reason is kept, not just the last one: a later tool can
+  -- fail for a reason of its own that has nothing to do with the request. With
+  -- GEMINI_API_KEY unset -- the normal state of a GUI-launched editor -- EVERY
+  -- claude outage would otherwise read "exit code 2: GEMINI_API_KEY is not
+  -- set", discarding what the tool the user actually asked for said and
+  -- pointing the reader at the wrong problem.
   local failures = {}
   local function attempt(i)
     local spec = specs[i]
     -- `handle.job` is claimed only by the attempt that is still current. A
     -- spec that fails SYNCHRONOUSLY (unknown tool, oversized payload, a
     -- refused jobstart) runs the callback below -- which advances to
-    -- attempt(i + 1) and stores that job -- before M.run has even returned,
-    -- so an unconditional `handle.job = M.run(...)` then overwrote the live
-    -- id with nil and ui.lua's cancel_job had nothing to stop.
+    -- attempt(i + 1) and stores that job -- before M.run has even returned, and
+    -- an unconditional `handle.job = M.run(...)` would overwrite the live id
+    -- with nil, leaving ui.lua's cancel_job nothing to stop.
     handle.attempt = i
     local job = M.run(spec, function(ok, lines, err)
       if ok then
@@ -560,12 +550,11 @@ function M.run_with_fallback(specs, done)
       -- i.e. the user closing the window), and the stopped job's on_exit lands
       -- right here reporting SIGTERM as "exit code 143" -- byte for byte what a
       -- tool killed for any other reason reports, so the exit code decides
-      -- nothing. Read as a failure, it advanced the chain: measured as
-      -- `done ok=false tool=gemini err=claude: exit code 143 | gemini: exit
-      -- code 1`, i.e. the NEXT tool's subprocess started after the window was
-      -- already gone. For gemini that subprocess is scripts/gemini_api.py -- a
-      -- live request to Google, fired by a user action that meant "stop", with
-      -- no window left to show the answer and nothing tracking it to stop.
+      -- nothing. Advancing the chain on it would start the NEXT tool's
+      -- subprocess after the window is already gone. For gemini that is
+      -- scripts/gemini_api.py -- a live request to Google, fired by a user
+      -- action that meant "stop", with no window left to show the answer and
+      -- nothing tracking it to stop.
       --
       -- Only the ADVANCE is skipped; the failure is still reported through
       -- `done` below. A caller is never left waiting for a callback that never
@@ -600,14 +589,14 @@ function M.run_with_fallback(specs, done)
   return handle
 end
 
--- Test seam. These two are private -- nothing outside tests/ may read this --
--- but they carry the invariants worth pinning: the pre-send credential gate and
--- the shape of the argv handed to each tool. Reaching them through
+-- Test seam. These are private -- nothing outside tests/ may read this -- but
+-- they carry the invariants worth pinning: the pre-send credential gate and the
+-- shape of the argv handed to each tool. Reaching them through
 -- debug.getupvalue instead would couple the tests to this file's call graph,
 -- and a source-level splice would load the module differently from production;
--- a plain table costs four lines and gets checked for free, because a rename of
--- either local turns the reference below into an undefined global that the
--- gating luacheck job reports (W113).
+-- a plain table is checked for free, because a rename of any of these locals
+-- turns the reference below into an undefined global that the gating luacheck
+-- job reports (W113).
 --
 -- MAX_CMD_BYTES is deliberately NOT exposed: the limit is observable in the
 -- refusal message run_cli produces, and a test that hardcodes 256 KB is

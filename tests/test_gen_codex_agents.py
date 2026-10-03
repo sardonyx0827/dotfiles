@@ -1,9 +1,8 @@
 """Tests for the .codex/agents generator.
 
-The headline test is test_committed_agents_are_current: it is the drift guard
-that the old test_agent_parity could not be. Comparing only the name set and
-the one-line description let commit 7009f67 neutralize the .md copies while
-leaving a private project's vocabulary in the .toml twins. Regenerating and
+The headline test is test_committed_agents_are_current: it is the drift guard.
+Comparing only the name set and the one-line description would let an edit to
+an .md body leave stale text behind in its .toml twin. Regenerating and
 comparing bytes makes that class of drift impossible rather than merely
 visible.
 
@@ -78,9 +77,8 @@ def test_generated_bodies_round_trip_byte_exact():
 def test_hand_maintained_agents_are_not_generated(tmp_path, monkeypatch):
     """The allowlisted exception must survive a real generate run untouched.
 
-    The previous version of this test only called `run(check=True)`, which
-    never writes anything -- it could not have failed even if HAND_MAINTAINED
-    were ignored during an actual generate. This copies the real
+    `run(check=True)` never writes anything, so it could not fail even if
+    HAND_MAINTAINED were ignored during an actual generate. This copies the real
     .codex/agents tree so `run(check=False)` has real files to (not) touch,
     mutates the hand-maintained twin, and confirms an ordinary sibling is
     regenerated while the mutation survives.
@@ -157,8 +155,8 @@ def test_generated_toml_carries_no_tools_key():
 def test_bodies_with_backslashes_survive():
     """A basic (\"\"\") string would reject \\*; a literal string keeps it.
 
-    The old hand-written refactor-cleaner.toml used \"\"\" and had lost the
-    backslash from `api/products/\\*` -- silent corruption this test forbids.
+    Silently losing the backslash from `api/products/\\*` is the corruption
+    this test forbids.
     """
     rendered = render_toml("t", "d", "- see api/products/\\*, api/x/[slug]/\n")
     assert tomllib.loads(rendered)["developer_instructions"] == (
@@ -249,9 +247,10 @@ def test_check_reports_a_missing_or_corrupt_hand_maintained_twin(
 ):
     """The generator cannot rebuild a hand-maintained twin, so it must check it.
 
-    Skipping the stem outright let `--check` print "current" with the twin
-    deleted or replaced by garbage: `expected` still carried the stem, so the
-    orphan sweep never saw it either, and CI stayed green on a broken agent.
+    Skipping the stem outright would let `--check` print "current" with the
+    twin deleted or replaced by garbage: `expected` still carries the stem, so
+    the orphan sweep never sees it either, and CI would stay green on a broken
+    agent.
     """
     import gen_codex_agents
 

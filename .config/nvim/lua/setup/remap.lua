@@ -73,7 +73,7 @@ vim.keymap.set('n', '<leader>ww', function()
   vim.notify('wrap ' .. (vim.wo.wrap and 'on' or 'off'))
 end, { desc = 'Toggle word wrap' })
 
--- close all buffers (formerly after/plugin/auto-session.lua)
+-- close all buffers
 local function close_all_buffers()
   vim.cmd("bufdo bd")
 end
@@ -84,10 +84,10 @@ vim.keymap.set("n", "<leader>qa", function()
   vim.cmd("q!")
 end, { noremap = true, silent = true, desc = "Close All Buffers and Exit" })
 
--- native buffer list (formerly after/plugin/telescope.lua <leader>la)
+-- native buffer list
 vim.keymap.set("n", "<leader>la", ":ls!<CR>", { desc = "List Buffers" })
 
--- jump to next diagnostic (core diagnostics; formerly after/plugin/trouble.lua <leader>xn)
+-- jump to next diagnostic (core diagnostics)
 vim.keymap.set("n", "<leader>xn", function()
   vim.diagnostic.jump({ count = 1, on_jump = vim.diagnostic.open_float })
 end, { desc = "Jump to Next Error/Warn" })

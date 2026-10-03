@@ -1,34 +1,30 @@
 """Tab-lifecycle tests for `.config/nvim/lua/setup/functions/undotree_vimdiff.lua`.
 
 `M.open_vimdiff()` opens a scratch-vs-current diff in its OWN tab and registers
-cleanup so the diff can be unwound again. Two independent defects made that
-cleanup destroy tabs it was never asked to touch:
+cleanup so the diff can be unwound again. That cleanup must not destroy tabs it
+was never asked to touch:
 
-- `close_diff_tab` ran a bare `:tabclose`, which closes whatever tab is CURRENT.
-  Its only guard was that `diff_tab` is still *valid* -- never that it is the
-  tab being closed.
-- the `TabClosed` autocmd carried no `pattern`, so it fired on EVERY tab close
-  in the session.
+- `close_diff_tab` must close its own tab by number. A bare `:tabclose` closes
+  whatever tab is CURRENT, and `diff_tab` still being *valid* does not make it
+  the tab being closed.
+- the `TabClosed` autocmd fires on EVERY tab close in the session and cannot be
+  narrowed with a `pattern` (its <amatch> is a shifting tab number), so its
+  callback must identify the diff tab by handle and ignore any other close.
+  Otherwise closing an unrelated tab runs the cleanup, which then closes the
+  current tab. Buffer contents survive (nothing is unsaved-lost), but the
+  window layout the user built is gone and there is no undo for that.
 
-Together: closing an unrelated tab ran the callback, which then closed the
-current tab. With the user sitting in their own working tab, that tab is what
-disappeared. Buffer contents survive (nothing is unsaved-lost), but the window
-layout the user built is gone and there is no undo for that.
+Two diffs open at once must not disarm each other (single-diff scenarios cannot
+see this, so the two-diff cases get their own classes):
 
-A third defect outlived that fix and is covered here too: the cleanup augroup
-was a fixed literal created with `clear = true`, so opening a SECOND undo-diff
-deleted the first tab's BufWipeout and TabClosed handlers. The first diff was
-then unarmed -- wiping its scratch buffer closed that buffer's window and left
-the tab standing, showing the real buffer still in diff mode, with nothing left
-to close it. Every scenario predating this called open_vimdiff exactly once,
-which is why a green suite never noticed.
-
-A fourth is the same defect class as that third one -- per-invocation state
-colliding on a shared handle -- reached through the keymap instead: the
-`<C-w>q` mapping on the user's real buffer is shared across invocations, so a
-second undo-diff can silently replace the first's callback.
-
-See the `live_diffs` comment in undotree_vimdiff.lua for the full mechanism.
+- the cleanup augroup is per-invocation. A fixed name created with `clear = true`
+  lets a SECOND undo-diff delete the first tab's BufWipeout and TabClosed
+  handlers, so wiping the first scratch buffer closes that buffer's window and
+  leaves the tab standing in diff mode with nothing left to close it.
+- the `<C-w>q` mapping on the user's real buffer is shared across invocations,
+  so it must dispatch by the current tab rather than close over one
+  invocation's diff. See the `live_diffs` comment in undotree_vimdiff.lua for
+  the full mechanism.
 
 These run the module for real under `nvim -l` (no init.lua, so no plugin
 manager) via tests/lua/undotree_tabs.lua, because the behaviour under test is a
@@ -67,8 +63,9 @@ def scenario(name: str) -> dict:
 class TestUnrelatedTabsAreLeftAlone:
     def test_closing_an_unrelated_tab_keeps_the_users_tab(self):
         # Tabs {user, diff, unrelated}; user is in their own tab and closes the
-        # unrelated one. Before the fix this left {diff} -- the user's working
-        # tab was the collateral, because `:tabclose` closed the CURRENT tab.
+        # unrelated one. A bare `:tabclose` in the cleanup would leave {diff} --
+        # the user's working tab as the collateral, because it closes the
+        # CURRENT tab.
         res = scenario("close_unrelated_from_user_tab")
         assert res["user_tab_valid"], (
             "closing an unrelated tab destroyed the user's working tab"
@@ -81,8 +78,8 @@ class TestUnrelatedTabsAreLeftAlone:
         )
 
     def test_closing_an_unrelated_tab_keeps_the_diff_tab(self):
-        # Same layout, closed from inside the unrelated tab. Before the fix
-        # nvim landed on the diff tab and the callback closed that instead.
+        # Same layout, closed from inside the unrelated tab. nvim lands on the
+        # diff tab afterwards, so a callback that fired anyway would close that.
         res = scenario("close_unrelated_from_that_tab")
         assert res["user_tab_valid"]
         assert res["diff_tab_valid"], (
@@ -91,8 +88,8 @@ class TestUnrelatedTabsAreLeftAlone:
         assert res["tab_count"] == 2
 
     def test_target_buffer_is_never_lost(self):
-        # The bug costs a window layout, not file contents. Pin that, so a
-        # future change cannot quietly turn it into data loss.
+        # A misdirected close costs a window layout, not file contents. Pin
+        # that, so a future change cannot quietly turn it into data loss.
         for name in (
             "close_unrelated_from_user_tab",
             "close_unrelated_from_that_tab",
@@ -116,11 +113,10 @@ class TestClosingTheDiffTabStillCleansUp:
             "target buffer stayed in diff mode after the diff tab closed"
         )
         # This assertion is the point of the scenario, not decoration. The
-        # scratch buffer is bufhidden=wipe, so closing the tab wipes it, which
-        # fires BufWipeout, which re-entered `:tabclose` inside the close that
-        # was still unwinding -- surfacing E937 to the user on the exit path the
-        # code comment names. Carrying the same assertion its two siblings carry
-        # is what keeps that from coming back.
+        # scratch buffer is bufhidden=wipe, so closing the tab wipes it and
+        # fires BufWipeout; cleanup must not fight that wipe (see the E937
+        # comment in cleanup_diff) or E937 reaches the user on this exit path.
+        # The same assertion in its two siblings keeps that from coming back.
         assert not res["close_err"], f"closing the diff tab raised: {res['close_err']}"
 
     def test_wiping_the_scratch_buffer_closes_the_diff_tab(self):
@@ -142,10 +138,10 @@ class TestClosingTheDiffTabStillCleansUp:
     def test_wiping_the_scratch_buffer_from_the_users_tab_closes_the_right_tab(self):
         # The only scenario where the tab that needs closing is NOT the current
         # one, which makes it the only one that can tell `tabclose <n>` apart
-        # from a bare `tabclose` -- the exact distinction the headline fix turns
-        # on. Every other scenario passes either way, so without this the
-        # original bug (the user's working tab closing instead) could come back
-        # unnoticed. `:bwipeout <n>` / `:%bwipeout` from elsewhere is the normal
+        # from a bare `tabclose` -- the distinction the whole cleanup turns on.
+        # Every other scenario passes either way, so without this a regression
+        # to a bare `tabclose` (the user's working tab closing instead) could
+        # go unnoticed. `:bwipeout <n>` / `:%bwipeout` from elsewhere is the normal
         # way a buffer gets wiped; nothing requires looking at it.
         res = scenario("wipe_scratch_from_user_tab")
         assert not res["close_err"], f"the wipe raised: {res['close_err']}"
@@ -158,20 +154,20 @@ class TestClosingTheDiffTabStillCleansUp:
 
 class TestASecondDiffDoesNotDisarmTheFirst:
     def test_the_first_diffs_cleanup_autocmds_survive_a_second_diff(self):
-        # The defect itself, measured directly. Both handlers of call 1 have to
-        # still be registered once call 2 has opened its own diff -- by autocmd
-        # id, since the old fixed group name made the two calls' entries
+        # The property itself, measured directly. Both handlers of call 1 have
+        # to still be registered once call 2 has opened its own diff -- by
+        # autocmd id, since a fixed group name would make the two calls' entries
         # indistinguishable by name (see cleanup_autocmd_ids in the harness).
         for name in (
             "close_first_diff_after_second_open",
             "wipe_first_scratch_after_second_open",
         ):
             res = scenario(name)
-            # Shape check on the HARNESS, not on the fix: this reads 2 with the
-            # bug present or absent, because the defect deletes call 1's entries
-            # only once call 2 has registered its own two under the same name.
-            # It is here so a harness that silently stopped seeing any cleanup
-            # autocmds cannot make the real assertion below vacuously true.
+            # Shape check on the HARNESS, not on the augroup naming: this reads 2
+            # either way, because a shared name deletes call 1's entries only
+            # once call 2 has registered its own two under it. It is here so a
+            # harness that silently stopped seeing any cleanup autocmds cannot
+            # make the real assertion below vacuously true.
             assert res["first_call_autocmd_count"] == 2, (
                 f"{name}: the first open registered "
                 f"{res['first_call_autocmd_count']} cleanup autocmds, expected 2"
@@ -190,8 +186,8 @@ class TestASecondDiffDoesNotDisarmTheFirst:
         #
         # This is the load-bearing assertion of the pair. Its sibling below
         # turns on the diffoff sweep, which reaches windows in OTHER tabs;
-        # `diff_tab_valid` does not, so it keeps pinning the augroup fix even if
-        # that sweep is ever narrowed.
+        # `diff_tab_valid` does not, so it keeps pinning the per-invocation
+        # augroup even if that sweep is ever narrowed.
         res = scenario("wipe_first_scratch_after_second_open")
         assert not res["close_err"], f"the wipe raised: {res['close_err']}"
         assert not res["diff_tab_valid"], (
@@ -207,20 +203,16 @@ class TestASecondDiffDoesNotDisarmTheFirst:
         # The documented way out of the first diff, taken while the second is
         # open. Unwinding one diff must stop at its own tab.
         #
-        # This assertion used to read `not any(target_still_in_diff_mode)`, from
-        # back when one diff at a time was the only case that worked. Closing
-        # the first tab destroys BOTH of its windows, so the only window that
-        # list could still be reporting on is the SECOND diff's -- meaning the
-        # old form required the first diff's cleanup to reach across tabs and
-        # switch off a diff that is still live, leaving that tab with its
-        # scratch side diffthis and its target side not: no highlighting on
-        # either. The sweep is now scoped to the closing diff's own tab.
+        # The assertion is `second_diff_target_in_diff_mode`, not "no window is
+        # in diff mode": closing the first tab destroys BOTH of its windows, so
+        # the only window left to report on is the SECOND diff's, and that diff
+        # must stay live. The diffoff sweep is scoped to the closing diff's own
+        # tab; reaching across tabs would leave the second tab with its scratch
+        # side diffthis and its target side not -- no highlighting on either.
         #
-        # 862244b's regression (a shared augroup, so the first diff's TabClosed
-        # handler was deleted by the second open and its cleanup never ran) is
-        # still pinned, by `diff_tab_valid` in the sibling test above -- which
-        # that test's own comment calls out as independent of this sweep for
-        # exactly this reason.
+        # A first diff whose TabClosed handler was deleted by the second open
+        # (a shared augroup) is pinned by `diff_tab_valid` in the sibling test
+        # above, which is independent of this sweep for exactly this reason.
         res = scenario("close_first_diff_after_second_open")
         assert not res["close_err"], (
             f"closing the first diff tab raised: {res['close_err']}"
@@ -239,14 +231,14 @@ class TestASecondDiffDoesNotDisarmTheFirst:
 class TestTheSharedTargetBufferKeymapActsOnTheDiffYouAreIn:
     """`<C-w>q` on the user's real buffer, with two diffs open on that buffer.
 
-    One buffer-local mapping slot, two live diffs: the second registration wins
-    and the first diff's documented way out ran the wrong invocation's callback.
-    The existing two-diff scenarios leave via :tabclose or :bwipeout, so none of
-    them touches the mapping -- which is why this survived a green suite.
+    One buffer-local mapping slot, two live diffs: the second registration wins,
+    so the mapping has to serve whichever diff the user is standing in rather
+    than the invocation that registered it last. The other two-diff scenarios
+    leave via :tabclose or :bwipeout, so only these touch the mapping.
     """
 
     def test_pressing_it_in_the_first_diff_tab_closes_that_diff(self):
-        # The defect, stated as the harm: the tab the key was pressed in has to
+        # Stated as the harm: the tab the key was pressed in has to
         # be the tab that closes, whichever invocation registered the mapping
         # that is currently installed.
         res = scenario("close_first_diff_via_target_keymap_after_second_open")
@@ -305,9 +297,9 @@ class TestTargetBufferSelection:
     """find_target_buf must pick the FILE, not whichever window comes first.
 
     Side panels -- nvim-tree, a terminal, quickfix -- sit in the first window
-    of the tab far more often than not, and the scan excluded only the four
-    undotree filetypes. So `<C-d>` with nvim-tree open diffed the tree buffer
-    and failed with E830 instead of opening anything.
+    of the tab far more often than not. A scan that excluded only the undotree
+    filetypes would diff the panel's buffer for `<C-d>` with nvim-tree open and
+    fail with E830 instead of opening anything.
     """
 
     def test_a_nofile_side_panel_in_the_first_window_is_skipped(self):
@@ -321,8 +313,9 @@ class TestTargetBufferSelection:
 
 class TestBothChordSpellingsCloseTheDiff:
     def test_the_control_form_on_the_target_side_closes_the_diff_too(self):
-        # cleanup_diff already deletes BOTH `<C-w>q` and `<C-w><C-q>` from the
-        # target buffer; only the letter form was ever bound there.
+        # cleanup_diff deletes BOTH `<C-w>q` and `<C-w><C-q>` from the target
+        # buffer, so both must be bound there: an unbound control form falls
+        # through to the builtin window close.
         res = scenario("close_via_target_ctrl_chord")
         assert not res["diff_tab_valid"], "the diff tab was left standing"
         assert res["tab_count"] == 1

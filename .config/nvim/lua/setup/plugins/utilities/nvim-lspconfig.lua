@@ -1,5 +1,5 @@
 --- @diagnostic disable: different-requires
--- LSP: mason + mason-lspconfig + lspconfig (formerly after/plugin/lsp.lua).
+-- LSP: mason + mason-lspconfig + lspconfig.
 -- mason loads after startup (VeryLazy) so :Mason is available without opening a file;
 -- mason-lspconfig + lspconfig load lazily when a file is opened.
 local mason = {
@@ -18,9 +18,9 @@ local lspconfig = {
     'williamboman/mason-lspconfig.nvim',
   },
   config = function()
-    -- mason-lspconfig v2 は v1 の `handlers` を撤廃し、インストール済みサーバは
-    -- automatic_enable (既定 on) が vim.lsp.enable() で有効化する。旧 `handlers`
-    -- を setup() に渡しても黙って無視され、下の lua_ls 設定が dead code 化していた。
+    -- mason-lspconfig v2 に `handlers` は無く、インストール済みサーバは
+    -- automatic_enable (既定 on) が vim.lsp.enable() で有効化する。`handlers`
+    -- を setup() に渡しても黙って無視される。
     -- サーバ個別設定は Neovim 0.11+ の vim.lsp.config で宣言し、nvim-lspconfig の
     -- lsp/<server>.lua 既定へマージする (enable より前に登録しておく)。
     vim.lsp.config('lua_ls', {

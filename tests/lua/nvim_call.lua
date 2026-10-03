@@ -1,9 +1,9 @@
 -- Call one function from the Neovim Lua tree and report the result as JSON.
 --
 -- Run as `nvim -l tests/lua/nvim_call.lua <repo-root>` with a request object on
--- stdin; see tests/test_nvim_ai_prompt.py, which is the only caller. `nvim -l`
--- is what makes this cheap and honest: it does NOT load the user's init.lua
--- (verified: package.loaded.lazy stays nil and "lazy" never enters
+-- stdin; see tests/test_nvim_ai_{prompt,backend,context}.py, its callers.
+-- `nvim -l` is what makes this cheap and honest: it does NOT load the user's
+-- init.lua (verified: package.loaded.lazy stays nil and "lazy" never enters
 -- runtimepath), so no plugin manager bootstraps and the module under test is
 -- the only thing that runs. `nvim --headless -c` would load the real config --
 -- ~/.config/nvim is a symlink to this repo -- and test the plugin set instead.

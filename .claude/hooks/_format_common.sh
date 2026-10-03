@@ -41,17 +41,15 @@ hook_format_file() {
   hook_log "$hook_log_file" "--- format start: $FILE_PATH ---"
   echo "Auto-formatting: $BASENAME"
 
-  # 拡張子に応じてフォーマッターを実行
   case "$EXTENSION" in
   # JavaScript/TypeScript/JSON/CSS/HTML/Markdown
   js | jsx | ts | tsx | json | css | scss | less | html | htm | md | yaml | yml)
     # ローカル解決: 編集ファイルのディレクトリから git root まで遡って一番
     # 近い node_modules/.bin/prettier を探す (hook_find_nearest_bin、
-    # _hook_common.sh)。_lint_common.sh の ESLint/tsc と同じ壊れ方をしていた:
-    # `command -v prettier` だけでは (a) prettier がプロジェクトの
+    # _hook_common.sh)。`command -v prettier` だけでは (a) prettier がプロジェクトの
     # node_modules にしか無い (= 標準的な devDependency 導入) と
     # 「Prettier not found」のまま未整形で抜け、(b) ローカルと PATH の両方に
-    # あると PATH 側が勝ってプロジェクトの固定バージョンを無視していた。
+    # あると PATH 側が勝ってプロジェクトの固定バージョンを無視する。
     # git リポジトリの外では遡る境界が無いので、編集ファイル自身のディレクトリ
     # 1 段だけを見て、それ以降は PATH にフォールバックする(無制限に遡ると
     # 無関係な node_modules まで拾いかねないため)。
@@ -78,7 +76,6 @@ hook_format_file() {
 
   # Python
   py)
-    # ruff (import整列 + フォーマッター)
     if command -v ruff >/dev/null 2>&1; then
       # インポート整列(ruff互換)→整形の順で ruff に一本化する。
       # ここで isort を併用すると `ruff format` の結果を崩し、CI の

@@ -17,8 +17,7 @@
 # その最終境界は permissions.deny (.claude/hooks/README.md の脅威モデル参照)。
 
 # 理由文は固定文字列 + 数値の差し込みのみなので jq 無しで組み立ててよい
-# (エスケープすべき動的データを含めない。git-push-review.sh の jq 縮退
-# パスと同じ判断)。
+# (エスケープすべき動的データを含めない)。
 ask_and_exit() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "$1"
   exit 0

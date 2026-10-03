@@ -5,9 +5,8 @@ option and keymap wiring. That part is left to luacheck, because
 it breaks loudly the moment the editor starts. `functions/ai/` is the exception
 -- it is application code that happens to live in a dotfiles repo. It parses
 untrusted LLM output and then rewrites the user's buffer with the result, and
-it is where this tree actually regresses: commit de046d2 migrated the whole
-tree off the pre-0.12 `buffer` keymap option and ad938a4 / 51cb2a8 promptly
-reintroduced it in exactly these files.
+it is where this tree actually regresses (see test_nvim_keymap_opts.py for the
+deprecated `buffer` keymap option creeping back in).
 
 `prompt.lua` is the first slice because it is pure: its only Neovim couplings
 are `vim.trim`, `vim.split`, `vim.json.decode`, and `vim.diagnostic.severity`,
@@ -654,7 +653,7 @@ class TestHintSystem:
         assert "指摘はありません。" in self.system()
 
     def test_does_not_name_a_transport(self):
-        """Same trap as replace_system (3fae7ab): naming stdin points a tool
+        """Same trap as replace_system: naming stdin points a tool
         with no stdin path at somewhere the code is not. This prompt goes to
         claude and gemini today; the wording must not be what breaks if it
         ever goes anywhere else."""
@@ -796,16 +795,13 @@ def vim_replace_system(lang: str, user_request: str) -> str:
 
 
 class TestReplaceSystemStaysInStepWithVim:
-    """The one cross-editor invariant in this module, and it keeps breaking.
+    """The one cross-editor invariant in this module.
 
     `replace_system`'s docstring requires the sentence to stay byte-identical
-    to `.vim/rc/70-ai.vim`'s `s:AI_Submit` apart from the editor name, and
-    both files carry a comment saying so -- yet 4832ef8 ("align the AI tool
-    set with Neovim") and 3fae7ab ("stop naming stdin in the replace-selection
-    prompt") are that invariant drifting and being repaired by hand. Nothing
-    held the line afterwards. The suite already guards duplicated content this
-    way for the hooks (test_hook_sync); this does the same for the one prompt
-    that exists twice.
+    to `.vim/rc/70-ai.vim`'s `s:AI_Submit` apart from the editor name. Both
+    files carry a comment saying so, but only this class enforces it. The suite
+    guards duplicated content this way for the hooks (test_hook_sync); this does
+    the same for the one prompt that exists twice.
     """
 
     LANG = "lua"
@@ -830,12 +826,11 @@ class TestReplaceSystemStaysInStepWithVim:
         assert from_nvim.replace("a Neovim editor", "a Vim editor") == from_vim
 
     def test_neither_prompt_names_stdin(self):
-        """The specific regression 3fae7ab fixed.
+        """Both prompts must stay transport-agnostic.
 
-        copilot has no stdin path -- backend.build_cli_cmd appends the
-        selection to this instruction under an `## Input` heading -- so a
-        prompt that says "provided via stdin" points copilot at somewhere the
-        text is not. The wording must stay transport-agnostic on both sides.
+        copilot has no stdin path, so a prompt that says "provided via stdin"
+        points it at somewhere the text is not. See `replace_system`'s docstring
+        in prompt.lua.
         """
         (from_nvim,) = prompt_call("replace_system", self.LANG, self.REQUEST)
         assert "stdin" not in from_nvim.lower()
@@ -1006,22 +1001,20 @@ def fix_reply(fixed, start=2, stop=2, original=("two",)):
 
 
 class TestFixFlowNeverAcceptsTheLoadingPlaceholder:
-    """The worst outcome this tree can produce, and it needed two bugs.
+    """The worst outcome this tree can produce: UI chrome replacing the whole buffer.
 
     `fixed` is the only model-supplied value that reaches nvim_buf_set_lines
     verbatim, and that API refuses an item that is not a string or that carries
-    a newline. apply_edits checked `fixed` was a table and never looked
-    inside it, so `{"fixed": ["TWO\\nEXTRA"]}` sailed through into ui.run_multi's
-    done callback -- which flipped the tab's status to "done" BEFORE the render,
-    then threw. The throw was swallowed by the job callback it runs in, leaving
-    the window open, the response pane still showing its loading placeholder,
-    and the tab claiming to be done. Pressing `y` there passed active_lines'
-    status check and handed that one line of UI chrome to on_accept, whose
+    a newline. If `{"fixed": ["TWO\\nEXTRA"]}` got past apply_edits into
+    ui.run_multi's done callback, the render would throw inside a job callback
+    (where the throw is swallowed), leaving the response pane on its loading
+    placeholder. If the tab already said "done", `y` would pass active_lines'
+    status check and hand that one line of UI chrome to on_accept, whose
     apply_fix replaces the whole buffer with what it is given.
 
-    Both halves are pinned here: element validation (so the throw stops
-    happening) and the status ordering (so the next throw, for whatever reason,
-    is a display bug rather than a destroyed file).
+    Both halves are pinned here: element validation in apply_edits (so the
+    throw does not happen) and the status ordering in ui.lua (so a throw from
+    any other cause is a display bug rather than a destroyed file).
     """
 
     LINES = ["one", "two", "three"]
@@ -1060,7 +1053,7 @@ class TestFixFlowNeverAcceptsTheLoadingPlaceholder:
         )
 
     def test_a_clean_fix_still_applies_end_to_end(self, tmp_path):
-        """The regression guard for both fixes at once.
+        """The control for both halves at once.
 
         An over-broad element check, or a status that is never written, would
         pass every assertion above by breaking the feature outright.

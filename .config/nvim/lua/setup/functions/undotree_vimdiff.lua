@@ -3,8 +3,8 @@
 -- for jiaoshijie/undotree. Supports `do` (obtain a hunk from the past state);
 -- the past side is a read-only scratch buffer, so `dp` is not available.
 --
--- Relocated from after/plugin/undotree.lua so it only loads when undotree does.
--- The undotree plugin spec calls M.setup() from its config.
+-- Loaded only when undotree loads: the plugin spec calls M.setup() from its
+-- config.
 
 local M = {}
 
@@ -12,33 +12,24 @@ local M = {}
 --   [diff_tab] = { close = <that invocation's cleanup entry point>,
 --                  target = <the user's real buffer it is diffing> }
 --
--- This exists because the `<C-w>q` mapping on the RIGHT-hand side is registered
--- with { buf = target_buf }, and target_buf is the user's file buffer -- shared
--- by every invocation, unlike the scratch buffer on the left. A second undo-diff
--- on the same file re-registers the same {buf, mode, lhs} slot and
--- vim.keymap.set REPLACES what was there (measured: exactly one mapping on
--- target_buf after two opens). The surviving callback used to close over the
--- SECOND invocation's diff_tab, so pressing the documented key in the FIRST diff
--- tab failed that tab-identity check and fell through to the bare `:quit`
--- fallback: one window closed, and the tab was left standing in diff mode with
--- its augroup and its BufWipeout / TabClosed autocmds still armed for a diff
--- nobody could reach any more.
+-- The `<C-w>q` mapping on the RIGHT-hand side is registered with
+-- { buf = target_buf }, and target_buf is the user's file buffer -- shared by
+-- every invocation, unlike the scratch buffer on the left. A second undo-diff on
+-- the same file re-registers the same {buf, mode, lhs} slot and vim.keymap.set
+-- REPLACES what was there, so only one callback can ever serve that buffer. It
+-- therefore dispatches through this table by the CURRENT tab (see
+-- close_if_in_diff_tab) instead of closing over one invocation's diff_tab.
 --
--- Keyed on the tab handle for the same reason 862244b keyed the augroup name on
--- the buffer handle: handles come from nvim, not from us, and are never reused
--- within a session -- so an entry means "this exact diff", not "whatever is
--- currently the second tab". The mapping's callback and this table come from the
--- same module instance, which is what makes it safe across a re-source
--- (:Lazy reload, :luafile): a diff opened under the previous module table is
--- still served by the mapping that closed over THAT table, where its entry
--- lives.
+-- Keyed on the tab handle because handles come from nvim, not from us, and are
+-- never reused within a session -- so an entry means "this exact diff", not
+-- "whatever is currently the second tab". The mapping's callback and this table
+-- come from the same module instance, which keeps a re-source (:Lazy reload,
+-- :luafile) safe.
 --
--- The honest gap: after a re-source, the NEXT open_vimdiff replaces the shared
--- mapping with one consulting the new table, and a diff from before the reload
--- has no entry there -- so its `<C-w>q` falls back to `:quit`. That is exactly
--- what a shared mapping slot costs and it is no worse than the behaviour this
--- replaces; the tab is still closeable with :tabclose, and its TabClosed handler
--- still unwinds the diff.
+-- Known gap: after a re-source, the NEXT open_vimdiff replaces the shared
+-- mapping with one consulting the new table, so a diff opened before the reload
+-- has no entry there and its `<C-w>q` falls back to `:quit`. Close it with
+-- :tabclose; its TabClosed handler still unwinds the diff.
 local live_diffs = {}
 
 --- Extract the undo seq number from the current line in the undotree buffer.
@@ -55,10 +46,9 @@ end
 
 --- Find the editing target buffer in the same tab as the undotree panel.
 ---
---- Only an ordinary buffer (`buftype` empty) qualifies. The scan used to
---- exclude just the undotree filetypes, so with a side panel in the first
---- window -- nvim-tree, a terminal, quickfix -- it returned the panel's buffer
---- and the diff failed with E830 (no undo history at the requested seq).
+--- Only an ordinary buffer (`buftype` empty) qualifies: a side panel in the
+--- first window -- nvim-tree, a terminal, quickfix -- has no undo history at the
+--- requested seq, and diffing it fails with E830.
 --- `buflisted` is deliberately NOT required: a real file a plugin has marked
 --- nobuflisted still has undo history and is a legitimate target.
 ---@return number|nil buf buffer number
@@ -180,24 +170,16 @@ function M.open_vimdiff()
   -- Focus on the right side (real buffer)
   -- so that do (obtain) is immediately usable
 
-  -- The group name is per-invocation, and the suffix is the whole point.
+  -- The group name is per-invocation, and the suffix is the whole point:
+  -- `clear = true` on a FIXED name would let a second undo-diff DELETE the first
+  -- tab's BufWipeout and TabClosed handlers, leaving a diff that is still open
+  -- with nothing armed to unwind it.
   --
-  -- `clear = true` on a FIXED name is what made this matter: a second undo-diff
-  -- recreating "UndotreeVimdiffCleanup" DELETED the first tab's BufWipeout and
-  -- TabClosed handlers, leaving a diff that was still open with nothing armed
-  -- to unwind it. Wiping that tab's scratch buffer then took the scratch window
-  -- and stopped there -- the tab stayed standing, showing the user's real
-  -- buffer still in diff mode, with no handler left to close it. Measured:
-  -- after the second open, the first call's two autocmds were simply gone.
-  --
-  -- Keyed on old_buf rather than a module-level counter, and that is not a
-  -- style preference. A counter lives in this module's table, so re-sourcing
-  -- the file (:Lazy reload, :luafile) restarts it at 1 while a diff opened
-  -- under the previous table is still open -- and the next open_vimdiff then
-  -- recreates THAT tab's group name with clear = true, which is the original
-  -- bug with extra steps. Buffer handles come from nvim, not from us: they are
-  -- never reused within a session (verified -- wiping a buffer does not hand
-  -- its number back), so old_buf stays unique across a reload.
+  -- Keyed on old_buf rather than a module-level counter: a counter restarts at 1
+  -- when the file is re-sourced (:Lazy reload, :luafile) while an earlier diff is
+  -- still open, and the next open_vimdiff would then recreate THAT tab's group
+  -- name with clear = true. Buffer handles come from nvim and are never reused
+  -- within a session, so old_buf stays unique across a reload.
   local augroup = vim.api.nvim_create_augroup(
     "UndotreeVimdiffCleanup_" .. old_buf, { clear = true })
   local diff_tab = vim.api.nvim_get_current_tabpage()
@@ -218,32 +200,31 @@ function M.open_vimdiff()
     -- 下の後始末 (diffoff ループの nvim_win_call、scratch の wipe) は pcall で
     -- 包まれていない。そこで例外が出るとこの関数は途中で抜け、エントリが
     -- 残ったままになる。残ると二重に悪い: still_needed が「まだ使っている diff が
-    -- いる」と誤答して共有キーマップをセッション中ずっと消せなくなり、しかも
-    -- 残ったエントリの close は cleaning_up が既に true なので即 return する
-    -- no-op -- つまりそのタブの `<C-w>q` は :quit のフォールバックすら通らず、
-    -- 完全に無反応になる。ここへ置けば、どの経路で抜けても必ず外れる。
+    -- いる」と誤答して共有キーマップを消せなくなり、しかも残ったエントリの
+    -- close は cleaning_up が既に true なので即 return する no-op -- そのタブの
+    -- `<C-w>q` は :quit のフォールバックすら通らず無反応になる。ここへ置けば、
+    -- どの経路で抜けても必ず外れる。
     live_diffs[diff_tab] = nil
 
     -- Remove the augroup first to prevent recursive triggers.
     --
-    -- Now that the names are per-invocation this also has to happen for its own
-    -- sake, on every exit path: no later call will ever reclaim this name by
-    -- recreating it, so an invocation that did not delete its group would leave
-    -- it behind -- with its autocmds still armed on a diff that no longer
-    -- exists -- for the rest of the session. By id, so it is unambiguously
-    -- OURS and not whatever currently answers to that name.
+    -- This also has to happen on every exit path for its own sake: names are
+    -- per-invocation, so no later call will reclaim this one, and a group left
+    -- behind keeps its autocmds armed on a diff that no longer exists for the
+    -- rest of the session. By id, so it is unambiguously OURS and not whatever
+    -- currently answers to that name.
     pcall(vim.api.nvim_del_augroup_by_id, augroup)
 
     -- Run diffoff on the windows of THIS diff's tab that show the target
     -- buffer -- not on every window in the session.
     --
     -- `diffthis` は window-local なので、この呼び出しが diff にしたのは自分の
-    -- タブの 2 枚だけ。にもかかわらず nvim_list_wins() で全タブを舐めていたため、
-    -- 同じファイルに 2 つ目の diff が開いていると、1 つ目を閉じた時点で 2 つ目の
-    -- target 側ウィンドウまで diffoff していた。相方の scratch 側は diffthis の
-    -- まま残るので、そのタブは「片側だけ diff」= どちらにも差分色が出ない状態に
-    -- なる。共有 target_buf 上のキーマップ削除を still_needed で守っているのと
-    -- 同じ「他の生きている diff に手を出さない」規則を、こちらにも適用する。
+    -- タブの 2 枚だけ。nvim_list_wins() で全タブを舐めると、同じファイルに
+    -- 2 つ目の diff が開いている場合に、その target 側ウィンドウまで diffoff
+    -- してしまう。相方の scratch 側は diffthis のまま残るので、そのタブは
+    -- 「片側だけ diff」= どちらにも差分色が出ない状態になる。共有 target_buf
+    -- 上のキーマップ削除を still_needed で守っているのと同じ
+    -- 「他の生きている diff に手を出さない」規則。
     --
     -- タブが既に無い経路 (TabClosed からの後始末) では列挙するものが無い。
     -- ウィンドウごと消えており、window-local な &diff もそれで消えるので、
@@ -286,31 +267,23 @@ function M.open_vimdiff()
     -- the close: nvim_buf_delete fails with "Failed to unload buffer" (E937,
     -- the buffer is in use), and although the pcall catches the Lua error, the
     -- autocmd has still raised a Vim error, which makes the COMMAND THAT
-    -- TRIGGERED IT fail. So `:tabclose` in the diff tab reported
-    -- `E937: Attempt to delete a buffer that is in use` to the user -- on the
-    -- documented way out. (`<C-w>q` routed around it and looked fine, which is
-    -- why this survived.) Verified with a standalone bufhidden=wipe repro:
-    -- skipping the delete makes the outer close succeed.
+    -- TRIGGERED IT fail -- `:tabclose` in the diff tab would report
+    -- `E937: Attempt to delete a buffer that is in use` to the user.
     if not from_wipeout and vim.api.nvim_buf_is_valid(old_buf) then
       pcall(vim.api.nvim_buf_delete, old_buf, { force = true })
     end
 
     -- Close the diff tab if it still exists.
     --
-    -- BY NUMBER, not a bare `:tabclose`. A bare tabclose closes whatever tab is
-    -- CURRENT, and the only guard here used to be that diff_tab is *valid* --
-    -- never that it is the tab we are standing in. Combined with the
-    -- patternless TabClosed autocmd below, closing any unrelated tab ran this
-    -- code from some other tab and took that tab out instead: with the user
-    -- sitting in their own working tab, that tab is what disappeared.
+    -- BY NUMBER, not a bare `:tabclose`, which closes whatever tab is CURRENT:
+    -- diff_tab being *valid* does not mean it is the tab we are standing in.
     --
     -- Deferred through vim.schedule, and that is load-bearing rather than
     -- defensive. One caller is BufWipeout: when the scratch buffer is wiped on
     -- its own (`:bwipeout`), the diff tab is still open and genuinely needs
     -- closing -- but a `:tabclose` issued from inside that handler fails while
     -- the wipe is still unwinding, the pcall swallows it, and the user is left
-    -- with a stranded half-diffed tab. Measured: without the schedule that
-    -- scenario ends with diff_tab still valid.
+    -- with a stranded half-diffed tab.
     -- Running after the wipe completes also lets the validity check mean
     -- something: if the tab was what closed in the first place (`:tabclose` in
     -- the diff tab, which wipes the buffer as a side effect), diff_tab is
@@ -349,14 +322,10 @@ function M.open_vimdiff()
   --- fall back to a normal :quit anywhere else.
   --
   -- The diff is looked up by the CURRENT tab rather than compared against this
-  -- invocation's `diff_tab`, and that indirection is the fix: only ONE callback
-  -- can occupy this buffer's mapping slot, so it has to serve whichever diff the
-  -- user is standing in -- including diffs opened before it. Comparing against a
-  -- captured tab made the last registration the only one that worked and sent
-  -- every earlier diff down the `:quit` path (see live_diffs).
-  --
-  -- The fallback is unchanged in every case that used to take it: no entry for
-  -- this tab means no live diff owns it, which is precisely "not in a diff tab".
+  -- invocation's `diff_tab`: only ONE callback can occupy this buffer's mapping
+  -- slot, so it has to serve whichever diff the user is standing in -- including
+  -- diffs opened before it (see live_diffs). No entry for this tab means no live
+  -- diff owns it, which is precisely "not in a diff tab".
   local function close_if_in_diff_tab()
     local live = live_diffs[vim.api.nvim_get_current_tabpage()]
     if live then
@@ -371,10 +340,9 @@ function M.open_vimdiff()
     buf = target_buf, silent = true, noremap = true,
     desc = "undotree vimdiff: close diff tab",
   })
-  -- Both spellings, as on the scratch side. cleanup_diff deletes both from
-  -- this buffer, but only the letter form was ever bound here, so
-  -- `<C-w><C-q>` fell through to the builtin window-close, took one window
-  -- and left the tab standing half-diffed with its cleanup still armed.
+  -- Both spellings, as on the scratch side: cleanup_diff deletes both from this
+  -- buffer, and an unbound `<C-w><C-q>` would fall through to the builtin
+  -- window-close and leave the tab half-diffed with its cleanup still armed.
   vim.keymap.set("n", "<C-w><C-q>", close_if_in_diff_tab, {
     buf = target_buf, silent = true, noremap = true,
     desc = "undotree vimdiff: close diff tab",
@@ -400,15 +368,13 @@ function M.open_vimdiff()
   -- and go, so it never reliably identifies this tab. Identify by handle
   -- instead -- if diff_tab is no longer valid, the tab that just closed was
   -- ours and the diff state needs unwinding. Any other tab closing is none of
-  -- our business, and returning early is the whole point: without this check
-  -- the callback ran on every tab close and its `:tabclose` destroyed whatever
-  -- tab the user happened to be in.
+  -- our business, so return early.
   --
-  -- `once` is deliberately NOT set. The callback now no-ops for unrelated
-  -- closes, so it has to stay armed until our own tab actually goes; with
-  -- `once` the first unrelated close would consume it and the real cleanup
-  -- would never run. It still self-removes, because cleanup_diff deletes the
-  -- augroup on the pass that matters.
+  -- `once` is deliberately NOT set: the callback no-ops for unrelated closes, so
+  -- it has to stay armed until our own tab actually goes (with `once` the first
+  -- unrelated close would consume it and the real cleanup would never run). It
+  -- still self-removes, because cleanup_diff deletes the augroup on the pass that
+  -- matters.
   vim.api.nvim_create_autocmd("TabClosed", {
     group = augroup,
     callback = function()

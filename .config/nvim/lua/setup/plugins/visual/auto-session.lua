@@ -6,6 +6,5 @@ return {
   ---@type { suppressed_dirs: string[] }
   opts = {
     suppressed_dirs = { "~/", "~/Projects", "~/Downloads", "/" },
-    -- log_level = 'debug',
   },
 }

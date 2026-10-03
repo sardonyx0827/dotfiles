@@ -78,9 +78,9 @@ jobs:
           echo "${NVIM_SHA256}  nvim.tar.gz" | sha256sum -c -
           sudo mkdir -p /opt/nvim
           # --strip-components=1 so the archive's top-level directory name is
-          # not baked in here; it has been renamed before (nvim-linux64 ->
-          # nvim-linux-x86_64 in 0.10.4) and a stale guess would only surface
-          # as a dangling symlink at `nvim --version`.
+          # not baked in here; upstream has renamed it between releases and a
+          # stale guess would only surface as a dangling symlink at
+          # `nvim --version`.
           sudo tar -xzf nvim.tar.gz -C /opt/nvim --strip-components=1
           sudo ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
           rm nvim.tar.gz
@@ -88,7 +88,7 @@ jobs:
       # フックは stdin/subprocess/urlopen を全てスタブ化した hermetic テスト。
       # codex / gemini / tmux 等の実バイナリは不要（conftest.py 参照）。
       # Python フックは in-process で exec されるためカバレッジを実測でき、
-      # 集計 90% を下回るとジョブが失敗する（設定は .coveragerc、実測は約 97%）。
+      # 集計 90% を下回るとジョブが失敗する（設定は .coveragerc）。
       # 併せて JSON レポートを出力し、後続ステップでファイル単位の床も強制する。
       - name: Run pytest (with coverage gate)
         run: >-
@@ -111,10 +111,8 @@ jobs:
         if: matrix.python-version == env.PRIMARY_PYTHON
         run: python3 scripts/gen_codex_agents.py --check
       # 集計 90% ゲートはファイル単位の低カバレッジを平均で覆い隠すため、
-      # 各ファイルに最低 80% を別途強制する（測定された全ファイルが対象。
-      # 以前あった .coveragerc の omit は、対象だった .codex 側の
-      # _bash_review_common.py の複製が撤去され、共有モジュールが実体 1 本
-      # だけになったため不要になった。詳細は .coveragerc のコメント参照）。
+      # 各ファイルに最低 80% を別途強制する（測定された全ファイルが対象で、
+      # omit は無い。理由は .coveragerc のコメント参照）。
       # 床チェックは代表レッグでのみ実行する: レッグ間でファイル別プロファイルは
       # ほぼ同一で、もう一方のレッグにも集計 90% ゲートは残っているため、
       # 2 回目の床チェックが追加で検出できるものは実質無い。
@@ -148,7 +146,7 @@ jobs:
       # Python フック群だけを測る。source した関数単位テスト (test_install.py)
       # は個々の分岐を hermetic に押さえるが、main() を通した end-to-end の配線
       # (detect_os → create_symlinks → backup_if_real → _render_git_local_config
-      # → link_* → change_shell プレビュー) は一度も実行されていなかった。
+      # → link_* → change_shell プレビュー) はこのスモークが main() を通して実行する。
       # --dry-run はパッケージ導入を announce-and-skip し、ネットワーク/sudo/apt を
       # 一切触らず FS も書かない (DRY_RUN ガード) ため、ubuntu ランナー上でそのまま
       # 通せる無償のスモークになる。完了行を grep して、将来 main() が途中で
@@ -180,20 +178,18 @@ jobs:
         run: ruff format --check .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
       - name: bandit (security, medium+ severity)
         run: bandit -ll -q -r .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
-      # フックには元から型注釈が付いていたが検証する仕組みが無く、実装と注釈が
-      # 無言で乖離し得た。設定ファイルは置かない: 既定値で緑になり、唯一の例外
-      # (Windows 専用の任意依存 win10toast) は import 箇所の inline ignore で
-      # 完結するため。設定を足すのは、それが実際に何かを検出するときだけにする。
+      # フックの型注釈を検証し、実装との無言の乖離を防ぐ。設定ファイルは置かない:
+      # 既定値で緑になり、唯一の例外 (Windows 専用の任意依存 win10toast) は
+      # import 箇所の inline ignore で完結するため。設定を足すのは、それが実際に
+      # 何かを検出するときだけにする。
       # 2 回に分けるのは .claude/hooks と .codex/hooks が同名の bash-review.py を
       # 持ち、両方を 1 回の呼び出しに渡すと mypy が重複モジュールとして実行を
       # 拒否するため。codex 側の bash-review.py は別実体 (exit-2 変種) なので
       # 除外ではなく個別に検査する。
       # codex 側には MYPYPATH が要る: 共有モジュールの実体は .claude/hooks 側に
       # しか無く、.codex/hooks/bash-review.py の sys.path.insert は実行時の操作
-      # なので mypy は追えない (共有ファイルが .codex/hooks に symlink として
-      # 置かれていた頃は隣接ファイルとして解決できていた)。MYPYPATH は実行時の
-      # sys.path と同じ場所を指すので、import を無視するのではなく実体に対して
-      # 型検査される。
+      # なので mypy は追えない。MYPYPATH は実行時の sys.path と同じ場所を指す
+      # ので、import を無視するのではなく実体に対して型検査される。
       # tests/ は対象外: conftest / フック本体を sys.path 操作で読むため mypy の
       # モジュール解決と噛み合わず、緑にするには実挙動と無関係なスタブ整備が
       # 要る。守れない厳しさを掲げるより、本番コードを確実に縛る方を採る。
@@ -222,26 +218,20 @@ jobs:
           # shellcheck disable=SC2086  # パスに空白は無いため意図的に単語分割する
           shellcheck -x -P SCRIPTDIR $files
 
-  # Neovim Lua ツリーの静的解析。これまで .config/nvim/*.lua は CI の外にあり、
-  # lazy.lua のコメントが記録する「未定義グローバル参照でエディタが静かに壊れた」
-  # クラスの退行を検知できなかった。stylua による整形強制は日常的な手調整と衝突
-  # するため意図的に入れず、luacheck を lint 専用で回して当該バグクラスだけを拾う。
+  # Neovim Lua ツリーの静的解析。未定義グローバル参照 (typo 等) でエディタが
+  # 静かに壊れるクラスの退行を拾うため、luacheck を lint 専用で回す。stylua による整形強制は日常的な手調整と衝突するため意図的に入れない。
   #
-  # 助言的 (continue-on-error) から gating へ格上げした。Lua ツリーは
-  # このリポジトリ最大の未検証面であり、luacheck が唯一の自動検査になる部分が
-  # 大半を占める。tests/test_nvim_*.py (上の "Install Neovim (pinned)" 参照) は
-  # functions/ 配下のアプリケーションコードと lazy.lua の読み込み、キーマップ
-  # opts の綴りだけを押さえており、プラグイン spec・オプション・キーマップの
-  # 大半はテストが無い。非ブロックのままでは「赤くならない警告」を誰も読まず、
-  # 検知できても退行を止められない。格上げの前提として、直近の main で
-  # 0 warnings / 0 errors in 50 files を確認済み。
+  # gating にしている理由: Lua ツリーはこのリポジトリ最大の未検証面で、luacheck が
+  # 唯一の自動検査になる部分が大半を占める。tests/test_nvim_*.py (上の
+  # "Install Neovim (pinned)" 参照) が押さえるのは functions/ 配下の
+  # アプリケーションコードと lazy.lua の読み込み、キーマップ opts の綴りだけで、
+  # プラグイン spec・オプション・キーマップの大半はテストが無い。ジョブが失敗
+  # しなければ警告は誰にも読まれず、検知できても退行を止められない。
   #
-  # gating にしたので版をピン留めする: 助言的だった頃は「誤ピンで恒常的に赤く
-  # しない」ことを優先して未固定だったが、ブロックする以上は luacheck の新版が
-  # 出た瞬間に無関係な指摘で main が止まる方が困る。luarocks 自体は apt 由来で
-  # 未固定のままなので、これは完全な再現性ではなく「検査ツールの固定」である。
-  # apt/luarocks の外部ネットワーク依存が失敗点になる点は gating な test ジョブが
-  # 既に apt-get install zsh で負っている露出と同じで、新たに増やしてはいない。
+  # 版をピン留めする理由: ブロックする以上、luacheck の新版が出た瞬間に無関係な
+  # 指摘で main が止まるのを避けたい。luarocks 自体は apt 由来で未固定のままなので、
+  # これは完全な再現性ではなく「検査ツールの固定」である。apt/luarocks の外部
+  # ネットワーク依存が失敗点になる点は、test ジョブの apt-get install zsh と同じ。
   # 設定は .config/nvim/.luacheckrc (LuaJIT + vim / R / Snacks グローバル。
   # .luarc.json と一致し、tests/test_config_wiring.py が両者の一致を検査する)。
   luacheck:

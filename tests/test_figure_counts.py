@@ -5,10 +5,9 @@ The prose in README.md deliberately avoids hardcoding these counts, but the SVG
 figures embed them as literal text (`N agents · N commands`, `N test suites`,
 `agents (N ⇆ N)`, ...). Unlike the hook duplicates (guarded byte-for-byte by
 test_hook_sync) or the config paths (checked by test_config_wiring), nothing
-stopped those figures from drifting as agents / commands / tests were added or
-removed -- and they did. This test closes that gap: every count rendered in a
-figure is re-derived from the filesystem and compared, so a stale diagram fails
-CI instead of shipping.
+else would notice those figures drifting as agents / commands / tests are added
+or removed. Every count rendered in a figure is re-derived from the filesystem
+and compared, so a stale diagram fails CI instead of shipping.
 """
 
 import re
@@ -31,14 +30,11 @@ def _commands() -> int:
 
 
 def _skills() -> int:
-    # Every skill on disk, templates included. The figures used to exclude the
-    # `*-example` template and render 23 while docs/claude-architecture.md said
-    # 24, so the repo carried two authoritative answers to "how many skills".
-    # Neither was wrong -- they counted different things -- but a reader has no
-    # way to tell which definition a given "N skills" is using. Settled on the
-    # raw count, because the architecture doc's Codex-sharing breakdown ("24 中
-    # 18 を共有") is already stated in those terms and the template is a real
-    # directory that Codex-side sharing decisions apply to like any other.
+    # Every skill on disk, templates (`*-example`) included. A reader has no way
+    # to tell which definition a given "N skills" uses, so the raw count is the
+    # one: the architecture doc's Codex-sharing breakdown ("N 中 M を共有") is
+    # already stated in those terms, and the template is a real directory that
+    # Codex-side sharing decisions apply to like any other.
     return len(list((REPO_ROOT / ".claude/skills").glob("*/SKILL.md")))
 
 
@@ -127,11 +123,8 @@ def test_orchestration_svg_counts_match_repo():
     )
 
 
-# The prose architecture doc is the side this repo settled on as authoritative when the
-# skill count disagreed with the SVGs (they were off by one, because the figure helper
-# excluded the *-example template). The exclusion is gone and the SVGs now match the raw
-# count -- but the doc itself was the one artifact with nothing checking it, so the
-# number everyone else was aligned TO could drift freely. Tie it to the filesystem too.
+# The prose architecture doc is the authoritative side for the skill count, so it is tied
+# to the filesystem too: otherwise the number every figure is aligned TO could drift freely.
 ARCHITECTURE_DOC = REPO_ROOT / "docs/claude-architecture.md"
 
 

@@ -134,9 +134,9 @@ def no_network(monkeypatch):
     Shared by test_gemini_api_cli.py and test_gemini_consultant_server.py:
     both drive an unusable-API-key path where the exception under test comes
     from `http.client.putheader`, which a stubbed urlopen never calls -- so
-    the leak assertions in those tests would pass against unfixed code if
-    urlopen were mocked as usual. The transport is cut one layer lower
-    instead -- at connect() -- so header validation still runs for real.
+    their leak assertions would pass vacuously if urlopen were mocked as
+    usual. The transport is cut one layer lower, at connect(), so header
+    validation still runs for real.
 
     Every attempt is recorded rather than silently swallowed, so a regression
     that gets past the guard fails loudly here instead of dialling out. Nothing
@@ -268,12 +268,11 @@ class ShellEnv:
         """Make a host-installed executable invisible to the script under test.
 
         The stub dir is only PREPENDED to the real PATH, so a test premised on
-        a tool being *absent* silently depends on the host lacking it — the
-        moment a CI runner image or dev machine ships the tool for real,
-        `command -v` finds it and the premise breaks (this bit us when runner
-        images gained phpstan). Stubbing cannot express absence, so instead
-        every PATH entry containing `name` is replaced by a symlink-farm clone
-        of that directory minus the entry.
+        a tool being *absent* silently depends on the host lacking it: if a CI
+        runner image or dev machine ships the tool, `command -v` finds it and
+        the premise breaks. Stubbing cannot express absence, so instead every
+        PATH entry containing `name` is replaced by a symlink-farm clone of
+        that directory minus the entry.
         """
         clones_root = self.stub_bin.parent / "hidden-path"
         rebuilt: list[str] = []
@@ -329,11 +328,10 @@ def shell_env(tmp_path):
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_SYSTEM"] = os.devnull
     # stop-audit.sh exits before it scans anything when this is set. It is only
-    # ever exported per-command by the editors' AI wrappers, so a developer
-    # shell should never carry it -- but the env here is inherited from the
-    # host, and if one ever did, every stop-audit test would pass by never
-    # running. A vacuous green is the one failure mode a gate's own tests must
-    # not have.
+    # ever exported per-command by the editors' AI wrappers, but the env here
+    # is inherited from the host: a shell that carried it would make every
+    # stop-audit test pass by never running. A vacuous green is the one
+    # failure mode a gate's own tests must not have.
     env.pop("EDITOR_AI_ONESHOT", None)
 
     se = ShellEnv(home=home, stub_bin=stub_bin, calls_file=calls_file, env=env)
@@ -342,13 +340,11 @@ def shell_env(tmp_path):
     se.stub("osascript")
     # Backstop: no test may ever reach a real system-mutating tool. The stub
     # dir only PREPENDS to the host PATH, so any code path that escapes its
-    # per-test stubs runs the real binary: a mid-development version of
-    # install.sh's dry-run gate once reached the host `brew`, which
-    # "upgraded" the font-ubuntu-mono cask by relocating the user's real
-    # font files into the doomed pytest tmp HOME. Individual tests override
-    # these freely with their own stub(); absence-testing via
-    # _without_commands-style PATH surgery is unaffected (none of these
-    # names are exercised as "absent" today).
+    # per-test stubs runs the real binary (e.g. a brew cask upgrade relocating
+    # the user's real fonts into the pytest tmp HOME). Individual tests
+    # override these freely with their own stub(); absence-testing via
+    # _without_commands-style PATH surgery is unaffected (none of these names
+    # are exercised as "absent" today).
     for tool in ("brew", "apt-get", "sudo", "chsh", "npm"):
         se.stub(tool)
     return se

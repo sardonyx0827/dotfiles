@@ -9,13 +9,9 @@ return {
     {
       "JMarkin/nvim-tree.lua-float-preview",
       lazy = false,
-      -- default
       opts = {
-        -- wrap nvimtree commands
         wrap_nvimtree_commands = true,
-        -- lines for scroll
         scroll_lines = 20,
-        -- window config
         window = {
           style = "minimal",
           relative = "win",
@@ -23,9 +19,7 @@ return {
           wrap = false,
         },
         mapping = {
-          -- scroll down float buffer
           down = { "<C-d>" },
-          -- scroll up float buffer
           up = { "<C-e>", "<C-u>" },
           -- enable/disable float windows
           toggle = { "<C-p>" },
@@ -48,8 +42,7 @@ return {
       },
     },
   },
-  -- Setup, on_attach mappings and the Telescope action menu formerly lived in
-  -- after/plugin/nvim-tree.lua. nvim-tree renders eagerly (lazy = false).
+  -- nvim-tree renders eagerly (lazy = false).
   config = function()
     -- is nvim-tree already opened?
     local function is_opend()
@@ -240,8 +233,6 @@ return {
       view = {
         relativenumber = true,
         width = 50,
-        -- float = { enable = true },
-        --side = "left",
       },
       renderer = {
         group_empty = true,

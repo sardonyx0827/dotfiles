@@ -144,8 +144,7 @@ local function select_codeblock_text()
 
   -- if start_line and end_line are found, select the text. Both scans start
   -- at the cursor line, so a cursor ON a fence matches it twice and yields
-  -- start > end; that is "no block", not a selection to attempt (the old
-  -- guard passed, `normal! V` ran, and set_cursor(0) threw mid-selection).
+  -- start > end; that is "no block", not a selection to attempt.
   if start_line and end_line and start_line <= end_line then
     vim.api.nvim_win_set_cursor(0, { start_line, 0 })
     vim.cmd("normal! V")

@@ -16,9 +16,8 @@ local ui = require("setup.functions.ai.ui")
 local map = vim.keymap.set
 
 -- Commit messages favour cheap/fast models; everything else uses backend
--- defaults (claude=sonnet, codex=default, gemma=ollama). gemini is not in that
--- list: it pins no default at all, because scripts/gemini_api.py resolves
--- $GEMINI_MODEL when the request runs.
+-- defaults (claude=sonnet, codex=default, gemma=ollama). gemini pins no model
+-- (see CHECK_MODELS).
 local COMMIT_MODELS = { claude = "haiku" }
 
 -- Upper bound on the diff sent for commit generation. Past this we fall back to
@@ -99,18 +98,17 @@ map("n", "<leader><leader>a", copy_all_lsp_diagnostics,
 ---------------------------------------------------------
 -- Check the current buffer for typos / syntax errors (claude -> gemini)
 ---------------------------------------------------------
--- gemini is deliberately absent from these tables. It now goes through the REST
--- API (scripts/gemini_api.py), which resolves $GEMINI_MODEL itself when the
--- child runs -- so pinning a model here would freeze that variable at startup
--- and leave it dead for the three flows that actually use gemini.
+-- gemini is deliberately absent from these tables. It goes through the REST API
+-- (scripts/gemini_api.py), which resolves $GEMINI_MODEL itself when the child
+-- runs -- so pinning a model here would freeze that variable at startup and
+-- leave it dead for the flows that use gemini (see backend.gemini_model).
 local CHECK_MODELS = { claude = "sonnet" }
 -- Same tiers as the check: claude first, gemini as the fallback.
 local FIX_MODELS = { claude = "sonnet" }
 
--- What a report header should print for the model. `pinned` is whatever the
--- caller's table held, which is nil for gemini; ask the backend for the value
--- that request will actually have used rather than printing "default" at the
--- one reader who wanted to know which model answered.
+-- What a report header should print for the model. `pinned` is nil for gemini,
+-- so ask the backend for the value the request actually used rather than
+-- printing "default" at the reader who wants to know which model answered.
 local function model_label(tool, pinned)
   if pinned then
     return pinned
@@ -200,7 +198,7 @@ local function check_current_buffer()
         -- claude first; on error fall back to gemini (same order as the check).
         return backend.run_with_fallback({
           { tool = "claude", prompt = fix_system, input = fix_input, model = FIX_MODELS.claude },
-          -- No model: scripts/gemini_api.py reads $GEMINI_MODEL when it runs.
+          -- No model: see CHECK_MODELS.
           { tool = "gemini", prompt = fix_system, input = fix_input },
         }, function(ok, result, err, tool)
           if not ok then
@@ -247,7 +245,6 @@ local function check_current_buffer()
     })
   end
 
-  -- Report opens in a vertical split on the right with wrap on (`tw` toggles it).
   ui.open_report({
     name = "[AI Buffer Check]",
     filetype = "markdown",
@@ -262,7 +259,6 @@ local function check_current_buffer()
             vim.notify("Buffer check is not ready yet.", vim.log.levels.WARN)
             return
           end
-          -- Snapshot the report, close the split, then drive the diff UI.
           local report_lines = vim.api.nvim_buf_get_lines(ctx.buf, 0, -1, false)
           ctx.close()
           start_fix(report_lines)
@@ -273,7 +269,7 @@ local function check_current_buffer()
       -- claude first; on error fall back to gemini (see backend.run_with_fallback).
       return backend.run_with_fallback({
         { tool = "claude", prompt = system, input = input, model = CHECK_MODELS.claude },
-        -- No model: same reason as start_fix above.
+        -- No model: see CHECK_MODELS.
         { tool = "gemini", prompt = system, input = input },
       }, function(ok, result, err, tool)
         if not ok then
@@ -358,12 +354,11 @@ local function hint_at_cursor(tool)
 
   local label = context.describe(unit)
   local system = prompt.hint_system(lang, filepath, unit.start_line, unit.end_line)
-  -- The description goes in the PAYLOAD, not the instruction: the instruction
-  -- is passed in argv (`claude -p ...`) where `ps aux` can read it, and the
-  -- description carries an identifier taken from the buffer. The payload is
-  -- piped in on stdin. Numbered from the unit's real first line, so every
-  -- `L<n>` in the reply is a line the user can jump to rather than an offset
-  -- into the excerpt.
+  -- The description goes in the PAYLOAD, not the instruction: it carries an
+  -- identifier taken from the buffer, and the instruction rides in argv where
+  -- `ps aux` can read it (see prompt.hint_system). Numbered from the unit's
+  -- real first line, so every `L<n>` in the reply is a line the user can jump
+  -- to rather than an offset into the excerpt.
   local input = prompt.hint_input(label, unit.lines, unit.start_line)
 
   if #unit.lines > HINT_LARGE_UNIT then
@@ -390,8 +385,6 @@ local function hint_at_cursor(tool)
     fail_label = "hint",
     copy_notify = "Hints copied to clipboard.",
     start = function(done)
-      -- Tries each spec in order, stopping at the first success; with one spec
-      -- there is no fallback (see backend.run_with_fallback).
       return backend.run_with_fallback(specs, function(ok, result, err, answered)
         if not ok then
           done(false, {}, err)
@@ -455,28 +448,25 @@ end, { desc = "Get file and line info from visual selection", noremap = true, si
 -- `:bd!`: on a modified buffer it drops the unsaved edits *and* the undo
 -- history, with no prompt, no error and no message -- one stray <C-q> (next to
 -- <C-w>) and the work is gone with nothing to undo it back from. The sibling
--- Vim config never did this (.vim/rc/80-custom.vim binds <C-q> to a plain
--- `:bd`); only this side had drifted to the `!` form.
+-- Vim config binds <C-q> to a plain `:bd` (.vim/rc/80-custom.vim).
 --
--- Keying the flag on 'modified' rather than dropping force outright is what
--- keeps the fix from costing something else. A plain delete refuses whenever
--- `:bd` would, and that is wider than unsaved text: a terminal buffer whose
--- job is still running refuses too (measured: E89 "will be killed" with
--- 'modified' false), so <C-q> would stop closing toggleterm windows -- a
--- regression traded for the fix. 'modified' is exactly the "unwritten text
--- exists" flag, it is false for a live terminal and false for a scratch
--- buffer, and those are the ones that were always fine to force.
+-- Keying the flag on 'modified' rather than dropping force outright: a plain
+-- delete refuses whenever `:bd` would, and that is wider than unsaved text -- a
+-- terminal buffer whose job is still running refuses too (E89 "will be killed"
+-- with 'modified' false), so <C-q> would stop closing toggleterm windows.
+-- 'modified' is exactly the "unwritten text exists" flag; it is false for a
+-- live terminal and for a scratch buffer, which are fine to force.
 --
 -- Refuse rather than ask: a `vim.fn.confirm` prompt blocks, and this tree runs
 -- headless (`nvim -l`) in its own CI, where a blocked prompt is a hang.
 -- The error is reported rather than matched on -- the delete can also fail for
 -- reasons that have nothing to do with unsaved changes (a locked buffer, say),
 -- and a message hardcoding "unsaved changes" would be a lie there. pcall gets
--- the API function directly and not a closure around it, which is what keeps
--- that error readable: wrap it in a `function() ... end` and Lua prefixes the
--- message with this file's own "init.lua:NNN:", i.e. noise to the person who
--- just pressed a key. Neovim has already put the real reason (E89) in the
--- message area by then; this only adds the way out.
+-- the API function directly and not a closure around it, which keeps that
+-- error readable: a `function() ... end` wrapper makes Lua prefix the message
+-- with this file's own "init.lua:NNN:", i.e. noise to the person who just
+-- pressed a key. Neovim has already put the real reason (E89) in the message
+-- area by then; this only adds the way out.
 local function close_current_buffer()
   local current_buf = vim.api.nvim_get_current_buf()
   if not vim.api.nvim_buf_is_loaded(current_buf) then
@@ -674,9 +664,9 @@ local function ask_ai_and_replace(start_line, end_line, tool)
       original = selected_lines,
       footer = footer,
       start = function(t, done)
-        -- Models sometimes ignore replace_system's "no code fences" rule and wrap
-        -- the reply in ```lang ... ```; strip that wrapper before it reaches the
-        -- diff preview and the buffer (see prompt.strip_code_fences).
+        -- Models sometimes ignore replace_system's "no code fences" rule; strip
+        -- the wrapper before it reaches the diff preview and the buffer (see
+        -- prompt.strip_code_fences).
         return backend.run({ tool = t, prompt = system, input = input, skip_git_check = true },
           function(ok, out_lines, err)
             done(ok, ok and prompt.strip_code_fences(out_lines) or out_lines, err)

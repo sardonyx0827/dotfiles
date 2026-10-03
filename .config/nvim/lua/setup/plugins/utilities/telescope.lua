@@ -16,7 +16,6 @@ return {
       build = "make",
     },
   },
-  -- Keymaps formerly in after/plugin/telescope.lua (+ <M-0> from after/plugin/colorscheme.lua).
   -- Each key lazy-loads telescope on first use.
   keys = {
     { "<leader>sf", builtin("find_files"),             desc = "Find Files" },
@@ -61,7 +60,6 @@ return {
           hidden = true,
         },
         live_grep = {
-          --theme = "dropdown",
           additional_args = function()
             return { "--hidden" }
           end

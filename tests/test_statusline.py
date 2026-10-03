@@ -92,11 +92,12 @@ class TestStatusline:
         assert f"↺{expected}" in out
 
     def test_backslashes_in_the_directory_are_shown_literally(self, shell_env):
-        """printf %b read the cwd's backslashes as escapes.
+        """The cwd's backslashes are shown literally, not read as `printf %b` escapes.
 
-        macOS allows `\\` in a directory name; `\\c` told %b to stop printing,
-        so everything after it -- model, ctx, git, cost and the trailing reset --
-        vanished and the terminal was left coloured. `\\t` became a tab.
+        macOS allows `\\` in a directory name; `\\c` would tell %b to stop
+        printing, so everything after it -- model, ctx, git, cost and the
+        trailing reset -- vanishes and the terminal is left coloured. `\\t`
+        would become a tab.
         """
         weird = shell_env.home / "src" / "c\\components"
         weird.mkdir(parents=True)
