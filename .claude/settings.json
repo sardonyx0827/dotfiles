@@ -185,7 +185,11 @@
       "Read(out/**)",
       "Read(./.next/**)"
     ],
-    "ask": ["Bash(git push:*)"],
+    "ask": [
+      "Bash(git push:*)",
+      "Edit(//**/.claude/mods/**)",
+      "Edit(//**/.claude/settings.json)"
+    ],
     "defaultMode": "auto"
   },
   "hooks": {

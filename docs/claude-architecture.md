@@ -168,6 +168,18 @@ mod は settings hook より**先に**走り、サンドボックスもありま
 `permissions.ask` を越えて承認することもできるため、ここに置く mod は `tool.*`・`classic.PreToolUse`・
 `classic.PermissionRequest`（とそれらを含むワイルドカード）にフックせず、`$.tool` も呼ばないことを前提にしています
 （`tests/test_config_wiring.py` の `test_mods_do_not_hook_permission_events` が静的に検査します）。
+mod のコードと、mod を読み込む `settings.json` を Claude が書き換えるときに利用者の確認を挟むため、`permissions.ask` に
+`Edit(//**/.claude/mods/**)` と `Edit(//**/.claude/settings.json)` を置いています。`.claude/` は保護パスですが、
+auto モードでは保護パスへの書き込みを classifier が判断するので、明示の ask ルールで利用者に確認させます。
+書き込みのたびに確認が出ることは実機で確かめています。ダイアログに `.claude` フォルダの編集をセッション単位で許可する
+選択肢が出ることがありますが、それを選んだ後も ask ルールの確認が続くかは未検証なので、1 件ずつ確かめたいときは選ばないでください。
+
+この ask ルールが確認を挟むのは組み込みのファイル編集ツール（Edit / Write / NotebookEdit）だけです。次の経路は対象外です。
+
+- Bash 経由の書き込み（`sed -i`、`tee`、リダイレクト、`cp`、`mv`）: bash-review の判定に委ねます
+- allow 済みの Serena の書き込み系 MCP ツール（`replace_content` など）: Edit ルールは MCP ツールに効きません
+- `.claude/settings.local.json` と `.claude/hooks/**`: 従来どおり、保護パスとして classifier が判断します
+
 フックと呼び出しの正確な一覧は `claude plugin validate <mod>` の `hooks:` / `calls:` 行で確認でき、
 テストは `claude plugin test <mod>` で走ります（pytest・CI の対象外）。mod のルートの `tsconfig.json` は
 エンジンが生成する `.claude-plugin/types/`（git 管理外）を extends するので、新しく clone した直後は

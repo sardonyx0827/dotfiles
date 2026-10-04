@@ -380,6 +380,30 @@ def test_git_push_asks_at_the_permission_layer_too():
     )
 
 
+def test_mod_and_settings_edits_ask_the_user():
+    """Editing a mod or settings.json must reach the user, not the classifier.
+
+    A mod is unsandboxed code that runs ahead of the PreToolUse hooks (and can
+    override them through `tool.check`), and settings.json is what loads mods,
+    wires the hooks and holds these very rules. `.claude/` is a protected path,
+    but under defaultMode `auto` a protected-path write is routed to the
+    classifier, so a prompt-injected session could rewrite either without the
+    user ever seeing a prompt. An explicit ask rule prompts even in auto mode,
+    and wins over the bare `Edit` / `Write` allow (deny > ask > allow).
+
+    `//**/` anchors at the filesystem root: in user settings a bare `**/`
+    pattern only reaches files under the session's working directory. Edit
+    rules cover the built-in file tools (Edit, Write, NotebookEdit) only: Bash
+    writes are left to bash-review, and allowed MCP tools that write files
+    (Serena's replace_content and friends) are not covered at all -- see the
+    mod section of docs/claude-architecture.md.
+    """
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    ask = settings["permissions"].get("ask", [])
+    for rule in ("Edit(//**/.claude/mods/**)", "Edit(//**/.claude/settings.json)"):
+        assert rule in ask, f"permissions.ask is missing {rule}; current: {ask}"
+
+
 def test_codex_pretooluse_bash_hooks_are_unconditional():
     """Parity guard for the same hole on the Codex side (it has no `if` today;
     this keeps one from being added)."""
