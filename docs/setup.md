@@ -199,7 +199,7 @@ done
 
 # Claude Code設定 (CLIの実行時データを巻き込まないよう個別にリンク)
 mkdir -p ~/.claude
-for e in CLAUDE.md settings.json statusline-command.sh agents commands hooks mcp-servers rules skills; do
+for e in CLAUDE.md settings.json statusline-command.sh agents commands hooks mcp-servers mods rules skills; do
   ln -sf ~/dotfiles/.claude/$e ~/.claude/$e
 done
 

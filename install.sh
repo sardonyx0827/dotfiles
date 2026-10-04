@@ -1443,6 +1443,7 @@ _link_claude_config() {
     "commands"
     "hooks"
     "mcp-servers"
+    "mods"
     "rules"
     "skills"
   )

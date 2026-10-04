@@ -8,7 +8,9 @@ that launches them). These tests close that gap.
 """
 
 import json
+import os
 import re
+import subprocess
 import sys
 
 import tomllib
@@ -42,7 +44,10 @@ def test_claude_settings_is_valid_json():
 
 
 def test_claude_settings_hook_and_statusline_paths_exist():
-    text = CLAUDE_SETTINGS.read_text(encoding="utf-8")
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    # Only hook and statusLine commands name script files. An env value such as
+    # CLAUDE_CODE_PLUGIN_DIRS names a directory and has its own test below.
+    text = json.dumps({key: settings.get(key) for key in ("hooks", "statusLine")})
     rels = _referenced_repo_paths(text, "~")
     # Guard against the regex silently matching nothing (which would make the
     # existence loop vacuously pass).
@@ -51,6 +56,119 @@ def test_claude_settings_hook_and_statusline_paths_exist():
         assert (REPO_ROOT / rel).is_file(), (
             f"settings.json references missing file: {rel}"
         )
+
+
+def _claude_plugin_dirs() -> list[str]:
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    value = settings.get("env", {}).get("CLAUDE_CODE_PLUGIN_DIRS", "")
+    return [entry for entry in value.split(":") if entry]
+
+
+def test_claude_plugin_dirs_point_at_valid_mods():
+    """Every CLAUDE_CODE_PLUGIN_DIRS entry is a mod this repo ships.
+
+    Claude Code loads each entry as a `--plugin-dir` at session start, so a
+    typo or a missing hooks module only shows up there, out of sight of every
+    other test. Entries go through ~/.claude/mods, which install.sh links here.
+    """
+    entries = _claude_plugin_dirs()
+    assert entries, "expected CLAUDE_CODE_PLUGIN_DIRS in settings.json env"
+    for entry in entries:
+        assert entry.startswith("~/.claude/mods/"), (
+            f"plugin dir outside ~/.claude/mods: {entry}"
+        )
+        assert ".." not in entry.split("/"), f"plugin dir escapes mods: {entry}"
+        mod = REPO_ROOT / entry.removeprefix("~/")
+        manifest = json.loads(
+            (mod / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
+        )
+        assert manifest["name"] == mod.name, f"{entry}: manifest name differs"
+        hooks = json.loads((mod / "hooks/hooks.json").read_text(encoding="utf-8"))
+        assert hooks["modules"], f"{entry}: hooks.json names no module"
+        for module in hooks["modules"]:
+            assert (mod / "hooks" / module).is_file(), (
+                f"{entry}: missing hooks module {module}"
+            )
+
+
+def _is_git_ignored(rel: str) -> bool:
+    # --no-index: ask the ignore rules themselves. Without it a tracked file
+    # always reads as "not ignored", hiding an over-broad pattern. The user's
+    # global config and excludesFile are shut out (as conftest.run_git does) so
+    # only this repo's .gitignore answers, and a git error fails loudly instead
+    # of reading as "not ignored".
+    result = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.excludesFile=/dev/null",
+            "check-ignore",
+            "-q",
+            "--no-index",
+            rel,
+        ],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode in (0, 1), f"git check-ignore failed: {result.stderr}"
+    return result.returncode == 0
+
+
+def test_generated_mod_types_are_gitignored():
+    """Claude Code writes `<mod>/.claude-plugin/types/` on every load, through the
+    ~/.claude/mods symlink into this work tree; the mod's own sources stay tracked.
+    """
+    for entry in _claude_plugin_dirs():
+        mod = entry.removeprefix("~/")
+        assert _is_git_ignored(f"{mod}/.claude-plugin/types/claude-code/index.d.ts")
+        assert not _is_git_ignored(f"{mod}/.claude-plugin/plugin.json")
+        assert not _is_git_ignored(f"{mod}/types/index.d.ts")
+        # The engine also writes a root tsconfig.json, but it only extends the
+        # generated one and never changes, so it is tracked for `tsc -p <mod>`.
+        assert not _is_git_ignored(f"{mod}/tsconfig.json")
+
+
+# A mod runs before the user's PreToolUse settings hooks and can answer a tool
+# call (`tool.call`), override the permission verdict after them (`tool.check`),
+# or approve past a PermissionRequest -- each one a way around bash-review,
+# git-push-review and permissions.ask. Mods here only display, so none of
+# those events (nor a wildcard that would include them) may be hooked, and the
+# `$.tool` noun, which calls and checks tools, is off limits too.
+# A tripwire, not a proof: `claude plugin validate <mod>`'s `hooks:` line is
+# the authority, and an aliased `on` would slip past this regex.
+_MOD_SOURCE_SUFFIXES = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
+_HOOKED_EVENT = re.compile(r"""\bon\(\s*(["'`])([^"'`]+)\1""")
+_GATE_EVENTS = re.compile(
+    r"^(?:tool\.|classic\.(?:PreToolUse|PermissionRequest)$)|[*!]"
+)
+
+
+def test_mods_do_not_hook_permission_events():
+    mods = sorted(p for p in (REPO_ROOT / ".claude/mods").iterdir() if p.is_dir())
+    assert mods, "expected at least one mod under .claude/mods"
+    for mod in mods:
+        sources = [
+            p
+            for p in (mod / "hooks").rglob("*")
+            if p.suffix in _MOD_SOURCE_SUFFIXES and p.is_file()
+        ]
+        events = []
+        for source in sources:
+            text = source.read_text(encoding="utf-8")
+            rel = source.relative_to(REPO_ROOT)
+            assert "$.tool." not in text, f"{rel} calls the $.tool noun"
+            events += [m.group(2) for m in _HOOKED_EVENT.finditer(text)]
+        # Guard against the regex silently matching nothing.
+        assert events, f"{mod.name}: no on(...) registrations found"
+        gated = [event for event in events if _GATE_EVENTS.search(event)]
+        assert not gated, f"{mod.name} hooks permission events: {gated}"
 
 
 # Paths whose *contents* are secrets (or, for .git/config, are what turns a

@@ -40,6 +40,7 @@
 │   ├── commands/                   # カスタムスラッシュコマンド (tdd, verify 等)
 │   ├── hooks/                      # フック (auto-format, lint, bash-review 等)
 │   ├── mcp-servers/                # 自作MCPサーバー (gemini-consultant)
+│   ├── mods/                       # mod (bash-review-log: bash-review の判定ログ表示)
 │   ├── rules/                      # ワークフロー / セキュリティルール
 │   ├── skills/                     # スキル定義 (backend-patterns 等)
 │   ├── CLAUDE.md                   # グローバル指示
