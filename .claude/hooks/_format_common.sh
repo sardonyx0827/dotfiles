@@ -53,7 +53,6 @@ hook_format_file() {
     # git リポジトリの外では遡る境界が無いので、編集ファイル自身のディレクトリ
     # 1 段だけを見て、それ以降は PATH にフォールバックする(無制限に遡ると
     # 無関係な node_modules まで拾いかねないため)。
-    PRETTIER_BIN=""
     PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
     [ -z "$PROJECT_ROOT" ] && PROJECT_ROOT=$(dirname "$FILE_PATH")
     PRETTIER_BIN=$(hook_find_nearest_bin "$(dirname "$FILE_PATH")" "$PROJECT_ROOT" prettier)
