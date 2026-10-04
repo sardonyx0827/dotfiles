@@ -188,18 +188,34 @@ def test_mods_do_not_hook_permission_events():
 # and reads as protection while enforcing nothing, and the CLI prints a startup
 # warning for each one. Keep these Edit-only so the list cannot drift back into
 # inert entries.
+#
+# Every pattern is anchored at the filesystem root (`//**/`). In user settings a
+# bare `**/x` only reaches files under the session's working directory, so the
+# old `**/.ssh/**` guarded a repo's own .ssh/ and left ~/.ssh, ~/.aws and other
+# projects' secrets readable under the bare `Read` allow -- confirmed in a live
+# session, where a read under the repo was denied and one under /tmp was not.
+#
+# The known side effects widen with the scope (they already held inside the
+# working directory): `.env.*` also blocks .env.example, `*.pem` public CA
+# bundles, `*.key` Keynote files, `id_rsa*` the matching .pub, and `secrets/**`
+# any directory of that name. A deny wins over every allow, so an exception
+# means narrowing the pattern itself.
 SECRET_PATH_PATTERNS = [
-    "**/id_rsa*",
-    "**/id_ed25519*",
-    "**/id_ecdsa*",
-    "**/*.key",
-    "**/*.pem",
-    "**/*.token",
-    "**/.ssh/**",
-    "**/.aws/**",
-    "**/secrets/**",
-    "**/.git/config",
+    "//**/id_rsa*",
+    "//**/id_ed25519*",
+    "//**/id_ecdsa*",
+    "//**/*.key",
+    "//**/*.pem",
+    "//**/*.token",
+    "//**/.ssh/**",
+    "//**/.aws/**",
+    "//**/secrets/**",
+    "//**/.env",
+    "//**/.env.*",
 ]
+# Denied for editing only: a repo's config is not secret to read, but writing it
+# is what turns a "safe" git read into code execution.
+EDIT_ONLY_SECRET_PATTERNS = ["//**/.git/config"]
 
 
 def _deny_rules() -> set[str]:
@@ -216,22 +232,36 @@ def test_secret_paths_are_denied_for_editing():
     deny = _deny_rules()
     missing = [
         f"Edit({pattern})"
-        for pattern in SECRET_PATH_PATTERNS
+        for pattern in [*SECRET_PATH_PATTERNS, *EDIT_ONLY_SECRET_PATTERNS]
         if f"Edit({pattern})" not in deny
     ]
     assert not missing, f"permissions.deny is missing edit-side guards: {missing}"
 
 
-def test_dotenv_is_denied_for_editing():
-    """`.env` uses its own spellings (no `**/` prefix) in the existing Read denies,
-    so it is checked separately rather than bent into SECRET_PATH_PATTERNS."""
+def test_secret_paths_are_read_denied_and_anchored():
+    """Secret contents are read-denied too, and no guard keeps a cwd-relative spelling.
+
+    This checks the rule strings only; that `//**/` reaches outside the working
+    directory while `**/` does not is the live-session result noted above. A
+    leftover `Read(**/.ssh/**)` beside the `//**/` one would look like extra
+    coverage while guarding only the working directory, so those spellings must
+    be gone, not merely outnumbered.
+    """
     deny = _deny_rules()
     missing = [
-        f"Edit({pattern})"
-        for pattern in (".env", ".env.*")
-        if f"Edit({pattern})" not in deny
+        f"Read({pattern})"
+        for pattern in SECRET_PATH_PATTERNS
+        if f"Read({pattern})" not in deny
     ]
-    assert not missing, f"permissions.deny is missing .env edit guards: {missing}"
+    assert not missing, f"permissions.deny is missing read-side guards: {missing}"
+    cwd_relative = {
+        f"{verb}({prefix}{pattern.removeprefix('//**/')})"
+        for verb in ("Read", "Edit")
+        for prefix in ("", "./", "**/")
+        for pattern in [*SECRET_PATH_PATTERNS, *EDIT_ONLY_SECRET_PATTERNS]
+    }
+    leftovers = sorted(deny & cwd_relative)
+    assert not leftovers, f"cwd-relative secret guards: {leftovers}"
 
 
 # bash-review's DENY_EXECUTABLES (sudo, ssh, dd, ...) are *context-free* hard
