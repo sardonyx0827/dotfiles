@@ -3,7 +3,7 @@
 return {
   "folke/trouble.nvim",
   lazy = true,
-  cmd = { "TroubleToggle", "Trouble", "TroubleRefresh" },
+  cmd = "Trouble",
   keys = {
     {
       "<leader>xX",

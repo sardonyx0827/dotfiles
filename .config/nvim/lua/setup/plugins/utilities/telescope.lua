@@ -61,7 +61,6 @@ return {
         path_display = { "truncate" },
       },
       pickers = {
-        show_all_buffers = true,
         find_files = {
           hidden = true,
         },

@@ -1,5 +1,3 @@
-vim.g.mapleader = ","
-
 -- move text: keep the visual selection after shifting
 vim.keymap.set("v", "<", "<gv")
 vim.keymap.set("v", ">", ">gv")

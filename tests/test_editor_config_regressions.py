@@ -937,3 +937,135 @@ emit({ found = true, picks = picks, added = after - before, blend = hl.blend or 
     assert got["added"] == 1, f"{got['added']} ColorScheme autocmds after 3 presses"
     # The hook still does its job: a colorscheme change resets the blend.
     assert got["blend"] == 0, got
+
+
+def test_trouble_lazy_loads_only_on_commands_it_defines(tmp_path):
+    """trouble.nvim v2 defines a single user command, `:Trouble`.
+
+    lazy.nvim turns every name in `cmd` into a stub command that loads the
+    plugin and then re-runs the command, so a name the plugin does not define
+    (the v1 `TroubleToggle` / `TroubleRefresh`) loads Trouble and then fails
+    with "Not an editor command".
+    """
+    got = _nvim_probe(
+        tmp_path,
+        """
+local cmd = require("setup.plugins.utilities.trouble").cmd
+if type(cmd) == "string" then cmd = { cmd } end
+emit({ cmd = cmd or {} })
+""",
+    )
+    assert got["cmd"], "trouble spec no longer lazy-loads on any command"
+    assert set(got["cmd"]) <= {"Trouble"}, got["cmd"]
+
+
+def test_telescope_pickers_hold_only_option_tables(tmp_path):
+    """Every `pickers` value is an option table for the picker it is keyed by.
+
+    telescope looks options up as `pickers[<picker name>]`, so a bare option at
+    this level (`pickers.show_all_buffers = true`) belongs to no picker and is
+    silently ignored. Whether each key names a real picker is not checked:
+    telescope itself is not installed where this suite runs.
+    """
+    got = _nvim_probe(
+        tmp_path,
+        """
+local captured
+package.loaded["telescope"] = {
+  setup = function(opts) captured = opts end,
+  load_extension = function() end,
+}
+require("setup.plugins.utilities.telescope").config()
+local names, bad = {}, {}
+for name, value in pairs((captured or {}).pickers or {}) do
+  table.insert(names, name)
+  if type(value) ~= "table" then table.insert(bad, name) end
+end
+table.sort(names)
+table.sort(bad)
+emit({ names = names, bad = bad })
+""",
+    )
+    assert got["names"], "telescope.setup no longer receives any pickers"
+    assert got["bad"] == [], f"not picker option tables: {got['bad']}"
+
+
+def test_eager_plugin_specs_declare_no_lazy_load_triggers(tmp_path):
+    """A `lazy = false` spec must not also declare `cmd` / `event` / `ft`.
+
+    Those keys only tell lazy.nvim when to load a lazy plugin; on a plugin that
+    loads at startup they do nothing and misstate how it is loaded. `keys` is
+    exempt: lazy.nvim still creates those mappings for an eager plugin.
+    """
+    got = _nvim_probe(
+        tmp_path,
+        f"""
+local root = {str(NVIM_LUA_ROOT)!r} .. "/"
+local files = vim.fs.find(function(name) return name:match("%.lua$") end, {{
+  path = root .. "setup/plugins", type = "file", limit = math.huge,
+}})
+table.sort(files)
+local eager, offenders = 0, {{}}
+local function check(spec, where)
+  if type(spec) ~= "table" then return end
+  -- A file may return a list of specs (nvim-lspconfig.lua does).
+  if type(spec[1]) == "table" then
+    for i, item in ipairs(spec) do check(item, where .. "[" .. i .. "]") end
+    return
+  end
+  if spec.lazy == false then
+    eager = eager + 1
+    for _, key in ipairs({{ "cmd", "event", "ft" }}) do
+      if spec[key] ~= nil then table.insert(offenders, where .. ": " .. key) end
+    end
+  end
+  local deps = spec.dependencies or {{}}
+  if type(deps) ~= "table" then deps = {{ deps }} end
+  for _, dep in ipairs(deps) do
+    check(dep, where .. " > " .. tostring(type(dep) == "table" and dep[1] or dep))
+  end
+end
+for _, file in ipairs(files) do
+  -- Plain prefix cut, not gsub: the path may hold Lua pattern characters.
+  local module = file:sub(#root + 1):gsub("%.lua$", ""):gsub("/", ".")
+  check(require(module), module)
+end
+emit({{ eager = eager, offenders = offenders }})
+""",
+    )
+    assert got["eager"] > 0, "no `lazy = false` spec found -- did the probe break?"
+    assert got["offenders"] == [], got["offenders"]
+
+
+def test_mapleader_is_assigned_once_before_lazy_setup():
+    """`vim.g.mapleader` is set in lazy.lua only, ahead of `lazy.setup`.
+
+    lazy.nvim expands `<leader>` in spec `keys` when lazy.setup runs, and
+    vim.keymap.set expands it when each mapping is made. A second assignment
+    elsewhere is a second place to edit: change one copy and plugin keys and the
+    remaining keymaps end up on different leaders. remap.lua relies on
+    setup/init.lua loading lazy.lua first.
+    """
+    assignment = re.compile(r"\bvim\.g\.mapleader\s*=(?!=)")
+    sites = [
+        f"{path.relative_to(REPO_ROOT)}:{n}"
+        for path in sorted((REPO_ROOT / ".config/nvim").rglob("*.lua"))
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if not line.lstrip().startswith("--") and assignment.search(line)
+    ]
+    lazy_lua = ".config/nvim/lua/setup/lazy.lua"
+    assert len(sites) == 1 and sites[0].startswith(lazy_lua + ":"), sites
+
+    lines = (REPO_ROOT / lazy_lua).read_text(encoding="utf-8").splitlines()
+    setup_line = next(
+        (n for n, line in enumerate(lines, 1) if "lazy.setup(" in line), None
+    )
+    assert setup_line, "lazy.lua no longer calls lazy.setup"
+    assert int(sites[0].rsplit(":", 1)[1]) < setup_line
+
+    init_lua = (REPO_ROOT / ".config/nvim/lua/setup/init.lua").read_text(
+        encoding="utf-8"
+    )
+    lazy_at = init_lua.find('require("setup.lazy")')
+    remap_at = init_lua.find('require("setup.remap")')
+    assert 0 <= lazy_at < remap_at, "setup/init.lua must load lazy.lua before remap.lua"
