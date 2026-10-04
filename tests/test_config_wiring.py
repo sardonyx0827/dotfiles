@@ -197,8 +197,8 @@ def test_mods_do_not_hook_permission_events():
 #
 # The known side effects widen with the scope (they already held inside the
 # working directory): `.env.*` also blocks .env.example, `*.pem` public CA
-# bundles, `*.key` Keynote files, `id_rsa*` the matching .pub, and `secrets/**`
-# any directory of that name. A deny wins over every allow, so an exception
+# bundles, `*.key` Keynote files, `id_rsa*` the matching .pub, `secrets/**`
+# any directory of that name, and `.envrc` every project's direnv config. A deny wins over every allow, so an exception
 # means narrowing the pattern itself.
 SECRET_PATH_PATTERNS = [
     "//**/id_rsa*",
@@ -212,6 +212,19 @@ SECRET_PATH_PATTERNS = [
     "//**/secrets/**",
     "//**/.env",
     "//**/.env.*",
+    "//**/.envrc",
+    "//**/.git-credentials",
+    "//**/.zsh_secrets",
+]
+# Credential files whose names are common inside projects too (a project's own
+# auth.json or .npmrc), so only the copy in the home directory is denied.
+HOME_SECRET_PATHS = [
+    "~/.claude.json",
+    "~/.codex/auth.json",
+    "~/.config/gh/hosts.yml",
+    "~/.npmrc",
+    "~/.netrc",
+    "~/.pypirc",
 ]
 # Denied for editing only: a repo's config is not secret to read, but writing it
 # is what turns a "safe" git read into code execution.
@@ -236,6 +249,57 @@ def test_secret_paths_are_denied_for_editing():
         if f"Edit({pattern})" not in deny
     ]
     assert not missing, f"permissions.deny is missing edit-side guards: {missing}"
+
+
+def test_home_secret_files_are_denied():
+    """The CLI credential files under ~ are denied for reading and editing."""
+    deny = _deny_rules()
+    missing = [
+        f"{verb}({path})"
+        for path in HOME_SECRET_PATHS
+        for verb in ("Read", "Edit")
+        if f"{verb}({path})" not in deny
+    ]
+    assert not missing, f"permissions.deny is missing home secret guards: {missing}"
+
+
+# Commands that print the whole environment. .zshrc sources ~/.zsh_secrets, so
+# the API keys there are in the environment the Bash tool inherits, and a file
+# deny cannot see them. Bash rules match command text, so these stop the usual
+# spellings, not `/usr/bin/env` or `sh -c env` (those still go through
+# bash-review). `env FOO=1 cmd` is a wrapper, not a dump, and is not matched.
+#
+# `env -*` catches `env -0` / `env -u X` (each prints the environment when no
+# command follows); bare `declare` / `typeset` print every variable, and the
+# `-*` forms catch any flag cluster (`-p`, `-x`, `-px`, `-xp`). Neither builtin
+# has a top-level use worth keeping. `env FOO=1` with no command still prints
+# the environment and cannot be told apart from `env FOO=1 cmd` by a rule, so
+# that one is left to bash-review.
+ENV_DUMP_DENIES = [
+    "Bash(env)",
+    "Bash(env -*)",
+    "Bash(printenv)",
+    "Bash(printenv:*)",
+    "Bash(export)",
+    "Bash(export -p:*)",
+    "Bash(set)",
+    "Bash(declare)",
+    "Bash(declare -*)",
+    "Bash(typeset)",
+    "Bash(typeset -*)",
+]
+
+
+def test_environment_dumps_are_denied():
+    """Environment dumps are denied, and `export` is no longer pre-allowed.
+
+    The allow entry never decided anything (bash-review rules on every Bash
+    call first), but it read as "export is safe" and hid the dump forms.
+    """
+    permissions = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))["permissions"]
+    missing = [rule for rule in ENV_DUMP_DENIES if rule not in permissions["deny"]]
+    assert not missing, f"permissions.deny is missing env dump guards: {missing}"
+    assert "Bash(export:*)" not in permissions["allow"]
 
 
 def test_secret_paths_are_read_denied_and_anchored():
