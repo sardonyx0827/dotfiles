@@ -181,7 +181,21 @@ latency low for the common case:
    Safe-skip is the conservative side: it matches the raw command string against
    an allowlist and never consults the resolver, so anything wrapped in grammar
    simply fails to match and goes to review. A sensitive path (`.env`, `id_rsa`,
-   `.ssh`, …) forces review even when the prefix looks safe.
+   `.ssh`, …) forces review even when the prefix looks safe. So do the reads
+   that reach a secret without naming it, since such a command names no file
+   and the `permissions.deny` Read rules cannot catch it either:
+   - an unquoted glob, brace or parenthesis (`cat .e*` expands to `.env`; the
+     Bash tool's shell is zsh, where `.e(n)v` is a group glob and `=(cmd)`
+     runs cmd). A quoted regex such as `grep 'a.*b'` stays fast.
+   - a grep that may read a directory. Claude Code's Bash tool shadows grep
+     with `ugrep --hidden`, which reads the hidden files under a directory
+     operand even without `-r`, and treats `-3` as "recurse 3 levels". So a
+     recursive flag, a digit flag, or an operand that does not look like a
+     regular file (`.`, `src`, `sub/`) sends grep to review; a pipe
+     (`… | grep foo`) or `grep foo file.txt` stays fast.
+   - an rg that overrides its hidden/ignored-file skip: `--hidden`, `-u`,
+     `--no-ignore`, and also `-g` / `--glob` (unless an `!` exclusion) and
+     `-t` / `--type`, both of which read hidden files.
 
 2. **Secret pre-send scan (no external call).** Before any command is handed to
    an LLM, a static scan (`scan_secrets`) checks the command _and_ the full

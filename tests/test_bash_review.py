@@ -2111,11 +2111,11 @@ class TestCommandHelpers:
             # revision ranges like HEAD~1 / HEAD~5..HEAD) must stay fast, and a
             # hyphenated relative subdir must not false-positive as a flag path.
             ("cat README.md", True),
-            ("grep -r foo src", True),
+            ("grep -n foo src/app.ts", True),
             ("git diff HEAD~1", True),
             ("git log HEAD~5..HEAD", True),
             ("cat src/my-component/index.js", True),
-            ("grep -r foo my-dir", True),
+            ("grep -n foo my-dir/file.txt", True),
             # A bare `..` argument is parent traversal exactly like `../`;
             # anchoring only on `/..` and `../` would let `grep -rn . ..` reach
             # the safe-skip fast path with no AI review at all. `..` is only
@@ -2175,6 +2175,167 @@ class TestCommandHelpers:
     )
     def test_is_safe_command(self, hook_fns, command, expected):
         assert hook_fns["_is_safe_command"](command) is expected
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            # A recursive grep names no file, so no Read deny and no sensitive
+            # pattern sees the .env it prints: `grep -r '' .` dumps every line
+            # of every file under the tree. Recursion therefore always reaches
+            # AI review, however ordinary the pattern looks.
+            ("grep -r '' .", False),
+            ("grep -r foo src", False),
+            ("grep -rn foo src", False),
+            ("grep -nr foo src", False),
+            ("grep -Rin foo .", False),
+            ("grep --recursive foo .", False),
+            ("grep --dereference-recursive foo .", False),
+            ("grep -d recurse foo .", False),
+            ("grep --directories=recurse foo .", False),
+            # rg is recursive by default but skips hidden and ignored files, and
+            # .env is usually both; the flags that lift that are the opt-in.
+            ("rg --hidden foo", False),
+            ("rg -. foo", False),
+            ("rg -n. foo", False),
+            ("rg -u foo", False),
+            ("rg -uu foo", False),
+            ("rg -nu foo", False),
+            ("rg --unrestricted foo", False),
+            ("rg --no-ignore foo", False),
+            ("rg --no-ignore-vcs foo", False),
+            # An unquoted glob or brace is expanded by the shell into names the
+            # command text never spells (`cat .e*` -> `cat .env`), so the
+            # sensitive-path patterns cannot see the target.
+            ("cat .e*", False),
+            ("cat .e?v", False),
+            ("cat .[e]nv", False),
+            ("cat .e{n,}v", False),
+            ("ls *.md", False),
+            ("head -n 5 *.txt", False),
+            ("grep foo *", False),
+            ("rg -g *.ts foo", False),
+            # The Bash tool's shell is zsh, where parentheses expand too: a
+            # group glob (`.e(n)v` -> `.env`), a glob qualifier, and `=(cmd)`
+            # process substitution, which RUNS cmd -- unlike `$(` / `<(` it is
+            # not in COMPLEX_SHELL_SYNTAX, so `cat =(curl ...)` used to skip
+            # review entirely.
+            ("cat .e(n)v", False),
+            ("ls *(.)", False),
+            ("cat =(echo x)", False),
+            # Claude Code's Bash tool shadows grep with `ugrep --hidden`: a
+            # directory operand reads the hidden files directly under it even
+            # without -r, and `-3` means "recurse 3 levels" (both reproduced
+            # with dummy files). So does an abbreviated long flag on GNU grep.
+            ("grep -n MARKER .", False),
+            ("grep -h '' .", False),
+            ("grep foo src", False),
+            ("grep foo sub/", False),
+            ("grep foo .gitignore", False),
+            ("grep -3 foo .", False),
+            ("grep -3 foo", False),
+            ("grep --max-depth=3 foo .", False),
+            ("grep --null --rec '' .", False),
+            ("timeout 5 grep -n foo .", False),
+            # rg's -g / --glob and -t / --type override its hidden-file skip
+            # (`rg -g '*'` and `rg -t json` both printed a hidden file); only an
+            # exclusion glob (`!`) leaves the default alone.
+            ("rg -g '*.ts' foo", False),
+            ("rg -g'*' foo", False),
+            ("rg --glob '*' foo", False),
+            ("rg --glob=* foo", False),
+            ("rg --iglob '*.JSON' foo", False),
+            ("rg -t json ''", False),
+            ("rg --type py foo", False),
+            ("rg --type=py foo", False),
+            ("rg -nt json foo", False),
+            ("rg -L foo", False),  # follows symlinks out of the tree
+            ("rg --follow foo", False),
+            ("rg -g '!*.lock' foo", True),
+            ("rg --glob='!vendor/**' foo", True),
+            # CLI credential files read by a relative path (cwd = ~).
+            ("cat .claude.json", False),
+            ("cat .codex/auth.json", False),
+            ("cat .config/gh/hosts.yml", False),
+            # ...while the everyday forms stay fast: rg's default skips hidden
+            # files, grep reading a pipe or a named regular file reads nothing
+            # else, and a quoted glob or regex is a literal argument the shell
+            # never expands.
+            ("rg foo", True),
+            ("rg -n foo src", True),
+            ("rg -T json foo", True),  # -T excludes a type
+            ("rg 'foo.*bar'", True),
+            ("grep foo", True),
+            ("grep -c foo", True),
+            ("grep -e foo -e bar", True),
+            ("grep -n 'a.*b' file.txt", True),
+            ('grep -E "colou?r" file.txt', True),
+            ("grep -n foo file.txt", True),
+            ("grep -A 3 foo src/app.ts", True),
+            ("grep -e foo docs/a.md docs/b.md", True),
+            ("cat 'weird*name'", True),
+            ("cat .e\\*", True),  # escaped: the literal file name `.e*`
+            ("echo '(done)'", True),
+        ],
+    )
+    def test_safe_skip_rules_for_unrestricted_and_glob_reads(
+        self, hook_fns, command, expected
+    ):
+        assert hook_fns["_is_safe_command"](command) is expected
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # The glob and recursive-search guards now return False first for
+            # these, so the safe-skip tests above would still pass with the
+            # out-of-tree regex broken. Pin each of its branches on its own.
+            "grep -n . ..",
+            "rg '' ..",
+            "grep -n . ..*",
+            "ls ..*",
+            "tree ..?",
+            "grep -n x --directory=..",
+            "grep -n . .*",
+            "ls .*",
+            "cat .?",
+            "cat {/proc/self,.}/environ",
+            "cat {/,}etc/passwd",
+            "ls {.,..}",
+            "ls .{.,}",
+            "cat ${HOME}/.zshrc",
+            "grep -n foo .. && ls",
+        ],
+    )
+    def test_out_of_tree_regex_catches_expansion_and_traversal(self, hook_fns, command):
+        assert hook_fns["_references_out_of_tree_path"](command) is True
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            ("cat x", False),
+            ("cat 'a*b'", False),
+            ('cat "a*b"', False),
+            ("cat 'it'\\''s'*", True),  # quote closed, then a bare glob
+            ('cat "a\\"b*"', False),  # escaped quote stays inside the string
+            ("cat a\\*", False),
+            ("cat a\\\\*", True),  # escaped backslash, then a bare glob
+        ],
+    )
+    def test_has_unquoted_glob_tracks_quotes_and_escapes(
+        self, hook_fns, command, expected
+    ):
+        assert hook_fns["_has_unquoted_glob"](command) is expected
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            ("grep '-r' foo .", True),  # quotes are resolved before matching
+            ("grep -- -r file.txt", False),  # after --, -r is the pattern
+            ("ls -r", False),  # not grep / rg
+            ("rg -- --hidden", False),  # after --, a pattern
+        ],
+    )
+    def test_is_unrestricted_search_edge_cases(self, hook_fns, command, expected):
+        assert hook_fns["_is_unrestricted_search"](command) is expected
 
     @pytest.mark.parametrize(
         ("command", "expected"),
@@ -2385,7 +2546,7 @@ class TestCommandHelpers:
             ("tree --outfile out.txt", False),
             # No false positives: `-o` means something harmless for these two,
             # and demoting them would cost latency on very common commands.
-            ("grep -o pattern file", True),
+            ("grep -o pattern file.txt", True),
             ("ls -o", True),
             # Ordinary read-only spellings stay on the fast path.
             ("git log --oneline", True),
