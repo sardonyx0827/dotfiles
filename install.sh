@@ -1721,6 +1721,26 @@ install_ai_tools() {
   fi
 }
 
+# rubocop (gem) and phpstan (composer) install the same way on macOS and
+# Ubuntu; both arms of install_linters_formatters call this at the same point.
+_install_ruby_php_linters() {
+  # Ruby tools
+  if command_exists gem; then
+    if ! command_exists rubocop; then
+      print_info "Installing rubocop via gem..."
+      try_install rubocop gem install rubocop
+    fi
+  fi
+
+  # PHP tools
+  if command_exists php && ! command_exists phpstan; then
+    if command_exists composer; then
+      print_info "Installing phpstan via composer..."
+      try_install phpstan composer global require phpstan/phpstan
+    fi
+  fi
+}
+
 # Install linters and formatters (used by .claude/hooks/lint.sh and auto-format.sh)
 install_linters_formatters() {
   print_info "Installing linters and formatters..."
@@ -1809,21 +1829,7 @@ install_linters_formatters() {
       fi
     fi
 
-    # Ruby tools
-    if command_exists gem; then
-      if ! command_exists rubocop; then
-        print_info "Installing rubocop via gem..."
-        try_install rubocop gem install rubocop
-      fi
-    fi
-
-    # PHP tools
-    if command_exists php && ! command_exists phpstan; then
-      if command_exists composer; then
-        print_info "Installing phpstan via composer..."
-        try_install phpstan composer global require phpstan/phpstan
-      fi
-    fi
+    _install_ruby_php_linters
     ;;
 
   ubuntu)
@@ -1862,21 +1868,9 @@ install_linters_formatters() {
       fi
     fi
 
-    # Ruby tools
-    if command_exists gem; then
-      if ! command_exists rubocop; then
-        print_info "Installing rubocop via gem..."
-        try_install rubocop gem install rubocop
-      fi
-    fi
+    _install_ruby_php_linters
 
-    # PHP tools
-    if command_exists php && ! command_exists phpstan; then
-      if command_exists composer; then
-        print_info "Installing phpstan via composer..."
-        try_install phpstan composer global require phpstan/phpstan
-      fi
-    fi
+    # php-cs-fixer (composer; macOS gets it from brew above)
     if ! command_exists php-cs-fixer; then
       if command_exists composer; then
         print_info "Installing php-cs-fixer via composer..."
