@@ -174,11 +174,23 @@ auto モードでは保護パスへの書き込みを classifier が判断する
 書き込みのたびに確認が出ることは実機で確かめています。ダイアログに `.claude` フォルダの編集をセッション単位で許可する
 選択肢が出ることがありますが、それを選んだ後も ask ルールの確認が続くかは未検証なので、1 件ずつ確かめたいときは選ばないでください。
 
-この ask ルールが確認を挟むのは組み込みのファイル編集ツール（Edit / Write / NotebookEdit）だけです。次の経路は対象外です。
+この Edit の ask ルールが確認を挟むのは、組み込みのファイル編集ツール（Edit / Write / NotebookEdit）だけです。
+
+Edit ルールは MCP ツールに効かないので、作業ツリーを書き換える Serena のツール（`replace_*`・`insert_*`・
+`rename_symbol`・`safe_delete_symbol`）は、ツールそのものを `permissions.ask` に置いています。いまは公開されていない
+`replace_lines`・`delete_lines`・`insert_at_line`・`create_text_file`・`execute_shell_command` も、設定で公開されたときに
+確認なしで使えないよう同じく置いています。allow に残すのは読み取り・プロジェクト設定・メモリ系だけで、
+`tests/test_config_wiring.py` が許可リストとして検査します。ツール単位の ask が auto モードでも確認を出すのは
+公式ドキュメントの記述によるもので、実機では Edit ルールしか確かめていません。
+
+次の経路は対象外です。
 
 - Bash 経由の書き込み（`sed -i`、`tee`、リダイレクト、`cp`、`mv`）: bash-review の判定に委ねます
-- allow 済みの Serena の書き込み系 MCP ツール（`replace_content` など）: Edit ルールは MCP ツールに効きません
 - `.claude/settings.local.json` と `.claude/hooks/**`: 従来どおり、保護パスとして classifier が判断します
+- Serena の `activate_project`: プロジェクトの `.serena/project.yml` にある `activation_command` を実行します
+  （`~/.serena/serena_config.yml` の `trusted_project_path_patterns` が `**` のため、どのプロジェクトでも実行されます）
+- Serena のメモリ系（`write_memory` など）: `.serena/memories/` か、`global/` 接頭辞なら全プロジェクト共通の
+  `~/.serena/memories/global/` に Markdown を書きます。コードは実行しませんが、書いた内容は後のセッションで読まれます
 
 フックと呼び出しの正確な一覧は `claude plugin validate <mod>` の `hooks:` / `calls:` 行で確認でき、
 テストは `claude plugin test <mod>` で走ります（pytest・CI の対象外）。mod のルートの `tsconfig.json` は

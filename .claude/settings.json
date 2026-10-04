@@ -107,14 +107,7 @@
       "mcp__serena__find_symbol",
       "mcp__serena__find_declaration",
       "mcp__serena__find_implementations",
-      "mcp__serena__find_referencing_symbols",
-      "mcp__serena__replace_symbol_body",
-      "mcp__serena__replace_content",
-      "mcp__serena__replace_in_files",
-      "mcp__serena__insert_after_symbol",
-      "mcp__serena__insert_before_symbol",
-      "mcp__serena__rename_symbol",
-      "mcp__serena__safe_delete_symbol"
+      "mcp__serena__find_referencing_symbols"
     ],
     "deny": [
       "Bash(shutdown:*)",
@@ -188,7 +181,19 @@
     "ask": [
       "Bash(git push:*)",
       "Edit(//**/.claude/mods/**)",
-      "Edit(//**/.claude/settings.json)"
+      "Edit(//**/.claude/settings.json)",
+      "mcp__serena__replace_symbol_body",
+      "mcp__serena__replace_content",
+      "mcp__serena__replace_in_files",
+      "mcp__serena__insert_after_symbol",
+      "mcp__serena__insert_before_symbol",
+      "mcp__serena__rename_symbol",
+      "mcp__serena__safe_delete_symbol",
+      "mcp__serena__replace_lines",
+      "mcp__serena__delete_lines",
+      "mcp__serena__insert_at_line",
+      "mcp__serena__create_text_file",
+      "mcp__serena__execute_shell_command"
     ],
     "defaultMode": "auto"
   },

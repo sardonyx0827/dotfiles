@@ -13,9 +13,10 @@
 
 ## Code Navigation
 
-Read symbols, not whole files. Serena's tools are allow-listed, so they need no justification. It is
-scoped per project, so a project must be active before it answers — set one up as below rather than
-treating its absence as a reason to reach for Grep.
+Read symbols, not whole files. Serena's read, memory and project-setup tools are allow-listed, so
+they need no justification; its tools that write the working tree (`replace_*`, `insert_*`,
+`rename_symbol`, `safe_delete_symbol`) are in `permissions.ask` and prompt every time. It is scoped per project, so a project must be active
+before it answers — set one up as below rather than treating its absence as a reason to reach for Grep.
 
 | Question shape                                        | Tool                                            |
 | ----------------------------------------------------- | ----------------------------------------------- |

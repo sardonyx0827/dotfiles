@@ -7,6 +7,7 @@ green (the hooks themselves are tested in isolation, not through the config
 that launches them). These tests close that gap.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -394,14 +395,87 @@ def test_mod_and_settings_edits_ask_the_user():
     `//**/` anchors at the filesystem root: in user settings a bare `**/`
     pattern only reaches files under the session's working directory. Edit
     rules cover the built-in file tools (Edit, Write, NotebookEdit) only: Bash
-    writes are left to bash-review, and allowed MCP tools that write files
-    (Serena's replace_content and friends) are not covered at all -- see the
-    mod section of docs/claude-architecture.md.
+    writes are left to bash-review, and MCP tools that write files need a
+    tool-level ask of their own (see test_serena_writers_ask_and_only_known_tools_are_allowed).
     """
     settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
     ask = settings["permissions"].get("ask", [])
     for rule in ("Edit(//**/.claude/mods/**)", "Edit(//**/.claude/settings.json)"):
         assert rule in ask, f"permissions.ask is missing {rule}; current: {ask}"
+
+
+# Serena's tools that write the working tree, run a shell, or create files.
+# Edit rules never see an MCP tool, so while the writers sat in allow they could
+# rewrite a mod or settings.json with no prompt, around the ask rules above.
+# The last five are not exposed today (optional tools, or excluded by the
+# claude-code context) and are listed so that turning them on cannot skip the
+# prompt.
+SERENA_ASK = (
+    "mcp__serena__replace_symbol_body",
+    "mcp__serena__replace_content",
+    "mcp__serena__replace_in_files",
+    "mcp__serena__insert_after_symbol",
+    "mcp__serena__insert_before_symbol",
+    "mcp__serena__rename_symbol",
+    "mcp__serena__safe_delete_symbol",
+    "mcp__serena__replace_lines",
+    "mcp__serena__delete_lines",
+    "mcp__serena__insert_at_line",
+    "mcp__serena__create_text_file",
+    "mcp__serena__execute_shell_command",
+)
+
+# What Serena may do without a prompt: read code, set up the project, and keep
+# its memories (Markdown under .serena/memories, or ~/.serena/memories/global
+# for the global/ prefix). An allowlist rather than a denylist, so a write tool
+# Serena adds upstream (it is installed unpinned) is not allowed by default.
+SERENA_ALLOWED = {
+    f"mcp__serena__{name}"
+    for name in (
+        "activate_project",
+        "initial_instructions",
+        "onboarding",
+        "get_current_config",
+        "get_symbols_overview",
+        "get_diagnostics_for_file",
+        "find_symbol",
+        "find_declaration",
+        "find_implementations",
+        "find_referencing_symbols",
+        "list_memories",
+        "read_memory",
+        "write_memory",
+        "edit_memory",
+        "rename_memory",
+        "delete_memory",
+    )
+}
+
+
+def test_serena_writers_ask_and_only_known_tools_are_allowed():
+    """Serena's writers prompt, and allow holds nothing beyond SERENA_ALLOWED.
+
+    ask already wins over allow, but leaving a writer in both lists reads as
+    "allowed" to anyone skimming the allow block, and a later cleanup that
+    drops the ask entry would silently restore the bypass. A glob in allow
+    that reaches a Serena tool (`mcp__serena__*`, `mcp__*`, `*`) would allow
+    every writer at once, so none may match one.
+    """
+    permissions = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))["permissions"]
+    ask = permissions.get("ask", [])
+    allow = permissions.get("allow", [])
+    for tool in SERENA_ASK:
+        assert tool in ask, f"permissions.ask is missing {tool}"
+    serena_allowed = {rule for rule in allow if rule.startswith("mcp__serena")}
+    assert serena_allowed <= SERENA_ALLOWED, (
+        f"unexpected Serena tools in allow: {sorted(serena_allowed - SERENA_ALLOWED)}"
+    )
+    globs = [
+        rule
+        for rule in allow
+        if "*" in rule and fnmatch.fnmatchcase("mcp__serena__replace_content", rule)
+    ]
+    assert not globs, f"allow globs that reach Serena's writers: {globs}"
 
 
 def test_codex_pretooluse_bash_hooks_are_unconditional():
