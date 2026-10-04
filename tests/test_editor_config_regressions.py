@@ -12,6 +12,7 @@ present. The 70-ai.vim port tests further down do drive a real Vim (no plugins n
 and skip when none is available.
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -851,3 +852,88 @@ def test_no_deprecated_vim_highlight_calls_in_the_lua_tree():
         if "vim.highlight." in path.read_text(encoding="utf-8")
     )
     assert offenders == [], f"deprecated vim.highlight used in: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# Neovim plugin specs, loaded for real under `nvim -l`.
+#
+# `nvim -l` runs a Lua script without the user's init.lua or any plugin manager
+# (see tests/lua/nvim_call.lua), so each probe `require`s a spec module straight
+# from the repo and stubs only the plugin modules the spec reaches into. Probes
+# reduce everything to plain data before encoding: the spec tables hold
+# functions, which vim.json cannot encode.
+# ---------------------------------------------------------------------------
+NVIM = shutil.which("nvim")
+NVIM_LUA_ROOT = REPO_ROOT / ".config/nvim/lua"
+
+_PROBE_PRELUDE = f"""
+package.path = {str(NVIM_LUA_ROOT / "?.lua")!r} .. ";" .. package.path
+local function emit(value)
+  io.stdout:write(vim.json.encode(value), "\\n")
+end
+"""
+
+
+def _nvim_probe(tmp_path, body: str) -> dict:
+    if NVIM is None:
+        pytest.skip("nvim not installed")
+    probe = tmp_path / "probe.lua"
+    probe.write_text(_PROBE_PRELUDE + body, encoding="utf-8")
+    proc = subprocess.run(
+        [NVIM, "-l", str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+        },
+    )
+    # A crash is a broken probe, never a passing or failing assertion.
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_colorscheme_picker_registers_its_statusline_autocmd_once(tmp_path):
+    """Each `<M-0>` press must not stack another ColorScheme autocmd.
+
+    The handler keeps StatusLine transparent across colorscheme switches by
+    hooking ColorScheme. Registering that hook on every press piles up one
+    identical autocmd per use for the rest of the session. The hook is still
+    registered by the handler itself, so three presses leave exactly one.
+    """
+    got = _nvim_probe(
+        tmp_path,
+        """
+local picks = 0
+package.loaded["telescope.builtin"] = {
+  colorscheme = function() picks = picks + 1 end,
+}
+local spec = require("setup.plugins.utilities.telescope")
+local handler
+for _, key in ipairs(spec.keys) do
+  if key[1] == "<M-0>" then handler = key[2] end
+end
+if not handler then
+  emit({ found = false })
+  return
+end
+local before = #vim.api.nvim_get_autocmds({ event = "ColorScheme" })
+for _ = 1, 3 do handler() end
+local after = #vim.api.nvim_get_autocmds({ event = "ColorScheme" })
+vim.api.nvim_set_hl(0, "StatusLine", { fg = "#ff0000", blend = 50 })
+vim.cmd("doautocmd ColorScheme")
+local hl = vim.api.nvim_get_hl(0, { name = "StatusLine" })
+-- nvim_get_hl omits `blend` once it is back to 0.
+emit({ found = true, picks = picks, added = after - before, blend = hl.blend or 0 })
+""",
+    )
+    assert got["found"], "telescope spec no longer maps <M-0>"
+    assert got["picks"] == 3, got
+    assert got["added"] == 1, f"{got['added']} ColorScheme autocmds after 3 presses"
+    # The hook still does its job: a colorscheme change resets the blend.
+    assert got["blend"] == 0, got

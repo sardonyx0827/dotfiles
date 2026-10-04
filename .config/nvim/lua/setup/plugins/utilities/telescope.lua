@@ -41,7 +41,13 @@ return {
       "<M-0>",
       function()
         require("telescope.builtin").colorscheme({ enable_preview = true })
-        vim.cmd("autocmd ColorScheme * lua vim.api.nvim_set_hl(0, 'StatusLine', { blend = 0 })")
+        -- clear = true keeps it to one hook however often the picker is opened.
+        vim.api.nvim_create_autocmd("ColorScheme", {
+          group = vim.api.nvim_create_augroup("TelescopeColorschemeStatusLine", { clear = true }),
+          callback = function()
+            vim.api.nvim_set_hl(0, "StatusLine", { blend = 0 })
+          end,
+        })
       end,
       noremap = true,
       desc = "Pick colorscheme (transparent statusline)",
