@@ -83,14 +83,16 @@ local function cancel_job(job)
   return false
 end
 
--- Copy text to clipboard (and the tmux buffer when running inside tmux).
-local function copy_to_clipboard(msg)
-  vim.fn.setreg("+", msg)
-  vim.fn.setreg('"', msg)
+-- Copy to the system clipboard, the unnamed register, and the tmux buffer.
+-- Public because ai/init.lua's copy keymaps use it too.
+local function copy_to_clipboard(content)
+  vim.fn.setreg("+", content)
+  vim.fn.setreg('"', content)
   if vim.env.TMUX then
-    vim.fn.system("tmux load-buffer -", msg)
+    vim.fn.system("tmux load-buffer -", content)
   end
 end
+M.copy_to_clipboard = copy_to_clipboard
 
 --- Drive a multi-tab AI result window.
 --- @param opts table {

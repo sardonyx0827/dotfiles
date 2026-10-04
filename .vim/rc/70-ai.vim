@@ -271,14 +271,12 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     endif
   endfunction
 
-  function! s:AI_JobOut(buffer, ch, msg) abort
-    call add(a:buffer, a:msg)
-  endfunction
-
-  " stderr は out_cb とは別のバッファに溜める。捨てると失敗理由が「番号だけ」に
-  " なる: 未インストールなら exit 127 + stderr "command not found" が本題で、
-  " 127 という数字だけ見せられても読み手は何も判断できない。
-  function! s:AI_JobErr(buffer, ch, msg) abort
+  " out_cb / err_cb 共通: 受け取った行を、partial で束ねたリストに溜める。
+  " 呼び出し側は err_cb に out_cb とは別のリストを束ねて stderr を残す。捨てると
+  " 失敗理由が「番号だけ」になる: 未インストールなら exit 127 + stderr
+  " "command not found" が本題で、127 という数字だけ見せられても読み手は何も
+  " 判断できない。
+  function! s:AI_JobCollect(buffer, ch, msg) abort
     call add(a:buffer, a:msg)
   endfunction
 
@@ -535,9 +533,9 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     call s:AI_SingleStatus(l:state)
 
     let l:state.job = job_start(['sh', '-c', a:cmd], {
-          \ 'out_cb': function('s:AI_JobOut', [l:state.output]),
+          \ 'out_cb': function('s:AI_JobCollect', [l:state.output]),
           \ 'out_mode': 'nl',
-          \ 'err_cb': function('s:AI_JobErr', [l:state.errout]),
+          \ 'err_cb': function('s:AI_JobCollect', [l:state.errout]),
           \ 'err_mode': 'nl',
           \ 'exit_cb': function(a:exit_cb, [l:state]),
           \ })
@@ -752,9 +750,9 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
         endif
       else
         let l:state.jobs[l:i] = job_start(['sh', '-c', l:cmd], {
-              \ 'out_cb': function('s:AI_JobOut', [l:state.output[l:i]]),
+              \ 'out_cb': function('s:AI_JobCollect', [l:state.output[l:i]]),
               \ 'out_mode': 'nl',
-              \ 'err_cb': function('s:AI_JobErr', [l:state.errout[l:i]]),
+              \ 'err_cb': function('s:AI_JobCollect', [l:state.errout[l:i]]),
               \ 'err_mode': 'nl',
               \ 'exit_cb': function('s:AI_AllExit', [l:state, l:i]),
               \ })

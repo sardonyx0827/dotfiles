@@ -41,14 +41,7 @@ local function jump_hint(n)
   return "  <Tab>/<S-Tab>:switch  " .. table.concat(nums, "/") .. ":jump"
 end
 
--- Copy to the system clipboard, the unnamed register, and the tmux buffer.
-local function copy_to_clipboard(content)
-  vim.fn.setreg("+", content)
-  vim.fn.setreg('"', content)
-  if vim.env.TMUX then
-    vim.fn.system("tmux load-buffer -", content)
-  end
-end
+local copy_to_clipboard = ui.copy_to_clipboard
 
 ---------------------------------------------------------
 -- Copy LSP diagnostics to clipboard for AI assistance
