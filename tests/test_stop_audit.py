@@ -72,7 +72,7 @@ class TestClaudeVariant:
     def test_identifier_fusion_is_not_flagged(self, shell_env, git_repo):
         # myconsole.log / debuggerTool are different identifiers fused with
         # "console"/"debugger", not bare debug statements, and must stay
-        # excluded even after widening the console.log match to catch
+        # excluded although the console.log match also catches
         # `window.console.log(` (see test below).
         (git_repo / "app.ts").write_text(
             "myconsole.log(1)\nconst debuggerTool = 1\n", encoding="utf-8"
@@ -130,10 +130,10 @@ class TestClaudeVariant:
         # editors' AI features set. Blocking here is not a false positive about
         # the code -- the finding is real -- it is a false positive about WHOSE
         # code it is: a `<leader>cm` run is generating a commit message for the
-        # user's own uncommitted work, not finishing a turn of its own. The
-        # observed cost of blocking it was that claude took the reason as an
-        # instruction, edited app.ts, and returned "removed the debug
-        # statement" as the commit message.
+        # user's own uncommitted work, not finishing a turn of its own.
+        # Blocking it would make claude take the reason as an instruction,
+        # edit app.ts, and return "removed the debug statement" as the commit
+        # message.
         (git_repo / "app.ts").write_text(
             'const x = 1\nconsole.log("debug")\n', encoding="utf-8"
         )
@@ -196,9 +196,9 @@ class TestCodexVariant:
 # --- Debug-scan parity across BOTH variants ----------------------------------
 # The scan logic (which files, which patterns, member-access exemptions) is
 # identical across the two copies; only the SIGNAL differs (claude emits a JSON
-# "block", codex exits 2 with stderr). Previously the codex copy had far fewer
-# cases, so a scan regression there would ship green. Run every case against
-# both — the same drift guard rationale as test_hook_sync.py.
+# "block", codex exits 2 with stderr). Every case runs against both copies so a
+# scan regression in either cannot ship green — the same drift-guard rationale
+# as test_hook_sync.py.
 SCAN_CASES = [
     # (filename, content, should_block)
     ("app.ts", 'const x = 1\nconsole.log("debug")\n', True),
@@ -207,8 +207,8 @@ SCAN_CASES = [
     ("app.py", "break" + "point()\n", True),
     # A `debugger` statement does not have to be followed by `;` or the end of
     # the line: it is a keyword, so anything that is not an identifier character
-    # terminates it. Requiring `;|$` silently missed the two most common shapes
-    # a leftover breakpoint actually takes.
+    # terminates it. Requiring `;|$` would silently miss the two most common
+    # shapes a leftover breakpoint actually takes.
     ("app.js", "if (x) { debugger }\n", True),
     ("app.js", "debugger // remove me\n", True),
     ("app.ts", "  debugger\n", True),
@@ -278,10 +278,10 @@ def test_audits_paths_needing_git_quoting(shell_env, git_repo, variant, hook, fi
 def test_without_jq_the_audit_never_blocks(shell_env, git_repo, hook):
     """No jq means stop_hook_active cannot be read, so the audit must stand down.
 
-    With jq absent the Codex variant read an EMPTY flag, ran the audit anyway
-    and exited 2 -- on every Stop, including the continuation after its own
-    block, so the loop-prevention flag could never end it. The sibling hooks
-    (lint.sh / auto-format.sh) all exit 0 without jq; both variants now do too.
+    With jq absent a variant would read an EMPTY flag, run the audit anyway and
+    exit 2 -- on every Stop, including the continuation after its own block, so
+    the loop-prevention flag could never end it. Like the sibling hooks
+    (lint.sh / auto-format.sh), both variants exit 0 without jq.
     """
     (git_repo / "app.ts").write_text('console.log("x")\n', encoding="utf-8")
     shell_env.hide("jq")
@@ -296,9 +296,8 @@ def test_without_jq_the_audit_never_blocks(shell_env, git_repo, hook):
 # (git init, before the first commit) it does not: the diff fails with
 # "fatal: ambiguous argument 'HEAD'" and is swallowed by `2>/dev/null`. Staged
 # files are not "others" either (that command is for untracked files), so a
-# file staged before the first commit fell out of BOTH collection commands and
-# was never audited. Reproduces with: git init, stage a.js with a
-# console.log, no commit -> exit 0 on both copies.
+# file staged before the first commit has to be collected separately or it
+# falls out of BOTH collection commands and is never audited.
 def _init_unborn_repo(path):
     """A git repo with `git init` run but no commit yet (HEAD unresolved)."""
     from conftest import run_git

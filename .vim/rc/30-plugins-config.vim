@@ -3,7 +3,7 @@
 "*****************************************************************************
 scriptencoding utf-8
 
-"" Abbreviations — no one is really happy until you have these shortcuts
+"" Abbreviations (tolerate a stray Shift on :w/:q; short names for the fzf commands)
 cnoreabbrev W! w!
 cnoreabbrev Q! q!
 cnoreabbrev Qall! qall!
@@ -31,18 +31,14 @@ nnoremap <silent> <leader>p :Explore<CR>
 " NERDTree configuration
 " do chdir when change root
 let g:NERDTreeChDirMode=2
-" show ignore
 let g:NERDTreeIgnore=['node_modules','\.rbc$', '\~$', '\.pyc$', '\.db$', '\.sqlite$', '__pycache__','\.swp']
-" dir tree sorting
 let g:NERDTreeSortOrder=['^__\.py$', '\/$', '*', '\.swp$', '\.bak$', '\~$']
-" enable show bookmarks
 let g:NERDTreeShowBookmarks=1
 let g:nerdtree_tabs_focus_on_files=1
 let g:NERDTreeWinSize = 30
 set wildignore+=*/tmp/*,*.so,*.swp,*.zip,*.pyc,*.db,*.sqlite,*node_modules/
 nnoremap <silent> <F2> :NERDTreeFind<CR>
 nnoremap <silent> <F3> :NERDTreeToggle<CR>
-" show .hidden files
 let NERDTreeShowHidden = 1
 
 nnoremap <silent> <leader>e :NERDTreeFocusToggle<CR>
@@ -116,7 +112,8 @@ function! s:NERDTreeOpenDirFilesAsBuffers()
   echo 'NERDTree: opened ' . len(l:files) . ' file(s) from ' . l:label
 endfunction
 
-" show nerdtree default
+" do not open NERDTree automatically on terminal Vim startup (GUI Vim follows
+" g:nerdtree_tabs_open_on_gui_startup, which defaults to on)
 let g:nerdtree_tabs_open_on_console_startup=0
 
 "*****************************************************************************

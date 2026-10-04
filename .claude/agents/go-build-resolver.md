@@ -285,15 +285,12 @@ go mod why -m package
 
 # Get specific version
 go get package@v1.2.3
-
-# Update all dependencies
-go get -u ./...
 ```
 
 ### Checksum Mismatch
 
 ```bash
-# Clear module cache
+# Clear the machine-wide module cache — ask the caller first
 go clean -modcache
 
 # Re-download
@@ -359,7 +356,7 @@ x = x  // Remove pointless assignment
 
 Stop and report if:
 
-- Same error persists after 3 fix attempts
+- Same error persists after 2 consecutive fix attempts
 - Fix introduces more errors than it resolves
 - Error requires architectural changes beyond scope
 - Circular dependency that needs package restructuring
@@ -367,7 +364,7 @@ Stop and report if:
 
 ## Output Format
 
-After each fix attempt:
+Report each fix in this form:
 
 ```text
 [FIXED] internal/handler/user.go:42

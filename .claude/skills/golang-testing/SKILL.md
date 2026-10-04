@@ -391,10 +391,9 @@ func TestUserService(t *testing.T) {
 
 ```go
 func BenchmarkProcess(b *testing.B) {
-    data := generateTestData(1000)
-    b.ResetTimer() // Don't count setup time
+    data := generateTestData(1000) // setup before b.Loop is not timed
 
-    for i := 0; i < b.N; i++ {
+    for b.Loop() { // Go 1.24+; below 1.24: b.ResetTimer(), then for i := 0; i < b.N; i++
         Process(data)
     }
 }
@@ -412,9 +411,8 @@ func BenchmarkSort(b *testing.B) {
     for _, size := range sizes {
         b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
             data := generateRandomSlice(size)
-            b.ResetTimer()
 
-            for i := 0; i < b.N; i++ {
+            for b.Loop() {
                 // Make a copy to avoid sorting already sorted data
                 tmp := make([]int, len(data))
                 copy(tmp, data)
@@ -432,7 +430,7 @@ func BenchmarkStringConcat(b *testing.B) {
     parts := []string{"hello", "world", "foo", "bar", "baz"}
 
     b.Run("plus", func(b *testing.B) {
-        for i := 0; i < b.N; i++ {
+        for b.Loop() {
             var s string
             for _, p := range parts {
                 s += p
@@ -442,7 +440,7 @@ func BenchmarkStringConcat(b *testing.B) {
     })
 
     b.Run("builder", func(b *testing.B) {
-        for i := 0; i < b.N; i++ {
+        for b.Loop() {
             var sb strings.Builder
             for _, p := range parts {
                 sb.WriteString(p)
@@ -452,7 +450,7 @@ func BenchmarkStringConcat(b *testing.B) {
     })
 
     b.Run("join", func(b *testing.B) {
-        for i := 0; i < b.N; i++ {
+        for b.Loop() {
             _ = strings.Join(parts, "")
         }
     })
@@ -717,13 +715,15 @@ test:
     - uses: actions/checkout@v4
     - uses: actions/setup-go@v5
       with:
-        go-version: "1.22"
+        go-version-file: go.mod
 
     - name: Run tests
       run: go test -race -coverprofile=coverage.out ./...
 
     - name: Check coverage
+      env:
+        MIN_COVERAGE: "<the project's gate, else tdd-workflow § Coverage Requirements>"
       run: |
         go tool cover -func=coverage.out | grep total | awk '{print $3}' | \
-        awk -F'%' '{if ($1 < 80) exit 1}'
+        awk -F'%' -v min="$MIN_COVERAGE" 'BEGIN{if (min !~ /^[0-9.]+$/) {print "MIN_COVERAGE must be a number" > "/dev/stderr"; exit 2}} {if ($1 < min) exit 1}'
 ```

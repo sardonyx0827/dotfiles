@@ -32,69 +32,17 @@ The planner agent will:
 3. **Identify dependencies** between components
 4. **Assess risks** and potential blockers
 5. **Estimate complexity** (High/Medium/Low)
-6. **Present the plan** and WAIT for your explicit confirmation
+6. **Present the plan**
 
-## Example Usage
+## Plan Format
 
-```
-User: /plan I need to add real-time notifications when an order they're watching ships
+The plan follows the format in `agents/planner.md` § Plan Format.
 
-Agent (planner):
-# Implementation Plan: Real-Time Order Status Notifications
+## Confirmation Gate
 
-## Requirements Restatement
-- Send notifications to users when orders they're watching ship
-- Support multiple notification channels (in-app, email, webhook)
-- Ensure notifications are delivered reliably
-- Include order status and tracking details
-
-## Implementation Phases
-
-### Phase 1: Database Schema
-- Add notifications table with columns: id, user_id, order_id, type, status, created_at
-- Add user_notification_preferences table for channel preferences
-- Create indexes on user_id and order_id for performance
-
-### Phase 2: Notification Service
-- Create notification service in lib/notifications.ts
-- Implement notification queue using BullMQ/Redis
-- Add retry logic for failed deliveries
-- Create notification templates
-
-### Phase 3: Integration Points
-- Hook into order status update logic (when status changes to "shipped")
-- Query all users watching the order
-- Enqueue notifications for each user
-
-### Phase 4: Frontend Components
-- Create NotificationBell component in header
-- Add NotificationList modal
-- Implement real-time updates via Supabase subscriptions
-- Add notification preferences page
-
-## Dependencies
-- Redis (for queue)
-- Email service (SendGrid/Resend)
-- Supabase real-time subscriptions
-
-## Risks
-- HIGH: Email deliverability (SPF/DKIM required)
-- MEDIUM: Performance with 1000+ users per order
-- MEDIUM: Notification spam if orders update frequently
-- LOW: Real-time subscription overhead
-
-## Estimated Complexity: MEDIUM
-- Backend: 4-6 hours
-- Frontend: 3-4 hours
-- Testing: 2-3 hours
-- Total: 9-13 hours
-
-**WAITING FOR CONFIRMATION**: Proceed with this plan? (yes/no/modify)
-```
-
-## Important Notes
-
-**CRITICAL**: The planner agent will **NOT** write any code until you explicitly confirm the plan with "yes" or "proceed" or similar affirmative response.
+The planner agent is read-only and returns its plan in one pass. After presenting it, stop:
+make no edits and start no implementation until the user confirms the plan. If they ask for
+changes, revise the plan first.
 
 If you want changes, respond with:
 

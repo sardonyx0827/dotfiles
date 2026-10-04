@@ -13,7 +13,7 @@
 # したがって「整形済みの状態を lint する」という前提は Codex 版では成立
 # しない。整形前のコードを解析するので、フォーマッターが Stop で直す類の指摘
 # (rubocop の Layout、ruff の import 整列) まで exit 2 で返り、エージェントに
-# 手で直させる無駄なターンが生じていた。そこで hook_lint_file に before-format
+# 手で直させる無駄なターンが生じる。そこで hook_lint_file に before-format
 # を渡し、共有側でそれらを対象から外す (_lint_common.sh の hook_lint_file 参照)。
 #
 # 意図的に `set -e` は使わない: このフックは fail-open 設計であり、個々の
@@ -28,16 +28,16 @@ command -v jq >/dev/null 2>&1 || exit 0
 # 共有ヘルパー(hook_log / hook_notify)
 #
 # 実体は .claude/hooks/_hook_common.sh 一本で、こちら側には複製もリンクも置かず
-# 直接あちらを読む。以前は同名の相対 symlink を置いていたが、core.symlinks=false
-# (Git for Windows の既定) で clone すると git が symlink を「リンク先パスを書いた
-# テキストファイル」として展開するため、source がそのパス文字列を実行しようとして
-# helpers が未定義のまま進む。install.sh は OS="windows" (msys/cygwin) を宣言済み
-# スコープに含むので、リンクをやめて参照側で解決する。
+# 直接あちらを読む。symlink を置かないのは、core.symlinks=false (Git for Windows
+# の既定) で clone すると git が symlink を「リンク先パスを書いたテキストファイル」
+# として展開するため、source がそのパス文字列を実行しようとして helpers が未定義
+# のまま進むから。install.sh は OS="windows" (msys/cygwin) を宣言済みスコープに
+# 含むので、参照側で解決する。auto-format.sh もここを参照している。
 #
 # cd -P で物理解決する点が要: install.sh は ~/.codex/hooks を <repo>/.codex/hooks
 # への symlink にするため、論理解決だと ../../.claude/hooks が ~/.claude/hooks を
 # 指し、install.sh がそちらも張っているという偶然にぶら下がる (Codex 側だけ導入
-# した場合に静かに壊れる)。
+# した場合に静かに壊れる)。auto-format.sh も同じ理由で cd -P を使う。
 #
 # source 側で `exec 1>/dev/null` する前に読み込むため、共有ファイルは
 # source 時に何も出力しない契約になっている(詳細は _hook_common.sh のヘッダ)。
@@ -66,12 +66,14 @@ mkdir -p "$LOG_DIR"
 #
 # Claude の Write/Edit/MultiEdit は .tool_input.file_path に単一ファイルを
 # 入れて渡すが、Codex の編集ツール apply_patch はこのキーを持たず、かつ
-# 1 回の呼び出しで複数ファイルを変更しうる。そのため file_path が取れない
-# 場合は git の作業ツリー差分から対象を復元する(auto-format.sh と同じ方針)。
+# 1 回の呼び出しで複数ファイルを変更しうる。そのため file_path が無ければ
+# apply_patch のパッチ本文のマーカーから対象を取り、未知の payload 形状の
+# ときだけ git の作業ツリー差分にフォールバックする。
 # -------------------------------------------------------------------
 INPUT=$(cat)
 
-# git 差分フォールバック時に一度に処理する上限(打ち切った場合はログに残す)
+# 一度に処理する対象の上限(打ち切った場合はログに残す)。主な狙いは作業ツリーが
+# 大きく汚れた git 差分フォールバックの安全弁だが、判定は全経路の対象に掛かる。
 MAX_FALLBACK_FILES=50
 
 # 全対象ファイル分のエラーを集約する(最後にまとめて exit 2 で返す)
@@ -145,9 +147,8 @@ collect_targets() {
   [ -z "$repo_root" ] && return 0
 
   # 変更ファイル + 未追跡ファイル。両者は排他なので重複しない。
-  # -z が必須: 既定の core.quotePath が有効だと、引用符や非 ASCII(日本語の
-  # ファイル名など)を含むパスを `"evil\".sh"` のようにクォートして返すため、
-  # そのままでは開けず黙って対象から漏れる。
+  # -z が必須な理由 (core.quotePath でクォートされたパスは開けず黙って漏れる)
+  # は .claude/hooks/stop-audit.sh を参照。
   {
     git -C "$repo_root" diff --name-only -z HEAD 2>/dev/null
     git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null

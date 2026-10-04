@@ -165,10 +165,10 @@ class TestTmuxLoggingBind:
     The bind inlines its own `pipe-pane` shell command instead of calling the
     tmux-logging plugin's script, so it never benefits from that script's `mkdir -p`.
     install.sh only creates `~/.tmux`, not `~/.tmux/log`, so on a freshly installed
-    machine the redirect failed with "No such file or directory" -- and because
-    `pipe-pane` is chained with `\\; display-message "Logging start."`, tmux reported
-    success anyway. The bug self-heals the moment a user presses the plugin's own
-    M-p/M-P once, which is why it never showed up on an established machine.
+    machine an unguarded redirect fails with "No such file or directory" -- and because
+    `pipe-pane` is chained with `\\; display-message "Logging start."`, tmux reports
+    success anyway. The plugin's own M-p/M-P creates the directory, which hides the
+    problem on an established machine.
 
     Asserted at text level: exercising the real bind needs a live tmux pane, and
     executing a string extracted from a config file is a pattern this repo's own
@@ -196,9 +196,9 @@ class TestTmuxLoggingBind:
 class TestTmuxSendToAllExceptNvimBind:
     """`.tmux.conf` の `bind S` は、打ち込んだ文字列をシェル語に埋め込まない。
 
-    旧実装は `run-shell "~/.tmux/...sh '%%'"` だった。tmux の `%%` は
+    `run-shell "~/.tmux/...sh '%%'"` のように埋め込むと壊れる。tmux の `%%` は
     「打った文字列をそのまま貼り付ける」だけの置換で、貼り付け先がシングル
-    クォートの内側だったため二つ壊れていた:
+    クォートの内側だと二つ壊れる:
 
     1. `git commit -m 'wip'` と打つとユーザのクォートが黙って剥がれ、
        各ペインには `git commit -m wip` が別々の語として届く。
@@ -206,7 +206,7 @@ class TestTmuxSendToAllExceptNvimBind:
        `echo INJECTED` が tmux サーバのシェルで走る。自分で自分を撃つ形
        とはいえ、正真正銘のコマンドインジェクション。
 
-    修正後はシェル語への埋め込みを一切やめ、tmux のユーザオプション
+    そこで bind はシェル語への埋め込みを一切せず、tmux のユーザオプション
     (`@send_to_all_except_nvim`) を伝言板に使う。`run-shell` に渡る文字列は
     定数になり、打った文字列は tmux のパーサ内だけで完結する。
 
@@ -271,7 +271,7 @@ class TestTmuxSendToAllExceptNvimBind:
 class TestTmuxSendToAllExceptNvim:
     #: What `bind S` stashes the prompt response in. The script's only job on
     #: that path is to read it back out verbatim, so the payload below is
-    #: deliberately built from every character that broke the old bind.
+    #: deliberately built from every character that breaks a quote-spliced bind.
     NASTY = """git commit -m 'wip "x"' $HOME `id` ; echo hi \\ ~"""
 
     def _stub_tmux(self, shell_env, sync_state: str, option_value=None):
@@ -368,9 +368,9 @@ class TestTmuxSendToAllExceptNvim:
         """`send-keys up` is the Up ARROW to tmux, not the word.
 
         Without -l a lone word is resolved as a key name, case-insensitively,
-        so `up` re-ran the previous command in every non-nvim pane; a command
-        starting with `-` was read as send-keys flags, failed, and the `|| true`
-        swallowed it -- nothing sent, nothing reported.
+        so `up` re-runs the previous command in every non-nvim pane; a command
+        starting with `-` is read as send-keys flags, fails, and the `|| true`
+        swallows it -- nothing sent, nothing reported.
         """
         self._stub_tmux(shell_env, sync_state="off")
         res = shell_env.run(TMUX_SCRIPT, word)
@@ -423,8 +423,7 @@ class TestUpdateAiTools:
         expected = [
             "claude update",
             # `@latest`, not `npm update -g`: see the comment above the
-            # `npm install -g ...@latest` calls in scripts/update_ai_tools.sh
-            # for why.
+            # `update_npm_managed` calls in scripts/update_ai_tools.sh for why.
             "npm install -g @openai/codex@latest",
             "npm install -g @google/gemini-cli@latest",
             "copilot update",
@@ -439,11 +438,11 @@ class TestUpdateAiTools:
     def test_one_tool_failing_does_not_abort_the_rest(self, shell_env):
         """run_if_installed's whole purpose is that one bad tool cannot stop the run.
 
-        It only ever guarded against a tool being *absent*. An installed tool whose
-        update exits nonzero propagated that status, and `set -euo pipefail` killed the
-        script on the spot -- so a transient npm-registry blip while updating the first
-        tool silently skipped every later update and the entire version report. That is
-        both likelier and quieter than the missing-CLI case the guard was written for.
+        Guarding against a tool being *absent* is not enough: an installed tool whose
+        update exits nonzero would propagate that status, and `set -euo pipefail` would
+        kill the script on the spot -- so a transient npm-registry blip while updating
+        the first tool would silently skip every later update and the entire version
+        report. That is both likelier and quieter than the missing-CLI case.
         """
         for tool in ("claude", "codex", "gemini", "copilot", "npm"):
             shell_env.stub(tool)
@@ -465,10 +464,10 @@ class TestUpdateAiTools:
             )
 
     def test_skips_install_for_a_package_npm_does_not_manage(self, shell_env):
-        """run_if_installed only ever checked that npm itself existed, so running the
-        "update" script INSTALLED codex/gemini-cli for the first time on a machine
-        that never had them, and added a duplicate npm copy on a machine that got
-        them from Homebrew. "Installed" now means an npm-managed global
+        """run_if_installed only checks that npm itself exists, so it alone would make
+        the "update" script INSTALL codex/gemini-cli for the first time on a machine
+        that never had them, and add a duplicate npm copy on a machine that got
+        them from Homebrew. "Installed" therefore means an npm-managed global
         (`npm ls -g --depth=0 <pkg>` succeeds); anything else is left untouched.
         """
         # Every CLI the script touches must be a stub: `codex`/`gemini` exist for
@@ -509,8 +508,8 @@ class TestUpdateAiTools:
         assert "gemini --version" in shell_env.calls
 
     def test_a_failed_npm_managed_install_does_not_abort_the_rest(self, shell_env):
-        """The "one failure is reported, the rest continue" contract now lives in
-        update_npm_managed (the ls-then-install check no longer goes through
+        """The "one failure is reported, the rest continue" contract lives in
+        update_npm_managed (the ls-then-install check does not go through
         run_if_installed for codex/gemini-cli), so it needs its own coverage.
         """
         for tool in ("claude", "codex", "gemini", "copilot"):
@@ -667,16 +666,15 @@ class TestNewProject:
     ):
         """A case-insensitive filesystem lets `$HOME` be reached under an alias.
 
-        The guard used to compare `pwd -P` strings. bash's `pwd -P` resolves
-        symlinks but never canonicalises case, so on a case-insensitive
-        filesystem (APFS by default) `HOME` and `home` are two spellings of
-        one directory and the string compare missed it -- `git init` ran in
-        $HOME. Fixed the same way install.sh's checkout-alias guards were
-        (d68b0f1): compare identity (`-ef`), not spelling. `alias.exists()`
-        is itself the case-insensitivity probe: it is a distinct path from
-        `shell_env.home` that resolves to the same directory only when the
-        filesystem folds case, so the test is meaningless (and self-skips)
-        anywhere else, e.g. Linux CI.
+        bash's `pwd -P` resolves symlinks but never canonicalises case, so on a
+        case-insensitive filesystem (APFS by default) `HOME` and `home` are two
+        spellings of one directory: a guard comparing `pwd -P` strings misses
+        it and `git init` runs in $HOME. The guard therefore compares identity
+        (`-ef`), not spelling, as install.sh's checkout-alias guards do.
+        `alias.exists()` is itself the case-insensitivity probe: it is a
+        distinct path from `shell_env.home` that resolves to the same directory
+        only when the filesystem folds case, so the test is meaningless (and
+        self-skips) anywhere else, e.g. Linux CI.
         """
         alias = tmp_path / "HOME"
         if not alias.exists():
@@ -692,10 +690,10 @@ class TestNewProject:
         """A symlink pointing AT $HOME must resolve to the same guard, portably.
 
         Unlike the case-differing spelling above, bash's `pwd -P` already
-        dereferences a real symlink correctly, so this passed even before the
-        `-ef` fix -- it is a portable (works on case-sensitive filesystems,
-        e.g. Linux CI too) regression guard for the new identity-based
-        comparison, not a reproduction of the original bug.
+        dereferences a real symlink correctly, so this also holds under a
+        string compare -- it is a portable (works on case-sensitive
+        filesystems, e.g. Linux CI too) regression guard for the
+        identity-based comparison, not a reproduction of the case-alias hazard.
         """
         alias = tmp_path / "home-link"
         alias.symlink_to(shell_env.home)
@@ -835,8 +833,7 @@ class TestNewProject:
     def test_leading_dot_in_an_already_existing_name_still_works(
         self, shell_env, tmp_path
     ):
-        # `./.hidden` already worked before the fix (per the bug report); this
-        # pins that an already-existing dotted directory works too.
+        # An already-existing dotted directory must work too, not just a new one.
         target = tmp_path / "proj" / ".hidden"
         target.mkdir(parents=True)
 
@@ -1331,10 +1328,10 @@ class TestVf:
     """vf() picks a file with fzf, cd's to its directory, and opens it.
 
     Because it cd's first, the path handed to the editor has to be the
-    basename. Reusing the original cwd-relative path made `src/foo` resolve to
-    `src/src/foo` after the cd, opening an empty buffer for anything below the
-    cwd (fixed in 11c35ac). These tests pin the composed result, not the
-    argument shape, so they fail for any variant of that mistake.
+    basename. Reusing the original cwd-relative path would make `src/foo`
+    resolve to `src/src/foo` after the cd, opening an empty buffer for anything
+    below the cwd. These tests pin the composed result, not the argument shape,
+    so they fail for any variant of that mistake.
     """
 
     def _run(self, tmp_path, selection):
@@ -1359,8 +1356,8 @@ class TestVf:
 
         assert os.path.realpath(cwd) == os.path.realpath(workdir / "src")
         assert arg == "foo.txt"
-        # The assertion that actually encodes the bug: whatever cwd/arg pair
-        # vf produces has to name a real file. The old code yielded
+        # The assertion that actually encodes the hazard: whatever cwd/arg pair
+        # vf produces has to name a real file. A cwd-relative arg would yield
         # <work>/src + src/foo.txt, i.e. <work>/src/src/foo.txt -- absent.
         assert os.path.isfile(os.path.join(cwd, arg))
 
@@ -1469,12 +1466,9 @@ class TestMcCli:
         # wins the lookup and every assertion below turns into a live API call
         # that writes nothing to `record`.
         #
-        # That ~/.zshenv is NOT ours: uv's installer writes it. This comment
-        # used to call it "this repo's own", which is what hid the fact that
-        # nothing tracked here put ~/.local/bin on PATH at all -- install.sh
-        # fills that directory (pip --user linters, bat/fd, uv) and its own
-        # export dies with the script. .zshrc now adds it; see
-        # TestZshrcPath::test_local_bin_is_on_the_path.
+        # That ~/.zshenv is NOT ours: uv's installer writes it, so nothing here
+        # may rely on it to put ~/.local/bin on PATH. .zshrc adds that itself;
+        # see TestZshrcPath::test_local_bin_is_on_the_path.
         home = tmp_path / "home"
         home.mkdir(exist_ok=True)
         env = {**path_env(bin_dir), "HOME": str(home)}
@@ -2117,7 +2111,7 @@ class TestZshrcPath:
         install_pyenv is ubuntu-only. So on macOS the ruff/bandit/mypy that
         install.sh installs land in ~/Library/Python/<X.Y>/bin, and adding
         ~/.local/bin alone leaves `command -v ruff` false -- the hooks stay
-        silently unformatted, which is the whole bug this was meant to close.
+        silently unformatted.
 
         The (N) glob qualifier collapses to nothing when the directory does
         not exist, so this line is inert on Linux and needs no OS guard, and
@@ -2197,12 +2191,12 @@ EOS
 class ZshPrologueHarness:
     """Run .zshrc's macOS branch on any host, against a fake Homebrew prefix.
 
-    Without this the branch is unreachable off macOS, and *on* macOS the php
-    block is skipped because the keg is not installed -- so the assertions
-    below would pass no matter what the code said. A code review caught
-    exactly that: reverting the append back to an assignment left every test
-    green. Rewriting the absolute prefixes into tmp_path is what gives these
-    tests teeth on the ubuntu CI leg.
+    Without this the branch is unreachable off macOS, and *on* macOS a
+    keg-guarded block is skipped when its keg is not installed -- so the
+    assertions below would pass no matter what the code said. Rewriting the
+    absolute prefixes into tmp_path is what gives these tests teeth on the
+    ubuntu CI leg, and `with_php_keg=True` stands up a fake keg so that a
+    re-added keg-guarded block would be observable.
     """
 
     def __init__(self, tmp_path, *, with_php_keg: bool):
@@ -2261,10 +2255,9 @@ class TestZshHomebrewOnPath:
     that dies with the script, install.sh appends to no shell rc, and the repo
     ships no .zprofile. On Apple Silicon /opt/homebrew is not in /etc/paths
     either, so following install.sh's own closing advice ("Restart your
-    terminal") dropped brew and every brew-installed package off PATH. .zshrc
-    already states this principle for ~/.local/bin and friends (see the
-    comment above the `export PATH=~/.local/bin` line) -- Homebrew's own bin
-    was the one omission.
+    terminal") would drop brew and every brew-installed package off PATH.
+    .zshrc applies the same principle to ~/.local/bin and friends (see the
+    comment above the `export PATH=~/.local/bin` line).
     """
 
     def test_brew_lands_on_path(self, tmp_path):
@@ -2294,12 +2287,12 @@ class TestZshHomebrewOnPath:
         """Idempotence is carried by `typeset -U` / `typeset -xTU`, not by a
         "skip if HOMEBREW_PREFIX is set" guard.
 
-        That guard was tried and reverted: in a nested *login* shell
-        /etc/zprofile's path_helper rewrites the inherited PATH and pushes
-        /opt/homebrew/bin to the end, so skipping the re-prepend left Homebrew
-        behind /usr/bin (measured: `git` resolved to /usr/bin/git). Re-running
-        shellenv every time is what keeps the order right, which is only safe
-        because the duplicates are removed by type.
+        Such a guard breaks nested *login* shells: /etc/zprofile's path_helper
+        rewrites the inherited PATH and pushes /opt/homebrew/bin to the end, so
+        skipping the re-prepend leaves Homebrew behind /usr/bin (see the
+        Homebrew block comment in .zshrc). Re-running shellenv every time is
+        what keeps the order right, which is only safe because the duplicates
+        are removed by type.
         """
         harness = ZshPrologueHarness(tmp_path, with_php_keg=False)
         once, thrice = harness.run(repeats=1), harness.run(repeats=3)
@@ -2312,16 +2305,15 @@ class TestZshHomebrewOnPath:
             )
 
     def test_inherited_prefix_still_re_prepends(self, tmp_path):
-        """The regression that killed the `HOMEBREW_PREFIX` guard.
+        """An inherited HOMEBREW_PREFIX must not suppress the re-prepend.
 
         A nested *login* shell inherits HOMEBREW_PREFIX, and /etc/zprofile's
         path_helper rewrites the inherited PATH so /opt/homebrew/bin lands at
         the end. Re-running shellenv is what pulls it back in front of
         /usr/bin; a "skip if HOMEBREW_PREFIX is set" guard leaves it behind
-        (measured on a real nested `zsh -l -i`: `git` resolved to
-        /usr/bin/git). The other tests here all start from a clean env, so the
-        guard slipped past every one of them -- this is the only one that
-        reproduces the inherited shape.
+        (`git` would resolve to /usr/bin/git). The other tests here all start
+        from a clean env, so such a guard would pass every one of them -- this
+        is the only one that reproduces the inherited shape.
         """
         harness = ZshPrologueHarness(tmp_path, with_php_keg=False)
         prefix = str(harness.prefix)
@@ -2341,13 +2333,12 @@ class TestZshHomebrewOnPath:
 class TestZshCompilerFlags:
     """The prologue must not touch LDFLAGS / CPPFLAGS at all.
 
-    It used to, for a `php@8.4` keg: assigned rather than appended, and guarded
-    on the OS but not on the formula, so on macOS every interactive shell threw
-    away whatever ~/.zshenv, direnv or a parent shell had set and replaced it
-    with flags for a keg that is not installed -- exactly the hazard .zshrc's
-    opening comment describes. The block was then deleted rather than hardened:
-    install.sh pulls plain `php` in as a php-cs-fixer dependency and never
-    `php@8.4`, so on a machine this repo built the block could not run at all.
+    Assigning them (rather than appending) throws away whatever ~/.zshenv,
+    direnv or a parent shell had set -- the discard-inherited-values hazard
+    described in the LDFLAGS/CPPFLAGS comment inside .zshrc's macOS block. A
+    keg-specific `php@8.4` block is not worth hardening: install.sh pulls plain
+    `php` in as a php-cs-fixer dependency and never `php@8.4`, so on a machine
+    this repo built such a block could not run at all.
 
     Both tests stand up a fake keg on purpose. With the keg absent, deleting
     the block has no observable signature -- these would pass either way.

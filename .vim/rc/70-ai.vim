@@ -64,36 +64,29 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " the Neovim side (ai/init.lua's replace tool list); the two editors offer the
   " same set for "ask about a selection and replace it" so muscle memory carries
   " between them. Everything downstream (tab count, the 1..N jump keys, the
-  " status hint) is derived from this list rather than hardcoded to two entries.
+  " status hint) is derived from this list.
   let s:ai_all_tools = ['claude', 'codex', 'gemini', 'copilot']
 
   " copilot has no stdin path, so its payload rides in argv; see s:AI_BuildCmd.
   let s:ai_copilot_model = 'gpt-5-mini'
 
-  " Marks the child as an editor-driven, generation-only invocation. The Stop
+  " Marks the child as an editor-driven, generation-only invocation: the Stop
   " hooks (.claude/hooks/stop-audit.sh and its .codex sibling) skip their
-  " debug-statement audit when it is set. Without it the audit fires on a
-  " commit-message run and blocks with "remove console.log / debugger": the
-  " agent reads that as an instruction, edits the user's working tree, and
-  " returns "removed the debug statement" instead of the message. Mirrors
-  " ONESHOT_ENV in .config/nvim/lua/setup/functions/ai/backend.lua, where the
-  " reasoning is written out in full.
+  " debug-statement audit when it is set. Mirrors ONESHOT_ENV in
+  " .config/nvim/lua/setup/functions/ai/backend.lua, where the reasoning is
+  " written out in full.
   let s:ai_oneshot_env = 'EDITOR_AI_ONESHOT=1'
 
-  " Upper bound on the `sh -c` string handed to job_start(). The whole command
-  " is one argv entry and counts against ARG_MAX (argv + envp, ~1 MB here), so a
-  " tool that inlines the payload can push it past the limit and exec fails with
-  " a bare E2BIG that surfaces as an unexplained non-zero exit. Tools that pipe
-  " the selection in from the tmpfile keep the command short however large the
-  " selection is, so in practice only copilot can trip this. Checking the built
-  " string rather than the raw selection keeps the estimate honest: shellescape's
-  " quoting can inflate the text several-fold. Mirrors MAX_CMD_BYTES in
-  " .config/nvim/lua/setup/functions/ai/backend.lua.
+  " Upper bound on the `sh -c` string handed to job_start(), checked on the
+  " built string rather than the raw selection. Only copilot, which inlines the
+  " payload into argv, can trip it. Mirrors MAX_CMD_BYTES in
+  " .config/nvim/lua/setup/functions/ai/backend.lua, where the reasoning is
+  " written out in full.
   let s:ai_max_cmd_bytes = 256 * 1024
 
   " Return an error message when `cmd` cannot safely be exec'd, '' when it can.
-  " Refusing beats truncating: the payload IS the text about to be replaced, so
-  " a reply written for a fragment would then be applied over the whole range.
+  " Refuses rather than truncates, for the reason given at MAX_CMD_BYTES in
+  " ai/backend.lua.
   function! s:AI_CmdTooLarge(tool, cmd) abort
     if len(a:cmd) <= s:ai_max_cmd_bytes
       return ''
@@ -110,8 +103,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " scanner (scripts/secret_scan.py -> the same scan_secrets the bash-review
   " hooks use; the regexes live in one place, never reimplemented in VimScript).
   " A hit prompts for confirmation defaulting to abort; a missing scanner/python
-  " fails OPEN with a warning (blocking all AI when python is absent -- e.g. a
-  " GUI vim without the shell PATH -- is worse than the risk it guards).
+  " fails OPEN with a warning, as in ai/backend.lua's pre-send credential scan.
   " This file is sourced by its real repo path (see .vimrc's resolve()), so step
   " up from .vim/rc/70-ai.vim to the repo root to find scripts/.
   let s:ai_scripts_dir =
@@ -120,9 +112,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
 
   " The other shared python helper: gemini talks to the REST API through this
   " rather than through the `gemini` CLI. Same file the Neovim side resolves in
-  " ai/backend.lua (repo_script), so the retry policy, the response parsing and
-  " the MAX_TOKENS truncation guard exist once instead of being ported into
-  " VimScript as well.
+  " ai/backend.lua (repo_script).
   let s:ai_gemini_helper = s:ai_scripts_dir . '/gemini_api.py'
 
   " Returns [status, label]: 'clean' | 'secret',<label> | 'unavailable'.
@@ -168,14 +158,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     return l:out
   endfunction
 
-  " Strip a markdown code fence that wraps the WHOLE reply (mirrors the nvim
-  " prompt.strip_code_fences). The submit prompt tells the model not to fence its
-  " output, but models (Claude especially) often wrap the reply in ```lang ...
-  " ```; those fence lines must never land in the replaced selection. Only strips
-  " when an opening ```lang line and a matching closing ``` line clearly bracket
-  " the whole output (ignoring surrounding blank lines). Any other shape -- no
-  " fence, or a lone ``` inside otherwise-plain code -- is returned unchanged so
-  " ordinary source is never corrupted.
+  " Strip a markdown code fence that wraps the WHOLE reply; mirrors the nvim
+  " prompt.strip_code_fences, whose comment gives the full rule.
   function! s:AI_StripCodeFences(list) abort
     let l:first = 0
     let l:last = len(a:list) - 1
@@ -221,15 +205,14 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   " なく素の <C-w>c・:close・:bwipeout でウィンドウを閉じられると、状態辞書には
   " 消えたバッファ番号だけが残る (`closed` は立たないままなので各 Finish 冒頭の
   " `if l:s.closed | return` も効かない)。その番号への deletebufline / setbufline
-  " は例外もメッセージも出さず「1 (失敗)」を返すだけで、直前の setbufvar すら
-  " 消えたバッファを復活させない。呼び出し側が戻り値を見ない限り、描画が一行も
-  " 入らなかったことを知る手段がこの経路には存在しない。
+  " は例外もメッセージも出さず失敗値を返すだけなので、呼び出し側が戻り値を見ない
+  " 限り、描画が一行も入らなかったことを知る手段がこの経路には存在しない。
   "
   " catch が広いのは、'modifiable' が落ちていれば E21 が投げられるため。しかも
   " この関数は timer_start 経由のコールバックから呼ばれ、そこでの例外は握り潰され
   " てタブだけが残る。catch して 0 を返すことが、「見えない失敗」を呼び出し側の
-  " status という「見える失敗」に変える唯一の経路になる。nvim 側の同じ順序バグ
-  " (fb3fc08, ai/ui.lua) は pcall で同じことをしている。
+  " status という「見える失敗」に変える唯一の経路になる。nvim 側 (ai/ui.lua) は
+  " pcall で同じことをしている。
   function! s:AI_SetBufAll(buf, lines) abort
     try
       if deletebufline(a:buf, 1, '$') != 0
@@ -253,8 +236,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
             \ . shellescape(a:sys)
     elseif a:tool ==# 'gemini'
       " The REST API, not the `gemini` CLI. The payload still arrives on stdin,
-      " so everything downstream (job handling, stderr capture, s:AI_FailureReason)
-      " is unchanged -- only the far end of the pipe moved.
+      " so job handling, stderr capture and s:AI_FailureReason are unchanged.
       "
       " No -m/--model here, unlike the Neovim branch: the helper resolves
       " $GEMINI_MODEL itself, and Neovim passes it explicitly only because it
@@ -262,9 +244,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       " VimScript would create a third copy of that literal with nothing to
       " catch a drift between them.
       "
-      " GEMINI_API_KEY is read by the child out of its own environment. It is
-      " never placed on argv -- so unlike copilot's payload it cannot be read
-      " out of `ps aux` -- and never written to disk.
+      " GEMINI_API_KEY is read by the child out of its own environment; it is
+      " never placed on argv (so it cannot be read out of `ps aux`) or on disk.
       return 'cat ' . shellescape(a:tmpfile) . ' | python3 '
             \ . shellescape(s:ai_gemini_helper) . ' --system ' . shellescape(a:sys)
     elseif a:tool ==# 'copilot'
@@ -272,14 +253,10 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       " into the prompt. `-s` keeps stdout to the agent response only.
       "
       " Deliberate exception to the "payload on stdin, never argv" rule stated
-      " above (and in scripts/secret_scan.py / ai/backend.lua): there is no
-      " stdin path for this tool, so the choice is argv or no copilot at all.
-      " The cost is real -- while the job runs the whole selection is visible to
-      " every process on the machine via `ps aux`, unlike the tmpfile the other
-      " tools use. s:AI_ConfirmSend still gates copilot, so a credential the
-      " scanner RECOGNISES never reaches argv; what escapes is what
-      " value-scanning cannot see. Prefer a stdin tool for anything sensitive;
-      " if copilot ever grows a stdin mode, move it there and delete this branch.
+      " above: while the job runs the whole selection is visible via `ps aux`.
+      " s:AI_ConfirmSend still gates copilot, so a credential the scanner
+      " RECOGNISES never reaches argv. See the copilot branch of build_cli_cmd
+      " in ai/backend.lua for the full cost / why it is accepted.
       let l:prompt = a:sys . "\n\n## Input\n```\n" . join(a:selected, "\n") . "\n```"
       return 'copilot --model ' . shellescape(s:ai_copilot_model)
             \ . ' -s -p ' . shellescape(l:prompt)
@@ -294,34 +271,24 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     endif
   endfunction
 
-  function! s:AI_JobOut(buffer, ch, msg) abort
+  " out_cb / err_cb 共通: 受け取った行を、partial で束ねたリストに溜める。
+  " 呼び出し側は err_cb に out_cb とは別のリストを束ねて stderr を残す。捨てると
+  " 失敗理由が「番号だけ」になる: 未インストールなら exit 127 + stderr
+  " "command not found" が本題で、127 という数字だけ見せられても読み手は何も
+  " 判断できない。
+  function! s:AI_JobCollect(buffer, ch, msg) abort
     call add(a:buffer, a:msg)
   endfunction
 
-  " stderr は out_cb とは別のバッファに溜める。捨てると失敗理由が「番号だけ」に
-  " なる: 未インストールなら exit 127 + stderr "command not found" が本題で、
-  " 127 という数字だけ見せられても読み手は何も判断できない。
-  function! s:AI_JobErr(buffer, ch, msg) abort
-    call add(a:buffer, a:msg)
-  endfunction
-
-  " 失敗の理由文を組み立てる。nvim 側 (ai/backend.lua の cli_failure_reason,
-  " 59cfcf9) と同じ方針で、こちらは独立実装なのでその修正が届いていなかった。
-  "
-  " - exit 0 を「原因」として出さない。ツールは正常終了して何も出さなかっただけで、
-  "   `(exit code 0)` は成功を失敗の理由として述べていることになる。
-  " - stderr があれば畳み込む。長いトレースバックは先頭だけ残す。
-  " - 切り詰めは文字単位。CLI はエラーを各国語で出すので、バイト位置で切ると
-  "   マルチバイト文字の途中で割れて不正な UTF-8 がバッファに入る。
   " Ollama 経路の失敗理由。トランスポートの失敗を先に見る。
   "
-  " 以前は l:err (レスポンス本文のパースエラー) を無条件に優先していたが、
-  " 接続できなければ本文は空で、パースは必ず失敗する。つまり exit code を見る枝に
-  " 到達できず、「サーバに繋がらない」が常にパースエラーとして表示されていた。
+  " l:err (レスポンス本文のパースエラー) を先に見てはいけない: 接続できなければ
+  " 本文は空でパースは必ず失敗するので、exit code を見る枝に到達できず、
+  " 「サーバに繋がらない」が常にパースエラーとして表示される。
   "
-  " 呼び出し側にインラインで書くと退行を検知できない (実際、この修正を入れた直後は
-  " 条件を元に戻しても全テストが緑のままだった)。nvim 側 ai/backend.lua の
-  " ollama_failure_reason と同じ形に切り出し、両実装の構造を揃えて単体で叩けるようにする。
+  " 呼び出し側にインラインで書くと、条件を元に戻しても退行を検知できない。
+  " nvim 側 ai/backend.lua の ollama_failure_reason と同じ形に切り出して、両実装の
+  " 構造を揃え、単体で叩けるようにしてある。
   function! s:AI_OllamaFailureReason(tool, status, errbuf, parse_err) abort
     if a:status != 0
       return s:AI_FailureReason(a:tool, a:status, a:errbuf)
@@ -333,18 +300,22 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     return s:AI_FailureReason(a:tool, a:status, a:errbuf)
   endfunction
 
-  " How much of a failing tool's stderr to quote. Raised from 200 to match the
-  " Neovim side's MAX_STDERR_CHARS (ai/backend.lua): the two ports clipped at
-  " different lengths, which cost nothing while every message was a short
-  " "command not found" and started to matter once gemini began surfacing
-  " Google's own error text. Its most common one -- "models/X is not found for
-  " API version v1beta, or is not supported for generateContent. Call
-  " ModelService.ListModels ..." -- is ~190 characters before the model name is
-  " even substituted, so 200 truncated the half that says what to do.
-  " Measured in CHARACTERS, not bytes: these messages are localised, and cutting
-  " at a byte offset lands mid-character and puts invalid UTF-8 in the buffer.
+  " How much of a failing tool's stderr to quote; matches MAX_STDERR_CHARS in
+  " ai/backend.lua. It has to fit Google's own error text: its most common one
+  " -- "models/X is not found for API version v1beta, or is not supported for
+  " generateContent. Call ModelService.ListModels ..." -- is ~190 characters
+  " before the model name is substituted, and the half that says what to do
+  " comes last.
   let s:ai_max_stderr_chars = 500
 
+  " 失敗の理由文を組み立てる。方針は nvim 側 (ai/backend.lua の
+  " cli_failure_reason) と同じ。
+  "
+  " - exit 0 を「原因」として出さない。ツールは正常終了して何も出さなかっただけで、
+  "   `(exit code 0)` は成功を失敗の理由として述べていることになる。
+  " - stderr があれば畳み込む。長いトレースバックは先頭だけ残す。
+  " - 切り詰めは文字単位 (バイト位置で切るとマルチバイト文字の途中で割れて不正な
+  "   UTF-8 がバッファに入る。CLI はエラーを各国語で出す)。
   function! s:AI_FailureReason(tool, status, errbuf) abort
     let l:detail = trim(join(a:errbuf, "\n"))
     if strchars(l:detail) > s:ai_max_stderr_chars
@@ -412,7 +383,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     " ので、getbufline() が [] を返すのは wipe 済みか未ロードのバッファだけ。
     " つまりこの門は正当な「選択範囲を空で置換 (= 削除)」を塞がない。
     " 素通しすると s:AI_SetLines が l:new < l:old の枝に入り、置換のつもりで
-    " 選択範囲を削除する。y は status で止まるようになったが、Y
+    " 選択範囲を削除する。y は status で止まるが、Y
     " (s:AI_SingleAcceptMerged / s:AI_AllAcceptMerged) は status を一切見ずに
     " orig_buf を読み、その orig_buf も bufhidden=wipe なので同じ穴を持つ。
     " 四つの accept 経路すべてが通るのはここだけなので、最後の砦はここに置く。
@@ -426,9 +397,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       echohl ErrorMsg | echom 'Target buffer no longer valid.' | echohl None
       return
     endif
-    " Guard against edits made to the target buffer while the AI response was
-    " in flight (prompt window open, then the async job itself): the recorded
-    " start/end line numbers would otherwise replace the wrong range.
+    " Same guard as replace_range in ai/init.lua: edits made while the response
+    " was in flight would leave the recorded start/end on the wrong range.
     if getbufvar(l:target, 'changedtick') != a:state.changedtick
       echohl WarningMsg
       echom 'Target buffer changed since the selection was made; aborting to avoid replacing the wrong range.'
@@ -497,13 +467,13 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       call setbufvar(l:s.resp_buf, '&modifiable', 1)
       if a:status == 0 && len(l:out) > 0
         " status は y (s:AI_SingleAccept) が読む唯一の値で、'done' だけが
-        " 「バッファの中身」についての主張になっている。だから 'done' は描画が
-        " 実際に入ったことを確かめてからでなければ書けない。先に 'done' を立てて
-        " いた頃は、応答ウィンドウを素の <C-w>c で閉じられると描画が無音で no-op
-        " したうえでタブが成功を名乗り、y は status しか見ないので
-        " getbufline() の返す [] がそのまま s:AI_Apply に渡って、s:AI_SetLines が
-        " 「置換」ではなく「削除」の枝 (l:new < l:old) を通り、ユーザーの選択範囲を
-        " 何も入れずに消していた。
+        " 「バッファの中身」についての主張になる。だから 'done' は描画が
+        " 実際に入ったことを確かめてからでなければ書けない。応答ウィンドウが
+        " 素の <C-w>c で閉じられると描画は無音で no-op になり、先に 'done' を
+        " 立てていると、y は status しか見ないので getbufline() の返す [] が
+        " そのまま s:AI_Apply に渡って、s:AI_SetLines が「置換」ではなく
+        " 「削除」の枝 (l:new < l:old) を通り、ユーザーの選択範囲を何も入れずに
+        " 消してしまう。
         " 'failed' 側を同じように守らないのは意図的: 'failed' は中身について何も
         " 主張していないし、y は元から拒否するので、書き込みが no-op しても損は
         " ない。証明が要るのは 'done' だけ。
@@ -563,9 +533,9 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     call s:AI_SingleStatus(l:state)
 
     let l:state.job = job_start(['sh', '-c', a:cmd], {
-          \ 'out_cb': function('s:AI_JobOut', [l:state.output]),
+          \ 'out_cb': function('s:AI_JobCollect', [l:state.output]),
           \ 'out_mode': 'nl',
-          \ 'err_cb': function('s:AI_JobErr', [l:state.errout]),
+          \ 'err_cb': function('s:AI_JobCollect', [l:state.errout]),
           \ 'err_mode': 'nl',
           \ 'exit_cb': function(a:exit_cb, [l:state]),
           \ })
@@ -605,7 +575,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       let l:i += 1
     endfor
     " Derive the jump hint from the tool count so it can never advertise a key
-    " s:AI_SetMaps did not bind (it read "1/2:jump" while the list grew).
+    " s:AI_SetMaps did not bind.
     let l:nums = map(range(1, len(a:state.tools)), 'string(v:val)')
     call setwinvar(a:state.orig_win, '&statusline', ' Original ')
     call setwinvar(a:state.resp_win, '&statusline',
@@ -670,8 +640,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     let l:s = a:state
     " Decrement pending and clean up the shared tmpfile regardless of
     " closed=1 (tab already closed via `q`), so it is removed once the last
-    " outstanding job actually exits. See s:AI_SingleFinish for the same
-    " pattern (delete() silently no-ops on a missing file).
+    " outstanding job actually exits. See s:AI_SingleFinish.
     let l:s.pending -= 1
     if l:s.pending <= 0
       call delete(l:s.tmpfile)
@@ -781,9 +750,9 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
         endif
       else
         let l:state.jobs[l:i] = job_start(['sh', '-c', l:cmd], {
-              \ 'out_cb': function('s:AI_JobOut', [l:state.output[l:i]]),
+              \ 'out_cb': function('s:AI_JobCollect', [l:state.output[l:i]]),
               \ 'out_mode': 'nl',
-              \ 'err_cb': function('s:AI_JobErr', [l:state.errout[l:i]]),
+              \ 'err_cb': function('s:AI_JobCollect', [l:state.errout[l:i]]),
               \ 'err_mode': 'nl',
               \ 'exit_cb': function('s:AI_AllExit', [l:state, l:i]),
               \ })
@@ -795,11 +764,10 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
 
   " ---- ollama mode (local HTTP API, single tool) --------------------------
   " `ollama run` writes ANSI control codes onto STDOUT, corrupting the captured
-  " text. Instead POST to the local Ollama HTTP API with stream=false and parse
-  " the JSON, which yields clean output. think=false keeps any reasoning out of
-  " the `.response` field and avoids erroring on models that do not support the
-  " think parameter (kept in sync with the nvim backend, which also sends
-  " think=false). Reuses the single-mode UI/accept/close machinery; only the
+  " text, so POST to the local HTTP API with stream=false and parse the JSON, as
+  " ai/backend.lua's run_ollama does. think=false keeps reasoning out of the
+  " `.response` field and avoids erroring on models that do not support the
+  " think parameter. Reuses the single-mode UI/accept/close machinery; only the
   " command and the JSON output parsing differ.
   function! s:AI_BuildOllamaCmd(tmpfile) abort
     return 'curl -s http://localhost:11434/api/generate --data-binary @'
@@ -808,9 +776,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
 
   function! s:AI_OllamaFinish(state, status, timer) abort
     let l:s = a:state
-    " Always remove the tmpfile, even if the diff tab was already closed via
-    " `q` while the job was still pending; delete() no-ops safely on a
-    " missing file. See s:AI_SingleFinish for the same pattern.
+    " Remove the tmpfile even if the diff tab was already closed; see
+    " s:AI_SingleFinish.
     call delete(l:s.tmpfile)
     if l:s.closed
       return
@@ -876,9 +843,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       nnoremap <buffer><silent> Y :call <SID>AI_AllAcceptMerged()<CR>
       nnoremap <buffer><silent> <Tab> :call <SID>AI_AllSwitchOffset(1)<CR>
       nnoremap <buffer><silent> <S-Tab> :call <SID>AI_AllSwitchOffset(-1)<CR>
-      " One jump key per tool, derived from the list rather than spelled out:
-      " these were hardcoded to 1 and 2, so a third tool would have been
-      " reachable only by <Tab> and the status line would still have said 1/2.
+      " One jump key per tool, derived from s:ai_all_tools.
       for l:n in range(1, len(s:ai_all_tools))
         execute printf('nnoremap <buffer><silent> %d :call <SID>AI_AllJump(%d)<CR>',
               \ l:n, l:n)
@@ -902,11 +867,9 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       return
     endif
     bwipeout
-    " Says nothing about HOW the selection arrives: most tools get it on stdin,
-    " but copilot has no stdin path and s:AI_BuildCmd appends it to this
-    " instruction under an `## Input` heading, so naming stdin pointed copilot at
-    " somewhere the text was not. Byte-identical to prompt.replace_system on the
-    " Neovim side apart from the editor name; keep the two in step.
+    " Byte-identical to prompt.replace_system on the Neovim side apart from the
+    " editor name; keep the two in step. See its comment for why this says
+    " nothing about HOW the selection arrives.
     let l:sys = printf(
           \ "You are an AI assistant integrated into a Vim editor. "
           \ . "The selected %s code/text is provided as the input to this request. "

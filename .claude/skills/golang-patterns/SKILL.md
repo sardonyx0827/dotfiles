@@ -246,7 +246,7 @@ func FetchAll(ctx context.Context, urls []string) ([][]byte, error) {
     results := make([][]byte, len(urls))
 
     for i, url := range urls {
-        i, url := i, url // Capture loop variables
+        // Go 1.22+ scopes i and url per iteration; below 1.22, copy them first (i, url := i, url)
         g.Go(func() error {
             data, err := FetchWithTimeout(ctx, url)
             if err != nil {
@@ -532,7 +532,7 @@ func ProcessRequest(data []byte) []byte {
 
     buf.Write(data)
     // Process...
-    return buf.Bytes()
+    return bytes.Clone(buf.Bytes()) // copy: buf is reset and reused after Put
 }
 ```
 

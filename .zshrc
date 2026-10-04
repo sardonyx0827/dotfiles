@@ -5,10 +5,8 @@
 typeset -U path PATH fpath FPATH
 
 # OS 判定。Homebrew / macOS 固有のパス・エイリアスを Linux/WSL でそのまま
-# 読み込むと存在しない /opt/homebrew を指してしまうため、uname でガードする。
-# この戒めは LDFLAGS/CPPFLAGS が存在しない keg を指してネイティブビルド
-# (pip の C 拡張ビルド等) を壊した事故に由来する。その 2 変数は下で設定しなく
-# なったが、ガード自体は brew shellenv と PKG_CONFIG_PATH をなお守っている。
+# 読み込むと存在しない /opt/homebrew を指してしまうため、uname でガードする
+# (brew shellenv と PKG_CONFIG_PATH が対象)。
 case "$(uname -s)" in
   Darwin) _os=macos ;;
   Linux) _os=linux ;;
@@ -98,11 +96,8 @@ path=(~/Library/Python/*/bin(N) $path)
 if [[ "$_os" == macos ]]; then
   # Homebrew (Apple Silicon) 固有のパス群。Linux には存在しないため読み込まない。
   export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
-  # ここで LDFLAGS / CPPFLAGS は設定しない。以前は php@8.4 の keg 向けに
-  # 「代入」していたが、(1) install.sh が入れるのは php-cs-fixer の依存として
-  # 引かれる素の php であって php@8.4 ではなく、このリポジトリで構築した
-  # マシンでは一度も成立しない設定だった、(2) 代入なので ~/.zshenv / direnv /
-  # 親シェル (tmux ペイン、入れ子 zsh) が入れた値を毎回捨てていた。
+  # ここで LDFLAGS / CPPFLAGS は設定しない。代入すると ~/.zshenv / direnv /
+  # 親シェル (tmux ペイン、入れ子 zsh) が入れた値を毎回捨ててしまう。
   # keg-only formula (openssl@3, zlib, readline ...) の brew info はまさに
   # この 2 変数への設定を案内するため、捨てるとネイティブビルドが落ちる。
   # 必要になったら ~/.zshenv 側で追記する形にすること。
@@ -110,7 +105,6 @@ fi
 
 export ZSH="$HOME/.oh-my-zsh"
 
-# set less options
 export LESS="-i -M -R -x4"
 
 ZSH_THEME="px-rose-pine"
@@ -148,9 +142,8 @@ cf () {
 vf () {
   selected_file=$(fzf --extended --preview 'bat --style=numbers --color=always {}')
   if [ -n "$selected_file" ]; then
-    # cd changes cwd to the file's dir, so open by basename -- reusing the
-    # original (cwd-relative) path here looked for src/foo under src/, i.e.
-    # src/src/foo, and opened an empty buffer for anything below the cwd.
+    # cd changes cwd to the file's dir, so open by basename: the original
+    # (cwd-relative) path would resolve against the new cwd (src/foo -> src/src/foo).
     cd "$(dirname "$selected_file")" && nvim "$(basename "$selected_file")"
   fi
 }
@@ -181,7 +174,6 @@ alias vim="nvim"
 alias vimdiff="nvim -d"
 alias view="nvim -R"
 
-# or 'docker exec MyContainer nvim --headless --listen 0.0.0.0:22222'
 alias nvim_listen="nvim --headless --listen 0.0.0.0:22222"
 alias nvim_attach="nvim --remote-ui --server localhost:22222"
 
@@ -450,7 +442,7 @@ function mc() {
       # 実行」と言うとおりの素通しなので、打った語を語のまま claude へ渡さないと
       # いけない。"$*" は全引数を 1 語に連結してしまうため、`mc cli mcp list` が
       # `claude "mcp list"` (argc=1) になり、claude CLI 側はそれをサブコマンドでは
-      # なく 1 本のプロンプト文字列として解釈していた。引数無しの `mc cli` も
+      # なく 1 本のプロンプト文字列として解釈する。引数無しの `mc cli` も
       # "$*" では空文字列を 1 個渡すことになり対話起動にならない。
       # 逆に上の translate) / execute) が "$*" なのは正しい。あちらは日本語の
       # プロンプト文へ語を埋め込む用途で、1 語に潰れるのが仕様そのもの。
@@ -502,7 +494,7 @@ _mc() {
     args)
       # `*::args` rewrites `words` to the normal arguments only, so the
       # subcommand sits at words[1] (the idiom zsh's own _asciinema / _augeas
-      # use); words[2] was the argument AFTER it and never matched a hint.
+      # use).
       case $words[1] in
         translate|execute|cli)
           _message "プロンプトまたは翻訳したいテキストを入力"

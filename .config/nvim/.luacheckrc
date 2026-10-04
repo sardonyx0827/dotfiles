@@ -1,16 +1,13 @@
 -- .luacheckrc — luacheck config for the Neovim Lua tree.
 --
 -- luacheck GATES CI: the `luacheck` job in .github/workflows/ci.yml fails the
--- build. It was advisory (continue-on-error) until the tree was verified clean,
--- and the version is pinned precisely because it now blocks. Its job is to
+-- build, and the version is pinned precisely because it blocks. Its job is to
 -- surface the one bug class that has silently broken the editor before -- an
 -- undefined global (a typo'd name, or a `require` result used where a global
--- was meant), which lazy.lua's own comment records as having "degraded the
--- editor silently". It is kept
--- deliberately lenient so it never fights the hand-tuning this tree gets:
--- formatting is not enforced (stylua is intentionally absent) and the noisier
--- style diagnostics are off. Widen the checks only if a real regression slips
--- through, not preemptively.
+-- was meant). It is kept deliberately lenient so it never fights the
+-- hand-tuning this tree gets: formatting is not enforced (stylua is
+-- intentionally absent) and the noisier style diagnostics are off. Widen the
+-- checks only if a real regression slips through, not preemptively.
 --
 -- The runtime/global facts mirror .luarc.json (LuaJIT + `vim`, `R`, `Snacks`)
 -- so the lint and the language server agree on what is defined. Keep the two
@@ -21,8 +18,8 @@ std = "luajit" -- Neovim embeds LuaJIT (Lua 5.1 dialect); this defines its stdli
 
 -- Known runtime globals. `vim`/`R` go in `globals` (read+write) because config
 -- code legitimately assigns their fields (`vim.opt.x = ...`) or defines them
--- (`R` = a plenary reload helper); listing them in read_globals instead is what
--- produced 77 spurious W122 "setting read-only field" warnings. `Snacks` is
+-- (`R` = a plenary reload helper); listing them in read_globals instead would
+-- raise spurious W122 "setting read-only field" warnings. `Snacks` is
 -- injected by snacks.nvim and only read, so read_globals is right for it.
 -- Declaring these known globals is what keeps the useful signal alive: a truly
 -- undefined global (a typo'd name) still surfaces as W113 against this baseline.
@@ -34,8 +31,7 @@ unused_args = false -- plugin/event callbacks routinely take unused (_, opts)
 
 -- Suppress two diagnostics that only fire on deliberate idioms here. Kept
 -- narrow (just these codes) so genuine findings of every other kind still
--- surface -- the W431 shadowing this list once flagged was fixed in code, not
--- ignored.
+-- surface.
 --   214: a `_`-prefixed parameter that is in fact used. The underscore is a
 --        chosen "usually skipped" hint (backend.lua's _skip_scan), not a bug.
 --   512: a loop that runs at most once -- used on purpose as "return the first

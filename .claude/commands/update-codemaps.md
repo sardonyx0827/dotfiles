@@ -1,19 +1,20 @@
 ---
-description: Scan the codebase structure and regenerate token-lean architecture codemaps (architecture, backend, frontend, data). Invokes the doc-updater agent.
+description: Scan the codebase structure and regenerate token-lean architecture codemaps under docs/CODEMAPS/ (index, backend, frontend, database). Invokes the doc-updater agent.
 ---
 
 # Update Codemaps
 
-This command invokes the **doc-updater** agent to scan the codebase and regenerate token-lean architecture codemaps. The agent does the work directly — it does not call this command back.
+This command invokes the **doc-updater** agent to scan the codebase and regenerate token-lean architecture codemaps.
 
 Analyze the codebase structure and update architecture documentation:
 
 1. Scan all source files for imports, exports, and dependencies
-2. Generate token-lean codemaps in the following format:
-   - codemaps/architecture.md - Overall architecture
-   - codemaps/backend.md - Backend structure
-   - codemaps/frontend.md - Frontend structure
-   - codemaps/data.md - Data models and schemas
+2. Generate token-lean codemaps under docs/CODEMAPS/ — at minimum the files below; agents/doc-updater.md
+   defines the full layout and format:
+   - docs/CODEMAPS/INDEX.md - Overall architecture
+   - docs/CODEMAPS/backend.md - Backend structure
+   - docs/CODEMAPS/frontend.md - Frontend structure
+   - docs/CODEMAPS/database.md - Data models and schemas
 
 3. Calculate diff percentage from previous version
 4. If changes > 30%, request user approval before updating

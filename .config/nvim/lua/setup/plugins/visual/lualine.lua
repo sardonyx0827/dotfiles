@@ -21,7 +21,6 @@ vim.api.nvim_create_autocmd("BufEnter", {
 
 -- command line position when using lualine
 vim.opt.cmdheight = 0
--- Show Statusline
 -- Rosé Pine (main) palette — kept in sync with the active colorscheme
 -- (rose-pine.lua) so the statusline matches the rest of the UI. bg is 'None'
 -- on purpose: the statusline stays transparent like the terminal.
@@ -57,9 +56,7 @@ return {
     require("lualine").setup {
       options = {
         icons_enabled = true,
-        -- theme = "auto",
         theme = my_transparent_theme,
-        --color = { bg = "none" },
         component_separators = { left = "", right = "" },
         section_separators = { left = "", right = "" },
         disabled_filetypes = {
@@ -101,7 +98,6 @@ return {
         lualine_x = {
           {
             'copilot',
-            -- Default values
             symbols = {
               status = {
                 icons = {

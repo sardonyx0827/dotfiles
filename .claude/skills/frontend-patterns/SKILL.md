@@ -34,8 +34,9 @@ Boundary rules worth knowing before you place the directive:
   imports become part of the client bundle too. Push it as far down the tree as possible.
 - Server Components can render Client Components; a Client Component cannot import a
   Server Component, but it can receive one via `children` / props.
-- Props crossing the boundary must be serializable — no functions, classes, or Dates in,
-  though `children` as an already-rendered Server Component is fine.
+- Props crossing the boundary must be serializable — no plain functions (Server Functions
+  excepted) or class instances; Date, Map, Set, and Promises are fine, as is `children` as an
+  already-rendered Server Component.
 - Data fetching belongs in Server Components where possible; reach for the client
   fetching hook below only for genuinely client-driven state (search-as-you-type, polling).
 
@@ -218,16 +219,21 @@ export function useQuery<T>(
   return { data, error, loading, refetch };
 }
 
-// Usage
+// Usage — fetcher and options must be stable (module scope or memoized); inline
+// values change every render, which re-creates refetch and refetches in a loop
+const fetchProducts = (): Promise<Product[]> =>
+  fetch("/api/products").then((r) => r.json());
+const productQueryOptions: UseQueryOptions<Product[]> = {
+  onSuccess: (data) => console.log("Fetched", data.length, "products"),
+  onError: (err) => console.error("Failed:", err),
+};
+
 const {
   data: products,
   loading,
   error,
   refetch,
-} = useQuery("products", () => fetch("/api/products").then((r) => r.json()), {
-  onSuccess: (data) => console.log("Fetched", data.length, "products"),
-  onError: (err) => console.error("Failed:", err),
-});
+} = useQuery("products", fetchProducts, productQueryOptions);
 ```
 
 ### Debounce Hook
@@ -320,7 +326,7 @@ export function useProducts() {
 ```typescript
 // ✅ useMemo for expensive computations
 const sortedProducts = useMemo(() => {
-  return products.sort((a, b) => b.sales - a.sales)
+  return [...products].sort((a, b) => b.sales - a.sales)
 }, [products])
 
 // ✅ useCallback for functions passed to children

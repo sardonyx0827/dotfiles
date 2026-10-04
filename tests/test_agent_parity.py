@@ -1,10 +1,9 @@
 """Drift guards for the parts of the multi-runtime config that are still copied.
 
-Agent bodies used to live here. They no longer do: `.codex/agents/*.toml` is
-generated from `.claude/agents/*.md` by scripts/gen_codex_agents.py, and
+Agent bodies are not compared here: `.codex/agents/*.toml` is generated from
+`.claude/agents/*.md` by scripts/gen_codex_agents.py, and
 tests/test_gen_codex_agents.py enforces that the committed output matches the
-SSOT byte-for-byte. What is left in this file is the drift that generation
-does not cover:
+SSOT byte-for-byte. This file covers the drift that generation does not:
 
 - codex-delegator, the one agent whose Codex body genuinely diverges in
   meaning (the Claude copy documents the advisor-first escalation tier, which
@@ -83,11 +82,10 @@ def test_secrets_gate_line_consistent_across_instruction_files():
 
 
 # --- The delegation policy lives in one place, and the catalog must not re-grow it ---
-# CLAUDE.md and AGENTS.md both said "Single is the default" and "do not delegate what you
-# could finish yourself" while their Development Workflow section separately ordered a
-# code-reviewer run after *every* edit. That second definition is gone: CLAUDE.md's
-# Execution Layer Selection decides whether to delegate at all, and each agent's own
-# description says when that agent applies. Nothing else may define review timing.
+# CLAUDE.md's Execution Layer Selection decides whether to delegate at all, and each
+# agent's own description says when that agent applies. Nothing else may define review
+# timing: a second definition (e.g. a Development Workflow step ordering a code-reviewer
+# run after *every* edit) would contradict CLAUDE.md § Execution Layer Selection.
 #
 # The catalog must not grow its own policy back. Anchored to the heading form (`## ` at
 # line start) on purpose: the README's own history paragraph quotes these titles inline
@@ -129,18 +127,13 @@ def test_agent_catalog_carries_no_delegation_policy():
 
 
 # --- The concurrency cap is a number, and a number copied is a number that drifts ---
-# CLAUDE.md § Execution Layer Selection owns how many SubAgents may run at once. Two
-# dependents restated it as their own figure and then went stale when CLAUDE.md's cap
-# moved: subagent-prompt-design/SKILL.md said "Per `CLAUDE.md`: run 2-4" (an attribution
-# CLAUDE.md never supported) and hard-capped its checklist at 4, while agents/README.md
-# described "CLAUDE.md's ... cap of four". CLAUDE.md says ~6 and endorses "five
-# independent tickets, five agents", so the skill's checklist forbade a fan-out the SSOT
-# explicitly allows -- a live contradiction an agent had to arbitrate mid-task.
-#
-# The fix is not "update 4 to 6" (that just re-arms the same trap); it is that these two
-# files must not carry a global cap figure at all. Scoped counts stay legal on purpose:
-# a command or skill saying "launch 2-4 request-workers *for this task*" is a recipe, not
-# a claim about the global ceiling, so this guard covers only the two policy dependents.
+# CLAUDE.md § Execution Layer Selection owns how many SubAgents may run at once. The two
+# dependents below must not carry a global cap figure at all: a restated figure goes
+# stale when CLAUDE.md's cap moves (and updating it just re-arms the trap), leaving a
+# checklist that forbids a fan-out the SSOT allows -- a live contradiction an agent has
+# to arbitrate mid-task. Scoped counts stay legal on purpose: a command or skill saying
+# "launch 2-4 request-workers *for this task*" is a recipe, not a claim about the global
+# ceiling, so this guard covers only the two policy dependents.
 CAP_DEPENDENTS = (
     REPO_ROOT / ".claude/skills/subagent-prompt-design/SKILL.md",
     REPO_ROOT / ".claude/agents/README.md",
@@ -155,11 +148,11 @@ _GLOBAL_CAP_CLAIM = re.compile(
     re.I,
 )
 
-# The second half of the same defect: SKILL.md opened its parallelism section with
-# "Per `CLAUDE.md`: run 2-4 SubAgents concurrently". A bare "2-4" is legal (scoped
-# recipes use it), but *sourcing a count to CLAUDE.md* is checkable and was false --
-# CLAUDE.md has never carried that range. Citing the SSOT by name is what makes a
-# reader stop verifying, so a wrong citation costs more than an uncited wrong number.
+# The second half of the same hazard: a line like "Per `CLAUDE.md`: run 2-4 SubAgents
+# concurrently". A bare "2-4" is legal (scoped recipes use it), but *sourcing a count to
+# CLAUDE.md* is checkable, and false whenever CLAUDE.md carries no such range. Citing the
+# SSOT by name is what makes a reader stop verifying, so a wrong citation costs more than
+# an uncited wrong number.
 _ATTRIBUTED_COUNT = re.compile(
     r"(?:per|from|follows?)\s+.{0,4}CLAUDE\.md.{0,40}?\d", re.I
 )

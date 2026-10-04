@@ -19,21 +19,20 @@ return {
   version = "*",
   lazy = true,
   cmd = { "ToggleTerm" },
-  -- Keymaps formerly in after/plugin/toggleterm.lua. Each entry lazy-loads toggleterm.
+  -- Each entry lazy-loads toggleterm.
   keys = {
     -- The terminal number is a Vim command COUNT and belongs on the command name.
     -- Written as `:ToggleTerm 2direction=...` it becomes an argument, and toggleterm's
     -- parser splits each token on "=" and reads the left side as the option name --
     -- yielding the unrecognized key "2direction" and a nil `direction`, so the terminal
-    -- silently fell back to the setup default (tab) on a single shared instance instead
-    -- of opening the numbered split each `desc` promises.
+    -- would silently fall back to the setup default (tab) on a single shared instance
+    -- instead of opening the numbered split each `desc` promises.
     -- ss は count を付けない。toggleterm の `toggle()` は count>=1 で
-    -- toggle_nth_term(n)、0 で smart_toggle に分かれる。`1direction=vertical` は
-    -- 無効キーだったので修正前の ss は実質 smart_toggle(size=80) であり、ここに
-    -- `1` を補うと toggle_nth_term(1) に変わって sh1 (bare = smart_toggle、既定の
-    -- 端末 1) と同じスロットを方向指定付きで奪い合う。方向は端末の初回生成時に
-    -- 固定されるので、先に押した方が勝って他方の desc が黙って無効になる。
-    -- 従来どおり smart_toggle のまま direction だけ効かせる (shf/shb と同じ形)。
+    -- toggle_nth_term(n)、0 で smart_toggle に分かれる。ss に `1` を付けると
+    -- toggle_nth_term(1) に変わって sh1 (bare = smart_toggle、既定の端末 1) と
+    -- 同じスロットを方向指定付きで奪い合う。方向は端末の初回生成時に固定される
+    -- ので、先に押した方が勝って他方の desc が黙って無効になる。
+    -- そのため smart_toggle のまま direction だけ効かせる (shf/shb と同じ形)。
     { "<leader>ss",  ":ToggleTerm direction=vertical size=80<cr>" },
     { "<leader>sh1", ":ToggleTerm<cr>",                          desc = "ToggleTerm - toggle session 1" },
     { "<leader>sh2", ":2ToggleTerm direction=horizontal<cr>",    desc = "ToggleTerm - toggle session 2" },

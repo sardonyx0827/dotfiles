@@ -142,8 +142,8 @@ def render(
 ) -> Path:
     """Render `md_path` to HTML beside it (or into `out_dir`) and return the path."""
     # errors="replace": a stray byte in a hand-edited report must not turn into
-    # a UnicodeDecodeError traceback when the rest of the page is fine. The
-    # newline translation read_text() used to do is kept explicitly.
+    # a UnicodeDecodeError traceback when the rest of the page is fine. Newlines
+    # are normalised explicitly, as read_text() would.
     markdown = (
         md_path.read_bytes()
         .decode("utf-8", errors="replace")

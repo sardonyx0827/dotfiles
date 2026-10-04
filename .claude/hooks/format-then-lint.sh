@@ -1,14 +1,14 @@
 #!/bin/bash
 # PostToolUse (Write|Edit|MultiEdit) の整形 → 静的解析を「この順で」走らせる。
 #
-# 以前は settings.json の同一 matcher の hooks 配列に auto-format.sh と lint.sh
-# を並べていた。これは順序を保証しない: Claude Code は同一イベントにマッチした
-# ハンドラを並列に走らせ、公式ドキュメントも "Since hooks run in parallel, the
-# order is non-deterministic" と明記している。一方 lint.sh は冒頭で「auto-format.sh
-# 実行後を想定」と宣言し、_lint_common.sh も整形済みを前提に ruff の import 順
-# (I001) や rubocop の Layout を指摘する。順序が崩れると、フォーマッタが今まさに
-# 直している最中の指摘が exit 2 でエージェントに返り、手で直させる無駄なターンを
-#生む。1 本のハンドラへ畳んで逐次性を取り戻す。
+# settings.json の同一 matcher の hooks 配列に auto-format.sh と lint.sh を並べても
+# 順序は保証されない: Claude Code は同一イベントにマッチしたハンドラを並列に走らせ、
+# 公式ドキュメントも "Since hooks run in parallel, the order is non-deterministic"
+# と明記している。一方 lint.sh は冒頭で「auto-format.sh 実行後を想定」と宣言し、
+# _lint_common.sh も整形済みを前提に ruff の import 順 (I001) や rubocop の Layout
+# を指摘する。順序が崩れると、フォーマッタが今まさに直している最中の指摘が exit 2
+# でエージェントに返り、手で直させる無駄なターンを生む。1 本のハンドラへ畳んで
+# 逐次性を取り戻す。
 #
 # 素朴に `auto-format.sh && lint.sh` と 1 行に並べられないのは、両者とも jq で
 # stdin を直接読むため。1 つ目がペイロードを食い切り、2 つ目は空を受け取って

@@ -15,17 +15,16 @@
 # 「回避を試みず人間に報告せよ」の指示を添え、Codex の自律的な回避リトライを
 # 抑える。
 #
-# 意図的に set -e は使わない: 本体の非ゼロ終了はこのラッパーが分岐すべき
-# 対象データであって、ラッパー自身の異常ではない。
+# 意図的に set -e は使わない (理由は .claude/hooks/bash-review-launcher.sh 参照)。
 
 block_and_exit() {
   echo "$1 — BLOCKED (fail-closed by bash-review-launcher). Report this to the user; do NOT retry with alternative or simplified commands to work around it." >&2
   exit 2
 }
 
-# フック本体はラッパー自身と同じディレクトリから解決する (インストール後は
-# ~/.codex/hooks がリポジトリ側への symlink になるため、相対解決で両配置に
-# 効く)。解決に失敗したら hook が見つからず下の -f 検査でブロックに倒れる。
+# フック本体はラッパー自身と同じディレクトリから解決する (~/.codex/hooks が
+# リポジトリ側への symlink でも効く。理由は .claude 側のランチャー参照)。
+# 解決に失敗したら下の -f 検査でブロックに倒れる。
 launcher_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd) || launcher_dir=""
 hook="$launcher_dir/bash-review.py"
 
@@ -43,9 +42,9 @@ out=$(python3 "$hook")
 status=$?
 
 # exit 0 (許可) と exit 2 (ブロック; stderr が Codex へ届く) は本体の正常な
-# 終了語彙なのでそのまま返す。なお python3 が本体を読めない場合 (import/構文
-# エラー) は try 節の外で例外になり python3 は exit 1 で落ちる — これは 0/2 の
-# どちらにも一致せず、下のクラッシュ用フォールバック (block_and_exit) に落ちる。
+# 終了語彙なのでそのまま返す。python3 が本体を読めない場合 (import/構文エラー)
+# の exit 1 は 0/2 のどちらにも一致せず、下の block_and_exit に落ちる
+# (詳細は .claude 側のランチャー参照)。
 if [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; then
   [ -n "$out" ] && printf '%s\n' "$out"
   exit "$status"

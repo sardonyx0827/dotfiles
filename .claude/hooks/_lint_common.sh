@@ -14,10 +14,8 @@
 #   - Claude: PostToolUse で .tool_input.file_path の 1 ファイル
 #   - Codex : PostToolUse だが apply_patch のマーカーから複数ファイル。stdout は
 #             構造化出力として解釈されるため exec 1>/dev/null で捨てる
-# 一方「1 ファイルをどう解析するか」は完全に同一で、以前は約 230 行が
-# インデント 1 段違いで両者にコピペされていた(しかも js/ts, rs, go, java, c/c++,
-# rb, php はテストが 1 件も無かった)。共有するのはこの解析部分だけで、
-# 対象の集約・通知・終了コードの決定は wrapper に残す。
+# 一方「1 ファイルをどう解析するか」は完全に同一なので、共有するのはこの解析部分
+# だけ。対象の集約・通知・終了コードの決定は wrapper に残す。
 #
 # ■ 失敗の判定方法が linter ごとに違う
 #
@@ -26,21 +24,21 @@
 # 「問題を見つけたのに通す」という最悪の壊れ方をするので、
 # tests/test_lint_and_format.py::TestLintLanguageMatrix が両者を固定している。
 #
-# その grep 側に落とし穴が 2 つあり、3 ツールとも踏んでいた。
+# その grep 側に落とし穴が 2 つある (clippy / checkstyle / cppcheck)。
 #
 #   1. severity の綴り。clippy の lint は warn 既定、checkstyle の
 #      google_checks.xml も severity=warning で、どちらも既定設定では "error"
 #      を一度も出さない。error だけを探すと恒久的に緑になる。cppcheck は
-#      --enable で 4 カテゴリ要求しながら 2 つしか見ていなかった。マッチさせる
-#      のは「ツールが既定で出す綴り」であって、名前から連想する綴りではない。
+#      --enable で要求した 4 カテゴリ全てを見ること。マッチさせるのは「ツールが
+#      既定で出す綴り」であって、名前から連想する綴りではない。
 #   2. 出力形式そのもの。cppcheck 1.x の `(severity)` を前提にした grep は、
 #      既定が `severity:` に変わった 2.x に対して何一つマッチせず、(error) の
-#      指摘ごと素通ししていた。既定形式に委ねると、ツール側の変更でゲートが
+#      指摘ごと素通しする。既定形式に委ねると、ツール側の変更でゲートが
 #      黙って死ぬ。grep する形式は --template で自分で固定する。
 #
-# どちらもテストは通っていた。error 形状の出力しかスタブしておらず、コードが
-# 既に正しく扱えるケースだけを固定していたためで、カバレッジは何の防波堤にも
-# ならなかった。スタブはツールの実出力から起こすこと。
+# スタブはツールの実出力から起こすこと。error 形状の出力しかスタブしないと、
+# コードが既に正しく扱えるケースだけを固定することになり、カバレッジは
+# 何の防波堤にもならない。
 
 # _go_dir_has_analyzable_package <dir>
 #
@@ -53,12 +51,12 @@
 #     var x int = "matched no packages"
 #   → vet: ./main.go:4:14: cannot use "matched no packages" ... as int value
 # — まで「検査できなかった」と誤分類し、コンパイルの通らないファイルに対して
-# lint が緑を返す。実際にそう作り込んで security review で検出された。
+# lint が緑を返す。
 #
 # `go env GOMOD` も使わない。GOPATH モード (GO111MODULE=off) では空を返すのに
 # `go vet .` は正常に動くため、「空なら skip」にすると *全ファイルの検査が
 # 黙って消える*。モジュール判定は、本当に知りたいこと (解析できるか) の
-# 代理としてそもそも不正確だった。
+# 代理として不正確。
 #
 # 実測した go1.27 の応答 (files = GoFiles/TestGoFiles/XTestGoFiles の個数):
 #   通常のパッケージ          files=1/0/0  rc=0  vet rc=0  → 解析する
@@ -67,8 +65,7 @@
 #   build 制約で全除外        files=0/0/0  rc=0  vet rc=1  → skip
 #   名前に空白を含むディレクトリ files=0/0/0 rc=0 vet rc=1 → skip (malformed import path)
 #   モジュール外              files=(空)   rc=1  vet rc=1  → skip
-# 下 3 つはいずれも「vet は失敗するが、それは指摘ではない」ケース。
-# 単一ファイル検査だった頃はどれも rc=0 で素通りしていたので、ここを取り違えると
+# 下 3 つはいずれも「vet は失敗するが、それは指摘ではない」ケース。ここを取り違えると
 # `//go:build tools` や `//go:build integration` のような普通の書き方に対して
 # 「存在しないエラーを直せ」とエージェントに指示することになる。
 #
@@ -139,8 +136,8 @@ hook_lint_file() {
 
     # ESLint設定ファイルの存在確認。編集ファイルのディレクトリから PROJECT_ROOT
     # まで遡って探す (monorepo は packages/<pkg>/ に置く)。名前の一覧は ESLint が
-    # 実際に読むものを揃える: .eslintrc.cjs / .eslintrc.yaml / eslint.config.ts が
-    # 漏れていて、eslint があっても「config not found」で静かに緑を返していた。
+    # 実際に読むものを揃える(漏れると、eslint があっても「config not found」で
+    # 静かに緑を返す)。
     HAS_ESLINT_CONFIG=false
     if [ -n "$PROJECT_ROOT" ]; then
       eslint_dir=$(cd "$(dirname "$FILE_PATH")" 2>/dev/null && pwd -P)
@@ -158,10 +155,9 @@ hook_lint_file() {
 
     # ローカル解決は monorepo を考慮し、編集ファイルのディレクトリから
     # PROJECT_ROOT まで遡って一番近い node_modules/.bin/eslint を探す
-    # (hook_find_nearest_bin, _hook_common.sh)。PROJECT_ROOT 直下しか見て
-    # いなかった頃は、eslint が packages/<pkg>/node_modules にしか無い構成で
-    # 「ESLint not found」のまま exit 0 を返していた — 上の設定探索は同じ
-    # monorepo 構成を既に想定しているのに、バイナリ解決だけがそれを知らなかった。
+    # (hook_find_nearest_bin, _hook_common.sh)。PROJECT_ROOT 直下しか見ないと、
+    # eslint が packages/<pkg>/node_modules にしか無い構成で「ESLint not found」の
+    # まま exit 0 を返す。上の設定探索と同じ monorepo 構成に合わせる。
     ESLINT_BIN=""
     if [ -n "$PROJECT_ROOT" ]; then
       ESLINT_BIN=$(hook_find_nearest_bin "$(dirname "$FILE_PATH")" "$PROJECT_ROOT" eslint)
@@ -179,7 +175,7 @@ hook_lint_file() {
       # ブロックする。上のループが見つけた config のディレクトリで実行する。
       # .eslintrc 系はファイル基準で探され、作業ディレクトリは .eslintignore
       # の探索に効くので、従来どおり動かさない。
-      # 移動する前に対象を絶対パスにする (上の TSC_BIN と同じ理由): 相対パスの
+      # 移動する前に対象を絶対パスにする (下の TSC_BIN と同じ理由): 相対パスの
       # まま渡すと移動先基準で読み直され、存在しないファイルとして eslint が
       # 失敗し、問題の無い編集をブロックする。$(...) 内の f は外に漏れない。
       # $(...) の中で case を使わないこと: macOS の bash 3.2 はパターンの `)`
@@ -281,7 +277,7 @@ hook_lint_file() {
             # 出力はどのファイルも名指ししない。空の RELATED を「関連エラー無し」
             # と読むと、型エラーのあるファイルでゲートが緑を返す。ファイル名を
             # 1 つも含まない失敗出力は起動失敗として丸ごと報告する (他ファイル
-            # だけのエラーは従来どおり素通し。checkstyle / cppcheck と同じ扱い)。
+            # だけのエラーは素通し。checkstyle / cppcheck と同じ扱い)。
             if [ -z "$RELATED" ] && ! echo "$OUTPUT" | grep -qE '\.tsx?[(:]'; then
               RELATED="$OUTPUT"
             fi
@@ -375,13 +371,12 @@ hook_lint_file() {
   #   go vet main.go -> exit 1 "undefined: helper"
   #   go vet -C <dir> . -> exit 0
   # つまり正しいコードに対して exit 2 を返し、エージェントに存在しないエラーの
-  # 修正を指示していた。さらに悪いことに、コンパイル失敗が先に立つので vet 本来の
-  # 指摘 (Printf の型不一致など) は表に出ないまま握り潰されていた。
+  # 修正を指示することになる。さらに、コンパイル失敗が先に立つので vet 本来の
+  # 指摘 (Printf の型不一致など) は表に出ない。
   # 1 ファイルだけのパッケージ以外、事実上あらゆる Go プロジェクトで発症する。
   #
-  # 副作用として、main.go を編集すると helper.go 由来の既存の指摘も出るように
-  # なる。パッケージ単位の解析としては正しい挙動だが、単一ファイル時代とは
-  # 見え方が変わる点は意図的なもの。
+  # 副作用として、main.go を編集すると helper.go 由来の既存の指摘も出る。
+  # パッケージ単位の解析としては正しい挙動で、意図したもの。
   go)
     GO_PKG_DIR=$(dirname "$FILE_PATH")
     # 解析可能かの判定は両ツールより先に、かつ一度だけ。「ツールチェインが
@@ -428,10 +423,10 @@ hook_lint_file() {
     if command -v checkstyle >/dev/null 2>&1; then
       echo "  Running checkstyle..."
       # プロジェクトにcheckstyle.xmlがあればそれを使用、なければGoogle規約。
-      # 既定値は "google" ではなく "/google_checks.xml"。前者は解決できず
-      # (`Could not find config XML file 'google'.` / exit 255)、この分岐は
-      # 一度も検査していなかった。jar 同梱の設定は classpath リソースなので
-      # 先頭スラッシュ付きで指定する。test_checkstyle_default_config_resolves。
+      # 既定値は "google" ではなく "/google_checks.xml"。前者は解決できない
+      # (`Could not find config XML file 'google'.` / exit 255)。jar 同梱の
+      # 設定は classpath リソースなので先頭スラッシュ付きで指定する。
+      # test_checkstyle_default_config_resolves。
       PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
       CONFIG="/google_checks.xml"
       [ -f "$PROJECT_ROOT/checkstyle.xml" ] && CONFIG="$PROJECT_ROOT/checkstyle.xml"
@@ -459,12 +454,10 @@ hook_lint_file() {
     if command -v cppcheck >/dev/null 2>&1; then
       echo "  Running cppcheck..."
       # --template で出力形式を固定する。cppcheck 1.x の既定は
-      # `[file:line]: (severity) message` だったが 2.x で
-      # `file:line:col: severity: message` に変わっており、括弧付きの綴りを
-      # 探す下の grep は modern cppcheck に対して何一つマッチしていなかった
-      # (= (error) の指摘ごと素通しし、常に緑)。既定に委ねるのが事故の原因な
-      # ので、grep する形式はこちらで決める。tests の
-      # test_cppcheck_template_and_matcher_agree がこの固定を守る。
+      # `[file:line]: (severity) message`、2.x は `file:line:col: severity: message`
+      # で、既定に委ねると括弧付きの綴りを探す下の grep が何もマッチせず、
+      # (error) の指摘ごと素通しして常に緑になる。grep する形式はこちらで決める。
+      # tests の test_cppcheck_template_and_matcher_agree がこの固定を守る。
       # --template-location も必須。--template だけ渡すと、指摘に付く補足
       # (nullPointer なら「Assignment 'p=0', assigned value is 0」等、修正に
       # 一番効く情報) が丸ごと落ちる。matcher には掛からない綴りなので誤検知
@@ -481,9 +474,8 @@ hook_lint_file() {
         --template-location='{file}:{line}:{column}: note: {info}' \
         "$FILE_PATH" 2>&1); then
         LINT_ERRORS="${LINT_ERRORS}[cppcheck]\n${OUTPUT}\n"
-      # --enable で有効化した 4 カテゴリを漏れなく拾う。error/warning しか見て
-      # いなかったため style/performance/portability の指摘は捨てられていた。
-      # note 行は上の --template-location 側の綴りで出るため、ここには掛からない
+      # --enable で有効化した 4 カテゴリと error を漏れなく拾う。note 行は上の
+      # --template-location 側の綴りで出るため、ここには掛からない
       # (指摘本体だけが判定に効く)。
       elif echo "$OUTPUT" | grep -qE "\((error|warning|style|performance|portability)\)"; then
         LINT_ERRORS="${LINT_ERRORS}[cppcheck]\n${OUTPUT}\n"

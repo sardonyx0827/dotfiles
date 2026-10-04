@@ -45,20 +45,17 @@ restore_sync() {
 }
 trap restore_sync EXIT
 
-# Temporarily turn off sync if it's on
 if [[ "$SYNC_STATE" == "on" ]]; then
   tmux set-window-option synchronize-panes off
 fi
 
-# List all panes in the current window
 tmux list-panes -F '#{pane_id} #{pane_current_command}' | while read -r PANE_ID COMMAND_NAME; do
-  # If the running command is not 'nvim'
   if [[ "$COMMAND_NAME" != "nvim" ]]; then
     # `-l` sends the text literally. Without it tmux resolves a lone word
     # such as `up` / `tab` / `enter` as a KEY NAME (case-insensitively), so
-    # typing `up` at the prompt re-ran the previous command in every pane.
-    # `--` keeps a command that starts with `-` from being read as send-keys
-    # flags (it failed, and `|| true` hid that nothing was sent). Enter goes
+    # typing `up` at the prompt would re-run the previous command in every
+    # pane. `--` keeps a command that starts with `-` from being read as
+    # send-keys flags (`|| true` would hide that nothing was sent). Enter goes
     # in a separate call: under -l it too would be literal text.
     # `|| true` keeps one pane's failure from aborting the remaining panes.
     tmux send-keys -t "$PANE_ID" -l -- "$COMMAND" || true

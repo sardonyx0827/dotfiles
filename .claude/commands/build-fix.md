@@ -24,7 +24,7 @@ Incrementally fix TypeScript and build errors:
 
 4. Stop if:
    - Fix introduces new errors
-   - Same error persists after 3 attempts
+   - Same error persists after 2 consecutive attempts
    - User requests pause
 
 5. Show summary:

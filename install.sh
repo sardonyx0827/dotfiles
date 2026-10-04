@@ -8,12 +8,11 @@
 # fails if ANY stage fails, not just the last one -- without it, a failed
 # curl in front of `sudo tee`/`sudo dd` would go unnoticed.
 # (-u is intentionally omitted: several env vars are read without a
-# default elsewhere in this script -- e.g. $USER in install_docker,
-# $SHELL in change_shell -- and auditing every use would be a much
-# larger change than this pass covers.)
+# default elsewhere in this script, e.g. $USER in install_docker, so
+# enabling it would turn those reads into aborts, and auditing every
+# use is out of scope.)
 set -eo pipefail
 
-# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -37,8 +36,7 @@ DRY_RUN="${DRY_RUN:-0}"
 # ALL of them fall through to the real branch. Since the value is deliberately
 # env-overridable (see above), `DRY_RUN=true` is a reachable typo that would
 # relink $HOME and move the user's dotfiles aside while looking like a preview.
-# Reject anything but 0/1 here rather than coercing -- a silent coercion just
-# moves the same surprise somewhere the user cannot see it.
+# Reject anything but 0/1 here rather than coercing.
 case "$DRY_RUN" in
 0 | 1) ;;
 *)
@@ -68,21 +66,18 @@ esac
 # stay unpinned; pinning them would require a content hash re-pinned on every
 # upstream release.
 #
-# Note the asymmetry that leaves, because it runs opposite to what the pinned
-# set above suggests: of the bootstrap scripts this block covers, the only two
-# whose downloaded bytes are *executed* as root are get.docker.com (`sudo sh`)
-# and deb.nodesource.com (`sudo -E bash`) -- and those are exactly the two that
+# The asymmetry this leaves runs opposite to what the pinned set suggests: the
+# only two fetched scripts *executed* as root are get.docker.com (`sudo sh`)
+# and deb.nodesource.com (`sudo -E bash`), and those are exactly the two that
 # cannot be pinned. The highest-privilege step carries the weakest integrity
-# check. That is accepted rather than solved here (the alternative is a content
-# hash re-pinned on every upstream release), but it should not be mistaken for
-# the pinned set covering the root-execution risk. It does not.
+# check; the pinned set does not cover the root-execution risk. That is
+# accepted rather than solved here.
 #
-# Scope of that "only two", so it does not rot into a false claim: it counts
-# fetched scripts that are executed. Other places pipe a download into a root
-# process to *store* bytes, not run them (`curl | sudo gpg --dearmor` and
-# `curl | sudo dd` for apt keyrings), and `sudo apt-get install` runs vendor
-# dpkg maintainer scripts as root -- both are separate trust paths that pinning
-# a raw.githubusercontent.com ref would not address either way.
+# "Only two" counts fetched scripts that are executed. Other places pipe a
+# download into a root process to *store* bytes, not run them (`curl | sudo gpg
+# --dearmor` and `curl | sudo dd` for apt keyrings), and `sudo apt-get install`
+# runs vendor dpkg maintainer scripts as root -- separate trust paths that
+# pinning a raw.githubusercontent.com ref would not address either way.
 #
 # To refresh a pin (do this deliberately, and review the diff):
 #   git ls-remote https://github.com/Homebrew/install HEAD
@@ -127,7 +122,6 @@ NEOVIM_MIN_VERSION="0.11.0"
 NEOVIM_SHA256_X86_64="bce0f56eda1f1b1db6eee8f4133d7a38813ea07933837dd1777411ca384c6875"
 NEOVIM_SHA256_ARM64="1aa5ca085249580ae0f91eb14f27ec0919773ff2d99a163d03f3d6c21ac29725"
 
-# Function to print colored messages
 print_info() {
   echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -144,9 +138,8 @@ print_error() {
   echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Usage / help text. Kept honest about dry-run's scope: it previews the parts
-# that modify the user's own files (the reason to preview at all), and says
-# outright that package installation is skipped rather than simulated.
+# Help text. Dry-run previews only the steps that modify the user's own files;
+# the text says outright that package installation is skipped, not simulated.
 usage() {
   cat <<'EOF'
 Dotfiles installation script.
@@ -169,7 +162,6 @@ real files it replaces), installs packages for the detected OS
 EOF
 }
 
-# Detect OS
 detect_os() {
   if [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
@@ -194,7 +186,6 @@ detect_os() {
   print_info "Detected OS: $OS"
 }
 
-# Check if command exists
 command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -224,9 +215,7 @@ fetch_and_run() {
   local url="$1"
   shift
   # Split the rest at an optional `--`: interpreter (+ its flags) on the left,
-  # script positional args on the right. No `--` => everything is interpreter
-  # side, so existing `fetch_and_run <url> sh` / `... sudo -E bash` calls are
-  # unchanged.
+  # script positional args on the right. No `--` => all interpreter side.
   local -a interp=() script_args=()
   local seen_sep=0 arg
   for arg in "$@"; do
@@ -267,18 +256,13 @@ install_homebrew() {
     # Download-then-run (not `bash -c "$(curl ...)"`) so a truncated download
     # can't execute a partial installer -- see fetch_and_run's header.
     #
-    # Guarded, and unlike every other optional installer here this one does
-    # NOT warn-and-continue. This fetch_and_run was the last unguarded one in
-    # the file: under `set -eo pipefail` a transient network failure aborted
-    # main() outright at install_os_packages, so everything after it (WezTerm,
-    # fonts, Node, pyenv, Docker, MCP, Oh My Zsh, vim-plug, tmux plugins, the
-    # shell change) silently never ran -- the same bug already fixed in
-    # install_oh_my_zsh, see the note in create_symlinks. Merely continuing
-    # would be wrong too: install_os_packages runs install_brew_packages next
-    # and that needs `brew` to exist, so a warn-and-continue would only buy a
-    # second wave of failures. Return non-zero instead and let the caller skip
-    # the brew packages. Bail before the Apple-Silicon PATH block (pointless
-    # with no brew to source) and before print_success (which would be a lie).
+    # Guarded, so a transient network failure cannot abort main() under
+    # `set -eo pipefail` and skip every later step. Unlike the other optional
+    # installers it does NOT warn-and-continue: install_os_packages runs
+    # install_brew_packages next and that needs `brew`, so continuing would
+    # only buy a second wave of failures. Return non-zero and let the caller
+    # skip the brew packages. Bail before the Apple-Silicon PATH block
+    # (pointless with no brew to source) and before print_success (a lie).
     if ! fetch_and_run "https://raw.githubusercontent.com/Homebrew/install/$HOMEBREW_INSTALL_REF/install.sh" /bin/bash; then
       print_warning "Homebrew bootstrap failed; skipping Homebrew packages"
       return 1
@@ -339,15 +323,12 @@ install_apt_packages() {
   # configs (.zshrc vf(), nvim telescope) invoke `bat` and `fd`. Provide
   # PATH-visible aliases so those code paths resolve.
   #
-  # Never clobber a real file here. These two were the only links in the script
-  # that skipped create_symlinks' backup step, back when backup_if_real was
-  # nested inside create_symlinks and so was not in scope at this point. A user
-  # who keeps their own `fd` or `bat` wrapper in ~/.local/bin had it destroyed
-  # with no backup and no warning. The rule below stays hand-rolled rather than
-  # delegating to the now-top-level backup_if_real: these aliases are generated
-  # artifacts that belong in ~/.local/bin, not dotfiles worth moving into
-  # $backup_dir. A symlink is ours to replace (the same rule backup_if_real
-  # applies); anything else belongs to the user and wins.
+  # Never clobber a real file here: a user's own `fd` or `bat` wrapper in
+  # ~/.local/bin must survive. The rule stays hand-rolled rather than using
+  # backup_if_real: these aliases are generated artifacts that belong in
+  # ~/.local/bin, not dotfiles worth moving into $backup_dir. A symlink is ours
+  # to replace (the same rule backup_if_real applies); anything else belongs to
+  # the user and wins.
   link_debian_alias() {
     local source_cmd="$1" alias_path="$HOME/.local/bin/$2"
     command_exists "$source_cmd" || return 0
@@ -668,7 +649,6 @@ link_managed_nvim() {
   return 0
 }
 
-# Install WezTerm
 install_wezterm() {
   # Every brew/network/apt step below can fail transiently. WezTerm is
   # optional, so failures must warn and continue -- under `set -e` an
@@ -704,7 +684,6 @@ install_wezterm() {
   fi
 }
 
-# Install fonts
 install_fonts() {
   # Fonts are optional: a failed brew/apt step warns and continues instead
   # of aborting the whole installer under `set -e`.
@@ -739,17 +718,14 @@ install_fonts() {
 # this OS has an install path in install_gh (macos / ubuntu), or gh is already
 # here by some other route. The second clause is not decoration -- detect_os
 # also yields `linux` (Arch and Fedora ship gh in their own repositories) and
-# `windows` (Git Bash + winget/scoop), and the tracked .gitconfig used to wire
-# the helper unconditionally. Gating on the OS name alone would take gh away
-# from those users and drop them onto the generic cache helper, re-prompting on
-# every HTTPS operation: a regression introduced by the fix rather than by the
-# bug it fixes.
+# `windows` (Git Bash + winget/scoop). Gating on the OS name alone would take gh
+# away from those users and drop them onto the generic cache helper,
+# re-prompting on every HTTPS operation.
 #
 # install_gh and _render_git_local_config must never disagree about this, so it
-# lives here rather than being inlined twice -- a list copied is how the
-# tracked .gitconfig came to name a gh that install_gh had quietly declined to
-# install. _render_git_local_config runs from create_symlinks, ahead of
-# install_gh, so on a fresh macos/ubuntu the first clause is what answers.
+# lives here rather than being inlined twice. _render_git_local_config runs
+# from create_symlinks, ahead of install_gh, so on a fresh macos/ubuntu the
+# first clause is what answers.
 gh_is_supported() {
   [[ "$OS" == "macos" || "$OS" == "ubuntu" ]] || command_exists gh
 }
@@ -842,10 +818,8 @@ install_glow() {
     if command_exists go; then
       try_install "glow (go)" go install github.com/charmbracelet/glow@latest
       # go install places the binary under ~/go/bin, which isn't on PATH
-      # until exported -- without this the command_exists check just below
-      # falsely reports glow as missing right after installing it (same
-      # fix as install_nodejs/install_uv already apply after their own
-      # installs).
+      # until exported; without this the command_exists check just below
+      # falsely reports glow as missing right after installing it.
       export PATH="$HOME/go/bin:$PATH"
     else
       print_warning "go not found; skipping glow"
@@ -884,9 +858,9 @@ install_docker() {
   if [[ "$OS" == "macos" ]]; then
     try_install "Docker Desktop" brew install --cask docker
     print_info "Launch Docker Desktop once to put the docker CLI on PATH."
-    # macOS `--cask docker` does not put the `docker` CLI on PATH until Docker
-    # Desktop is launched once, so the trailing check below legitimately finds
-    # nothing on the happy path — the `if` (no else) returns 0, so `set -e`
+    # `--cask docker` leaves the CLI off PATH until Docker Desktop is launched
+    # once, so the trailing check below legitimately finds nothing on the
+    # happy path. Keep it an `if` (no else returns 0), not `&&`, so `set -e`
     # never aborts the installer.
   elif [[ "$OS" == "ubuntu" ]]; then
     fetch_and_run https://get.docker.com sudo sh ||
@@ -927,8 +901,8 @@ install_tree_sitter_cli() {
 # 消すのは "$dir/.git" ただ一つ、しかも find が「$dir の下にはそれしか無い」と
 # 証明したときだけ。ここで扱う 3 つのプラグインはどれも実体のあるファイルを
 # トップレベルに持つので、中身のあるディレクトリは中断された clone ではありえず、
-# こちらが消してよいものでもない -- 5236098 が $ZSH に対して下したのと同じ判断
-# (「すでに中身のあるディレクトリはユーザーのもの」) をそのまま踏襲している。
+# こちらが消してよいものでもない (install_oh_my_zsh が $ZSH に対して取るのと
+# 同じ「すでに中身のあるディレクトリはユーザーのもの」という判断)。
 # ディレクトリ自体は残す: git clone は「存在する空ディレクトリ」なら受け入れる
 # ので、空にするだけで足りる。
 #
@@ -999,8 +973,7 @@ reclaim_aborted_clone() {
   # rm の失敗を握り潰さないこと。素の `rm -rf` を最後の文にすると、その終了
   # ステータスがそのまま関数の戻り値になり、呼び出し側は「このプラグインは
   # 飛ばす」と読む -- 直前に「消して clone し直す」と表示した後で、黙って
-  # 何もしないまま次へ進む。それは今ここで直している不具合そのもの
-  # (「進捗を報告しながら実際には詰まっている」) の再生産になる。
+  # 何もしないまま次へ進んでしまう。
   # 実際に起こりうる: sudo 配下で中断された clone や、復元したバックアップが
   # 残した root 所有・書き込み不可の .git。
   if ! rm -rf "${dir:?}/.git"; then
@@ -1012,12 +985,11 @@ reclaim_aborted_clone() {
 # Install tpm (Tmux Plugin Manager) — .tmux.conf declares plugins via @plugin
 # and runs ~/.tmux/plugins/tpm/tpm, but tpm does not bootstrap itself.
 install_tmux_plugins() {
-  # Test for tpm's ENTRY POINT, not the directory -- 5236098 が $ZSH に対して
-  # oh-my-zsh.sh を見るようにしたのと同じ理由。`-d` は中断された clone が
-  # 残した「.git だけのディレクトリ」にも true を返すので、以降どの実行も
+  # Test for tpm's ENTRY POINT, not the directory (install_oh_my_zsh が
+  # oh-my-zsh.sh を見るのと同じ理由)。`-d` は中断された clone が残した
+  # 「.git だけのディレクトリ」にも true を返すので、以降どの実行も
   # "tpm already installed" と言って再取得せず、.tmux.conf 末尾の
-  # `run '~/.tmux/plugins/tpm/tpm'` は tmux 起動のたびに失敗し続けた。
-  # 手で `rm -rf ~/.tmux/plugins/tpm` する以外に直しようが無かった状態。
+  # `run '~/.tmux/plugins/tpm/tpm'` が tmux 起動のたびに失敗し続ける。
   if [ -f "$HOME/.tmux/plugins/tpm/tpm" ]; then
     print_success "tpm already installed"
     return
@@ -1067,16 +1039,15 @@ pip_install_user() {
 }
 
 # Run a tool-install command, keeping success quiet but surfacing the reason on
-# failure (non-fatal, warns and returns 0). Consolidates the repeated
-# `<installer> ... 2>/dev/null || print_warning "Failed to install X"` pattern
-# so a failed toolchain/network install reports the installer's own error (npm
-# ERR!, go's module error, apt's message, ...) instead of a bare "Failed to
-# install". stderr is captured via the same fd shuttle as pip_install_user;
-# the installer's stdout progress stays quiet on the happy path. Only mutating
-# installs route through here -- existence probes (`brew list`, `npm list -g`,
-# `pip show`, ...) intentionally keep their own output-discarding redirect,
-# since they only care about exit status. (pip installs use the dedicated
-# pip_install_user, which additionally handles the PEP 668 retry.)
+# failure (non-fatal, warns and returns 0), so a failed toolchain/network
+# install reports the installer's own error (npm ERR!, go's module error,
+# apt's message, ...) instead of a bare "Failed to install". stderr is captured
+# via the same fd shuttle as pip_install_user; the installer's stdout progress
+# stays quiet on the happy path. Only mutating installs route through here --
+# existence probes (`brew list`, `npm list -g`, `pip show`, ...) keep their own
+# output-discarding redirect, since they only care about exit status. (pip
+# installs use the dedicated pip_install_user, which additionally handles the
+# PEP 668 retry.)
 try_install() {
   local label="$1"
   shift
@@ -1170,7 +1141,7 @@ install_nodejs() {
   # brew/NodeSource failures only warn, and the windows branch never installs
   # node at all -- so npm is legitimately absent here. Unguarded, `npm config
   # set` exits 127 and `set -e` aborts the whole run, skipping every step
-  # after this one (gh, pyenv, docker, linters, oh-my-zsh, the symlinks).
+  # after this one (e.g. gh, pyenv, docker, linters, oh-my-zsh).
   if command_exists npm; then
     mkdir -p "$HOME/.npm-global"
     npm config set prefix "$HOME/.npm-global"
@@ -1187,9 +1158,9 @@ install_nodejs() {
 
 # Install Oh My Zsh
 install_oh_my_zsh() {
-  # Test for the entry point, not the directory: create_symlinks runs first and
-  # makes ~/.oh-my-zsh/custom/themes/ to land the theme, so a `-d` test on the
-  # directory would report Oh My Zsh as already installed and skip it forever.
+  # Test for the entry point, not the directory: a half-made $ZSH (a directory
+  # with no oh-my-zsh.sh) must still read as "not installed", or a `-d` test
+  # would report Oh My Zsh as already installed and skip it forever.
   if [ ! -f "$HOME/.oh-my-zsh/oh-my-zsh.sh" ]; then
     print_info "Installing Oh My Zsh..."
     # Download-then-run for the same truncation safety as Homebrew. `--unattended`
@@ -1210,11 +1181,9 @@ install_oh_my_zsh() {
     # exactly how fetch_and_run invokes it. KEEP_ZSHRC is the only knob that
     # stops the clobber rather than merely silencing the prompt about it.
     #
-    # Guarded like every other optional installer (install_uv / install_pyenv /
-    # install_lazydocker / install_docker / install_nodejs). Unguarded, a
-    # transient network failure here returned non-zero under `set -eo pipefail`
-    # and killed main() outright -- taking vim-plug, tmux plugins, the Neovim
-    # setup, the AI tools, the MCP registration, the theme symlink and the
+    # Guarded like every other optional installer: a transient network failure
+    # must not abort main() under `set -eo pipefail` and take vim-plug, tmux
+    # plugins, the AI tools, the MCP registration, the theme symlink and the
     # shell change down with it, for a component none of them depend on.
     if fetch_and_run "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/$OHMYZSH_INSTALL_REF/tools/install.sh" sh -- --unattended --keep-zshrc; then
       print_success "Oh My Zsh installed"
@@ -1226,20 +1195,20 @@ install_oh_my_zsh() {
   fi
 
   # Everything below this point writes INTO $ZSH, so none of it may run when
-  # the block above did not leave one. Unguarded, the `mkdir -p
-  # "$HOME/.oh-my-zsh/custom"` and the plugin clones below created
-  # $HOME/.oh-my-zsh as a real directory even on the failure branch -- and Oh
-  # My Zsh's own installer exits 1 when $ZSH already exists. That turned a
-  # transient network failure into a permanent one: every later ./install.sh
-  # reprinted the same warning and never installed, while change_shell had
-  # already made zsh the login shell, so .zshrc's `source $ZSH/oh-my-zsh.sh`
-  # failed on every login. Only `rm -rf ~/.oh-my-zsh` repaired it.
+  # the block above did not leave one. The `mkdir -p
+  # "$HOME/.oh-my-zsh/custom"` and the plugin clones would create
+  # $HOME/.oh-my-zsh as a real directory even on the failure branch, and Oh
+  # My Zsh's own installer exits 1 when $ZSH already exists: a transient
+  # network failure would become a permanent one (every later ./install.sh
+  # never installs, while .zshrc's `source $ZSH/oh-my-zsh.sh` fails on every
+  # login).
   #
   # Retested via the entry point rather than fetch_and_run's exit status, for
   # the same reason the "already installed?" test at the top of this function
   # uses it: it also rejects a half-made $ZSH (a directory with no
   # oh-my-zsh.sh), which is the state that must stay visible to the next run
-  # as "not installed yet".
+  # as "not installed yet". That $ZSH is left in place, never deleted: a
+  # directory that already has content is the user's to clear.
   #
   # `return 0`, never non-zero: main() calls this bare under `set -eo
   # pipefail`, so returning a failure here would abort the whole run -- the
@@ -1251,10 +1220,10 @@ install_oh_my_zsh() {
     return 0
   fi
 
-  # Self-heal: older installs symlinked $HOME/.oh-my-zsh/custom straight to
-  # $DOTFILES_DIR/.oh-my-zsh/custom, which only tracks themes/ (no plugins/).
-  # That destroyed cloned plugins on the first run and, on a second run,
-  # cloned new plugins THROUGH the symlink into the dotfiles git checkout.
+  # Self-heal: a $HOME/.oh-my-zsh/custom symlinked straight to
+  # $DOTFILES_DIR/.oh-my-zsh/custom (which only tracks themes/, no plugins/)
+  # would lose cloned plugins on the first run and, on a second run, receive
+  # new clones THROUGH the symlink into the dotfiles git checkout.
   # Ensure custom/ is a real directory before cloning anything into it.
   if [ -L "$HOME/.oh-my-zsh/custom" ]; then
     print_warning "Migrating $HOME/.oh-my-zsh/custom from a symlink to a real directory"
@@ -1270,8 +1239,8 @@ install_oh_my_zsh() {
   # どちらのテストもディレクトリではなく ENTRY POINT (.zshrc の plugins=() を
   # 経由して実際に source されるファイル) を見る。install_tmux_plugins と同じ
   # 理由で、中断された clone は .git だけを抱えたディレクトリを残し、`-d` は
-  # それを「導入済み」と読んでしまう -- プラグインは二度と再取得されず、以後
-  # 対話シェルは毎回それ無しで起動し続けた。
+  # それを「導入済み」と読んでしまう -- プラグインは二度と再取得されず、対話
+  # シェルは毎回それ無しで起動する。
   # reclaim_aborted_clone はその残骸だけを (そしてそれだけを) 取り除いて再取得
   # を通す。断られたときはこのプラグインを飛ばして次へ進む -- ここは早期
   # return してはいけない。片方の残骸がもう片方の導入を巻き添えにする。
@@ -1292,16 +1261,11 @@ install_oh_my_zsh() {
   print_success "zsh plugins installed"
 }
 
-# Link the Oh My Zsh custom theme(s) tracked in the repo. Split out of
-# create_symlinks and called from main() only AFTER install_oh_my_zsh: this
-# used to run inside create_symlinks and `mkdir -p` the themes directory,
-# which on a genuinely fresh machine created $HOME/.oh-my-zsh before Oh My
-# Zsh's own installer ran -- and that installer refuses to run when $ZSH
-# already exists. Running this afterward means $HOME/.oh-my-zsh does not
-# exist yet when the official installer runs on a true first install.
-#
-# Depends on link_entry, which is now a top-level function (it used to be
-# nested inside create_symlinks, making this call order load-bearing).
+# Link the Oh My Zsh custom theme(s) tracked in the repo. Called from main()
+# only AFTER install_oh_my_zsh, not from create_symlinks: `mkdir -p` of the
+# themes directory would create $HOME/.oh-my-zsh before Oh My Zsh's own
+# installer runs on a genuinely fresh machine, and that installer refuses to
+# run when $ZSH already exists.
 link_oh_my_zsh_theme() {
   # Refuse to create $ZSH from nothing. The `mkdir -p
   # "$HOME/.oh-my-zsh/custom/themes"` below creates $HOME/.oh-my-zsh itself
@@ -1385,20 +1349,16 @@ install_vim_plug() {
   fi
 }
 
-# Create symbolic links
 # --- create_symlinks and its steps -------------------------------------------
-# create_symlinks was a single ~320-line function mixing dotfile linking, git
-# credential/identity rendering, and per-tool (VS Code / Claude / Codex /
-# Gemini / tmux) wiring. It is now an orchestrator over the steps below; each
-# step keeps the comments that explain its own decisions.
+# create_symlinks is an orchestrator over the steps below (dotfile linking, git
+# credential/identity rendering, per-tool VS Code / Claude / Codex / Gemini /
+# tmux wiring); each step keeps the comments that explain its own decisions.
 #
-# backup_if_real and link_entry used to be nested INSIDE create_symlinks. Bash
-# promotes a nested definition to global once the outer function first runs, so
-# the steps would still have resolved them -- but only as an invisible side
-# effect of call order. Hoisting makes the dependency explicit.
-#
-# Both read `backup_dir`, which create_symlinks assigns before invoking any
-# step. It is deliberately global (not `local`) for exactly that reason.
+# backup_if_real and link_entry are top-level, not nested inside
+# create_symlinks, so the steps' dependency on them is explicit rather than a
+# side effect of call order. Both read `backup_dir`, which create_symlinks
+# assigns before invoking any step; it is deliberately global (not `local`)
+# for exactly that reason.
 
 # Helper: backup a path if it exists as a real file/dir (not a symlink)
 backup_if_real() {
@@ -1441,10 +1401,10 @@ backup_if_real() {
 
 # Helper: create a destination directory, replacing a dangling symlink first.
 #
-# The sites this replaced were `[ "$DRY_RUN" -eq 1 ] || mkdir -p "$dir"`: an
-# OR-list, so the mkdir IS the command `set -e` watches. On a stale symlink
-# (an unmounted volume, a moved directory) mkdir -p fails with a bare "No such
-# file or directory" and the installer died mid-run, before packages, MCP
+# On a stale symlink (an unmounted volume, a moved directory) `mkdir -p` fails
+# with a bare "No such file or directory". In an OR-list such as
+# `[ "$DRY_RUN" -eq 1 ] || mkdir -p "$dir"` that mkdir IS the command `set -e`
+# watches, so the installer would die mid-run, before packages, MCP
 # registration or chsh, with no [ERROR] line. backup_if_real already treats a
 # symlink -- even a broken one -- as ours to replace; a symlink that resolves
 # to a real directory elsewhere is the user's redirect and is kept.
@@ -1474,14 +1434,14 @@ link_entry() {
   # self-heal for ~/.oh-my-zsh/custom; this is the general form.
   #
   # Identity, not spelling: `-ef` asks whether the two parents are the same
-  # directory (device + inode). This compared `pwd -P` strings, but bash
+  # directory (device + inode). A `pwd -P` string compare is not enough: bash
   # resolves symlinks textually and never canonicalises case, so on a
   # case-insensitive filesystem (the macOS default) a link to `.../Dotfiles`
-  # and an installer run from `.../dotfiles` were two strings for one
-  # directory and the guard let the write through. The parents are compared
-  # rather than dest itself: an existing dest link to src (every re-run) must
-  # still be refreshed, and `-ef` on dest would follow it and match. A missing
-  # dest parent makes `-ef` false, which is correct -- nothing resolves there.
+  # and an installer run from `.../dotfiles` are two strings for one
+  # directory. The parents are compared rather than dest itself: an existing
+  # dest link to src (every re-run) must still be refreshed, and `-ef` on dest
+  # would follow it and match. A missing dest parent makes `-ef` false, which
+  # is correct -- nothing resolves there.
   if [ "$(dirname "$dest")" -ef "$(dirname "$src")" ] &&
     [ "$(basename "$dest")" = "$(basename "$src")" ]; then
     print_warning "Skipping $dest: it already resolves into the checkout ($src)"
@@ -1497,7 +1457,6 @@ link_entry() {
 }
 
 _link_top_level_dotfiles() {
-  # Top-level dotfiles
   files=(
     ".zshrc"
     ".vimrc"
@@ -1526,11 +1485,11 @@ _seed_zsh_secrets() {
   # are just a starting point, so an empty stub is still a success.
   local secrets="$HOME/.zsh_secrets"
   # A symlink here is the user's redirect (an encrypted volume, a synced
-  # folder). `[ -e ]` is false once its target is gone, so it used to read as
-  # absent and the seed below wrote THROUGH it: a stub planted where the real
-  # keys belong or, with the target's directory gone too, a bare ENOENT under
-  # set -e that killed the installer with no [ERROR] line. Never write through
-  # it; ahead of the dry-run branch so the preview reports the same decision.
+  # folder). `[ -e ]` is false once its target is gone, so it reads as absent
+  # and a seed would write THROUGH it: a stub planted where the real keys
+  # belong or, with the target's directory gone too, a bare ENOENT under set -e
+  # that kills the installer with no [ERROR] line. Never write through it;
+  # ahead of the dry-run branch so the preview reports the same decision.
   if [ -L "$secrets" ] && [ ! -e "$secrets" ]; then
     local dry_prefix=""
     [ "$DRY_RUN" -eq 1 ] && dry_prefix="[DRY-RUN] "
@@ -1539,7 +1498,7 @@ _seed_zsh_secrets() {
   fi
   # Dry-run previews the decision it would actually make, not just the write:
   # a bare "would create" on a machine that already has the file would misreport
-  # the plan the same way the hooks.json preview once did.
+  # the plan.
   if [ "$DRY_RUN" -eq 1 ]; then
     if [ -e "$secrets" ]; then
       print_info "[DRY-RUN] would keep existing $secrets"
@@ -1590,9 +1549,8 @@ _render_git_local_config() {
   # resolves into the checkout (the layout link_entry guards against), they
   # would land in the working tree as untracked files.
   # `-ef` (same directory), not a `pwd -P` string compare -- see link_entry
-  # for the case-insensitive filesystem that slipped past the string form.
-  # Ahead of the dry-run branch: it used to sit in the real branch only, and
-  # the preview promised a render the real run then skipped.
+  # for why.
+  # Ahead of the dry-run branch so the preview and the real run agree.
   if [ "$HOME/.config" -ef "$DOTFILES_DIR/.config" ]; then
     print_warning "${dry_prefix}Skipping git config render: $HOME/.config resolves into the checkout"
     return 0
@@ -1634,18 +1592,15 @@ _render_git_local_config() {
   else
     local gh_host
     # ~/.config itself may be a dangling symlink (see ensure_dir); this is the
-    # first write under it, ahead of _link_editor_configs. So may ~/.config/git:
-    # a bare `mkdir -p` here died on it with no [ERROR] line, the same way the
-    # parent's did before ensure_dir.
+    # first write under it, ahead of _link_editor_configs. So may ~/.config/git,
+    # where a bare `mkdir -p` would die with no [ERROR] line.
     ensure_dir "$HOME/.config"
     ensure_dir "$HOME/.config/git"
     # The github blocks are emitted BEFORE the generic one, and the order is
     # behaviour rather than taste: their `helper =` resets the helper list
     # accumulated so far, so a generic helper written above them would be
     # discarded for github URLs. Written in this order git resolves
-    # github.com to [gh, <generic>] -- gh first, the keychain/cache behind it
-    # -- which is exactly what the tracked .gitconfig produced while it still
-    # carried the block and pulled this file in through [include] afterwards.
+    # github.com to [gh, <generic>] -- gh first, the keychain/cache behind it.
     #
     # The write is checked with a plain `if`. A bare `{ ... } >file` fired no
     # errexit on macOS /bin/bash 3.2 when the redirect failed, so the
@@ -1709,10 +1664,8 @@ _render_git_local_config() {
 }
 
 _link_editor_configs() {
-  # Directories to symlink
   ensure_dir "$HOME/.config"
 
-  # Neovim config (repo stores it at .config/nvim)
   link_entry "$DOTFILES_DIR/.config/nvim" "$HOME/.config/nvim"
 
   # VS Code: reads user settings from an OS-specific location (not
@@ -1720,20 +1673,16 @@ _link_editor_configs() {
   # dir) so editor runtime state (globalStorage, workspaceStorage, etc.)
   # never ends up in the repo.
   #
-  # Three locations, not two. detect_os yields "windows" for msys/cygwin (Git
-  # Bash), where VS Code reads %APPDATA%\Code\User -- the branch was missing, so
-  # a Windows install linked into $HOME/.config/Code/User, which that build never
-  # reads. The symlinks were created and simply had no effect, which is the
-  # quietest way for this to be wrong. APPDATA is a Windows-only variable, so it
-  # cannot mislead the other two branches.
+  # Three locations. detect_os yields "windows" for msys/cygwin (Git Bash),
+  # where VS Code reads %APPDATA%\Code\User; links under $HOME/.config/Code/User
+  # would be created and silently have no effect there. APPDATA is a
+  # Windows-only variable, so it cannot mislead the other two branches.
   #
   # Falls back to the Linux path when APPDATA is unset (a bare msys shell rather
-  # than Git Bash). That is where the pre-fix code always pointed, so the fallback
-  # is the old behaviour rather than a new failure mode. `-u` is intentionally
-  # not set here (see the note above `set -eo pipefail`), so `${APPDATA:-}`
-  # isn't guarding against a crash -- it just makes the unset case explicit,
-  # matching how DRY_RUN and DEBIAN_VERSION_FILE are guarded elsewhere in this
-  # script.
+  # than Git Bash). `-u` is intentionally not set here (see the note above
+  # `set -eo pipefail`), so `${APPDATA:-}` isn't guarding against a crash -- it
+  # just makes the unset case explicit, matching how DRY_RUN and
+  # DEBIAN_VERSION_FILE are guarded elsewhere in this script.
   local vscode_user_dir
   if [[ "$OS" == "macos" ]]; then
     vscode_user_dir="$HOME/Library/Application Support/Code/User"
@@ -1761,8 +1710,8 @@ _link_editor_configs() {
 # applies the layers in sequence:
 #   1. shell: every __HOME__ opens a single-quoted word ('__HOME__/...'; a
 #      test pins that), where only `'` is special. It becomes '\'' (close,
-#      escaped quote, reopen): /home/o'brien used to close the quote in every
-#      hook command.
+#      escaped quote, reopen): an unescaped /home/o'brien closes the quote in
+#      every hook command.
 #   2. JSON: that word sits in a JSON string, so `\` -- including the one
 #      step 1 just added -- becomes `\\`, and `"` becomes `\"`. Either one
 #      raw made the whole file unparseable and Codex loaded no hooks.
@@ -1818,10 +1767,10 @@ _link_codex_config() {
   #
   # The shared skill set is defined in the repo tree, not here: .codex/skills
   # holds relative symlinks into .claude/skills. Share or drop a skill by adding
-  # or removing a link there. (The hooks used to share files the same way, but
-  # now resolve ../../.claude/hooks by path instead -- symlinks break a
-  # core.symlinks=false checkout, and Codex reads the skills dir itself so the
-  # same fix does not apply there. See INSTALL_PLATFORM.md.)
+  # or removing a link there. (Hooks resolve ../../.claude/hooks by path
+  # instead, since symlinks break a core.symlinks=false checkout; Codex reads
+  # the skills dir itself, so that fix does not apply there. See
+  # INSTALL_PLATFORM.md.)
   #
   # Note that ~/.codex/skills and ~/.codex/agents resolve into the checkout, so
   # whatever Codex writes there lands in the repo working tree: its managed
@@ -1855,9 +1804,9 @@ _link_codex_config() {
   # away from committing a token" trap the comments below describe.
   #
   # `-ef` (same directory), not a `pwd -P` string compare -- see link_entry
-  # for the case-insensitive filesystem that slipped past the string form. It
-  # is also a plain test, so a missing ~/.codex or checkout .codex (the entry
-  # loop above deliberately tolerates both) is simply false under set -e.
+  # for why. It is also a plain test, so a missing ~/.codex or checkout .codex
+  # (the entry loop above deliberately tolerates both) is simply false under
+  # set -e.
   if [ "$HOME/.codex" -ef "$DOTFILES_DIR/.codex" ]; then
     print_warning "Skipping config.toml / hooks.json: $HOME/.codex resolves into the checkout"
     return 0
@@ -1867,16 +1816,16 @@ _link_codex_config() {
   # `codex mcp add` writes mcp_servers into it -- Authorization headers and all
   # -- and Codex accumulates projects/, plugins/ and desktop state there too. A
   # symlink would land every bit of that in the checkout, one `git add` away
-  # from committing a token. This is the same trap that once cloned zsh plugins
-  # through ~/.oh-my-zsh/custom into the repo (see install_oh_my_zsh).
+  # from committing a token. It is the same trap as zsh plugins cloned through
+  # ~/.oh-my-zsh/custom into the repo (see install_oh_my_zsh).
   #
   # Older installs did link it, so replace such a link with a real file.
   #
   # Whether to seed is decided HERE, before the removal below, so both branches
   # share it: a symlink -- live or dangling -- is replaced, so it counts as
-  # absent. The seed check used to run after the removal, which in dry-run
-  # never happens, so the preview still saw a live link resolving and said
-  # "Keeping existing config.toml" while the real run seeded from the template.
+  # absent. In dry-run the removal never happens, so a check placed after it
+  # would see the live link and say "Keeping existing config.toml" while the
+  # real run seeded from the template.
   local seed_codex_config=0
   if [ -L "$HOME/.codex/config.toml" ] || [ ! -e "$HOME/.codex/config.toml" ]; then
     seed_codex_config=1
@@ -1915,8 +1864,7 @@ _link_codex_config() {
     # real run would write.
     if [ "$DRY_RUN" -eq 1 ]; then
       # Read-only preview of the same diff check the real branch below
-      # performs -- this used to unconditionally claim "would render" even
-      # when the rendered output is byte-identical to what's already there.
+      # performs, so it does not claim "would render" for byte-identical output.
       local dry_rendered_tmp
       dry_rendered_tmp="$(mktemp)"
       _render_codex_hooks_json >"$dry_rendered_tmp"
@@ -1946,7 +1894,6 @@ _link_codex_config() {
 }
 
 _link_gemini_config() {
-  # Gemini config: symlink individual entries
   ensure_dir "$HOME/.gemini"
   local gemini_entries=(
     "GEMINI.md"
@@ -2030,14 +1977,8 @@ create_symlinks() {
   _link_codex_config
   _link_gemini_config
 
-  # Oh My Zsh custom theme: NOT handled here. This used to
-  # `mkdir -p "$HOME/.oh-my-zsh/custom/themes"` at this point, which on a
-  # genuinely fresh machine created $HOME/.oh-my-zsh as a real directory
-  # before Oh My Zsh's own installer ever ran -- and Oh My Zsh's official
-  # installer refuses to run when $ZSH already exists, so a true first
-  # install aborted at install_oh_my_zsh's unguarded fetch_and_run under
-  # set -eo pipefail. See link_oh_my_zsh_theme, called from main() only
-  # after install_oh_my_zsh.
+  # The Oh My Zsh theme is NOT linked here: see link_oh_my_zsh_theme, called
+  # from main() only after install_oh_my_zsh.
 
   _link_tmux_helper
   _link_pbcopy
@@ -2057,9 +1998,8 @@ create_symlinks() {
 # Install Vim plugins
 install_vim_plugins() {
   print_info "Installing Vim plugins..."
-  # Guarded like every other installer here: `|| true` used to swallow vim
-  # being absent (exit 127) the same as a real PlugInstall failure, then
-  # print_success ran unconditionally either way.
+  # Report the real outcome: vim being absent (exit 127) and a PlugInstall
+  # failure are different, and neither may print success.
   if ! command_exists vim; then
     print_warning "vim not found; skipping Vim plugin installation"
     return
@@ -2071,7 +2011,6 @@ install_vim_plugins() {
   fi
 }
 
-# Setup Neovim
 setup_neovim() {
   print_info "Setting up Neovim..."
   print_info "Please open Neovim manually to complete lazy.nvim setup: nvim"
@@ -2100,7 +2039,6 @@ install_ai_tools() {
       print_info "Claude Code already installed"
     fi
 
-    # Install npm-based tools
     try_install Codex npm install -g @openai/codex
     try_install "Gemini CLI" npm install -g @google/gemini-cli
 
@@ -2109,6 +2047,26 @@ install_ai_tools() {
     try_install "Copilot CLI" npm install -g @github/copilot
 
     print_success "AI tools installation attempted (check warnings above)"
+  fi
+}
+
+# rubocop (gem) and phpstan (composer) install the same way on macOS and
+# Ubuntu; both arms of install_linters_formatters call this at the same point.
+_install_ruby_php_linters() {
+  # Ruby tools
+  if command_exists gem; then
+    if ! command_exists rubocop; then
+      print_info "Installing rubocop via gem..."
+      try_install rubocop gem install rubocop
+    fi
+  fi
+
+  # PHP tools
+  if command_exists php && ! command_exists phpstan; then
+    if command_exists composer; then
+      print_info "Installing phpstan via composer..."
+      try_install phpstan composer global require phpstan/phpstan
+    fi
   fi
 }
 
@@ -2189,13 +2147,10 @@ install_linters_formatters() {
 
     # Go tools (requires go)
     if command_exists go; then
-      # Same reason as the ubuntu branch below: `go install` puts binaries in
-      # ~/go/bin, which is not on PATH until exported, so the command_exists
-      # check immediately below (and anything later in this run) would report
-      # goimports missing right after installing it -- rebuilding it from
-      # source on every re-run. install.sh runs under bash, so .zshrc's own
-      # ~/go/bin export does not apply here. staticcheck is not in this block
-      # because macOS gets it from brew above.
+      # ~/go/bin is not on PATH until exported (see the ubuntu branch below),
+      # and install.sh runs under bash, so .zshrc's own export does not apply
+      # here. staticcheck is not in this block because macOS gets it from brew
+      # above.
       export PATH="$HOME/go/bin:$PATH"
       if ! command_exists goimports; then
         print_info "Installing goimports..."
@@ -2203,21 +2158,7 @@ install_linters_formatters() {
       fi
     fi
 
-    # Ruby tools
-    if command_exists gem; then
-      if ! command_exists rubocop; then
-        print_info "Installing rubocop via gem..."
-        try_install rubocop gem install rubocop
-      fi
-    fi
-
-    # PHP tools
-    if command_exists php && ! command_exists phpstan; then
-      if command_exists composer; then
-        print_info "Installing phpstan via composer..."
-        try_install phpstan composer global require phpstan/phpstan
-      fi
-    fi
+    _install_ruby_php_linters
     ;;
 
   ubuntu)
@@ -2256,21 +2197,9 @@ install_linters_formatters() {
       fi
     fi
 
-    # Ruby tools
-    if command_exists gem; then
-      if ! command_exists rubocop; then
-        print_info "Installing rubocop via gem..."
-        try_install rubocop gem install rubocop
-      fi
-    fi
+    _install_ruby_php_linters
 
-    # PHP tools
-    if command_exists php && ! command_exists phpstan; then
-      if command_exists composer; then
-        print_info "Installing phpstan via composer..."
-        try_install phpstan composer global require phpstan/phpstan
-      fi
-    fi
+    # php-cs-fixer (composer; macOS gets it from brew above)
     if ! command_exists php-cs-fixer; then
       if command_exists composer; then
         print_info "Installing php-cs-fixer via composer..."
@@ -2316,18 +2245,17 @@ install_linters_formatters() {
 
 # Change default shell to zsh
 change_shell() {
-  # Guard first: when zsh isn't installed, `$(which zsh)` resolves to "",
-  # `[ "$SHELL" != "" ]` is true, and the branch below used to run
-  # `chsh -s ""` unconditionally.
+  # Guard first: without zsh, `$(which zsh)` resolves to "" and the branch
+  # below would run `chsh -s ""`.
   if ! command_exists zsh; then
     print_warning "zsh not found; skipping shell change. Install zsh, then run: chsh -s \$(which zsh)"
     return 0
   fi
   # "Is the login shell a zsh", not "is it THE zsh first on PATH". macOS logs
   # in with /bin/zsh while install_brew_packages puts a homebrew zsh first on
-  # PATH, so comparing against `$(which zsh)` failed on every run: chsh was
-  # retried (a password prompt), refused /opt/homebrew/bin/zsh as absent from
-  # /etc/shells, and told a user already on zsh to go edit that file.
+  # PATH, so comparing against `$(which zsh)` would retry chsh on every run (a
+  # password prompt), have it refuse /opt/homebrew/bin/zsh as absent from
+  # /etc/shells, and tell a user already on zsh to go edit that file.
   if [ "$(basename "${SHELL:-}")" != "zsh" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       print_info "[DRY-RUN] would change the default shell to zsh (chsh)"
@@ -2350,11 +2278,10 @@ change_shell() {
   fi
 }
 
-# Install OS-specific packages. Extracted from main()'s inline case so the
-# dispatch is unit-testable on its own. A bash `case` with no matching arm
-# is a silent no-op: a non-Debian Linux (OS="linux", set by detect_os when
-# /etc/debian_version is absent) used to fall through main()'s case with no
-# warning and no packages installed at all.
+# Install OS-specific packages. A separate function so the dispatch is
+# unit-testable on its own. A bash `case` with no matching arm is a silent
+# no-op, so every OS value gets an explicit arm (a non-Debian Linux is
+# OS="linux", set by detect_os when /etc/debian_version is absent).
 install_os_packages() {
   case "$OS" in
   macos)
@@ -2379,7 +2306,6 @@ install_os_packages() {
   esac
 }
 
-# Main installation flow
 main() {
   # Parse options first, before the banner and the checkout guard, so `--help`
   # works from anywhere and `--dry-run` is set before the first side effect.
@@ -2436,8 +2362,8 @@ main() {
 
   # Symlinks first: this is the part that is actually ours, it needs no package
   # manager, and it is what a dotfiles install is FOR. Everything below can fail
-  # on a flaky network or a renamed formula; when it ran last, one such failure
-  # left the machine with no dotfiles linked at all.
+  # on a flaky network or a renamed formula; run last, one such failure would
+  # leave the machine with no dotfiles linked at all.
   create_symlinks
 
   # Package / tool installation is not simulated in dry-run: these steps are
@@ -2451,7 +2377,6 @@ main() {
     print_info "[DRY-RUN]   MCP deps, linters/formatters, Oh My Zsh, vim-plug, tmux plugins;"
     print_info "[DRY-RUN]   set up Neovim; install AI tools; register Claude MCP servers."
   else
-    # Platform-specific package installation
     install_os_packages
 
     # Neovim comes from the upstream tarball, not APT -- see install_neovim.

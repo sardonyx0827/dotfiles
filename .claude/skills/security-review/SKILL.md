@@ -557,7 +557,7 @@ npx eslint . --plugin security
 
 # Scan for hardcoded secrets
 grep -rE "api[_-]?key|password|secret|token" --include="*.ts" --include="*.js" --include="*.json" .
-npx trufflehog filesystem . --json
+trufflehog filesystem . --json   # the installed TruffleHog binary; never fetch it through npx
 
 # Check git history for secrets
 git log -p | grep -iE "password|api_key|secret"

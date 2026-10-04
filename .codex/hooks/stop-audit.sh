@@ -10,8 +10,8 @@
 input=$(cat)
 
 # jq が無いと stop_hook_active を読めない。読めないまま監査を続けると、block
-# からの継続でもフラグが空 = false 扱いで再び block し、Stop が終わらなくなる
-# (Codex 変種で実測)。lint.sh / auto-format.sh と同じく jq 不在は監査しない。
+# からの継続でもフラグが空 = false 扱いで再び block し、Stop が終わらなくなる。
+# lint.sh / auto-format.sh と同じく jq 不在は監査しない。
 command -v jq >/dev/null 2>&1 || {
   echo "stop-audit: jq not found on PATH; debug-statement audit skipped" >&2
   exit 0
@@ -20,39 +20,22 @@ command -v jq >/dev/null 2>&1 || {
 stop_active=$(echo "$input" | jq -r '.stop_hook_active // false' 2>/dev/null)
 [ "$stop_active" = "true" ] && exit 0
 
-# エディタ (vim / nvim) の AI 機能から起動された一発呼び出しは監査しない。
-# あれはコミットメッセージ生成やバッファ校正のような *生成専用* の呼び出しで、
-# 作業ツリーを直す権限も意図もない。ここでブロックすると受け手はそれを指示と
-# 解釈し、実際にユーザの未コミットの変更を書き換えたうえで、生成物の代わりに
-# 「デバッグ文を削除しました」という文章を返す — 出力が壊れ、かつ誰も頼んで
-# いない変更がリポジトリに入る。
-#
-# 対話セッションでこの監査が正しいのは「エージェント自身が書いたコードを、
-# 終わる前に見直させる」からで、一発呼び出しにその前提はない。監査対象は
-# ユーザ自身の作業ツリーであり、それはまさにコミットメッセージを作る対象。
-# 変数は呼び出し側 (ai/backend.lua の ONESHOT_ENV、.vim/rc/70-ai.vim の
-# s:ai_oneshot_env) がコマンド文字列で立てる。
+# エディタ (vim / nvim) の AI 機能から起動された一発呼び出し(コミットメッセージ
+# 生成のような *生成専用* の呼び出し)は監査しない。理由と、変数を立てる側は
+# .claude/hooks/stop-audit.sh を参照。
 [ -n "$EDITOR_AI_ONESHOT" ] && exit 0
 
 # git リポジトリ外なら何もしない
 git rev-parse --is-inside-work-tree &>/dev/null || exit 0
 
-# git diff/ls-files はフックの cwd を基点にスキャン範囲を決める(サブディレ
-# クトリからだとそこ以下しか見ない)うえ、返すパスも cwd 相対になる。cwd が
-# リポジトリのサブディレクトリでもリポジトリ全体を対象にリポジトリルート
-# 相対パスで取得できるよう、ルートを解決して `-C` で明示的に指定する。
+# cwd がサブディレクトリでもリポジトリ全体をリポジトリルート相対で取得できるよう、
+# ルートを解決して `-C` で明示的に指定する(.claude/hooks/stop-audit.sh と同じ)。
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$repo_root" ] && exit 0
 
-# HEAD が無い(= `git init` 直後、最初のコミット前の unborn branch)場合、
-# `diff --name-only -z HEAD` は "fatal: ambiguous argument 'HEAD'" で失敗し
-# `2>/dev/null` に握りつぶされる。かつ最初のコミット用にステージした内容は
-# `ls-files --others` (未追跡ファイル用) の対象外なので、下の2コマンドの
-# どちらにも一切現れず監査から漏れる。`diff --cached` は HEAD が無くても
-# index を空ツリーとの差分として扱える(=最初のコミットとしてステージした
-# 内容がそのまま出る)ので、unborn 時だけこちらに切り替える。born 側は
-# 変更概念(--cached はステージ済みしか見ない)が変わらないよう従来どおり
-# HEAD 相手の diff(ステージ済み・未ステージ両方)を使う。
+# HEAD が無い(= unborn branch)場合は `diff --name-only -z HEAD` が失敗して
+# ステージ済みの内容が監査から漏れるため、unborn 時だけ `diff --cached` に切り替える
+# (詳細は .claude/hooks/stop-audit.sh)。
 if git -C "$repo_root" rev-parse -q --verify HEAD >/dev/null 2>&1; then
   diff_cmd=(git -C "$repo_root" diff --name-only -z HEAD)
 else
@@ -60,31 +43,14 @@ else
 fi
 
 # 作業ツリーの変更ファイル + 未追跡ファイル(両者は排他なので重複しない)。
-#
-# -z が必須: 既定の core.quotePath が有効だと、引用符や非 ASCII を含むパスを
-# `"evil\".ts"` のようにクォートして返す。そのままでは開けず、監査から黙って
-# 漏れてしまう(見逃すゲートは、うるさいゲートより質が悪い)。
-#
-# NUL 区切りの一覧はコマンド置換では受け取れない(bash が NUL を捨てる)ため、
-# プロセス置換でループへ直接流し込む。パイプにすると findings がサブシェルに
-# 閉じ込められて失われるので使えない。
+# -z とプロセス置換が必須な理由は .claude/hooks/stop-audit.sh を参照。
 findings=""
 while IFS= read -r -d '' f; do
   path="$repo_root/$f"
   [ -f "$path" ] || continue
   case "$f" in
   *.js | *.jsx | *.ts | *.tsx)
-    # 直前除外は識別子文字 (英数字) のみとし `.` は含めない: `window.console.log(`
-    # は window.console === console (ブラウザのグローバル) を指す実行可能な
-    # デバッグ文なので検出対象にする。`myconsole.log(` のように console が
-    # 別の識別子に融合しているケースは、直前が英数字のままなので引き続き除外される。
-    #
-    # debugger 側の直後条件は `(;|$)` ではなく「識別子文字以外 or 行末」で判定する。
-    # debugger は文ではなくキーワードなので `;` も行末も必須ではなく、
-    # `if (x) { debugger }` や `debugger // remove me` のように同一行に他の
-    # トークンが続く形が実際に最も多い。`(;|$)` はそれらを丸ごと取りこぼしていた。
-    # 融合判定の文字クラスに `_` と `$` を足すのは、JS の識別子文字だから
-    # (`debugger_x` / `$debugger` は別の識別子であってデバッグ文ではない)。
+    # console.log / debugger の境界条件の理由は .claude/hooks/stop-audit.sh を参照。
     hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5)
     ;;
   *.py)
@@ -105,7 +71,7 @@ done < <(
 # Codex の Stop フックでは exit 2 + stderr でブロックし、内容をエージェントに伝える。
 # `%b` ではなく `\n` だけを実改行へ戻す: `%b` は `\c` を「以降の出力を打ち切る」と
 # 解釈するので、検出行に `\c` (正規表現 `/\c/`、Windows パス `"C:\components"` 等)
-# があると、それ以降に見つけたファイルが報告から丸ごと消える。
+# があると、それ以降のファイルが報告から丸ごと消える(.claude/hooks/stop-audit.sh も同じ)。
 reason="Debug statements remain in modified files. Remove console.log / debugger / breakpoint() before finishing:\n${findings}"
 printf '%s' "${reason//\\n/$'\n'}" >&2
 exit 2

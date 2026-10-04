@@ -257,7 +257,7 @@ gh release create v1.3.1 --title "v1.3.1 (hotfix)" --generate-notes
 # Cherry-pick or merge back to main so the fix is not lost
 git checkout main
 git cherry-pick <hotfix-commit-sha>
-git push origin main
+git push origin main   # or open a PR if direct pushes to main are not allowed
 ```
 
 ❌ WRONG — hotfix branch from `main`:

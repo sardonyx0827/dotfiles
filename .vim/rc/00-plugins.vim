@@ -86,5 +86,4 @@ endif
 
 call plug#end()
 
-" Required:
 filetype plugin indent on

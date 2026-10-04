@@ -1,23 +1,13 @@
 """format-then-lint.sh -- the PostToolUse handler that orders the two hooks.
 
-auto-format.sh and lint.sh used to sit side by side in one matcher's `hooks`
-array in settings.json. That does not order them: Claude Code runs the
-handlers matching an event in parallel, and its docs say so outright --
-"Since hooks run in parallel, the order is non-deterministic." The repo
-assumed otherwise everywhere: README called the pair "(runs in order)",
-lint.sh's header says it expects to run after auto-format.sh, and the shared
-lint module reports findings the formatter owns (ruff's import sort, rubocop's
-Layout) on that basis. When lint won the race it returned those as exit 2 --
-handing the agent a hand-fix turn for something the formatter was about to do.
-
-Measured before the fix, on a project whose ruff config selects I:
-  lint.sh alone       -> exit 2, one I001 finding
-  format-then-lint.sh -> exit 0, no I001
-
-The wrapper cannot be `auto-format.sh && lint.sh` on one line: both read the
-payload straight off stdin with jq, so the first consumes it and the second
-sees an empty document, finds no file path and returns 0 -- the gate silently
-stops existing. It spools the payload to a temp file and feeds both.
+Claude Code runs the handlers matching an event in parallel, so listing
+auto-format.sh and lint.sh side by side in settings.json does not order them.
+Lint has to see what the formatter produced: the shared lint module reports
+findings the formatter owns (ruff's import sort, rubocop's Layout), and if lint
+won the race it would return those as exit 2 -- a hand-fix turn for something
+the formatter was about to do. The wrapper runs the two in order, spooling the
+payload to a temp file because both read stdin (see the header of
+format-then-lint.sh).
 
 These tests stub ruff rather than running it, the way the rest of this suite
 stays hermetic: the CI pytest job installs pytest alone, no linters.

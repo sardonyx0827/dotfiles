@@ -31,8 +31,8 @@ SCANNER = REPO_ROOT / "scripts" / "secret_scan.py"
 
 # An exported OpenPGP secret key, as `gpg --export-secret-keys --armor` writes it.
 # The header is assembled at runtime so no literal key header sits in the source.
-# Its armor line ends in "KEY BLOCK-----", which the "private key" pattern missed
-# while it required "KEY-----" -- the editors then sent the key to the AI tool.
+# Its armor line ends in "KEY BLOCK-----" rather than "KEY-----", so the "private
+# key" pattern must accept the BLOCK suffix.
 PGP_PRIVATE_KEY_PAYLOAD = (
     "-----BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----\n\nlQdGBGU" + "A" * 40 + "\n"
 )
@@ -67,9 +67,7 @@ class TestMainInProcess:
             # sends selections / diffs, not shell commands).
             "const client = new S3({\n  secretAccessKey: 'AKIAIOSFODNN7EXAMPLE',\n})",
             # A quote between the key and its separator -- the JSON literal an
-            # editor buffer is full of. The scanner missed this shape entirely,
-            # so a config file selection went to the AI tool with the value in
-            # it.
+            # editor buffer is full of.
             '{"password": "abc12345XYZ"}',
             '{\n  "api_key": "abcdef1234567890"\n}',
             # The bare-positional shape of the secret-setting CLIs.
@@ -118,8 +116,8 @@ class TestMainInProcess:
 
     def test_a_read_failure_exits_2_not_1(self, monkeypatch, capsys):
         # A read that fails outright is the scanner being unavailable (2), not a
-        # detection. Reporting 1 with nothing on stdout gave the editors an
-        # empty-label confirm dialog -- a question that says nothing.
+        # detection. Reporting 1 with nothing on stdout would give the editors
+        # an empty-label confirm dialog -- a question that says nothing.
         class Unreadable:
             def read(self):
                 raise OSError("stdin went away")
@@ -161,7 +159,7 @@ class TestCliSubprocess:
         assert r.stdout.strip()
 
     def test_pgp_private_key_on_stdin_exits_1(self):
-        # The reproduced miss, through the real `python3 secret_scan.py` path.
+        # A PGP private key block, through the real `python3 secret_scan.py` path.
         r = self._run(PGP_PRIVATE_KEY_PAYLOAD)
         assert r.returncode == 1
         assert r.stdout.strip() == "private key"
@@ -190,10 +188,9 @@ class TestCliSubprocess:
         ids=["strict", "surrogateescape"],
     )
     def test_undecodable_bytes_behave_the_same_under_either_handler(self, stdin_env):
-        # Reading through the text layer made the exit code depend on the
-        # environment rather than the payload: the same buffer decoded silently
-        # in CI and raised on a developer's machine, where the raise exited 1
-        # and the editors read that as a detection.
+        # The exit code must follow the payload, not the environment: a read
+        # through the text layer would decode silently under one handler and
+        # raise under the other, and a raise exiting 1 reads as a detection.
         env = {"PATH": os.environ["PATH"], **stdin_env}
         clean = self._run_bytes(b"\xff\xfe\x00 print(1)", env=env)
         assert clean.returncode == 0, clean.stderr

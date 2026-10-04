@@ -22,7 +22,7 @@ Bytes that are not valid UTF-8 are NOT in that third state: they are decoded
 with replacement and scanned, so the exit code depends only on the payload and
 a token pasted into an otherwise binary buffer is still caught. Reading through
 sys.stdin's own text layer would instead make the result follow the ambient
-locale, and on the strict side that surfaced as an exit the editors read as a
+locale, and on the strict side that surfaces as an exit the editors read as a
 detection — a confirm dialog with an empty label, which teaches the habit of
 approving a prompt that says nothing.
 
@@ -35,8 +35,7 @@ from pathlib import Path
 
 # scan_secrets is the single source of truth for the credential patterns; it
 # lives with the bash-review hooks. Import it from there rather than copying the
-# regexes (same sys.path approach as tests/test_bash_review.py and
-# tests/test_config_wiring.py).
+# regexes.
 _HOOKS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
@@ -54,15 +53,15 @@ def main() -> int:
     try:
         # Decode explicitly rather than reading sys.stdin's text layer, whose
         # error handler follows the ambient locale: strict under a UTF-8 locale,
-        # surrogateescape under C/POSIX (PEP 538). The same buffer therefore
-        # raised on a developer's machine and decoded silently in CI, making the
-        # exit code depend on the environment instead of the payload -- and on
-        # the raising side it exited 1, which callers read as a detection.
+        # surrogateescape under C/POSIX (PEP 538). The same buffer would raise
+        # under one and decode silently under the other, making the exit code
+        # depend on the environment instead of the payload -- and the raising
+        # side exits 1, which callers read as a detection.
         #
         # Replacing undecodable bytes rather than refusing them also keeps the
         # scan meaningful: a token pasted into an otherwise binary buffer is
-        # still matched, where bailing out would have skipped the scan entirely
-        # and handed the payload onward under a "cannot verify" warning.
+        # still matched, where bailing out would skip the scan entirely and
+        # hand the payload onward under a "cannot verify" warning.
         #
         # The read stays inside the guard: an I/O failure is the scanner being
         # unavailable (2), never a detection (1).

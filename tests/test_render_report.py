@@ -137,8 +137,8 @@ class TestBuildHtml:
         """The title is substituted LAST, so it can never become a placeholder.
 
         html.escape leaves underscores alone, so a heading like `# __MD_B64__`
-        used to be replaced by the whole base64 payload (or the CDN URL) by the
-        substitutions that followed it.
+        would otherwise be replaced by the whole base64 payload (or the CDN
+        URL) by any substitution that ran after it.
         """
         html = render_report.build_html(
             "# r\n", title=marker, assets=render_report.CDN_ASSETS
@@ -286,8 +286,8 @@ class TestRender:
         assert "body" in decode_embedded_markdown(html)
 
     def test_crlf_input_is_normalised_like_read_text_used_to(self, tmp_path):
-        # read_text() translated universal newlines; the bytes+decode path
-        # that replaced it (for the errors="replace" behaviour) must keep that.
+        # The bytes+decode path (chosen for errors="replace") must translate
+        # universal newlines the way read_text() does.
         md_path = tmp_path / "r.md"
         md_path.write_bytes(b"# Title\r\n\r\nbody\r\n")
 
@@ -355,9 +355,9 @@ class TestEmbeddedScript:
     @pytest.mark.parametrize(
         ("url", "safe"),
         [
-            # The bug this replaced a denylist to fix: the HTML parser turns the
-            # entity into a real TAB, a `^(javascript|...)` regex stops matching,
-            # and the URL parser strips the TAB again on navigation.
+            # A denylist cannot hold these: the HTML parser turns the entity
+            # into a real TAB, a `^(javascript|...)` regex stops matching, and
+            # the URL parser strips the TAB again on navigation.
             ("java\tscript:alert(1)", False),
             ("java\nscript:alert(1)", False),
             ("java\rscript:alert(1)", False),

@@ -30,7 +30,7 @@ return {
     })
 
     ------------------------------------------------------------------
-    -- Global appearance (formerly after/plugin/colorscheme.lua).
+    -- Global appearance.
     -- rose-pine is the active theme and loads eagerly, so this base
     -- appearance is established here. The ColorScheme autocmds below
     -- keep transparency correct if the theme is later switched.

@@ -17,6 +17,7 @@ This command invokes the **go-build-resolver** agent to incrementally fix Go bui
 ## When to Use
 
 Use `/go-build` when:
+
 - `go build ./...` fails with errors
 - `go vet ./...` reports issues
 - `golangci-lint run` shows warnings
@@ -43,7 +44,7 @@ go mod tidy -v
 
 ## Example Session
 
-```text
+````text
 User: /go-build
 
 Agent:
@@ -90,8 +91,10 @@ Error: cannot use x (type string) as type int
 // Changed
 count := params.Get("count")
 // To
-countStr := params.Get("count")
-count, _ := strconv.Atoi(countStr)
+count, err := strconv.Atoi(params.Get("count"))
+if err != nil {
+    return fmt.Errorf("parse count: %w", err)
+}
 ```
 
 ```bash
@@ -133,27 +136,28 @@ ok      project/internal/handler   0.023s
 
 ## Summary
 
-| Metric | Count |
-|--------|-------|
-| Build errors fixed | 3 |
-| Vet warnings fixed | 0 |
-| Files modified | 2 |
-| Remaining issues | 0 |
+| Metric             | Count |
+| ------------------ | ----- |
+| Build errors fixed | 3     |
+| Vet warnings fixed | 0     |
+| Files modified     | 2     |
+| Remaining issues   | 0     |
 
 Build Status: ✅ SUCCESS
-```
+
+````
 
 ## Common Errors Fixed
 
-| Error | Typical Fix |
-|-------|-------------|
-| `undefined: X` | Add import or fix typo |
-| `cannot use X as Y` | Type conversion or fix assignment |
-| `missing return` | Add return statement |
-| `X does not implement Y` | Add missing method |
-| `import cycle` | Restructure packages |
-| `declared but not used` | Remove or use variable |
-| `cannot find package` | `go get` or `go mod tidy` |
+| Error                    | Typical Fix                       |
+| ------------------------ | --------------------------------- |
+| `undefined: X`           | Add import or fix typo            |
+| `cannot use X as Y`      | Type conversion or fix assignment |
+| `missing return`         | Add return statement              |
+| `X does not implement Y` | Add missing method                |
+| `import cycle`           | Restructure packages              |
+| `declared but not used`  | Remove or use variable            |
+| `cannot find package`    | `go get` or `go mod tidy`         |
 
 ## Fix Strategy
 
@@ -166,7 +170,8 @@ Build Status: ✅ SUCCESS
 ## Stop Conditions
 
 The agent will stop and report if:
-- Same error persists after 3 attempts
+
+- Same error persists after 2 consecutive attempts
 - Fix introduces more errors
 - Requires architectural changes
 - Missing external dependencies

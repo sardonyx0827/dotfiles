@@ -1,16 +1,18 @@
 """Text-level guards for editor-config bugs that no linter in this repo can see.
 
 luacheck reads names and scopes; it has no model of another plugin's argv grammar.
-Nothing at all checks Vimscript -- `.vim/rc/` is the one tree in this repository with
-neither a linter nor a test. Both bugs pinned here passed every gate while being plainly
-wrong at runtime, and both were found by reading rather than by any automated check.
+Nothing lints Vimscript -- `.vim/rc/` has no linter, so its checks live here. The bugs
+pinned here pass every other gate while being plainly wrong at runtime.
 
-These are content assertions, not behavior tests: driving real toggleterm keymaps or a
-real `:saveas` would need a live Neovim/Vim session with plugins installed, which this
-suite deliberately does not build. The assertions are written against the specific
-malformed shapes so they stay meaningful rather than merely present.
+The toggleterm and Copilot-guard checks are content assertions, not behavior tests:
+driving real toggleterm keymaps or a real `:saveas` would need a live Neovim/Vim session
+with plugins installed, which this suite deliberately does not build. The assertions are
+written against the specific malformed shapes so they stay meaningful rather than merely
+present. The 70-ai.vim port tests further down do drive a real Vim (no plugins needed)
+and skip when none is available.
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -75,10 +77,10 @@ def test_toggleterm_count_prefix_is_not_glued_to_an_option_name():
     )
 
 
-# The Copilot sensitive-path guard only re-runs on the events in its augroup, so a
-# buffer renamed in place (`:saveas ~/.env`) fires BufFilePre/BufFilePost, none of which
-# were originally watched. See the AICopilotSensitiveGuard augroup's own comment in
-# 70-ai.vim for why BufFilePost had to be added.
+# The Copilot sensitive-path guard only re-runs on the events in its augroup, and a
+# buffer renamed in place (`:saveas ~/.env`) fires only BufFilePre/BufFilePost, so
+# BufFilePost has to be watched. See the AICopilotSensitiveGuard augroup's own comment
+# in 70-ai.vim.
 def test_copilot_sensitive_guard_rechecks_after_a_buffer_rename():
     text = VIM_AI_RC.read_text(encoding="utf-8")
     assert "AICopilotSensitiveGuard" in text, (
@@ -100,12 +102,12 @@ def test_copilot_sensitive_guard_rechecks_after_a_buffer_rename():
     )
 
 
-# The vim AI replace path is an independent port of the Neovim one, and it was left
-# behind when 59cfcf9 fixed how a failed run is reported. job_start() registered out_cb
-# but no err_cb, so the tool's own stderr -- the part that says WHY, e.g. "command not
-# found" or a connection error -- was discarded, and every failure was rendered as a bare
-# `[<tool> failed (exit code N)]`, including exit code 0 (ran fine, printed nothing),
-# which states a success as the cause of a failure.
+# The vim AI replace path is an independent port of the Neovim one and must report a
+# failed run the same way. job_start() needs an err_cb (or err_io), or the tool's own
+# stderr -- the part that says WHY, e.g. "command not found" or a connection error -- is
+# discarded and every failure renders as a bare `[<tool> failed (exit code N)]`,
+# including exit code 0 (ran fine, printed nothing), which states a success as the
+# cause of a failure.
 def test_vim_ai_jobs_capture_stderr():
     text = VIM_AI_RC.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -207,12 +209,10 @@ def _run_vim_script(binary: str, script: str, extra_source: str | None) -> str:
 class TestVimOllamaFailureOrdering:
     """The transport's exit code must win over the response-body parse error.
 
-    The vim AI path is an independent port of the Neovim one and carried the same
-    precedence bug: the parse error was preferred unconditionally, and a body that never
-    arrived fails to parse just as surely as a malformed one, so "could not reach the
-    server" always surfaced as a parse complaint. The nvim side has this pinned by
-    TestOllamaFailureReason; the vim port originally got the fix with no test at all --
-    reverting the ordering left every test green.
+    The vim AI path is an independent port of the Neovim one and must keep the same
+    precedence: a body that never arrived fails to parse just as surely as a malformed
+    one, so a parse-error-first reason would report "could not reach the server" as a
+    parse complaint. The nvim side pins this in TestOllamaFailureReason.
 
     Driven through a real Vim rather than asserted as source text, because the shape of
     the condition is not the behaviour: what matters is which reason comes out.
@@ -312,15 +312,14 @@ class TestVimOneShotInvocationShape:
 class TestFailureDetailClipParity:
     """Both ports must quote the same amount of a failing tool's stderr.
 
-    They did not: Neovim allowed 500 characters and classic Vim 200. That cost
-    nothing while every message was a short "command not found", and started to
-    matter once gemini began surfacing Google's own error text -- its "models/X
-    is not found for API version v1beta ..." runs past 200 characters, so one
-    editor showed the half that says what to do and the other did not.
+    A differing limit is harmless for short messages like "command not found" but
+    matters once gemini surfaces Google's own error text -- its "models/X is not
+    found for API version v1beta ..." runs past 200 characters, so one editor would
+    show the half that says what to do and the other not.
 
     Compared mechanically rather than by reading both constants, because the
-    two are independent ports and the numbers are what drifted. The markers make
-    the boundary observable through the different wrappers each side adds.
+    two are independent ports and the numbers are what can drift. The markers
+    make the boundary observable through the different wrappers each side adds.
     """
 
     LIMIT = 500
@@ -368,8 +367,7 @@ class TestVimGeminiApiShape:
 
     Its Neovim twin is pinned by TestGeminiApiPath in test_nvim_ai_backend.py.
     Re-checked here because the two command builders are independent ports and
-    have drifted before: the failure-message formatting was fixed on the Neovim
-    side and the identical bug sat in this file for another two commits.
+    can drift apart.
 
     Driven through a real Vim rather than grepped out of the source, because
     what matters is the string that reaches `sh -c`.
@@ -698,19 +696,19 @@ class TestAcceptNeverDeletesTheSelection:
     Every write to that number then returns 1 (failure) and says nothing: no
     exception, no message, and `setbufvar` will not even resurrect it.
 
-    Each finish callback wrote `status = 'done'` BEFORE rendering, so the render
-    no-oped and the tab still claimed success. `y` gates on `status ==# 'done'`
-    and nothing re-validates the buffer, so `getbufline()` on the dead number
-    returned `[]`, `s:AI_Apply` checked only `bufexists(target)` and
-    `changedtick`, and `s:AI_SetLines` took its `l:new < l:old` branch --
-    `deletebufline(target, start, end)`. The user's selected lines were deleted
-    with no replacement, and the command line said 'Selection replaced.'
+    Each finish callback must write `status = 'done'` only AFTER the render
+    lands. Written first, a no-oped render leaves the tab claiming success, and
+    `y` gates on `status ==# 'done'`. `getbufline()` on the dead number returns
+    `[]`, which s:AI_Apply must refuse: left alone, `s:AI_SetLines` would take its
+    `l:new < l:old` branch -- `deletebufline(target, start, end)` -- and the
+    user's selected lines would be deleted with no replacement while the command
+    line says 'Selection replaced.'
 
     Driven through a real Vim because not one step of that chain is visible in
     the source text: it is entirely about which of two writes happens first and
-    what a silent return code means. This is the same ordering defect fb3fc08
-    fixed on the Neovim side (status written before the buffer write was known
-    to have landed); the two are independent ports and this one was missed.
+    what a silent return code means. The Neovim side pins the same ordering
+    (TestFixFlowNeverAcceptsTheLoadingPlaceholder in test_nvim_ai_prompt.py);
+    the two are independent ports.
     """
 
     @pytest.fixture(scope="class")
@@ -843,10 +841,10 @@ class TestAcceptNeverDeletesTheSelection:
 def test_no_deprecated_vim_highlight_calls_in_the_lua_tree():
     """`vim.highlight` was deprecated in 0.11 and is scheduled for removal.
 
-    The tree was swept for deprecated 0.12 APIs (see tests/test_nvim_keymap_opts.py
-    for the commit), but the TextYankPost handler in setup/init.lua kept calling
-    `vim.highlight.on_yank`, which warns on every yank on 0.12 and will simply
-    fail once the alias is removed. `vim.hl` is the replacement.
+    The TextYankPost handler in setup/init.lua must call `vim.hl.on_yank`:
+    `vim.highlight.on_yank` warns on every yank on 0.12 and will simply fail once
+    the alias is removed. See tests/test_nvim_keymap_opts.py for the sibling
+    deprecated-0.12 check.
     """
     offenders = sorted(
         str(path.relative_to(REPO_ROOT))
@@ -854,3 +852,220 @@ def test_no_deprecated_vim_highlight_calls_in_the_lua_tree():
         if "vim.highlight." in path.read_text(encoding="utf-8")
     )
     assert offenders == [], f"deprecated vim.highlight used in: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# Neovim plugin specs, loaded for real under `nvim -l`.
+#
+# `nvim -l` runs a Lua script without the user's init.lua or any plugin manager
+# (see tests/lua/nvim_call.lua), so each probe `require`s a spec module straight
+# from the repo and stubs only the plugin modules the spec reaches into. Probes
+# reduce everything to plain data before encoding: the spec tables hold
+# functions, which vim.json cannot encode.
+# ---------------------------------------------------------------------------
+NVIM = shutil.which("nvim")
+NVIM_LUA_ROOT = REPO_ROOT / ".config/nvim/lua"
+
+_PROBE_PRELUDE = f"""
+package.path = {str(NVIM_LUA_ROOT / "?.lua")!r} .. ";" .. package.path
+local function emit(value)
+  io.stdout:write(vim.json.encode(value), "\\n")
+end
+"""
+
+
+def _nvim_probe(tmp_path, body: str) -> dict:
+    if NVIM is None:
+        pytest.skip("nvim not installed")
+    probe = tmp_path / "probe.lua"
+    probe.write_text(_PROBE_PRELUDE + body, encoding="utf-8")
+    proc = subprocess.run(
+        [NVIM, "-l", str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+        },
+    )
+    # A crash is a broken probe, never a passing or failing assertion.
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_colorscheme_picker_registers_its_statusline_autocmd_once(tmp_path):
+    """Each `<M-0>` press must not stack another ColorScheme autocmd.
+
+    The handler keeps StatusLine transparent across colorscheme switches by
+    hooking ColorScheme. Registering that hook on every press piles up one
+    identical autocmd per use for the rest of the session. The hook is still
+    registered by the handler itself, so three presses leave exactly one.
+    """
+    got = _nvim_probe(
+        tmp_path,
+        """
+local picks = 0
+package.loaded["telescope.builtin"] = {
+  colorscheme = function() picks = picks + 1 end,
+}
+local spec = require("setup.plugins.utilities.telescope")
+local handler
+for _, key in ipairs(spec.keys) do
+  if key[1] == "<M-0>" then handler = key[2] end
+end
+if not handler then
+  emit({ found = false })
+  return
+end
+local before = #vim.api.nvim_get_autocmds({ event = "ColorScheme" })
+for _ = 1, 3 do handler() end
+local after = #vim.api.nvim_get_autocmds({ event = "ColorScheme" })
+vim.api.nvim_set_hl(0, "StatusLine", { fg = "#ff0000", blend = 50 })
+vim.cmd("doautocmd ColorScheme")
+local hl = vim.api.nvim_get_hl(0, { name = "StatusLine" })
+-- nvim_get_hl omits `blend` once it is back to 0.
+emit({ found = true, picks = picks, added = after - before, blend = hl.blend or 0 })
+""",
+    )
+    assert got["found"], "telescope spec no longer maps <M-0>"
+    assert got["picks"] == 3, got
+    assert got["added"] == 1, f"{got['added']} ColorScheme autocmds after 3 presses"
+    # The hook still does its job: a colorscheme change resets the blend.
+    assert got["blend"] == 0, got
+
+
+def test_trouble_lazy_loads_only_on_commands_it_defines(tmp_path):
+    """trouble.nvim v2 defines a single user command, `:Trouble`.
+
+    lazy.nvim turns every name in `cmd` into a stub command that loads the
+    plugin and then re-runs the command, so a name the plugin does not define
+    (the v1 `TroubleToggle` / `TroubleRefresh`) loads Trouble and then fails
+    with "Not an editor command".
+    """
+    got = _nvim_probe(
+        tmp_path,
+        """
+local cmd = require("setup.plugins.utilities.trouble").cmd
+if type(cmd) == "string" then cmd = { cmd } end
+emit({ cmd = cmd or {} })
+""",
+    )
+    assert got["cmd"], "trouble spec no longer lazy-loads on any command"
+    assert set(got["cmd"]) <= {"Trouble"}, got["cmd"]
+
+
+def test_telescope_pickers_hold_only_option_tables(tmp_path):
+    """Every `pickers` value is an option table for the picker it is keyed by.
+
+    telescope looks options up as `pickers[<picker name>]`, so a bare option at
+    this level (`pickers.show_all_buffers = true`) belongs to no picker and is
+    silently ignored. Whether each key names a real picker is not checked:
+    telescope itself is not installed where this suite runs.
+    """
+    got = _nvim_probe(
+        tmp_path,
+        """
+local captured
+package.loaded["telescope"] = {
+  setup = function(opts) captured = opts end,
+  load_extension = function() end,
+}
+require("setup.plugins.utilities.telescope").config()
+local names, bad = {}, {}
+for name, value in pairs((captured or {}).pickers or {}) do
+  table.insert(names, name)
+  if type(value) ~= "table" then table.insert(bad, name) end
+end
+table.sort(names)
+table.sort(bad)
+emit({ names = names, bad = bad })
+""",
+    )
+    assert got["names"], "telescope.setup no longer receives any pickers"
+    assert got["bad"] == [], f"not picker option tables: {got['bad']}"
+
+
+def test_eager_plugin_specs_declare_no_lazy_load_triggers(tmp_path):
+    """A `lazy = false` spec must not also declare `cmd` / `event` / `ft`.
+
+    Those keys only tell lazy.nvim when to load a lazy plugin; on a plugin that
+    loads at startup they do nothing and misstate how it is loaded. `keys` is
+    exempt: lazy.nvim still creates those mappings for an eager plugin.
+    """
+    got = _nvim_probe(
+        tmp_path,
+        f"""
+local root = {str(NVIM_LUA_ROOT)!r} .. "/"
+local files = vim.fs.find(function(name) return name:match("%.lua$") end, {{
+  path = root .. "setup/plugins", type = "file", limit = math.huge,
+}})
+table.sort(files)
+local eager, offenders = 0, {{}}
+local function check(spec, where)
+  if type(spec) ~= "table" then return end
+  -- A file may return a list of specs (nvim-lspconfig.lua does).
+  if type(spec[1]) == "table" then
+    for i, item in ipairs(spec) do check(item, where .. "[" .. i .. "]") end
+    return
+  end
+  if spec.lazy == false then
+    eager = eager + 1
+    for _, key in ipairs({{ "cmd", "event", "ft" }}) do
+      if spec[key] ~= nil then table.insert(offenders, where .. ": " .. key) end
+    end
+  end
+  local deps = spec.dependencies or {{}}
+  if type(deps) ~= "table" then deps = {{ deps }} end
+  for _, dep in ipairs(deps) do
+    check(dep, where .. " > " .. tostring(type(dep) == "table" and dep[1] or dep))
+  end
+end
+for _, file in ipairs(files) do
+  -- Plain prefix cut, not gsub: the path may hold Lua pattern characters.
+  local module = file:sub(#root + 1):gsub("%.lua$", ""):gsub("/", ".")
+  check(require(module), module)
+end
+emit({{ eager = eager, offenders = offenders }})
+""",
+    )
+    assert got["eager"] > 0, "no `lazy = false` spec found -- did the probe break?"
+    assert got["offenders"] == [], got["offenders"]
+
+
+def test_mapleader_is_assigned_once_before_lazy_setup():
+    """`vim.g.mapleader` is set in lazy.lua only, ahead of `lazy.setup`.
+
+    lazy.nvim expands `<leader>` in spec `keys` when lazy.setup runs, and
+    vim.keymap.set expands it when each mapping is made. A second assignment
+    elsewhere is a second place to edit: change one copy and plugin keys and the
+    remaining keymaps end up on different leaders. remap.lua relies on
+    setup/init.lua loading lazy.lua first.
+    """
+    assignment = re.compile(r"\bvim\.g\.mapleader\s*=(?!=)")
+    sites = [
+        f"{path.relative_to(REPO_ROOT)}:{n}"
+        for path in sorted((REPO_ROOT / ".config/nvim").rglob("*.lua"))
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if not line.lstrip().startswith("--") and assignment.search(line)
+    ]
+    lazy_lua = ".config/nvim/lua/setup/lazy.lua"
+    assert len(sites) == 1 and sites[0].startswith(lazy_lua + ":"), sites
+
+    lines = (REPO_ROOT / lazy_lua).read_text(encoding="utf-8").splitlines()
+    setup_line = next(
+        (n for n, line in enumerate(lines, 1) if "lazy.setup(" in line), None
+    )
+    assert setup_line, "lazy.lua no longer calls lazy.setup"
+    assert int(sites[0].rsplit(":", 1)[1]) < setup_line
+
+    init_lua = (REPO_ROOT / ".config/nvim/lua/setup/init.lua").read_text(
+        encoding="utf-8"
+    )
+    lazy_at = init_lua.find('require("setup.lazy")')
+    remap_at = init_lua.find('require("setup.remap")')
+    assert 0 <= lazy_at < remap_at, "setup/init.lua must load lazy.lua before remap.lua"

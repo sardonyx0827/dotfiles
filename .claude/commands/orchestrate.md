@@ -33,7 +33,7 @@ planner -> tdd-guide -> code-reviewer
 Safe refactoring workflow:
 
 ```
-architect -> code-reviewer -> tdd-guide
+architect -> tdd-guide -> code-reviewer
 ```
 
 ### security
@@ -188,6 +188,5 @@ $ARGUMENTS:
 
 1. **Start with planner** for complex features
 2. **Always include code-reviewer** before merge
-3. **Use security-reviewer** for auth/payment/PII
+3. **security-reviewer closes every feature workflow** — add it to bugfix/refactor/custom runs too when they touch auth, user input, secrets, payments, or PII
 4. **Keep handoffs concise** - focus on what next agent needs
-5. **Run verification** between agents if needed

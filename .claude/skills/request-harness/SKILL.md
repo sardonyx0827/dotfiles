@@ -87,7 +87,7 @@ List new requests at root and tickets in `in-progress/`. Show the user a board (
 | writing  | Documents, translations, summaries                                                                 | Markdown (or HTML) in `output/`                           |
 | ops      | Scripts, environment changes — confirm before anything destructive                                 | Script + usage notes in `output/`                         |
 
-Execution layers follow the global rules (CLAUDE.md / AGENTS.md; Single by default). When 2+ pending tickets are independent, launch **request-worker** subagents in parallel (2–4, mechanism per Runtime Notes), one ticket each. Never parallelize tickets that touch the same files or both modify repo code — run those sequentially.
+Execution layers follow the global rules (CLAUDE.md / AGENTS.md). When 2+ pending tickets are independent, launch **request-worker** subagents in parallel (2–4, mechanism per Runtime Notes), one ticket each. Never parallelize tickets that touch the same files or both modify repo code — run those sequentially.
 
 ### 5. Deliver
 
@@ -144,15 +144,15 @@ When something was processed: a short Japanese board covering only the tickets t
 
 This skill is shared between Claude Code (`~/.claude/skills/`) and Codex (`~/.codex/skills/`). Map capabilities as follows:
 
-| Capability           | Claude Code                          | Codex                                           |
-| -------------------- | ------------------------------------ | ----------------------------------------------- |
-| Entry point          | `/requests` command                  | skill auto-activates (natural-language request) |
-| Watch loop           | `/loop 30m /requests-watch`          | Not available — ignore Watch Mode section       |
-| Global rules         | CLAUDE.md                            | AGENTS.md                                       |
-| Clarifying questions | AskUserQuestion tool                 | Ask directly in chat                            |
-| Parallel tickets     | request-worker subagent (Agent tool) | request-worker agent (multi-agent feature)      |
-| Web research         | claude-in-chrome / WebSearch         | `web_search`                                    |
-| Shareable preview    | Artifact tool (optional)             | Skip — the file in `output/` is the deliverable |
+| Capability           | Claude Code                                                                             | Codex                                           |
+| -------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Entry point          | `/requests` command                                                                     | skill auto-activates (natural-language request) |
+| Watch loop           | `/loop 30m /requests-watch`                                                             | Not available — ignore Watch Mode section       |
+| Global rules         | CLAUDE.md                                                                               | AGENTS.md                                       |
+| Clarifying questions | AskUserQuestion tool                                                                    | Ask directly in chat                            |
+| Parallel tickets     | request-worker subagent (Agent tool)                                                    | request-worker agent (multi-agent feature)      |
+| Web research         | WebSearch; claude-in-chrome only for pages that need interaction, auth, or JS rendering | `web_search`                                    |
+| Shareable preview    | Artifact tool (optional)                                                                | Skip — the file in `output/` is the deliverable |
 
 If a capability is missing in the current runtime, fall back to sequential single-agent execution — the directory contract and ticket lifecycle never change.
 

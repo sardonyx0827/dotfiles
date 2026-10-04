@@ -24,11 +24,10 @@ local M = {}
 --- vim.schedule callback with no pcall: the throw would leave the buffer on its
 --- pending text, still modifiable, with the title and diff never refreshed.
 ---
---- This stayed unreachable only while the reason was always `exit code N`.
---- run_cli now quotes the tool's own stderr -- a traceback is exactly what that
---- quoting is for -- and run_ollama can produce a multi-line reason too, since
---- parse_ollama surfaces the API's error string. Splitting here covers both
---- rather than flattening the message at each producer.
+--- Reasons can be multi-line: run_cli quotes the tool's own stderr (a traceback
+--- is exactly what that quoting is for) and run_ollama surfaces the API's error
+--- string. Splitting here covers both rather than flattening the message at each
+--- producer.
 ---
 --- @param label string tool name shown in the message
 --- @param err string|nil
@@ -62,12 +61,10 @@ end
 -- handle table `{ job = <id>, cancelled = <bool> }` (backend.run_with_fallback),
 -- whose `.job` field tracks whichever fallback attempt is currently in flight.
 --
--- For the handle, stopping the job is only half of cancelling. jobstop's SIGTERM
--- reaches run_with_fallback as an ordinary failed attempt ("exit code 143"), and
--- the chain answered that by starting the NEXT tool -- after the window whose
--- close triggered this was already gone. Raising `cancelled` FIRST is what tells
--- the two apart there; without it a cancelled claude quietly turned into a live
--- gemini request to Google (see backend.run_with_fallback).
+-- For the handle, stopping the job is only half of cancelling: jobstop's SIGTERM
+-- reaches run_with_fallback as an ordinary failed attempt ("exit code 143") and
+-- would start the NEXT tool. Raising `cancelled` FIRST is what tells the two
+-- apart (see backend.run_with_fallback).
 --
 -- Marked even when there is no job id left to stop: between attempts `.job` can
 -- be stale or nil while the chain is still very much alive, and that is exactly
@@ -86,14 +83,16 @@ local function cancel_job(job)
   return false
 end
 
--- Copy text to clipboard (and the tmux buffer when running inside tmux).
-local function copy_to_clipboard(msg)
-  vim.fn.setreg("+", msg)
-  vim.fn.setreg('"', msg)
+-- Copy to the system clipboard, the unnamed register, and the tmux buffer.
+-- Public because ai/init.lua's copy keymaps use it too.
+local function copy_to_clipboard(content)
+  vim.fn.setreg("+", content)
+  vim.fn.setreg('"', content)
   if vim.env.TMUX then
-    vim.fn.system("tmux load-buffer -", msg)
+    vim.fn.system("tmux load-buffer -", content)
   end
 end
+M.copy_to_clipboard = copy_to_clipboard
 
 --- Drive a multi-tab AI result window.
 --- @param opts table {
@@ -168,7 +167,6 @@ function M.run_multi(opts)
     return parts
   end
 
-  -- Layout.
   if mode == "diff" then
     local total_width = math.min(vim.o.columns - 4, 200)
     local pane_width = math.floor((total_width - 2) / 2)
@@ -290,10 +288,8 @@ function M.run_multi(opts)
     pcall(vim.api.nvim_del_augroup_by_id, group)
     for t, job in pairs(state.jobs) do
       -- Only pending tools are called off -- one that already answered has
-      -- nothing left in flight and no chain left to advance. The label still
-      -- follows cancel_job's return rather than the attempt: it reads
-      -- "cancelled" for a job that was really stopped, which is what that tab
-      -- has always meant by the word.
+      -- nothing left in flight and no chain left to advance. The label follows
+      -- cancel_job's return, so "cancelled" means a job was really stopped.
       if state.status[t] == "pending" and cancel_job(job) then
         state.status[t] = "cancelled"
       end
@@ -474,12 +470,12 @@ function M.run_multi(opts)
       -- nvim_buf_set_lines throws on an item that is not a string or that
       -- contains a newline, and this callback runs inside a job handler where
       -- such a throw is swallowed: the window stays open on its loading
-      -- placeholder. With the status flipped first, `y` then passed
-      -- active_lines' check and handed that placeholder to on_accept -- which,
-      -- for the fix flow, overwrites the user's entire buffer with it.
-      -- ai.prompt.apply_edits now rejects the lines that caused it; writing the
-      -- status only after a successful render is what keeps the NEXT throw here
-      -- a display bug rather than a destroyed file.
+      -- placeholder. A status flipped first would let `y` pass active_lines'
+      -- check and hand that placeholder to on_accept -- which, for the fix flow,
+      -- overwrites the user's entire buffer with it.
+      -- ai.prompt.apply_edits rejects the lines that cause it; writing the
+      -- status only after a successful render keeps any other throw here a
+      -- display bug rather than a destroyed file.
       local rendered = false
       if ok and lines and #lines > 0 then
         local set_ok, set_err =
@@ -529,12 +525,11 @@ function M.open_report(opts)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = opts.filetype or ""
-  -- Both strings are caller-supplied because this driver now backs more than
-  -- the buffer check it was written for; a report collecting hints about one
-  -- function saying "checking buffer..." describes a different, more expensive
-  -- request. The defaults reproduce the original wording byte for byte, and the
-  -- label is interpolated rather than taken as a format string so a caller can
-  -- never turn a stray "%" in its own text into a format error.
+  -- pending_text and fail_label are caller-supplied: a report collecting hints
+  -- about one function must not say "checking buffer...", which describes a
+  -- different, more expensive request. The label is interpolated rather than
+  -- taken as a format string so a stray "%" in a caller's text can never become
+  -- a format error.
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { opts.pending_text or "[checking buffer...]" })
   vim.bo[buf].modifiable = false
   pcall(vim.api.nvim_buf_set_name, buf, opts.name or "[AI Report]")
@@ -606,8 +601,8 @@ function M.open_report(opts)
     -- Same ordering as run_multi's, for the same reason: `status` is handed to
     -- every caller-supplied keymap, and the buffer-check report's `f` uses it
     -- to decide whether the report is worth sending off to be fixed. A "done"
-    -- written before a render that threw would send the AI this buffer's own
-    -- pending placeholder.
+    -- written before a render that threw would send the AI the pending
+    -- placeholder.
     local rendered = false
     if ok and lines and #lines > 0 then
       local set_ok, set_err =

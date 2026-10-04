@@ -2,14 +2,10 @@
 return {
   "folke/noice.nvim",
   opts = {
-    -- add any options here
   },
   dependencies = {
-    -- if you lazy-load any plugin below, make sure to add proper `module="..."` entries
     "MunifTanjim/nui.nvim",
-    -- OPTIONAL:
-    --   `nvim-notify` is only needed, if you want to use the notification view.
-    --   If not available, we use `mini` as the fallback
+    -- optional: nvim-notify backs the notification view (noice falls back to `mini`)
     "rcarriga/nvim-notify",
   },
   config = function()
@@ -23,7 +19,6 @@ return {
           ["vim.lsp.util.stylize_markdown"] = true,
         },
       },
-      -- you can enable a preset for easier configuration
       presets = {
         bottom_search = false,        -- use a classic bottom cmdline for search
         command_palette = true,       -- position the cmdline and popupmenu together

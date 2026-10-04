@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """Gemini REST client CLI — shared by the Vim/Neovim AI integration.
 
-The editors' AI features used to shell out to the `gemini` CLI
-(`cat payload | gemini -m MODEL -p INSTRUCTION`). This replaces that hop with a
-direct call to the Gemini REST API — the same endpoint the bash-review hooks
-(.claude/hooks/_bash_review_common.py) and the gemini-consultant MCP server
-already talk to, so the repository has one answer to "how do we reach Gemini"
-instead of three.
+The editors' AI features call the Gemini REST API directly through this helper
+— the same endpoint the bash-review hooks (.claude/hooks/_bash_review_common.py)
+and the gemini-consultant MCP server talk to, so the repository has one answer
+to "how do we reach Gemini" instead of three.
 
 The shape deliberately mirrors scripts/secret_scan.py, the other helper both
 editors invoke: a tiny numeric exit contract, the payload on stdin, and nothing
 sensitive on stdout. Keeping the transport here rather than porting it into Lua
 *and* VimScript is the whole point — the retry policy, the response parsing and
 the truncation guard exist once and are unit-tested once, instead of drifting
-apart in two independent editor ports the way the failure-message formatting
-already did.
+apart in two independent editor ports.
 
 Contract (kept small on purpose so editor glue stays trivial):
 
@@ -41,9 +38,8 @@ Contract (kept small on purpose so editor glue stays trivial):
 Note that exit 2 means the OPPOSITE of secret_scan.py's exit 2, even though the
 two contracts are otherwise deliberately alike. There, 2 is "the scan did not
 happen" and callers fail OPEN, because refusing every AI action when python is
-missing would be worse than the risk. Here there is nothing to fail open to --
-falling back to the `gemini` CLI is exactly what this replaced -- so 2 is a hard
-stop that names the variable to export.
+missing would be worse than the risk. Here there is nothing to fail open to, so
+2 is a hard stop that names the variable to export.
 
 Model resolution: `--model`, else $GEMINI_MODEL, else DEFAULT_MODEL. Same
 variable and same default as the bash-review hooks.
@@ -118,9 +114,9 @@ class GeminiKeyError(GeminiError):
     Deliberately NOT a ValueError subclass, which is the whole reason it is a
     type of its own. As a bare ValueError it would be indistinguishable from
     json.JSONDecodeError (a ValueError subclass) and from the value-carrying
-    ValueError http.client raises for a header it refuses -- and it was exactly
-    that collision, one arm catching all three, that leaked the key. The
-    gemini-consultant MCP server made the same split for the same reason.
+    ValueError http.client raises for a header it refuses, and one arm
+    catching all three would leak the key. The gemini-consultant MCP server
+    makes the same split for the same reason.
 
     It IS a GeminiError, so main's existing handler reports it as the single
     stderr line the contract promises. Exit 1 rather than the 2 an UNSET key
@@ -222,8 +218,7 @@ def build_request(
     """Build one generateContent POST.
 
     `systemInstruction` carries the task and `contents` carries the text being
-    worked on, which is the same split the CLI had (`-p INSTRUCTION` alongside
-    stdin) — so the prompts in ai/prompt.lua keep meaning what they meant.
+    worked on, the split the prompts in ai/prompt.lua are written for.
 
     No `generationConfig` is sent, and both omissions are deliberate:
 
@@ -371,14 +366,13 @@ def request_generate(
             # A body that is not JSON is not a transport hiccup — retrying it
             # just asks the same broken endpoint the same question again.
             #
-            # Deliberately NOT `except ValueError`, which is what it used to be
-            # and which is a far wider net than the intent. http.client raises
-            # ValueError("Invalid header value b'<key>'") for a header value it
-            # refuses, so this arm caught a credential-carrying exception and
-            # formatted the credential into a message bound for stderr. The
-            # guard in build_request stops such a key from reaching putheader at
-            # all; narrowing here is the second half, so neither the guard nor
-            # this arm has to hold alone.
+            # Deliberately NOT `except ValueError`, a far wider net than the
+            # intent. http.client raises ValueError("Invalid header value
+            # b'<key>'") for a header value it refuses, so that arm would catch
+            # a credential-carrying exception and format the credential into a
+            # message bound for stderr. The guard in build_request stops such a
+            # key from reaching putheader at all; narrowing here is the second
+            # half, so neither the guard nor this arm has to hold alone.
             #
             # JSONDecodeError is the only ValueError this try can produce: the
             # decode above passes errors="replace", so UnicodeDecodeError cannot

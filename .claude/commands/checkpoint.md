@@ -15,7 +15,7 @@ Create or verify a checkpoint in your workflow.
 When creating a checkpoint:
 
 1. Run `/verify quick` to ensure current state is clean
-2. Create a git stash or commit with checkpoint name
+2. Commit the tracked changes (`git add -u`; never untracked files) with a message in the rules/git-workflow.md format (e.g. `chore: checkpoint <name>`). If the tree is already clean, skip the commit and log the current HEAD. Do not use `git stash`: it removes the in-progress work from the tree, and the SHA logged below would not contain it.
 3. Log checkpoint to `.claude/checkpoints.log`:
 
 ```bash
@@ -32,8 +32,8 @@ When verifying against a checkpoint:
 2. Compare current state to checkpoint:
    - Files added since checkpoint
    - Files modified since checkpoint
-   - Test pass rate now vs then
-   - Coverage now vs then
+   - Build status now (the checkpoint was only created after `/verify quick` passed)
+   - Test and coverage deltas only where both runs were measured; otherwise report N/A
 
 3. Report:
 

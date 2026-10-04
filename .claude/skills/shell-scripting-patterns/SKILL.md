@@ -30,7 +30,7 @@ if ! command -v terminal-notifier >/dev/null 2>&1; then
 fi
 ```
 
-Note: hooks in this repo intentionally use `set -e` without `-u`/`pipefail` when they must be fail-open (see Hook Patterns below). Choose deliberately, not by omission.
+Note: hooks in this repo deliberately omit `set -e` (and `-u`/`pipefail`): they are fail-open, so one failing linter or `jq` call must not abort the rest (see the header comment in `.claude/hooks/lint.sh`). Choose deliberately, not by omission.
 
 ## Quoting
 
@@ -127,7 +127,7 @@ FILE_PATH=$(jq -r '.tool_input.file_path // empty' 2>/dev/null)
 
 ### Fail-open principle
 
-A hook that crashes blocks Claude's entire tool call. Anything irrelevant or unexpected exits 0 early:
+In Claude Code a hook that crashes (any exit other than 0/2) is a non-blocking error: the tool call proceeds and the check silently didn't run. Exit 0 early, on purpose, for anything irrelevant or unexpected:
 
 ```bash
 # Not the command we care about → let it through immediately

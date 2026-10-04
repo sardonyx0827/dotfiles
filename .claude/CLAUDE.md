@@ -41,10 +41,9 @@ When instructed to push / commit / create a PR, follow the Command Triggers in `
 ## Execution Layer Selection (SubAgents / Single / AgentTeams)
 
 **This section is the single source of truth for delegation.** The `description` fields in
-`.claude/agents/*.md` ("Use PROACTIVELY", "MUST BE USED for all code changes", "Automatically
-activated") exist so the _right_ agent is picked once delegation is already warranted — they are
-capability advertisements, **not invocation mandates**, and they never override this section.
-Delegation triggers live here and nowhere else.
+`.claude/agents/*.md` exist so the _right_ agent is picked once delegation is already warranted —
+they are capability advertisements, **not invocation mandates**, and they never override this
+section. Delegation triggers live here and nowhere else.
 
 **These triggers are a request, not just a policy.** I wrote them down in advance so that I would not
 have to ask for the same delegation again in every session. When one of them matches, I am asking for
@@ -58,18 +57,17 @@ SubAgent, so launching it satisfies the line rather than overriding it. AgentTea
 same grounds, since they launch through the same Agent tool. Workflows and deep-research are not
 covered: this file does not ask for them, so they still need an explicit ask from me in chat.
 
-**Default posture: delegate.** A SubAgent costs tokens and a round trip. Not delegating costs a
-polluted main context, serialized work, and a review that never happens — that second cost used to
-go unpriced here. Check the triggers below first; fall through to Single only when none match.
+A SubAgent costs tokens and a round trip. Not delegating costs a polluted main context, serialized
+work, and a review that never happens. Check the triggers below first; fall through to Single only
+when none match.
 
 ### SubAgents (the Agent tool) — the default whenever a trigger matches
 
 These fire on the situation, and not on a fresh cost/benefit judgment made in the moment.
-"I could probably do this inline" is not a reason to skip one.
 
 | Situation                                                                              | Agent                                                                      |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| A feature, fix, or refactor is complete, or a commit is about to be made               | `code-reviewer` (Go: `go-reviewer`; SQL / migrations: `database-reviewer`) |
+| A commit or PR is about to be made                                                     | `code-reviewer` (Go: `go-reviewer`; SQL / migrations: `database-reviewer`) |
 | A question that needs sweeping many files, directories, or naming conventions          | `Explore` (read-only fan-out; returns the conclusion, not the file dumps)  |
 | A new feature, or a refactor spanning more than a couple of files, before writing code | `planner` (system-level: `architect`)                                      |
 | Build, type, or vet errors that are mechanical to clear                                | `build-error-resolver` (Go: `go-build-resolver`)                           |
@@ -110,7 +108,7 @@ above is lifetime and addressability, not the tool:
 - `Agent({ name: "...", subagent_type: ... })` per teammate; the `name` is what makes it reachable
 - `SendMessage({ to: "<name>" })` to consult a running teammate, or to let teammates consult each
   other, instead of waiting for a one-shot final report
-- `TaskList` / `TaskOutput` to check on them, `TaskStop` to end one early
+- `ListAgents` to see which are running, `TaskStop` to end one early
 
 Use this shape rather than one-shot SubAgents when any of the following are met:
 

@@ -58,8 +58,8 @@ Get the timestamp from `date +%Y%m%d-%H%M%S` — never guess it.
 
 ## Report structure
 
-Keep the whole thing under roughly 150 lines. A report that takes as long to
-read as the scrollback has failed.
+Size the report so the user can read it top to bottom in about a minute. A report
+that takes as long to read as the scrollback has failed.
 
 ```markdown
 # <一行で「何をしたか」>
@@ -105,15 +105,15 @@ Write the report in Japanese, per the language policy in `CLAUDE.md`.
 A decorative flowchart _raises_ cognitive load. A diagram earns its place only
 when it encodes a relationship the prose cannot state compactly.
 
-- **At most 2 diagrams per report. Zero is a perfectly good answer.**
+- **Zero diagrams is a perfectly good answer.**
 - Every node must correspond to something real — an actual file, an actual step,
   an actual decision. No invented boxes to fill the canvas.
 - Use one of these shapes; do not invent new ones:
 
 | Shape                          | Use when                                            | Sketch                                                |
-| ------------------------------ | --------------------------------------------------- | ----------------------------------------------------- | ---- | ------------------ |
+| ------------------------------ | --------------------------------------------------- | ----------------------------------------------------- |
 | `flowchart LR`                 | 3+ changed files with a real call/data relationship | `A[skill] --> B[render_report.py] --> C[report.html]` |
-| `flowchart TD` with `{}` nodes | the work had genuine branch points                  | `A{file:// で ESM は?} -->                            | 不可 | B[classic script]` |
+| `flowchart TD` with `{}` nodes | the work had genuine branch points                  | `A{file:// で ESM は?} -->\|不可\| B[classic script]` |
 | `sequenceDiagram`              | the change is about a call/message order            | actor per component                                   |
 
 Skip the diagram entirely when the work was linear, touched 1–2 files, or is

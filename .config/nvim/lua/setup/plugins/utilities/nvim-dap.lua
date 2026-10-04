@@ -1,4 +1,4 @@
--- DAP for Debugging (config + dap-ui formerly in after/plugin/nvim-dap*.lua)
+-- DAP for Debugging
 -- requirements: install the Mason `debugpy` package (:MasonInstall debugpy);
 -- the adapter below runs it from mason/packages/debugpy/debugpy-adapter.
 return {
@@ -55,7 +55,7 @@ return {
       python = {
         {
           -- The first three options are required by nvim-dap
-          type = 'debugpy', -- the type here established the link to the adapter definition: `dap.adapters.python`
+          type = 'debugpy', -- the type here established the link to the adapter definition: `dap.adapters.debugpy`
           request = 'launch',
           name = "Launch file(no pipenv)",
 
@@ -89,7 +89,6 @@ return {
       }
     }
 
-    -- dap-ui (formerly after/plugin/nvim-dap-ui.lua)
     local dapui = require("dapui")
     dapui.setup({
       icons = { expanded = "", collapsed = "" },

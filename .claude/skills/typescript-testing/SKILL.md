@@ -266,7 +266,7 @@ mutate `cart` will pass or fail depending on run order.
 
 Rules:
 
-- Reset state in `beforeEach`, not `afterEach` (`afterEach` does not run on failure).
+- Reset state in `beforeEach`, so every test starts from a known state whatever the previous test left behind; use `afterEach` to restore globals (timers, spies, env).
 - Never export a singleton from a module under test; inject it.
 - Set and restore environment variables inside `beforeEach` / `afterEach`.
 
@@ -305,8 +305,8 @@ it("returns all matching records", async () => {
 
 ## 9. Coverage Configuration
 
-Configure coverage in `vitest.config.ts` using the `v8` provider (built into
-Node, no extra install). See the **tdd-workflow** skill for the coverage policy.
+Configure coverage in `vitest.config.ts` using the `v8` provider (install
+`@vitest/coverage-v8` as a dev dependency). See the **tdd-workflow** skill for the coverage policy.
 
 ```ts
 // vitest.config.ts
@@ -323,12 +323,8 @@ export default defineConfig({
         "**/*.config.ts",
         "**/index.ts", // re-export barrels add noise
       ],
-      thresholds: {
-        lines: 80,
-        functions: 80,
-        branches: 75,
-        statements: 80,
-      },
+      // thresholds: { lines, functions, branches, statements } — numbers from the
+      // project's existing gate, else tdd-workflow § Coverage Requirements
     },
   },
 });
@@ -341,8 +337,8 @@ npx vitest run --coverage          # single run
 npx vitest --coverage              # watch mode
 ```
 
-CI: add `--coverage.enabled=true` and fail the pipeline when thresholds are
-not met (Vitest exits with code 1 automatically).
+CI: add `--coverage.enabled=true`; once `thresholds` are set, Vitest exits with code 1
+when they are not met, which fails the pipeline.
 
 Jest equivalent: `jest --coverage` with `coverageThreshold` in `jest.config.ts`.
 

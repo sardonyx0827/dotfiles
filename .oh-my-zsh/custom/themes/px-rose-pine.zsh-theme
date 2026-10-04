@@ -1,5 +1,4 @@
 # vim:ft=zsh ts=2 sw=2 sts=2
-# ====================================================================
 
 # ROSE PINE THEME ZSH
 # Author: http://github.com/pixeljae
@@ -8,8 +7,6 @@
 # README
 # In order for this theme to render correctly, you will need a
 # [Powerline-patched font](https://gist.github.com/1595572).
-
-# ====================================================================
 
 # ROSE PINE PALETTE
 # Referenced here (https://rosepinetheme.com/palette.html#rose-pine)
@@ -36,7 +33,7 @@ typeset -aHg AGNOSTER_PROMPT_SEGMENTS=(
 # A few utility functions to make it easy and re-usable to draw segmented prompts
 CURRENT_BG='NONE'
 if [[ -z "$PRIMARY_FG" ]]; then
-  PRIMARY_FG=$RP_BASE # Orig. Value was black, but rose pine likes it a bit lighter
+  PRIMARY_FG=$RP_BASE
 fi
 
 # Characters
@@ -82,8 +79,7 @@ prompt_context() {
   local user=`whoami`
 
   if [[ "$user" != "$DEFAULT_USER" || -n "$SSH_CONNECTION" ]]; then
-    # prompt_segment $PRIMARY_FG default " %(!.%{%F{$RP_FOAM}%}.)$user@%m " # Orig. Value is {yellow}
-    prompt_segment $PRIMARY_FG default "" # Orig. Value is {yellow}
+    prompt_segment $PRIMARY_FG default ""
   fi
 }
 
@@ -112,7 +108,6 @@ prompt_git() {
   fi
 }
 
-#### PX-Note: Original Value was blue $PRIMARY_FG (Format = ...Background...Foreground...) but rose pine likes softer colors
 # Dir: current working directory
 prompt_dir() {
   prompt_segment $RP_OVERLAY $RP_IRIS ' %1~ '
@@ -125,19 +120,15 @@ prompt_dir() {
 prompt_status() {
   local symbols
   symbols=()
-  [[ $RETVAL -ne 0 ]] && symbols+="%{%F{$RP_LOVE}%}$CROSS" # Orig. Value: red
-  [[ $UID -eq 0 ]] && symbols+="%{%F{$RP_GOLD}%}$LIGHTNING" # Orig. Value: yellow
-  #### PX-Note: read in precmd (RP_JOBS), not here. This runs inside
-  #### $(prompt_agnoster_main), a forked subshell whose job table is empty, so
-  #### `$(jobs -l | wc -l)` was always 0 and the gear could never appear.
-  [[ ${RP_JOBS:-0} -gt 0 ]] && symbols+="%{%F{$RP_FOAM}%}$GEAR" # Orig. value. cyan
+  [[ $RETVAL -ne 0 ]] && symbols+="%{%F{$RP_LOVE}%}$CROSS"
+  [[ $UID -eq 0 ]] && symbols+="%{%F{$RP_GOLD}%}$LIGHTNING"
+  #### PX-Note: RP_JOBS is set in prompt_agnoster_precmd (see its comment); `jobs` here would run in a forked subshell.
+  [[ ${RP_JOBS:-0} -gt 0 ]] && symbols+="%{%F{$RP_FOAM}%}$GEAR"
 
-  #### PX-Note: Original value was...$PRIMARY_FG default...
   [[ -n "$symbols" ]] && prompt_segment $RP_BASE default " $symbols "
 }
 
 # Display current virtual environment
-#### PX-Note: Can't test this cause no virtualenv on my system :(  Someone do something cause I won't bother
 prompt_virtualenv() {
   if [[ -n $VIRTUAL_ENV ]]; then
     color=$RP_GOLD

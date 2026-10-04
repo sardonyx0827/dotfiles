@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Expert code review specialist. Proactively reviews code for quality, security, and maintainability. Use immediately after writing or modifying code. MUST BE USED for all code changes.
+description: Expert code review specialist for quality, security, and maintainability. Use before a commit or PR.
 tools:
   [
     "Read",
@@ -37,17 +37,12 @@ Review checklist:
 - Time complexity of algorithms analyzed
 - Licenses of integrated libraries checked
 
-Provide feedback organized by priority:
-
-- Critical issues (must fix)
-- Warnings (should fix)
-- Suggestions (consider improving)
-
-Include specific examples of how to fix issues.
+Report every issue you find, including ones you are unsure of or rate low. Give each a severity
+(CRITICAL / HIGH / MEDIUM / LOW), your confidence (high / medium / low), and a concrete fix.
 
 ## Security (lightweight pass — delegate depth)
 
-Do a quick security smell-check during review and flag obvious issues: hardcoded secrets, string-built SQL, or unescaped user input. Do NOT reproduce a full security audit here — for anything beyond a surface flag, hand off to the **security-reviewer** agent and the **security-review** skill, which own injection, SSRF, auth, crypto, and OWASP Top 10 coverage. Always route auth, user-input, API-endpoint, secret-handling, payment, and file-upload code to them.
+Do a quick security smell-check during review and report every security issue you notice — hardcoded secrets, string-built SQL, unescaped user input, or anything else — each with severity and confidence. Do NOT reproduce a full security audit here — the **security-reviewer** agent and the **security-review** skill own injection, SSRF, auth, crypto, and OWASP Top 10 depth. When the change touches auth, user input, API endpoints, secrets, payments, or file uploads, recommend a security-reviewer pass in your report.
 
 ## Code Quality (HIGH)
 
@@ -87,6 +82,7 @@ For each issue:
 [CRITICAL] Hardcoded API key
 File: src/api/client.ts:42
 Issue: API key exposed in source code
+Confidence: high
 Fix: Move to environment variable
 
 const apiKey = "sk-abc123";          // Bad: secret committed to source

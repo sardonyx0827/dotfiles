@@ -7,7 +7,7 @@ return {
   },
   config = function()
     require("undotree").setup()
-    -- vimdiff integration: <C-d> in the undotree panel (formerly after/plugin/undotree.lua)
+    -- vimdiff integration: <C-d> in the undotree panel
     require("setup.functions.undotree_vimdiff").setup()
   end,
 }

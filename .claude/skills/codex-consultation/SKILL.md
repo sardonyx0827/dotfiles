@@ -69,5 +69,5 @@ Implement with Claude → tests/verification fail
 
 ## Choosing Between This and the codex-delegator Agent
 
-- **`codex-delegator` agent (via the Task tool)**: Delegate spec discussions, bug-fix strategy consultations, and complex technical decisions. Automatic escalation when Claude has failed multiple times
+- **`codex-delegator` agent (via the Agent tool)**: Delegate spec discussions, bug-fix strategy consultations, and complex technical decisions. Escalate here after 2 consecutive failed fix attempts on the same issue (see When to Use)
 - **Direct MCP tool calls**: When you need fine-grained control over `sandbox` or `model`, or when continuing an existing conversation with `codex-reply`

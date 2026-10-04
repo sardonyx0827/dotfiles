@@ -9,17 +9,12 @@ return {
   -- Keymaps live in config (not the `keys` field) to avoid turning the plugin lazy.
   config = function()
     require("barbar").setup({
-      -- anything missing will use the default:
-      -- animation = true,
-      -- insert_at_start = true,
-      -- …etc.
       insert_at_end = true,
       icons = {
         button = ''
       }
     })
 
-    -- formerly after/plugin/barbar.lua
     vim.keymap.set("n", "<leader>jb", "<cmd>BufferPick<cr>",
       { noremap = true, silent = true, desc = "Barbar - Jump Buffer" })
     -- close other buffers except current one

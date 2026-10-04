@@ -90,7 +90,7 @@ After any Tier A/B change is applied:
    ```markdown
    ## 2026-07-03
 
-   - [done] fix: pin actions/checkout to v4 in ci.yml (Tier A)
+   - [done] fix: pin actions/checkout to a full commit SHA in ci.yml (Tier A)
    - [proposed] refactor: dedupe retry logic in sync.sh / backup.sh (Tier B)
    - [reported] deps: express 4 -> 5 major upgrade (Tier C)
    ```

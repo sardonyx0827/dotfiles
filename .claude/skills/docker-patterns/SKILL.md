@@ -111,6 +111,9 @@ vendor        # if not vendoring intentionally
 
 ## 4. Base Image Choice
 
+Tags in this skill are illustrative — use the version the project pins (`.nvmrc`,
+`go.mod`, `.tool-versions`) or the current LTS, never an end-of-life line.
+
 Pin to a specific minor version, not `latest`. `latest` silently changes on upstream
 pushes, breaking reproducibility. For maximum auditability, pin by digest.
 
@@ -164,13 +167,13 @@ RUN echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc && npm ci
 # ✅ CORRECT: BuildKit secret mount — zero trace in image history
 # syntax=docker/dockerfile:1
 RUN --mount=type=secret,id=npm_token \
-    NPM_TOKEN=$(cat /run/secrets/npm_token) \
+    NPM_TOKEN="$(cat /run/secrets/npm_token)" && \
     echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc && \
     npm ci && \
     rm ~/.npmrc
 ```
 
-Build with: `docker build --secret id=npm_token,src=.npmrc .`
+Build with: `docker build --secret id=npm_token,src=$HOME/.secrets/npm_token .` (a file holding only the token, kept outside the build context)
 
 ### Read-only filesystem
 

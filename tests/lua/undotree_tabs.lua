@@ -39,14 +39,13 @@ end
 
 -- Ids of the cleanup autocmds currently registered by the module.
 --
--- Matched on the group-name PREFIX and reported as ids, not counts, because
--- both halves of the bug this catches are invisible to a name lookup. The
--- group name is per-invocation, so `{ group = "UndotreeVimdiffCleanup" }`
--- raises once the name carries a suffix; and back when the name was a fixed
--- literal, a second open_vimdiff registered its autocmds under that SAME name,
--- so a by-name query returned two entries either way -- the first call's, or
--- the second call's standing on their grave. Ids are unique per autocmd and
--- never reused, so "are call 1's still there" is only answerable through them.
+-- Matched on the group-name PREFIX and reported as ids, not counts, because a
+-- name lookup cannot answer the question. The group name is per-invocation, so
+-- `{ group = "UndotreeVimdiffCleanup" }` raises; and under a fixed name a second
+-- open_vimdiff would register its autocmds under that SAME name, so a by-name
+-- query returns two entries either way -- the first call's, or the second
+-- call's standing on their grave. Ids are unique per autocmd and never reused,
+-- so "are call 1's still there" is only answerable through them.
 local function cleanup_autocmd_ids()
   local ids = {}
   for _, ac in ipairs(vim.api.nvim_get_autocmds({ event = { "BufWipeout", "TabClosed" } })) do
@@ -91,10 +90,10 @@ local user_tab = vim.api.nvim_get_current_tabpage()
 
 if scenario == "side_panel_first_in_tab" then
   -- A side panel (nvim-tree, a terminal, quickfix) usually holds the FIRST
-  -- window of the tab. find_target_buf() returned whatever that window showed
-  -- as long as it was not an undotree buffer, so the diff was opened on the
-  -- panel's buffer and died with E830 (no undo history at the requested seq).
-  -- The panel is built BEFORE open_vimdiff for exactly that reason.
+  -- window of the tab. A find_target_buf() that accepted any non-undotree
+  -- buffer would open the diff on the panel's buffer and die with E830 (no undo
+  -- history at the requested seq). The panel is built BEFORE open_vimdiff for
+  -- exactly that reason.
   vim.cmd("topleft vsplit")
   vim.cmd("enew")
   vim.bo.buftype = "nofile"
@@ -125,10 +124,9 @@ local second_diff_tab
 local second_call_autocmds
 local first_scratch
 
--- The user's own :tabclose must not raise. Capture rather than propagate: the
--- buggy version could surface E937 out of the cascade it set off (its own
--- `:tabclose` wiped the scratch buffer whose BufWipeout handler was still
--- unwinding), and a harness that dies there cannot report which tabs survived.
+-- The user's own :tabclose must not raise. Capture rather than propagate: a
+-- cleanup that fights the scratch-buffer wipe can surface E937 out of the
+-- cascade, and a harness that dies there cannot report which tabs survived.
 local close_err
 local function close(cmd)
   local ok, err = pcall(vim.cmd, cmd)
@@ -205,7 +203,7 @@ elseif scenario == "wipe_scratch_from_user_tab" then
   -- at it. This is the only scenario where the tab that needs closing is NOT
   -- the current one, so it is the only one that can tell `tabclose <n>` apart
   -- from a bare `tabclose`. Without it, reverting to a bare tabclose passes
-  -- every other scenario -- i.e. the original bug could come back unnoticed.
+  -- every other scenario -- i.e. that regression could come back unnoticed.
   local scratch
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(diff_tab)) do
     local b = vim.api.nvim_win_get_buf(win)
@@ -239,10 +237,10 @@ elseif scenario == "wipe_the_scratch_buffer" then
 elseif scenario == "close_first_diff_after_second_open"
     or scenario == "wipe_first_scratch_after_second_open" then
   -- TWO diffs open at once, which no other scenario builds -- and that is the
-  -- whole point. The cleanup augroup used to be a fixed literal created with
-  -- `clear = true`, so opening a second undo-diff DELETED the first tab's
-  -- BufWipeout and TabClosed handlers. Every scenario above calls open_vimdiff
-  -- exactly once, so all of them pass with that defect in place.
+  -- whole point. A fixed augroup name created with `clear = true` would let a
+  -- second undo-diff DELETE the first tab's BufWipeout and TabClosed handlers,
+  -- and every scenario above calls open_vimdiff exactly once, so all of them
+  -- would pass with that defect in place.
   --
   -- The second call is driven from the user's tab because that is where the
   -- undotree panel lives: find_target_buf() scans the CURRENT tab, and the
@@ -263,28 +261,26 @@ elseif scenario == "close_first_diff_after_second_open"
   else
     -- The first diff's scratch buffer is wiped while its tab is still open --
     -- the case BufWipeout exists for, now aimed at the invocation whose
-    -- handlers the second call used to erase. Without them nothing closes that
-    -- tab: the wipe takes the scratch window with it and leaves the first diff
-    -- tab standing, showing the real buffer still in diff mode.
+    -- handlers a shared group name would let the second call erase. Without
+    -- them nothing closes that tab: the wipe takes the scratch window with it
+    -- and leaves the first diff tab standing, showing the real buffer still in
+    -- diff mode.
     vim.api.nvim_set_current_tabpage(user_tab)
     close("bwipeout! " .. first_scratch)
   end
 elseif scenario == "close_first_diff_via_target_keymap_after_second_open"
     or scenario == "close_both_diffs_via_target_keymap" then
   -- `<C-w>q` pressed on the user's REAL buffer, in the FIRST diff tab, while a
-  -- second diff is open. Nothing before this ever pressed it: the two-diff
+  -- second diff is open. No earlier scenario presses it: the two-diff
   -- scenarios above leave through :tabclose or :bwipeout, and the mappings on
   -- old_buf are not at risk because old_buf is a fresh scratch buffer per call.
   --
-  -- That mapping is set with { buf = target_buf }, and target_buf is the user's
-  -- file buffer -- shared by every invocation. The second open re-registers the
-  -- same {buf, mode, lhs} slot and vim.keymap.set REPLACES what was there
-  -- (measured: one mapping on target_buf after two opens), so the surviving
-  -- callback belonged to the SECOND invocation and closed over ITS diff_tab.
-  -- Pressed in the first diff tab, that tab-identity check failed and the
-  -- handler fell through to the documented fallback, a bare `:quit`: one window
-  -- closed, the tab left standing half-diffed with its augroup and its
-  -- BufWipeout / TabClosed autocmds still armed.
+  -- The mapping on target_buf (the user's file buffer, shared by every
+  -- invocation) is one {buf, mode, lhs} slot that the second open REPLACES; see
+  -- `live_diffs` in undotree_vimdiff.lua. The surviving callback must still
+  -- close the tab the key is pressed in, not fall through to the bare `:quit`
+  -- fallback, which closes one window and leaves the tab standing half-diffed
+  -- with its augroup and its BufWipeout / TabClosed autocmds still armed.
   first_scratch = find_scratch(diff_tab, target)
   if not first_scratch then
     emit({ ok = false, err = "could not find the first scratch buffer" })
@@ -318,9 +314,9 @@ elseif scenario == "side_panel_first_in_tab" then
   local _ = nil
 elseif scenario == "close_via_target_ctrl_chord" then
   -- `<C-w><C-q>` is the same chord as `<C-w>q` to Vim's builtin window-close
-  -- and the scratch side binds both -- but the target side bound only the
-  -- letter form, so the control form fell through to the builtin, closed one
-  -- window and left the tab standing half-diffed with its cleanup still armed.
+  -- and the scratch side binds both; the target side must too, or the control
+  -- form falls through to the builtin, closes one window and leaves the tab
+  -- standing half-diffed with its cleanup still armed.
   press_close_in(diff_tab, target, "<C-w><C-q>")
 else
   emit({ ok = false, err = "unknown scenario: " .. scenario })

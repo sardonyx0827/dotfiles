@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ~/.claude/mcp-servers/gemini-consultant/server.py
 import contextlib
 import http.client
 import json
@@ -42,10 +41,10 @@ def _append_log(lines: list[str]) -> None:
     """ログファイルに書き込み、上限を超えた分を古い順に削除する。
 
     切り詰めは読んで書き戻す操作なので、複数プロセスが並行して呼ぶと衝突する。
-    以前は open(log_file, "w") でその場 truncate していたため、切り詰めと
-    書き込みの間にログが 0 バイトになる窓があった。共通側
-    _bash_review_common.py の append_and_rotate と同じく、プロセスごとに
-    一意な一時ファイルへ書いてから os.replace で不可分に差し替える。
+    open(log_file, "w") でその場 truncate すると、切り詰めと書き込みの間に
+    ログが 0 バイトになる窓ができる。共通側 _bash_review_common.py の
+    append_and_rotate と同じく、プロセスごとに一意な一時ファイルへ書いてから
+    os.replace で不可分に差し替える。
     """
     with open(log_file, "a", encoding="utf-8") as f:
         f.writelines(lines)
@@ -212,15 +211,15 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
 class GeminiKeyError(Exception):
     """GEMINI_API_KEY が未設定、または HTTP ヘッダ値として使えない。
 
-    ValueError の *サブクラスにしない* のが要点。以前はこの条件を素の ValueError で
-    表していたため、ツール側の `except ValueError` が
+    ValueError の *サブクラスにしない* のが要点。素の ValueError で表すと、
+    ツール側の `except ValueError` が
     (a) 本来の「キー未設定」
     (b) json.JSONDecodeError (ValueError のサブクラス)
     (c) putheader が送出する「値つき」ValueError
-    の 3 つを同じ腕で捕まえていた。結果、JSON パース失敗にまで
-    「APIキー未設定」と通知し、下の except に並ぶ JSONDecodeError は到達不能な
-    死んだエントリになり、(c) では API キーそのものを戻り値とログへ流していた。
-    独立した型にすることで 3 つを別々の腕へ分けられる。
+    の 3 つを同じ腕で捕まえてしまう。JSON パース失敗にまで「APIキー未設定」と
+    通知し、下の except に並ぶ JSONDecodeError は到達不能な死んだエントリになり、
+    (c) では API キーそのものを戻り値とログへ流す。独立した型にすることで
+    3 つを別々の腕へ分けられる。
     """
 
 
@@ -239,7 +238,7 @@ class GeminiUpstreamError(Exception):
     """API が 2xx 以外を返した。メッセージには状態コードと上流の error.message。
 
     URLError のサブクラスにはしない。HTTPError が URLError のサブクラスである
-    こと自体が、400 系まで一律にリトライされていた原因なので、専用の型で
+    ため、URLError の腕に流すと 400 系まで一律にリトライされてしまう。専用の型で
     識別してツール側の except に明示的に並べる。
     """
 
@@ -301,18 +300,19 @@ def _reject_unusable_api_key(api_key: str) -> None:
 def _extract_text(body: object) -> str:
     """レスポンス本文をテキスト化し、途中で打ち切られていればそれを明示する。
 
-    以前は `body.get("candidates", [{}])[0]` から parts を連結して返すだけで、
-    `finishReason` を一度も見ていなかった。maxOutputTokens=8192 を送っておいて
-    MAX_TOKENS の切り詰めを「完全な回答」として返すのは、設計相談ツールとしては
-    最悪の壊れ方になる (呼び出し側が途中までの論を完結したものとして採用する)。
+    `finishReason` を見ずに parts を連結するだけだと、maxOutputTokens=8192 を
+    送っておいて MAX_TOKENS の切り詰めを「完全な回答」として返すことになり、
+    設計相談ツールとしては最悪の壊れ方になる (呼び出し側が途中までの論を
+    完結したものとして採用する)。
 
-    `candidates` が「キーは在るが空リスト」の場合も既定値 [{}] は効かないため
-    [0] が IndexError になり、`list index out of range` という何も説明しない
-    文字列だけが返っていた。プロンプト段階のブロックはこの形で来る。
+    `candidates` が「キーは在るが空リスト」の場合、素朴な
+    `.get("candidates", [{}])[0]` では既定値 [{}] が効かず IndexError になり、
+    `list index out of range` という何も説明しない文字列だけが返る。
+    プロンプト段階のブロックはこの形で来る。
 
     形の検査は isinstance で行う。parts に文字列や text=null が混じると
     `p.get("text", "")` が AttributeError / TypeError を投げ、ツール側のどの
-    except 腕にも掛からず例外が MCP の外へそのまま抜けていた
+    except 腕にも掛からず例外が MCP の外へそのまま抜ける
     (scripts/gemini_api.py の extract_text と同じ選別に揃える)。
     """
     if not isinstance(body, dict):
@@ -360,9 +360,9 @@ def call_gemini(
     # 値の末尾に "\r" が残るが、http.client.putheader は CR/LF を含むヘッダ値を
     # 拒否し、その ValueError のメッセージに *生の値* を埋め込む
     # (`Invalid header value b'AIza...\r'`)。call_gemini の内側 except は
-    # (URLError, TimeoutError) しか捕まえないため、その例外はツール側の
-    # except まで抜け、str(e) が戻り値と _log_quietly の両方へ渡っていた。
-    # 結果、API キーが会話トランスクリプトと ~/.claude/logs の双方に残る。
+    # ValueError を捕まえないため、putheader まで届けば例外はツール側へ抜ける。
+    # ツール側の最後の `except ValueError` 腕は型名しか残さないが、それに
+    # 頼らず strip() と _reject_unusable_api_key で putheader の手前で止める。
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise GeminiKeyError("GEMINI_API_KEY not set")
@@ -408,17 +408,17 @@ def call_gemini(
                 return _extract_text(body)
         except urllib.error.HTTPError as e:
             # HTTPError は URLError のサブクラスなので、この腕は必ず下の腕より
-            # 前に置くこと。以前は下の腕が 400/403/404 まで拾って 3 回送り
-            # (待ち時間 3 秒)、しかも本文を一度も読まなかったため、Google が
-            # 返す error.message (モデル名違い、キー無効 ...) が呼び出し側に
-            # 届かなかった。同じ答えしか返らない状態は 1 回目で報告する。
+            # 前に置くこと。下の腕が 400/403/404 まで拾うと同じ答えを 3 回
+            # 受け取る (待ち時間 3 秒) うえ、本文が読まれず Google が返す
+            # error.message (モデル名違い、キー無効 ...) が呼び出し側に届かない。
+            # 同じ答えしか返らない状態は 1 回目で報告する。
             last_error = _upstream_error(e)
             if e.code not in RETRYABLE_STATUS:
                 raise last_error from e
         except (urllib.error.URLError, TimeoutError, http.client.HTTPException) as e:
             # HTTPException は本文の途中で接続が切れた IncompleteRead など。
-            # OSError 系ではないため、以前はリトライもされず、ツール側の except
-            # にも掛からずに MCP の外へ抜けていた。
+            # OSError 系ではないため、ここで名指ししないとリトライされず、
+            # ツール側の except にも掛からずに MCP の外へ抜ける。
             last_error = e
         # 最終試行の失敗後は再試行しないので待つ意味がない
         if attempt < max_retries - 1:
@@ -456,8 +456,8 @@ def consult_gemini(question: str) -> str:
         notify("Gemini Consultant", "APIキーの問題", 8)
         return f"Gemini API error: {e}"
     # JSONDecodeError は ValueError のサブクラスなので、この腕は必ず下の
-    # `except ValueError` より前に置くこと。順序を入れ替えると、以前と同じく
-    # ここが死んで JSON パース失敗が「予期しないエラー」に化ける。
+    # `except ValueError` より前に置くこと。順序を入れ替えると、ここが死んで
+    # JSON パース失敗が「予期しないエラー」に化ける。
     except (
         GeminiUpstreamError,
         urllib.error.URLError,

@@ -1,6 +1,6 @@
 ---
 name: go-reviewer
-description: Expert Go code reviewer specializing in idiomatic Go, concurrency patterns, error handling, and performance. Use for all Go code changes. MUST BE USED for Go projects.
+description: Expert Go code reviewer specializing in idiomatic Go, concurrency patterns, error handling, and performance. Use in place of code-reviewer when the change is Go code.
 tools:
   [
     "Read",
@@ -27,7 +27,7 @@ When invoked:
 
 ## Security Checks (CRITICAL)
 
-These are Go-idiom-level smell checks for the surface flags a Go reviewer is best placed to catch. Do NOT reproduce a full security audit here — for depth beyond an idiomatic flag (auth, SSRF, crypto selection, injection across layers, OWASP Top 10), hand off to the **security-reviewer** agent and the **security-review** skill, which own that coverage. Always route auth, user-input, API-endpoint, secret-handling, payment, and file-upload code to them.
+These are Go-idiom-level smell checks; report every issue they surface, each with severity and confidence. Do NOT reproduce a full security audit here — the **security-reviewer** agent and the **security-review** skill own injection, SSRF, auth, crypto, and OWASP Top 10 depth. When the change touches auth, user input, API endpoints, secrets, payments, or file uploads, recommend a security-reviewer pass in your report.
 
 - **SQL Injection**: String concatenation in `database/sql` queries
 
@@ -52,11 +52,11 @@ These are Go-idiom-level smell checks for the surface flags a Go reviewer is bes
   ```go
   // Bad
   os.ReadFile(filepath.Join(baseDir, userPath))
-  // Good
-  cleanPath := filepath.Clean(userPath)
-  if strings.HasPrefix(cleanPath, "..") {
+  // Good (Go 1.20+)
+  if !filepath.IsLocal(userPath) {
       return ErrInvalidPath
   }
+  data, err := os.ReadFile(filepath.Join(baseDir, userPath))
   ```
 
 - **Race Conditions**: Shared state without synchronization
@@ -255,6 +255,7 @@ For each issue:
 [CRITICAL] SQL Injection vulnerability
 File: internal/repository/user.go:42
 Issue: User input directly concatenated into SQL query
+Confidence: high
 Fix: Use parameterized query
 
 query := "SELECT * FROM users WHERE id = " + userID  // Bad

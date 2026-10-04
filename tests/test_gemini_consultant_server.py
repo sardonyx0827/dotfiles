@@ -62,11 +62,11 @@ def server(monkeypatch, tmp_path):
 
 class TestCallGemini:
     def test_missing_api_key_raises(self, server, monkeypatch):
-        # GeminiKeyError, deliberately NOT a ValueError subclass: the tools used
-        # to route key problems, json.JSONDecodeError and putheader's
-        # value-carrying ValueError through one `except ValueError` arm. That
-        # made the JSONDecodeError entry below it dead and leaked the key. The
-        # distinct type is what lets the three be told apart, so pin the type.
+        # GeminiKeyError, deliberately NOT a ValueError subclass: key problems,
+        # json.JSONDecodeError and putheader's value-carrying ValueError must
+        # not share one `except ValueError` arm, which would make the
+        # JSONDecodeError entry below it dead and leak the key. The distinct
+        # type is what lets the three be told apart, so pin the type.
         monkeypatch.delenv("GEMINI_API_KEY")
         with pytest.raises(server.GeminiKeyError, match="GEMINI_API_KEY not set"):
             server.call_gemini("question")
@@ -82,8 +82,8 @@ class TestCallGemini:
     def test_json_decode_error_is_not_reported_as_a_key_problem(
         self, server, monkeypatch
     ):
-        # A 200 with a non-JSON body (proxy / captive portal) used to be caught
-        # by `except ValueError` and announced as "APIキー未設定".
+        # A 200 with a non-JSON body (proxy / captive portal) must not be
+        # announced as an API-key problem ("APIキー...").
         class Resp:
             def read(self):
                 return b"<html>captive portal</html>"
@@ -182,7 +182,7 @@ class TestTools:
         assert result.startswith("Gemini API error:")
 
     def test_review_gemini_reports_missing_key_as_string(self, server, monkeypatch):
-        # ValueError branch of review_gemini (mirror of consult_gemini's).
+        # GeminiKeyError branch of review_gemini (mirror of consult_gemini's).
         monkeypatch.delenv("GEMINI_API_KEY")
         result = server.review_gemini("anything")
         assert result.startswith("Gemini API error:")
@@ -203,10 +203,13 @@ class TestApiKeyNeverLeaks:
 
     `http.client.putheader` refuses a header value containing CR/LF and raises
     `ValueError("Invalid header value %r" % value)` -- with the RAW value in the
-    message. `call_gemini`'s inner handler only catches (URLError, TimeoutError),
-    so that ValueError reaches the tools' `except ValueError` clause, which puts
-    `str(e)` into BOTH the returned string and `_log_quietly`. The key then sits
-    in the conversation transcript and on disk in ~/.claude/logs.
+    message. `call_gemini`'s inner handler does not catch ValueError, so one
+    reaches the tools' `except ValueError` clause; an arm that formatted
+    `str(e)` there would put it in BOTH the returned string and
+    `_log_quietly`: the key would sit in the conversation transcript and on
+    disk in ~/.claude/logs. Two layers block that independently:
+    `_reject_unusable_api_key` refuses the value up front, and the last-resort
+    arm reports only the exception type and withholds the message.
 
     `call_gemini` strips the key via `.strip()` before anything else, and only
     THEN hands it to `_reject_unusable_api_key`, which rejects embedded CR/LF
@@ -223,8 +226,7 @@ class TestApiKeyNeverLeaks:
       the same way every passing-case test elsewhere in this file mocks it.
       Treating an edge case as though it must also be "rejected" would assert
       against correct behavior; treating it as "offline because no socket is
-      involved" would silently let it dial the real API instead, which is
-      exactly the bug this class used to have.
+      involved" would silently let it dial the real API instead.
     """
 
     # Shapes strip() CANNOT remove. Split at 8 so a fragment of the sentinel
@@ -348,8 +350,8 @@ class TestApiKeyNeverLeaks:
 class TestTruncatedResponses:
     """A response cut short by the token budget must not read as a finished one.
 
-    `call_gemini` sends maxOutputTokens=8192 and then joins `parts` without ever
-    looking at `finishReason`, so a MAX_TOKENS truncation is returned as if it
+    `call_gemini` sends a maxOutputTokens budget, so joining `parts` without
+    looking at `finishReason` would return a MAX_TOKENS truncation as if it
     were the whole answer. For a design-consultation tool that is the worst
     shape of wrong: the caller acts on half an argument believing it complete.
     """
@@ -398,7 +400,7 @@ class TestTruncatedResponses:
 
     def test_empty_candidates_list_does_not_index_error(self, server, monkeypatch):
         # `.get("candidates", [{}])` does not defend a key that is PRESENT and
-        # empty, so [0] raised IndexError and surfaced as an opaque
+        # empty: [0] would raise IndexError and surface as an opaque
         # "list index out of range".
         self._resp(
             monkeypatch,
@@ -459,13 +461,13 @@ class TestLogRotation:
     def test_a_failed_rotation_leaves_the_log_intact(
         self, server, tmp_path, monkeypatch
     ):
-        # Regression guard: the old rotation path truncated the log in place
-        # via open(log_file, "w"), so a crash mid-write left it empty for
-        # good and concurrent writers (Claude + Codex sessions) could race on
-        # the same truncate. The fix must write the trimmed content to a
-        # temp file and swap it in with os.replace, matching the atomic
-        # pattern in _bash_review_common.py's append_and_rotate -- so a
-        # failure there must leave the previous log content untouched.
+        # Rotation must write the trimmed content to a temp file and swap it
+        # in with os.replace, matching the atomic pattern in
+        # _bash_review_common.py's append_and_rotate, rather than truncating in
+        # place via open(log_file, "w"): a crash mid-write would leave the log
+        # empty for good, and concurrent writers (Claude + Codex sessions)
+        # could race on the same truncate. So a failure there must leave the
+        # previous log content untouched.
         log = tmp_path / "rotated.log"
         before = "old\n" * 520
         log.write_text(before, encoding="utf-8")
@@ -539,8 +541,8 @@ class TestLoggingNeverCostsTheResponse:
     ):
         # _append_log re-raises OSError after cleaning up its temp file, and
         # neither except clause catches a bare OSError -- URLError is a SUBCLASS
-        # of OSError, not its parent -- so a failed rotation propagated straight
-        # out of the tool and discarded a successful answer.
+        # of OSError, not its parent -- so an unguarded failed rotation would
+        # propagate straight out of the tool and discard a successful answer.
         def boom(*_a, **_k):
             raise OSError("no space left on device")
 
@@ -576,12 +578,12 @@ class TestLoggingNeverCostsTheResponse:
     def test_any_log_failure_still_returns_the_response(
         self, server, monkeypatch, tool, exc
     ):
-        # Suppressing only OSError left the same bug reachable by another type:
-        # a lone surrogate survives json.loads but cannot be encoded as UTF-8,
-        # so writing the log raises UnicodeEncodeError -- a ValueError subclass,
-        # which the first except clause then reports as "APIキー未設定" while
-        # discarding the answer. Logging is a side effect; it never costs the
-        # response, whatever it fails with.
+        # Suppressing only OSError would leave the same bug reachable by another
+        # type: a lone surrogate survives json.loads but cannot be encoded as
+        # UTF-8, so writing the log raises UnicodeEncodeError -- a ValueError
+        # subclass, which the tools' `except ValueError` arm would report as an
+        # error while discarding the answer. Logging is a side effect; it never
+        # costs the response, whatever it fails with.
         def boom(*_a, **_k):
             raise exc
 
@@ -593,14 +595,14 @@ class TestLoggingNeverCostsTheResponse:
 class TestUpstreamFailures:
     """Non-2xx statuses, truncated bodies and odd payload shapes.
 
-    call_gemini used to catch only (URLError, TimeoutError). HTTPError *is* a
-    URLError, so a 400 / 403 / 404 -- which answers identically every time --
-    burned all three attempts and 3s of backoff, and the upstream
-    `error.message` that names the cause was never read. http.client's
-    IncompleteRead is neither, so a connection dropped mid-body escaped the
-    tool entirely. scripts/gemini_api.py already states the policy the server
-    is aligned with here: retry only what may still succeed, quote the
-    upstream message, and always hand the caller a string.
+    Catching only (URLError, TimeoutError) would be wrong twice over. HTTPError
+    *is* a URLError, so a 400 / 403 / 404 -- which answers identically every
+    time -- would burn all three attempts and 3s of backoff, and the upstream
+    `error.message` that names the cause would never be read. http.client's
+    IncompleteRead is neither, so a connection dropped mid-body would escape the
+    tool entirely. scripts/gemini_api.py states the policy the server is
+    aligned with here: retry only what may still succeed, quote the upstream
+    message, and always hand the caller a string.
     """
 
     @staticmethod

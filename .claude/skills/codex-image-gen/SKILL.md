@@ -17,7 +17,7 @@ run through the `mcp__codex__codex` tool, and land the finished files in a calle
   destination, and reports the final paths.
 
 Codex's `image_gen` lives in its system skill `~/.codex/skills/.system/imagegen/SKILL.md`.
-The **built-in tool mode is preferred and requires no `OPENAI_API_KEY`** (proven working under
+The **built-in tool mode is preferred and requires no `OPENAI_API_KEY`** (last verified 2026-07 under
 `sandbox: workspace-write`). A CLI fallback exists but needs `OPENAI_API_KEY` and is only
 for true native transparency — see Transparency below.
 
@@ -38,7 +38,7 @@ for true native transparency — see Transparency below.
 ## Invocation path
 
 Delegate via the **`mcp__codex__codex` MCP tool** — the supported path for this skill
-(verified working 2026-07). Call it with:
+(last verified 2026-07). Call it with:
 
 - `prompt`: the image spec (template below)
 - `sandbox`: `workspace-write` — lets Codex write the finished file into the project

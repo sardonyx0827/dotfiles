@@ -23,10 +23,10 @@ Design constraints (learned the hard way -- do not relax without evidence)
   "Denormalized for Read Performance"), so a `Read` -> `read` style rule would
   corrupt prose while buying nothing. Runtime-specific wording is neutralized
   in the SSOT instead of being substituted here.
-* Literal (''') TOML strings only. Three agent bodies contain `\\*`, `` \\` ``
-  and `\\/`, which are invalid escapes in a basic (\"\"\") string -- tomllib
-  raises `TOMLDecodeError` on load rather than silently dropping them. A
-  literal string keeps the body byte-exact.
+* Literal (''') TOML strings only. Agent bodies contain Markdown escapes such as
+  `\\*` and `` \\` ``, which are invalid escapes in a basic (\"\"\")
+  string -- tomllib raises `TOMLDecodeError` on load rather than silently
+  dropping them. A literal string keeps the body byte-exact.
 * The generator never reformats. Quote style, semicolons and blank lines in
   the body are Prettier's business; touching them here would churn the output
   and change the meaning of code examples.
@@ -187,10 +187,10 @@ def _rel(path: Path) -> str:
 def _hand_maintained_problem(stem: str) -> str | None:
     """Check a twin the generator cannot rebuild; None when it is usable.
 
-    Skipping a hand-maintained stem outright let `--check` report "current"
-    with its twin deleted or replaced by garbage: `expected` still carried the
-    stem, so the orphan sweep never saw it either, and CI stayed green on a
-    broken agent. The generator cannot repair it, so it reports instead.
+    A hand-maintained stem cannot simply be skipped: `--check` would report
+    "current" with its twin deleted or replaced by garbage, since `expected`
+    still carries the stem and the orphan sweep never sees it either. The
+    generator cannot repair it, so it reports instead.
     """
     target = CODEX_AGENTS_DIR / f"{stem}.toml"
     try:

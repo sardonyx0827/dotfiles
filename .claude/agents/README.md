@@ -5,7 +5,7 @@ Role separation (single source of truth):
 - **`CLAUDE.md` § Execution Layer Selection**: whether to delegate at all and how many
   SubAgents to spawn — the only place those rules live
 - **Each agent's own `description`**: the situation that agent covers, including when it
-  applies (`code-reviewer` says "immediately after writing or modifying code")
+  applies (`code-reviewer` says "before a commit or PR")
 - **`CLAUDE.md` § Model Selection Guidelines**: model tier and effort per agent
 - **This README**: a catalog of which agents exist and what each one is for. It carries no
   delegation policy; if something here reads like an instruction to launch an agent, it
@@ -45,7 +45,7 @@ Located in `~/.claude/agents/`:
 
 | Agent             | Model  | Purpose                                   | When to Use                    |
 | ----------------- | ------ | ----------------------------------------- | ------------------------------ |
-| code-reviewer     | sonnet | General code review                       | After writing code             |
+| code-reviewer     | sonnet | General code review                       | Before a commit or PR          |
 | security-reviewer | sonnet | Security & OWASP Top 10 analysis          | Before commits                 |
 | go-reviewer       | sonnet | Idiomatic Go review (concurrency, errors) | Go code changes                |
 | database-reviewer | sonnet | PostgreSQL/Supabase query & schema review | SQL, migrations, schema design |

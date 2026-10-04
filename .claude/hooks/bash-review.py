@@ -1,14 +1,6 @@
 # ~/.claude/hooks/bash-review.py
-# 判定の 3 層構造 (詳細は _bash_review_common.py のヘッダー参照):
-#   1. 静的 DENY: sudo / curl 等、文脈を問わず危険 → 即拒否
-#   2. 高リスク層: rm -r / force push / パッケージ導入等、文脈次第で正当
-#      → Gemini と Codex を並列実行する AND ゲート。両モデル ALLOW 一致時のみ
-#        許可、両モデル DENY 一致時のみ deny、それ以外 (判定割れ/ASK/ERROR) は
-#        両判定を添えて ask。片方説得での自動実行 (OR ゲート化) はしない。
-#   3. 低リスク層: Gemini (高スループット) が ALLOW なら即許可。
-#      疑義時 (ASK/DENY/ERROR) のみ Codex で二次確認。意見を伴う Gemini 判定
-#      (明示的 DENY / 要確認 ASK) は Codex の ALLOW 単独で自動上書きしない
-#      (両判定を添えて ask)。ERROR (無意見) のみ Codex ALLOW で解消。
+# 判定の 3 層構造 (静的 DENY / 高リスク層の二モデル AND ゲート / 低リスク層の
+# Gemini 一次 + Codex 二次) は _bash_review_common.py のヘッダー参照。
 #
 # Gemini/Codex の呼び出し (プロンプト生成・実行・パース) は _bash_review_common.py
 # に集約している。一方、判定の組み合わせ木 (Gemini×Codex のどちらが

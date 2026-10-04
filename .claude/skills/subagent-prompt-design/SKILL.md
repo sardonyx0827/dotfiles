@@ -187,9 +187,7 @@ when reviewing their own work.
 ### Concurrency guideline
 
 The ceiling lives in `CLAUDE.md` § Execution Layer Selection ("How many") — read
-it there rather than trusting a figure repeated here. This file used to carry its
-own number, CLAUDE.md's moved, and the stale copy then forbade a fan-out the SSOT
-explicitly endorses.
+it there rather than trusting a figure repeated here.
 
 What this skill adds is the shape of the judgment, which does not change with the
 number: match the count to genuinely independent tracks, and treat the ceiling as
@@ -200,7 +198,7 @@ more often than any range suggests. See §8.
 
 ## 5. Model Tier and Effort Selection
 
-Per `performance.md` and `CLAUDE.md`. Two independent axes — **tier** sets the
+Per `CLAUDE.md` § Model Selection Guidelines. Two independent axes — **tier** sets the
 capability ceiling, **effort** sets how much thinking and tool work is spent
 reaching it. Assign the cheapest combination that can do the job. Tier alone is
 a pre-effort mental model; a SubAgent prompt that names only a tier is
@@ -330,7 +328,7 @@ and an unmanageable return blob.
 
 ## 8. When NOT to Delegate
 
-Per the Single-layer policy in `CLAUDE.md`, keep work inline when:
+When no trigger in `CLAUDE.md` § Execution Layer Selection matches, keep work inline — especially when:
 
 - The task depends on the current conversation context (earlier turns, user
   confirmations, open questions).
@@ -358,7 +356,7 @@ task into pieces.
   its findings after it reports back.
 
 Review delegation is the deliberate exception: `CLAUDE.md` mandates the
-**code-reviewer** agent (Go: **go-reviewer**) after code changes, and Gate 3
+**code-reviewer** agent (Go: **go-reviewer**) before a commit or PR, and Gate 3
 above requires writer/reviewer separation. A fresh-context reviewer beats
 self-critique, which has confirmation bias. Keep that one.
 

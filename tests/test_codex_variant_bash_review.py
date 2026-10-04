@@ -41,10 +41,10 @@ class TestAllowPaths:
         assert res.stderr == ""
 
     def test_read_only_tmux_command_exits_zero_silently(self, run_hook):
-        # Regression guard for the tmux separator fix below: the legitimate
-        # read-only invocations must keep their safe-skip fast path. No
-        # urlopen/run fakes, so any review call would raise AssertionError --
-        # exit 0 here proves the command was skipped, not reviewed.
+        # The tmux separator rule below must not cost the legitimate read-only
+        # invocations their safe-skip fast path. No urlopen/run fakes, so any
+        # review call would raise AssertionError -- exit 0 here proves the
+        # command was skipped, not reviewed.
         res = run_hook(HOOK, hook_payload("tmux ls -F '#{session_name}'"))
         assert res.exit_code == 0
         assert res.stdout == ""
@@ -91,9 +91,9 @@ class TestBlockingPaths:
         assert "sudo" in res.stderr
 
     def test_unquoted_wrapper_form_stays_pre_denied(self, run_hook):
-        # Parity with the claude variant: the fix for the QUOTED blob below
-        # must not cost the unquoted wrapper form its deterministic denial.
-        # No urlopen/run fakes, so exit 2 here proves no model was consulted.
+        # Parity with the claude variant: the unquoted wrapper form keeps its
+        # deterministic denial. No urlopen/run fakes, so exit 2 here proves no
+        # model was consulted.
         res = run_hook(HOOK, hook_payload("watch sudo rm -rf /"))
         assert res.exit_code == 2
         assert res.stdout == ""
@@ -102,8 +102,8 @@ class TestBlockingPaths:
     def test_tmux_chained_second_command_reaches_review(self, run_hook):
         # `;` is tmux's OWN command separator, so `tmux ls ';' run-shell true`
         # runs a second tmux command -- run-shell takes an arbitrary shell
-        # command. The shell never splits on the quoted `;`, so the safe-skip
-        # prefix match read `tmux ls ...` and exited 0 silently with no review.
+        # command. The shell never splits on the quoted `;`, so a safe-skip
+        # prefix match would read `tmux ls ...` and exit 0 silently with no review.
         # Safe-skip and a reviewed ALLOW are indistinguishable in this variant
         # (both exit 0, both silent), so the verdicts are set to ASK: exit 2
         # can only mean review actually ran.
@@ -207,9 +207,9 @@ class TestHighRisk:
 
     def test_pipe_into_shell_is_high_risk(self, run_hook):
         # `echo ... | bash` runs stdin as shell code (== `sh -c`) with no -c, so
-        # it used to slip to the single-model fast path and exit 0 on a lone
-        # Gemini ALLOW. Exit 2 with both verdicts proves the dual-review AND-gate
-        # now runs in the codex variant too (fast path would have exited 0).
+        # only an explicit rule keeps it off the single-model fast path, which
+        # would exit 0 on a lone Gemini ALLOW. Exit 2 with both verdicts proves
+        # the dual-review AND-gate runs in the codex variant too.
         res = run_hook(
             HOOK,
             hook_payload("echo 'rm -rf /' | bash"),
@@ -222,12 +222,12 @@ class TestHighRisk:
         assert "stdin into bash" in res.stderr
 
     def test_wrapper_quoted_blob_is_high_risk(self, run_hook):
-        # `watch 'sudo rm -rf /'` passes the quoted string to `sh -c`, but the
-        # resolver used to hand the whole blob back as an executable name: the
-        # deterministic deny tier and the high-risk tier both went blind and the
-        # command dropped to the single-model fast path, where this very Gemini
-        # ALLOW exits 0 silently. Exit 2 with both verdicts proves the AND-gate
-        # runs in this variant too.
+        # `watch 'sudo rm -rf /'` passes the quoted string to `sh -c`. A resolver
+        # that handed the whole blob back as an executable name would blind the
+        # deterministic deny tier and the high-risk tier, and the command would
+        # drop to the single-model fast path, where this very Gemini ALLOW exits
+        # 0 silently. Exit 2 with both verdicts proves the AND-gate runs in this
+        # variant too.
         res = run_hook(
             HOOK,
             hook_payload("watch 'sudo rm -rf /'"),
@@ -242,11 +242,11 @@ class TestHighRisk:
         assert "Codex=ASK" in res.stderr
 
     def test_prefix_shaped_blob_is_high_risk(self, run_hook):
-        # Parity with the claude variant: `A=1 ` in front of the payload made
-        # the assignment rule swallow the whole blob token, so the resolver
-        # returned [] ("nothing here") instead of None ("cannot tell") and the
-        # command dropped back to the single-model fast path, where this Gemini
-        # ALLOW exits 0 silently.
+        # Parity with the claude variant: with `A=1 ` in front of the payload
+        # the assignment rule would swallow the whole blob token, so the
+        # resolver would return [] ("nothing here") instead of None ("cannot
+        # tell") and the command would drop to the single-model fast path,
+        # where this Gemini ALLOW exits 0 silently.
         res = run_hook(
             HOOK,
             hook_payload("watch 'A=1 sudo rm -rf /'"),
@@ -315,7 +315,7 @@ class TestErrorFallbacks:
 
     Parity with tests/test_bash_review.py's TestCodexStage error cases, but
     asserted against the codex variant's exit-2 + stderr contract instead of
-    permissionDecision JSON. Exercises the review logic now shared in
+    permissionDecision JSON. Exercises the review logic shared in
     _bash_review_common.py through the codex-specific wrapper/main flow.
     """
 
@@ -386,8 +386,8 @@ class TestErrorFallbacks:
 
 class TestLogs:
     def test_detail_log_filename_is_nanosecond_and_pid_unique(self, run_hook):
-        """Codex variant parity: nanosecond + PID uniqueness (bash_cmd_<sec>.log
-        collided within a second and overwrote earlier audit logs)."""
+        """Codex variant parity: nanosecond + PID uniqueness (a per-second name
+        would overwrite earlier audit logs)."""
         import os
 
         res = run_hook(HOOK, hook_payload("git branch"))

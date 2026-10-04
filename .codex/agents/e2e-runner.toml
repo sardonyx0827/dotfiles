@@ -1,5 +1,5 @@
 name = "e2e-runner"
-description = "End-to-end testing specialist using Vercel Agent Browser (preferred) with Playwright fallback. Use PROACTIVELY for generating, maintaining, and running E2E tests. Manages test journeys, quarantines flaky tests, uploads artifacts (screenshots, videos, traces), and ensures critical user flows work."
+description = "End-to-end testing specialist using Vercel Agent Browser (preferred) with Playwright fallback. Use for generating, maintaining, and running E2E tests. Manages test journeys, quarantines flaky tests, uploads artifacts (screenshots, videos, traces), and ensures critical user flows work."
 developer_instructions = '''
 # E2E Test Runner
 
@@ -362,181 +362,6 @@ test.describe("Product Search", () => {
 });
 ```
 
-## Example Project-Specific Test Scenarios
-
-### Critical User Journeys for Example Project
-
-**1. Product Browsing Flow**
-
-```typescript
-test("user can browse and view products", async ({ page }) => {
-  // 1. Navigate to products page
-  await page.goto("/products");
-  await expect(page.locator("h1")).toContainText("Products");
-
-  // 2. Verify products are loaded
-  const productCards = page.locator('[data-testid="product-card"]');
-  await expect(productCards.first()).toBeVisible();
-
-  // 3. Click on a product
-  await productCards.first().click();
-
-  // 4. Verify product details page
-  await expect(page).toHaveURL(/\/products\/[a-z0-9-]+/);
-  await expect(page.locator('[data-testid="product-name"]')).toBeVisible();
-
-  // 5. Verify chart loads
-  await expect(page.locator('[data-testid="price-chart"]')).toBeVisible();
-});
-```
-
-**2. Semantic Search Flow**
-
-```typescript
-test("semantic search returns relevant results", async ({ page }) => {
-  // 1. Navigate to products
-  await page.goto("/products");
-
-  // 2. Enter search query
-  const searchInput = page.locator('[data-testid="search-input"]');
-  await searchInput.fill("wireless keyboard");
-
-  // 3. Wait for API call
-  await page.waitForResponse(
-    (resp) =>
-      resp.url().includes("/api/products/search") && resp.status() === 200,
-  );
-
-  // 4. Verify results contain relevant products
-  const results = page.locator('[data-testid="product-card"]');
-  await expect(results).not.toHaveCount(0);
-
-  // 5. Verify semantic relevance (not just substring match)
-  const firstResult = results.first();
-  const text = await firstResult.textContent();
-  expect(text?.toLowerCase()).toMatch(
-    /keyboard|wireless|bluetooth|mechanical|typing/,
-  );
-});
-```
-
-**3. Payment Method Connection Flow**
-
-```typescript
-test("user can connect payment method", async ({ page, context }) => {
-  // Setup: Mock the payment provider SDK
-  await context.addInitScript(() => {
-    // @ts-ignore
-    window.paymentProvider = {
-      isReady: true,
-      request: async ({ method }) => {
-        if (method === "connect_account") {
-          return ["acct_1234567890123456789012345678901234567890"];
-        }
-        if (method === "account_status") {
-          return "active";
-        }
-      },
-    };
-  });
-
-  // 1. Navigate to site
-  await page.goto("/");
-
-  // 2. Click connect payment method
-  await page.locator('[data-testid="connect-payment"]').click();
-
-  // 3. Verify payment modal appears
-  await expect(page.locator('[data-testid="payment-modal"]')).toBeVisible();
-
-  // 4. Select payment provider
-  await page.locator('[data-testid="payment-provider-default"]').click();
-
-  // 5. Verify connection successful
-  await expect(page.locator('[data-testid="payment-account"]')).toBeVisible();
-  await expect(page.locator('[data-testid="payment-account"]')).toContainText(
-    "acct_1234",
-  );
-});
-```
-
-**4. Product Creation Flow (Authenticated)**
-
-```typescript
-test("authenticated user can create product", async ({ page }) => {
-  // Prerequisites: User must be authenticated
-  await page.goto("/creator-dashboard");
-
-  // Verify auth (or skip test if not authenticated)
-  const isAuthenticated = await page
-    .locator('[data-testid="user-menu"]')
-    .isVisible();
-  test.skip(!isAuthenticated, "User not authenticated");
-
-  // 1. Click create product button
-  await page.locator('[data-testid="create-product"]').click();
-
-  // 2. Fill product form
-  await page.locator('[data-testid="product-name"]').fill("Test Product");
-  await page
-    .locator('[data-testid="product-description"]')
-    .fill("This is a test product");
-  await page.locator('[data-testid="product-end-date"]').fill("2025-12-31");
-
-  // 3. Submit form
-  await page.locator('[data-testid="submit-product"]').click();
-
-  // 4. Verify success
-  await expect(page.locator('[data-testid="success-message"]')).toBeVisible();
-
-  // 5. Verify redirect to new product
-  await expect(page).toHaveURL(/\/products\/test-product/);
-});
-```
-
-**5. Order Flow (Critical - Real Money)**
-
-```typescript
-test("user can place order with sufficient balance", async ({ page }) => {
-  // WARNING: This test involves real money - use sandbox/staging only!
-  test.skip(process.env.NODE_ENV === "production", "Skip on production");
-
-  // 1. Navigate to product
-  await page.goto("/products/test-product");
-
-  // 2. Connect payment method (with test funds)
-  await page.locator('[data-testid="connect-payment"]').click();
-  // ... payment method connection flow
-
-  // 3. Select product variant
-  await page.locator('[data-testid="variant-default"]').click();
-
-  // 4. Enter order amount
-  await page.locator('[data-testid="order-amount"]').fill("1.0");
-
-  // 5. Verify order preview
-  const preview = page.locator('[data-testid="order-preview"]');
-  await expect(preview).toContainText("1.0 USD");
-  await expect(preview).toContainText("Est. total:");
-
-  // 6. Confirm order
-  await page.locator('[data-testid="confirm-order"]').click();
-
-  // 7. Wait for payment transaction
-  await page.waitForResponse(
-    (resp) => resp.url().includes("/api/orders") && resp.status() === 200,
-    { timeout: 30000 }, // Payment provider can be slow
-  );
-
-  // 8. Verify success
-  await expect(page.locator('[data-testid="order-success"]')).toBeVisible();
-
-  // 9. Verify balance updated
-  const balance = page.locator('[data-testid="account-balance"]');
-  await expect(balance).not.toContainText("--");
-});
-```
-
 ## Playwright Configuration
 
 ```typescript
@@ -700,48 +525,10 @@ use: {
 
 ### GitHub Actions Workflow
 
-```yaml
-# .github/workflows/e2e.yml
-name: E2E Tests
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
-
-      - name: Run E2E tests
-        run: npx playwright test
-        env:
-          BASE_URL: https://staging.example.com
-
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 30
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: playwright-results
-          path: playwright-results.xml
-```
+Write the workflow (e.g. `.github/workflows/e2e.yml`) per the **github-actions-ci** skill:
+actions pinned to a full commit SHA, `npx playwright install --with-deps` before
+`npx playwright test`, and `actions/upload-artifact` v4 with `if: always()` for
+`playwright-report/` and `playwright-results.xml`.
 
 ## Test Report Format
 
@@ -765,15 +552,15 @@ jobs:
 ### Products - Browse & Search
 
 - ✅ user can browse products (2.3s)
-- ✅ semantic search returns relevant results (1.8s)
+- ✅ search returns relevant results (1.8s)
 - ✅ search handles no results (1.2s)
 - ❌ search with special characters (0.9s)
 
-### Payment - Connection
+### Auth - Sign-in
 
-- ✅ user can connect primary provider (3.1s)
-- ⚠️ user can connect secondary provider (2.8s) - FLAKY
-- ✅ user can disconnect payment method (1.5s)
+- ✅ user can sign in with email (3.1s)
+- ⚠️ user can sign in with SSO (2.8s) - FLAKY
+- ✅ user can sign out (1.5s)
 
 ### Orders - Core Flows
 
@@ -843,5 +630,5 @@ After E2E test run:
 
 ---
 
-**Remember**: E2E tests are your last line of defense before production. They catch integration issues that unit tests miss. Invest time in making them stable, fast, and comprehensive. For Example Project, focus especially on financial flows - one bug could cost users real money.
+**Remember**: E2E tests are your last line of defense before production. They catch integration issues that unit tests miss. Keep them stable and fast, and cover the project's money-moving and auth flows first.
 '''

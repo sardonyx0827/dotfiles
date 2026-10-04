@@ -297,8 +297,8 @@ EXIT_CODE_LINTERS = [
 # Every tool is pinned at *every* severity it can emit, because the one it uses
 # by default is not the one its name suggests: checkstyle's bundled
 # google_checks.xml sets severity=warning, so real findings arrive as [WARN] and
-# an [ERROR] never appears; cppcheck is asked for four categories but only two
-# of them were ever matched. A matcher that only knows the error spelling
+# an [ERROR] never appears; cppcheck is asked for four categories and the matcher
+# has to know all of them. A matcher that only knows the error spelling
 # reports a clean bill of health for every finding the tool actually produces --
 # the worst failure mode there is: "found a problem but returned green" hides
 # the finding entirely. Same class as the clippy cases below.
@@ -372,11 +372,9 @@ GREP_LINTERS_CLEAN = [
 class TestLintLanguageMatrix:
     """Characterization of the per-language dispatch table.
 
-    Only .py and .sh had coverage; js/ts, rs, go, java, c/c++, rb and php --
-    roughly 230 lines duplicated verbatim between the two copies -- had none,
-    so a mechanical edit there could not be caught. These pin *which* tool each
-    extension dispatches to and *how* its failure is recognised, which is what
-    an extraction has to preserve.
+    These pin *which* tool each extension dispatches to (js/ts, rs, go, java,
+    c/c++, rb, php) and *how* its failure is recognised, in both copies of
+    lint.sh -- what any mechanical edit to the table has to preserve.
     """
 
     @pytest.mark.parametrize(
@@ -456,8 +454,8 @@ class TestLintLanguageMatrix:
         failing to start (unknown flag, unreadable config, internal error). Its
         message carries none of the severity markers, so a matcher looking only
         at output cannot tell it apart from a clean file and reports success --
-        the same silent pass this file's header warns about, one level up. A
-        wrong flag would then disable the gate permanently and invisibly.
+        the same silent pass the GREP_LINTERS comment warns about, one level up.
+        A wrong flag would then disable the gate permanently and invisibly.
         """
         shell_env.stub(
             tool,
@@ -498,12 +496,12 @@ echo "$out"
     def test_checkstyle_default_config_resolves(self, LINT, shell_env, tmp_path):
         """The fallback config must be one checkstyle can actually load.
 
-        The branch passed `-c google`, which does not resolve: real checkstyle
-        (13.8) answers `Could not find config XML file 'google'.` and exits 255,
-        so this linter never checked a single file. It looked healthy only
-        because the exception carries no [ERROR]/[WARN] and the matcher read
-        that as clean -- the same silent pass, one layer earlier. The bundled
-        config is a classpath resource and has to be named like one.
+        `-c google` does not resolve: real checkstyle (13.8) answers
+        `Could not find config XML file 'google'.` and exits 255, so the linter
+        would never check a single file. It would look healthy only because
+        the exception carries no [ERROR]/[WARN] and the matcher reads that as
+        clean -- the same silent pass, one layer earlier. The bundled config
+        is a classpath resource and has to be named like one.
         """
         shell_env.stub("checkstyle", body='echo "Starting audit..."', exit_code=0)
         target = tmp_path / "Foo.java"
@@ -520,10 +518,10 @@ echo "$out"
         """The pinned template must render the shape the matcher greps.
 
         cppcheck 1.x printed `(severity)`; 2.x changed its default to
-        `severity:`. The matcher kept looking for the parenthesised spelling, so
-        against any modern cppcheck it matched nothing at all and the gate
-        reported success on every file it saw -- `(error)` findings included.
-        The fix is to stop inheriting the tool's default and pin the format.
+        `severity:`. A matcher looking for the parenthesised spelling would
+        match nothing against a modern cppcheck, and the gate would report
+        success on every file it saw -- `(error)` findings included. So the
+        hook pins the format instead of inheriting the tool's default.
 
         Asserting the flag merely *exists* would not protect that: a pin of
         `{severity}:` -- the 2.x shape, i.e. the very desync this guards -- also
@@ -598,10 +596,10 @@ echo "$out"
         assert any(c.startswith("php -l ") for c in shell_env.calls)
 
     def test_php_fallback_survives_host_phpstan(self, LINT, shell_env, tmp_path):
-        # Regression: when the host PATH really does contain phpstan (the CI
-        # runner image grew one), it used to hijack the fallback test — the
-        # real phpstan even shells out to the stubbed `php`, relabelling the
-        # stub's canned output as [phpstan]. hide() must survive that setup.
+        # When the host PATH really does contain phpstan (CI runner images can
+        # ship one), it must not hijack the fallback test — the real phpstan
+        # even shells out to the stubbed `php`, relabelling the stub's canned
+        # output as [phpstan]. hide() must survive that setup.
         host_bin = tmp_path / "host-bin"
         host_bin.mkdir()
         fake = host_bin / "phpstan"
@@ -739,19 +737,16 @@ echo "$out"
     def test_go_tools_skipped_when_no_file_is_analyzable(
         self, LINT, shell_env, tmp_path
     ):
-        # Moving from single-file to package scope introduced a NEW way to
-        # report correct code as broken -- the same defect in a new costume.
-        # A package whose files are all excluded by build constraints on this
-        # GOOS is the common case: the `tools/tools.go` + `//go:build tools`
-        # idiom, `//go:build integration` helpers, platform-only subpackages.
-        # Measured on real go1.27 with a `//go:build windows` package:
-        #   old `go vet <file>`      -> rc 0
-        #   new `go vet -C <dir> .`  -> rc 1, "build constraints exclude all Go
-        #                               files in ."
-        # so the hook would exit 2 and tell the agent to fix a file that is
-        # exactly right. A directory below the module root whose name contains a
-        # space fails the same way ("malformed import path"), and `go list -e`
-        # reports 0 files for both, which is why one probe covers them.
+        # Package-scope vet can report correct code as broken. A package whose
+        # files are all excluded by build constraints on this GOOS is the
+        # common case: the `tools/tools.go` + `//go:build tools` idiom,
+        # `//go:build integration` helpers, platform-only subpackages. On real
+        # go1.27 with a `//go:build windows` package, `go vet -C <dir> .` exits
+        # rc 1 with "build constraints exclude all Go files in .", so the hook
+        # would exit 2 and tell the agent to fix a file that is exactly right.
+        # A directory below the module root whose name contains a space fails
+        # the same way ("malformed import path"), and `go list -e` reports 0
+        # files for both, which is why one probe covers them.
         shell_env.stub("go", body=_GO_STUB_NO_ANALYZABLE_FILES)
         shell_env.stub("staticcheck")
         target = tmp_path / "w.go"
@@ -848,10 +843,10 @@ echo "$out"
         """tsc exiting non-zero WITHOUT naming any file means it never ran.
 
         A broken tsconfig.json makes tsc print `error TS5083: Cannot read file
-        'tsconfig.json'.` and exit 1. The related-lines filter grep'd for the
-        basename, found nothing, appended nothing -- and the hook returned 0
-        on a file with a genuine type error. checkstyle and cppcheck in the
-        same file already treat "non-zero and no findings" as a launch failure.
+        'tsconfig.json'.` and exit 1. A related-lines filter that only greps
+        for the basename finds nothing and would return 0 on a file with a
+        genuine type error. checkstyle and cppcheck in the same file treat
+        "non-zero and no findings" as a launch failure.
         """
         (git_repo / "tsconfig.json").write_text(
             "{ this is not json\n", encoding="utf-8"
@@ -896,8 +891,8 @@ echo "$out"
     def test_tsc_error_in_a_file_whose_name_contains_the_edited_one_does_not_block(
         self, LINT, shell_env, git_repo
     ):
-        # The filter was a substring match on the basename, and "index.ts"
-        # contains "x.ts": editing a clean x.ts blocked on index.ts's error.
+        # A substring match on the basename would let "index.ts" (which
+        # contains "x.ts") block an edit of a clean x.ts.
         target = git_repo / "x.ts"
         self._tsc_reports(
             shell_env, git_repo, target, "src/index.ts(1,14): error TS2322: bad."
@@ -937,8 +932,8 @@ echo "$out"
     def test_tsc_pretty_error_only_in_another_file_does_not_block(
         self, LINT, shell_env, git_repo
     ):
-        # The colour codes also hid `.ts:` from the launch-failure check, which
-        # then reported tsc's whole output as if tsc had never started.
+        # The colour codes must not hide `.ts:` from the launch-failure check,
+        # or it reports tsc's whole output as if tsc had never started.
         target = git_repo / "src" / "page.tsx"
         self._tsc_reports(
             shell_env,
@@ -1041,10 +1036,9 @@ echo "$out"
     def test_every_eslint_config_spelling_is_detected(
         self, LINT, shell_env, git_repo, config
     ):
-        # The list had eslint.config.cjs but not .eslintrc.cjs, .yml but not
-        # .yaml, and no eslint.config.ts -- so with eslint installed and one
-        # of these configs present the hook printed "config not found" and
-        # went green on code eslint had rejected.
+        # Every spelling ESLint accepts (.eslintrc.cjs, .yaml, eslint.config.ts,
+        # ...) has to be detected: an unrecognised config makes the hook print
+        # "config not found" and go green on code eslint would have rejected.
         shell_env.stub("eslint", body='echo "1:1 error Unexpected var"', exit_code=1)
         (git_repo / config).write_text("\n", encoding="utf-8")
         target = git_repo / "x.js"
@@ -1056,8 +1050,8 @@ echo "$out"
     def test_eslint_config_in_a_package_directory_is_detected(
         self, LINT, shell_env, git_repo
     ):
-        # Monorepos keep the config next to the package, not at the git root;
-        # the search only looked at PROJECT_ROOT.
+        # Monorepos keep the config next to the package, not at the git root,
+        # so the search cannot look only at PROJECT_ROOT.
         shell_env.stub("eslint", body='echo "1:1 error Unexpected var"', exit_code=1)
         pkg = git_repo / "packages" / "web"
         pkg.mkdir(parents=True)
@@ -1091,14 +1085,13 @@ echo "$out"
         assert "[TypeScript]" in res.stderr
 
     def test_tsc_error_blocks_for_a_bracketed_filename(self, LINT, shell_env, git_repo):
-        """tsc output was filtered with `grep "$BASENAME"` -- the filename went in
-        as an ERE, not a literal.
+        """The edited file's name must match tsc's output as a literal, not an ERE.
 
-        Next.js dynamic routes make this routine: `[id].tsx` parses as a
-        character class ("one char, i or d"), which never matches tsc's own
-        error line for that file. The extraction came back empty, so nothing
-        was appended to LINT_ERRORS and the hook returned 0 -- the gate went
-        green on code tsc had just rejected. A quality gate that misses is
+        Next.js dynamic routes make this routine: `[id].tsx` read as an ERE is
+        a character class ("one char, i or d"), which never matches tsc's own
+        error line for that file. The extraction would come back empty, nothing
+        would be appended to LINT_ERRORS and the hook would return 0 -- the
+        gate green on code tsc just rejected. A quality gate that misses is
         worse than a noisy one, so pin the literal match.
         """
         target = self._tsc_project(shell_env, git_repo, "[id].tsx")
@@ -1138,9 +1131,9 @@ echo "$out"
         """eslint installed only in the package, no root node_modules, no PATH copy.
 
         Real monorepo shape: packages/web/node_modules/.bin/eslint, no root
-        node_modules and no global eslint. The binary was resolved only at
-        PROJECT_ROOT/node_modules/.bin/eslint, then PATH -- so this printed
-        "ESLint not found" and passed (exit 0) without ever invoking eslint.
+        node_modules and no global eslint. Resolving the binary only at
+        PROJECT_ROOT/node_modules/.bin/eslint, then PATH, would print
+        "ESLint not found" and pass (exit 0) without ever invoking eslint.
         """
         shell_env.hide("eslint")
         pkg = git_repo / "packages" / "web"
@@ -1208,10 +1201,9 @@ echo "$out"
 
     def test_package_flat_config_is_found_by_eslint(self, LINT, shell_env, git_repo):
         # ESLint 9 looks for eslint.config.js from its working directory, and
-        # the hook runs from the project root. Once the package-local eslint
-        # is found, running it from there fails with "couldn't find an
-        # eslint.config" and blocks a clean file; it has to run where its
-        # config is.
+        # the hook runs from the project root. Running the package-local
+        # eslint from there fails with "couldn't find an eslint.config" and
+        # blocks a clean file; it has to run where its config is.
         pkg = self._package_eslint(shell_env, git_repo, "eslint.config.js")
         res = shell_env.run(LINT, stdin=payload(pkg / "app.js"), cwd=git_repo)
         assert res.returncode == 0, res.stderr
@@ -1307,12 +1299,12 @@ echo "$out"
     def test_local_tsc_is_found_when_not_on_path(self, LINT, shell_env, git_repo):
         """typescript is a devDependency, so tsc is normally NOT on PATH.
 
-        Resolving it with `command -v tsc` alone deletes the type check from
-        every ordinary npm project: a .ts file with a genuine type error and a
-        tsconfig.json beside it returned 0. "Absent" must be forced here -- the
-        stub dir only PREPENDS to the host PATH, and this machine really has a
-        global tsc, so without hiding it the test would pass for the wrong
-        reason.
+        Resolving it with `command -v tsc` alone would delete the type check
+        from every ordinary npm project: a .ts file with a genuine type error
+        and a tsconfig.json beside it would return 0. "Absent" must be forced
+        here -- the stub dir only PREPENDS to the host PATH, and this machine
+        really has a global tsc, so without hiding it the test would pass for
+        the wrong reason.
         """
         env = _env_hiding(shell_env, "tsc")
         if env is None:
@@ -1346,8 +1338,7 @@ echo "$out"
 
 
 # (extension, formatter stub, expected argv prefix). One entry per branch of
-# auto-format.sh's dispatch table. Only py and sh had coverage before; the rest
-# is ~190 lines duplicated between the two copies, so nothing caught an edit.
+# auto-format.sh's dispatch table (py and sh are covered by TestAutoFormat).
 FORMATTERS = [
     ("js", "prettier", "prettier --write "),
     ("md", "prettier", "prettier --write "),
@@ -1364,10 +1355,8 @@ FORMATTERS = [
 class TestAutoFormatMatrix:
     """Characterization of auto-format.sh's per-language dispatch table.
 
-    Same gap as the lint matrix had: ten branches, coverage on two. These pin
-    which formatter each extension reaches for and that a missing or failing
-    one degrades to a pass, so the matrix can be moved into a shared file and
-    proven unchanged.
+    These pin which formatter each extension reaches for and that a missing or
+    failing one degrades to a pass.
     """
 
     @pytest.mark.parametrize(
@@ -1467,9 +1456,9 @@ class TestAutoFormat:
     ):
         """prettier installed only in node_modules/.bin, not on PATH.
 
-        Resolved only via `command -v prettier`, so a project that pins
-        prettier as a devDependency (the standard npm layout) printed
-        "Prettier not found, skipping JS/TS formatting" and left the file
+        Resolving it only via `command -v prettier` would make a project that
+        pins prettier as a devDependency (the standard npm layout) print
+        "Prettier not found, skipping JS/TS formatting" and leave the file
         unformatted -- silent fail-open, not merely the wrong version.
         """
         shell_env.hide("prettier")
@@ -1686,13 +1675,11 @@ class TestCodexAutoFormat:
         assert any(c.startswith("shfmt -i 2 -w") for c in shell_env.calls)
 
     def test_editor_oneshot_formats_nothing(self, shell_env, git_repo):
-        # Same worktree as test_formats_modified_tracked_file, audited under the
+        # Same worktree as test_formats_modified_tracked_file, run under the
         # marker the editors' AI wrappers set. Reformatting there is not a
         # borderline call: a commit-message run edits no files at all, so every
         # candidate this hook finds is the user's own uncommitted work, and the
-        # rewrite lands AFTER the diff the message was generated from. Measured
-        # through a real `codex exec`: app.ts came back with semicolons prettier
-        # had added during a run that only asked for text.
+        # rewrite would land AFTER the diff the message was generated from.
         shell_env.stub("shfmt")
         (git_repo / "x.sh").write_text("echo hi\n", encoding="utf-8")
         run_git(git_repo, "add", "x.sh")
@@ -1713,9 +1700,10 @@ class TestCodexAutoFormat:
         assert any(c.startswith("shfmt -i 2 -w") for c in shell_env.calls)
 
     def test_local_prettier_is_found_when_not_on_path(self, shell_env, git_repo):
-        # Same bug as the Claude copy, hit via the Stop hook's git-diff target
-        # collection instead of a payload path. node_modules is gitignored so
-        # the stub binary itself is never swept up as a format target.
+        # Same lookup as the Claude copy, reached via the Stop hook's git-diff
+        # target collection instead of a payload path. node_modules is
+        # gitignored so the stub binary itself is never swept up as a format
+        # target.
         shell_env.hide("prettier")
         (git_repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
         local_bin = git_repo / "node_modules" / ".bin"
@@ -1834,9 +1822,9 @@ class TestCodexAutoFormat:
 class TestLintHelperOutputVarGuard:
     """hook_lint_file must refuse an output variable that shadows one of its locals.
 
-    The guard enumerates the locals by hand; GO_PKG_DIR was declared local but
-    left out of the list, so that one name slipped through and printf -v would
-    have written into the local -- the caller sees nothing, silently.
+    The guard enumerates the locals by hand, so every declared local (GO_PKG_DIR
+    included) has to be on the list: a name that slips through makes printf -v
+    write into the local, and the caller sees nothing, silently.
     """
 
     @pytest.mark.parametrize(
@@ -1882,12 +1870,13 @@ class TestLintBeforeFormatSkipsFormatterOwnedFindings:
     """Codex lints BEFORE auto-format runs; Claude lints after it.
 
     Claude's PostToolUse runs auto-format then lint, so the shared lint module
-    was written against an already-formatted file ("auto-format.sh has already
-    run --auto-correct"). Codex moved auto-format to Stop (a reformat breaks
-    apply_patch), so its PostToolUse lint sees the raw edit: rubocop's Layout
-    cops and ruff's import sorting -- exactly what `rubocop --auto-correct` and
-    `ruff check --select I --fix` repair at Stop -- came back as exit 2, and
-    the agent spent a turn hand-fixing what the formatter was about to fix.
+    assumes an already-formatted file (`--auto-correct` has already run).
+    Codex runs auto-format at Stop (a reformat breaks apply_patch), so its
+    PostToolUse lint sees the raw edit: rubocop's Layout cops and ruff's
+    import sorting -- exactly what `rubocop --auto-correct` and
+    `ruff check --select I --fix` repair at Stop -- must not come back as
+    exit 2, or the agent spends a turn hand-fixing what the formatter is
+    about to fix.
 
     Each side is pinned: Codex must leave the formatter's findings to the
     formatter, and Claude, whose file is already formatted, must keep them --

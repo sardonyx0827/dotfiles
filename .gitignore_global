@@ -9,7 +9,7 @@
 ## vim ignore
 # Swap
 [._]*.s[a-v][a-z]
-# comment out if you don't need vector files
+# keep vector files: the swap pattern above also matches [._]*.svg
 !*.svg
 [._]*.sw[a-p]
 [._]s[a-rt-v][a-z]
@@ -117,9 +117,6 @@ dist
 
 # Gatsby files
 .cache/
-# Comment in the public line in if your project uses Gatsby and not Next.js
-# https://nextjs.org/blog/next-9-1#public-directory-support
-# public
 
 # vuepress build output
 .vuepress/dist

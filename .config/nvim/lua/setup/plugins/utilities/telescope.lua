@@ -16,7 +16,6 @@ return {
       build = "make",
     },
   },
-  -- Keymaps formerly in after/plugin/telescope.lua (+ <M-0> from after/plugin/colorscheme.lua).
   -- Each key lazy-loads telescope on first use.
   keys = {
     { "<leader>sf", builtin("find_files"),             desc = "Find Files" },
@@ -42,7 +41,13 @@ return {
       "<M-0>",
       function()
         require("telescope.builtin").colorscheme({ enable_preview = true })
-        vim.cmd("autocmd ColorScheme * lua vim.api.nvim_set_hl(0, 'StatusLine', { blend = 0 })")
+        -- clear = true keeps it to one hook however often the picker is opened.
+        vim.api.nvim_create_autocmd("ColorScheme", {
+          group = vim.api.nvim_create_augroup("TelescopeColorschemeStatusLine", { clear = true }),
+          callback = function()
+            vim.api.nvim_set_hl(0, "StatusLine", { blend = 0 })
+          end,
+        })
       end,
       noremap = true,
       desc = "Pick colorscheme (transparent statusline)",
@@ -56,12 +61,10 @@ return {
         path_display = { "truncate" },
       },
       pickers = {
-        show_all_buffers = true,
         find_files = {
           hidden = true,
         },
         live_grep = {
-          --theme = "dropdown",
           additional_args = function()
             return { "--hidden" }
           end

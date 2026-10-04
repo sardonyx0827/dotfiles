@@ -142,8 +142,8 @@ end
 --- elsewhere are genuinely unknown. Saying so is what keeps the model from
 --- reporting a guess about the surroundings as a defect.
 ---
---- Deliberately transport-neutral about HOW the code arrives: naming stdin here
---- is the mistake 3fae7ab had to undo in M.replace_system.
+--- Transport-neutral about HOW the code arrives, for the reason given in
+--- M.replace_system.
 ---
 --- The unit's DESCRIPTION (its name, from the buffer) deliberately does not
 --- appear here -- it travels in the payload, via M.hint_input. This instruction
@@ -195,10 +195,9 @@ function M.hint_system(lang, filepath, start_line, end_line)
 end
 
 --- Payload for M.hint_system: the unit's description followed by its numbered
---- source. Both halves ride here rather than in the instruction because this
---- string is written to a temp file and piped in on stdin, while the
---- instruction is passed in argv -- and `label` carries an identifier read out
---- of the user's buffer.
+--- source. Both halves ride here rather than in the instruction (see
+--- M.hint_system for why: `label` carries an identifier read out of the user's
+--- buffer, and the instruction is passed in argv).
 --- @param label string one-line description of the unit (see ai.context.describe)
 --- @param lines string[] the unit's lines
 --- @param start_line integer buffer line number of lines[1]
@@ -252,8 +251,8 @@ end
 --- Deliberately says nothing about HOW the selection arrives. Most tools get it
 --- on stdin, but copilot has no stdin path and backend.build_cli_cmd appends it
 --- to this instruction under an `## Input` heading -- so a prompt that named
---- stdin was telling copilot to look somewhere the text was not. commit_instruction
---- has always been worded this way ("the following diff") and reaches copilot too.
+--- stdin would point copilot somewhere the text is not. commit_instruction is
+--- worded the same way ("the following diff") and reaches copilot too.
 --- Keep this sentence byte-identical to the one in .vim/rc/70-ai.vim's s:AI_Submit;
 --- only the editor name differs.
 --- @param lang string filetype (or "plain text")
@@ -420,7 +419,7 @@ function M.apply_edits(lines, edits)
   --- and that API refuses a non-string item ("expected String, got Integer")
   --- and a string with an embedded newline ("'replacement string' item contains
   --- newlines"). This is the other half of ai.ui's run_multi status-after-render
-  --- fix (see its comment there for the story of what broke before this existed).
+  --- guard (see its comment there).
   ---
   --- Skipped rather than repaired (splitting the string, coercing the value):
   --- M.fix_buffer_system defines `fixed` as an array of lines, so either shape

@@ -7,7 +7,7 @@ this module are worth pinning:
 - `scan_payload` is the pre-send credential gate. Every AI request funnels
   through it, and a false negative sends a live credential to an external
   tool. It is also the one place where the Lua side and `scripts/secret_scan.py`
-  have to agree on a wire contract (exit 0/1/2), which nothing checked.
+  have to agree on a wire contract (exit 0/1/2).
 - `build_cli_cmd` decides what lands in argv, and `run_cli` refuses a payload
   that would blow past ARG_MAX. copilot has no stdin path, so its payload goes
   into the command line -- the one place in this codebase that knowingly breaks
@@ -233,9 +233,8 @@ def backend_call(
 class TestScanPayloadContract:
     """The exit-code contract scripts/secret_scan.py documents in its docstring.
 
-    Nothing previously checked that the Lua reader implements the same
-    contract the Python writer promises; these run a stub scanner that exits
-    with each documented code.
+    Pins that the Lua reader implements the contract the Python writer
+    promises; each case runs a stub scanner that exits with a documented code.
     """
 
     def scan(self, tmp_path, text, scanner_body=None, tools=("sh", "python3")):
@@ -410,7 +409,7 @@ class TestBuildCliCmd:
         ).only
 
     def test_gemini_goes_through_the_shared_api_helper_not_the_cli(self, tmp_path):
-        """The `gemini` CLI is gone; the REST API is reached via a helper.
+        """Gemini goes through the REST API helper, not the `gemini` CLI.
 
         Pinned as a whole string because the property that matters is
         positional: the payload still arrives on STDIN, which is what lets the
@@ -464,13 +463,12 @@ class TestBuildCliCmd:
     def test_claude_gets_no_tools_from_either_source(self, tmp_path):
         """Both halves, or the write path stays open.
 
-        `--tools ''` drops only the BUILT-IN tools. Measured against claude
-        2.1.228: with that flag alone, a run whose Stop hook blocked went on to
-        edit the working tree through mcp__serena__replace_content -- an MCP
-        tool, untouched by --tools. --strict-mcp-config with no --mcp-config
-        alongside it leaves the session zero MCP servers, which is the other
-        half. A future edit that keeps one and drops the other reads as a
-        harmless simplification and silently reopens the hole, so pin both.
+        `--tools ''` drops only the BUILT-IN tools; an MCP tool such as
+        mcp__serena__replace_content can still edit the working tree.
+        --strict-mcp-config with no --mcp-config alongside it leaves the
+        session zero MCP servers, which is the other half. An edit that keeps
+        one and drops the other reads as a harmless simplification and silently
+        reopens the hole, so pin both.
         """
         cmd = self.build(tmp_path, "claude", "haiku", "I")
         assert "--tools ''" in cmd, "built-in tools still available"
@@ -577,12 +575,12 @@ class TestBuildCliCmd:
 
 
 class TestGeminiApiPath:
-    """Gemini reaches Google over HTTPS now, not through the `gemini` CLI.
+    """Gemini reaches Google over HTTPS through a helper, not the `gemini` CLI.
 
-    Three properties survive that move and none of them is visible in the
-    command string alone: the helper is found next to the config symlink, the
-    model comes from the same variable the rest of the repo uses, and the
-    payload is still scanned for credentials before it leaves the editor.
+    Three properties are not visible in the command string alone: the helper is
+    found next to the config symlink, the model comes from the same variable the
+    rest of the repo uses, and the payload is scanned for credentials before it
+    leaves the editor.
     """
 
     def probe(self, tmp_path, fn, *args, xdg=None, extra_env=None, tools=("sh",)):
@@ -598,9 +596,8 @@ class TestGeminiApiPath:
     def test_helpers_resolve_next_to_the_config_symlink(self, tmp_path):
         """~/.config/nvim is a symlink into the repo; step up two levels.
 
-        Same resolution scan_payload has always relied on, now shared with the
-        Gemini helper -- so a broken lookup takes out both, and pinning it once
-        covers both.
+        The same resolution scan_payload and the Gemini helper share, so a
+        broken lookup takes out both and pinning it once covers both.
         """
         root = fake_repo(tmp_path)
         got = self.probe(
@@ -695,7 +692,7 @@ class TestGeminiApiPath:
         assert gemini_kind != "ollama"
 
     def test_a_credential_in_a_gemini_payload_is_refused_before_any_job(self, tmp_path):
-        """The gate stays armed for gemini after the transport change.
+        """The credential gate stays armed for gemini.
 
         Driven through the public M.run with the real scanner, so this fails if
         the exemption is ever widened from "the local transport" to "anything
@@ -788,8 +785,8 @@ class TestRunWithFallbackReporting:
     `nvim -l` never runs the event loop, so a chain of real tools would park in
     jobstart and report nothing at all.
 
-    See `M.run_with_fallback`'s comment in backend.lua for why accumulating
-    every failure (rather than keeping only the last) matters.
+    See the comment on `failures` inside `M.run_with_fallback` in backend.lua
+    for why every failure is accumulated rather than only the last.
     """
 
     def chain(self, tmp_path, *tools):
@@ -815,7 +812,7 @@ class TestRunWithFallbackReporting:
         """ui.failure_lines already renders "[<tool> failed: <err>]".
 
         Prefixing here too would produce "[gemini failed: gemini: ...]", so the
-        one-attempt case has to keep the bare reason it always had.
+        one-attempt case has to keep the bare reason.
         """
         res = self.chain(tmp_path, "no-such-a")
         _, _, err, _ = res.calls[0]
@@ -836,10 +833,10 @@ class TestRunWithFallbackReporting:
 
         A spec that fails synchronously (unknown tool, oversized payload, a
         refused jobstart) runs its callback -- which advances to the next spec
-        and stores THAT job -- before `handle.job = M.run(...)` assigns, so the
-        assignment then overwrote the live id with nil. ui.lua's cancel_job
-        found nothing to stop, and the subprocess the user had cancelled kept
-        running.
+        and stores THAT job -- before `handle.job = M.run(...)` assigns. The
+        assignment must not clobber the live id with nil, or ui.lua's
+        cancel_job has nothing to stop. See the `handle.attempt` comment in
+        `M.run_with_fallback`.
         """
         res = self.chain(tmp_path, "no-such-a", "claude")
         assert isinstance(res.only, dict), res.only
@@ -853,7 +850,7 @@ class TestRunWithFallbackReporting:
 # open_report's `close`, i.e. what `q` and WinClosed call; "multi" ->
 # run_multi's close_all, reached by closing the popup window). __CANCEL__ says
 # whether to cancel at all -- with it false the same probe pins the behaviour
-# the fix must NOT break: a genuine failure still falls back.
+# that must NOT change: a genuine failure still falls back.
 CHAIN_PROBE = r"""
 local backend = require("setup.functions.ai.backend")
 local ui = require("setup.functions.ai.ui")
@@ -935,19 +932,15 @@ io.stdout:write(vim.json.encode({
 class TestCancellingStopsTheFallbackChain:
     """A cancelled request must not go on to start the next tool in the chain.
 
-    `attempt`'s failure branch advanced to specs[i + 1] on ANY failure, and a
-    cancellation arrives as one: callers cancel with vim.fn.jobstop (ui.lua's
-    `close` and `close_all`, i.e. closing the window), and the stopped job's
-    on_exit reports SIGTERM as "exit code 143" -- which the chain read as
-    "claude failed, try the next one". Measured: `done ok=false tool=gemini
-    err=claude: exit code 143 | gemini: exit code 1`. The user had closed the
-    window; the next tool's subprocess started anyway and ran to completion, and
-    for gemini that subprocess is scripts/gemini_api.py -- a live request to
-    Google, fired after the cancellation, with no window left to show the answer
-    and nothing tracking it to stop.
+    A cancellation is vim.fn.jobstop (ui.lua's `close` and `close_all`, i.e.
+    closing the window), and the stopped job's on_exit reports SIGTERM as
+    "exit code 143" -- indistinguishable from a tool failing on its own. Only
+    the `cancelled` flag tells them apart; without it the chain starts the next
+    tool after the window is gone (for gemini, a live request to Google). See
+    the `handle.cancelled` comment in `attempt` in backend.lua.
 
-    Unlike every other test in this file these need the event loop. The defect
-    lives in a job callback, and `nvim -l` runs those only while something waits
+    Unlike every other test in this file these need the event loop. The
+    behaviour lives in a job callback, and `nvim -l` runs those only while something waits
     (TestRunWithFallbackReporting is built the other way round -- on tools that
     fail SYNCHRONOUSLY -- for exactly that reason), so these drive real
     subprocesses under vim.wait. They also cancel the way production does,
@@ -1004,7 +997,7 @@ class TestCancellingStopsTheFallbackChain:
         )
 
     def test_a_genuine_failure_still_falls_back(self, tmp_path):
-        """The invariant the fix must not break -- falling back IS the feature.
+        """The invariant the cancel guard must not break -- falling back IS the feature.
 
         Same probe, nothing cancelled, leading tool failing on its own: the
         chain has to advance, run the next tool for real, and report under that
@@ -1095,11 +1088,10 @@ def test_nvim_l_does_not_load_the_user_config(tmp_path):
 class TestCliFailureReason:
     """What the hint report says when a CLI run does not produce an answer.
 
-    Two things were wrong. `exit code 0` was reported when the tool succeeded
-    but printed nothing -- stating a success as the cause of a failure. And
-    with no on_stderr handler the CLI's own diagnosis was thrown away: a
-    missing binary exits 127 with "command not found" on stderr, so the reader
-    saw a bare number and no way to tell that the tool simply is not installed.
+    `exit code 0` must never be stated as the cause of a failure (the tool
+    succeeded but printed nothing), and the CLI's own stderr must reach the
+    reason: a missing binary exits 127 with "command not found", which a bare
+    number would hide. See `cli_failure_reason` in backend.lua.
     """
 
     def reason(self, tmp_path, exit_code, stderr):
@@ -1137,17 +1129,14 @@ class TestCliFailureReason:
 
 
 class TestOllamaFailureReason:
-    """run_ollama never got the fix run_cli did, so its reason was always wrong.
+    """run_ollama's failure reason: the transport's exit code and stderr win over the parse error.
 
-    `done(false, {}, err or exit_code)` prefers the parse error, and parse_ollama
-    returns a non-nil error for any unusable body -- including the empty string an
-    unreachable server produces. The exit_code branch was therefore unreachable, and
-    "could not connect to Ollama" always surfaced as "invalid JSON response". run_ollama
-    also registered no on_stderr at all, so the transport's own diagnosis was discarded.
-
-    Routed through the same cli_failure_reason run_cli uses, so both backends describe a
-    failure the same way: the transport's exit code and stderr when the transport failed,
-    the parse error only when it genuinely succeeded and returned something unusable.
+    parse_ollama returns a non-nil error for any unusable body, including the empty
+    string an unreachable server produces, so a parse-error-first reason would report
+    "could not connect to Ollama" as "invalid JSON response". The parse error is
+    reported only when the transport succeeded. Goes through the same
+    cli_failure_reason run_cli uses, so both backends describe a failure the same way.
+    See `ollama_failure_reason` in backend.lua.
     """
 
     def reason(self, tmp_path, exit_code, stderr, parse_err):
@@ -1187,10 +1176,9 @@ class TestFailureMessageReachesTheBuffer:
     """A failure reason is rendered with nvim_buf_set_lines, which REJECTS an
     item containing a newline ('replacement string' item contains newlines).
 
-    While the reason was always `exit code N` this could not happen. Quoting
-    the tool's stderr made multi-line reasons the normal case -- a traceback is
-    exactly what MAX_STDERR_CHARS was sized for -- so the display has to split
-    the message instead of handing it over as one line.
+    Quoting the tool's stderr makes multi-line reasons the normal case -- a
+    traceback is exactly what MAX_STDERR_CHARS is sized for -- so the display
+    has to split the message instead of handing it over as one line.
     """
 
     def lines(self, tmp_path, label, err):
@@ -1290,11 +1278,11 @@ def make_empty_reply_bin(tmp_path, output):
 class TestWhitespaceOnlyReplies:
     """Exit 0 with nothing but whitespace on stdout is an empty response.
 
-    `"\\n"` splits into {"", ""}; clean_cli_lines drops one trailing empty
-    string and `#result > 0` counted the survivor as an answer. The report tab
-    turned green and `y` replaced the selection with a single blank line -- and
-    cli_failure_reason's own "empty response" branch was unreachable. The other
-    transports already apply the rule (parse_ollama / parse_edits treat
+    `"\\n"` splits into {"", ""} and clean_cli_lines drops one trailing empty
+    string, so a bare `#result > 0` would count the survivor as an answer: the
+    report tab would turn green, `y` would replace the selection with a blank
+    line, and cli_failure_reason's "empty response" branch would be unreachable.
+    The other transports apply the same rule (parse_ollama / parse_edits treat
     whitespace-only as empty).
     """
 

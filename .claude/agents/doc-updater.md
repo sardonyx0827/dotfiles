@@ -1,6 +1,6 @@
 ---
 name: doc-updater
-description: Documentation and codemap specialist. Use PROACTIVELY for updating codemaps and documentation. Backs the /update-codemaps and /update-docs commands; generates docs/CODEMAPS/*, updates READMEs and guides.
+description: Documentation and codemap specialist. Use for updating codemaps and documentation. Backs the /update-codemaps and /update-docs commands; generates docs/CODEMAPS/*, updates READMEs and guides.
 tools:
   [
     "Read",
@@ -150,110 +150,6 @@ Files to update:
 - Validate code snippets compile
 ```
 
-## Example Project-Specific Codemaps
-
-### Frontend Codemap (docs/CODEMAPS/frontend.md)
-
-```markdown
-# Frontend Architecture
-
-**Last Updated:** YYYY-MM-DD
-**Framework:** Next.js 15.1.4 (App Router)
-**Entry Point:** website/src/app/layout.tsx
-
-## Structure
-
-website/src/
-├── app/ # Next.js App Router
-│ ├── api/ # API routes
-│ ├── products/ # Products pages
-│ ├── bot/ # Bot interaction
-│ └── creator-dashboard/
-├── components/ # React components
-├── hooks/ # Custom hooks
-└── lib/ # Utilities
-
-## Key Components
-
-| Component         | Purpose          | Location                        |
-| ----------------- | ---------------- | ------------------------------- |
-| HeaderAuth        | Auth connection  | components/HeaderAuth.tsx       |
-| ProductsClient    | Products listing | app/products/ProductsClient.js  |
-| SemanticSearchBar | Search UI        | components/SemanticSearchBar.js |
-
-## Data Flow
-
-User → Products Page → API Route → Supabase → Redis (optional) → Response
-
-## External Dependencies
-
-- Next.js 15.1.4 - Framework
-- React 19.0.0 - UI library
-- Auth0 - Authentication
-- Tailwind CSS 3.4.1 - Styling
-```
-
-### Backend Codemap (docs/CODEMAPS/backend.md)
-
-```markdown
-# Backend Architecture
-
-**Last Updated:** YYYY-MM-DD
-**Runtime:** Next.js API Routes
-**Entry Point:** website/src/app/api/
-
-## API Routes
-
-| Route                | Method | Purpose           |
-| -------------------- | ------ | ----------------- |
-| /api/products        | GET    | List all products |
-| /api/products/search | GET    | Semantic search   |
-| /api/product/[slug]  | GET    | Single product    |
-| /api/product-price   | GET    | Real-time pricing |
-
-## Data Flow
-
-API Route → Supabase Query → Redis (cache) → Response
-
-## External Services
-
-- Supabase - PostgreSQL database
-- Redis Stack - Vector search
-- OpenAI - Embeddings
-```
-
-### Integrations Codemap (docs/CODEMAPS/integrations.md)
-
-```markdown
-# External Integrations
-
-**Last Updated:** YYYY-MM-DD
-
-## Authentication
-
-- Social login (Google, GitHub)
-- Email authentication
-- Session management
-
-## Database (Supabase)
-
-- PostgreSQL tables
-- Real-time subscriptions
-- Row Level Security
-
-## Search (Redis + OpenAI)
-
-- Vector embeddings (text-embedding-ada-002)
-- Semantic search (KNN)
-- Fallback to substring search
-
-## Payments (Stripe)
-
-- Payment method integration
-- Transaction handling
-- Stripe SDK
-```
-
 ## README Update Template
 
 When updating README.md:
@@ -275,7 +171,7 @@ npm install
 
 cp .env.example .env.local
 
-# Fill in: OPENAI_API_KEY, REDIS_URL, etc.
+# Fill in the variables listed in .env.example
 
 # Development
 

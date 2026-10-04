@@ -54,10 +54,10 @@ When a third-party package is genuinely needed (e.g., a standalone CLI tool), us
 
 ## Reading JSON from stdin Safely
 
-Hooks receive structured input on stdin. Crash = the entire tool call is blocked for the user.
+Hooks receive structured input on stdin. In Claude Code a crash (any exit other than 0/2) is a non-blocking error: the tool call proceeds with the check silently skipped — so parse defensively and exit 0 on purpose.
 
 ```python
-# ❌ WRONG: crashes on empty stdin or malformed JSON, blocks Claude
+# ❌ WRONG: raises on empty stdin or malformed JSON, so the check silently doesn't run
 hook_input = json.loads(sys.stdin.read())
 
 # ✅ CORRECT: fail-open — let the tool call through on any parse error
@@ -192,12 +192,16 @@ Atomic writes (never leave a partial file visible):
 
 ```python
 from pathlib import Path
-import tempfile, os
+import os, shutil, tempfile
 
 def atomic_write(path: Path, content: str) -> None:
-    tmp = Path(tempfile.mktemp(dir=path.parent, suffix=".tmp"))
+    fd, name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    tmp = Path(name)
     try:
-        tmp.write_text(content, encoding="utf-8")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        if path.exists():
+            shutil.copymode(path, tmp)   # mkstemp creates 0600; keep the target's mode
         tmp.replace(path)   # atomic on POSIX same-filesystem
     except Exception:
         tmp.unlink(missing_ok=True)
@@ -231,7 +235,7 @@ logger = _make_logger("bash-review", Path.home() / ".claude" / "logs" / "bash-re
 ```
 
 - `RotatingFileHandler` handles rotation atomically — no manual tail/rewrite needed.
-- Never leave `print()` debugging statements in committed code; the Stop hook will flag them.
+- Remove `print()` debugging before committing; the Stop hook (`stop-audit.sh`) flags only `breakpoint()` / `pdb.set_trace()` in Python.
 
 ## Error Handling & Exit Discipline
 
@@ -253,7 +257,7 @@ except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
     sys.exit(0)   # fail-open for hooks; fail-closed (sys.exit(1)) for CLI tools
 ```
 
-- Group related error types into a named tuple at module level (see `_API_ERRORS` pattern in `bash-review.py`) so the catch clause stays readable.
+- Group related error types into a named tuple at module level (see `_API_ERRORS` in `.claude/hooks/_bash_review_common.py`) so the catch clause stays readable.
 - Log `traceback.format_exc()` to the file, but write only a short summary to stderr — Claude reads stderr and a wall of traceback is unhelpful.
 
 ## Type Hints & Dataclasses
@@ -276,7 +280,7 @@ def run_review(command: str, cfg: ReviewConfig) -> tuple[str, str]:
     ...
 ```
 
-- `frozen=True` on dataclasses makes config objects immutable (matches the coding-style rule).
+- `frozen=True` on dataclasses makes config objects immutable.
 - Prefer `tuple[str, str]` return types over parallel global variables or mutable dicts.
 
 ## argparse for CLI Scripts
@@ -301,6 +305,7 @@ Accepting `argv` as a parameter (defaulting to `None`, which argparse interprets
 
 ```python
 # pytest with capsys + monkeypatch + tmp_path
+import io
 import json
 import pytest
 from my_hook import main   # importable because of the if __name__ == "__main__" guard
@@ -311,7 +316,7 @@ def _make_hook_json(**overrides) -> str:
     return json.dumps(base)
 
 def test_safe_command_is_allowed(monkeypatch, capsys):
-    monkeypatch.setattr("sys.stdin", io.StringIO(_make_hook_json()))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(_make_hook_json().encode()), encoding="utf-8"))
     rc = main()
     out = capsys.readouterr().out
     decision = json.loads(out)["hookSpecificOutput"]["permissionDecision"]
@@ -319,7 +324,7 @@ def test_safe_command_is_allowed(monkeypatch, capsys):
     assert decision == "allow"
 
 def test_deny_command_is_blocked(monkeypatch, capsys):
-    monkeypatch.setattr("sys.stdin", io.StringIO(_make_hook_json(tool_input={"command": "rm -rf /"})))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(_make_hook_json(tool_input={"command": "rm -rf /"}).encode()), encoding="utf-8"))
     rc = main()
     decision = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"]
     assert decision == "deny"

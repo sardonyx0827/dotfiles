@@ -1,6 +1,6 @@
 ---
 name: database-reviewer
-description: PostgreSQL database specialist for query optimization, schema design, security, and performance. Use PROACTIVELY when writing SQL, creating migrations, designing schemas, or troubleshooting database performance. Incorporates Supabase best practices.
+description: PostgreSQL database specialist for query optimization, schema design, security, and performance. Use when writing SQL, creating migrations, designing schemas, or troubleshooting database performance. Incorporates Supabase best practices.
 tools:
   [
     "Read",
@@ -68,7 +68,7 @@ a) Index Usage
    - Is the index type appropriate (B-tree, GIN, BRIN)?
 
 b) Query Plan Analysis
-   - Run EXPLAIN ANALYZE on complex queries
+   - Run EXPLAIN ANALYZE on complex queries — on a non-production database, or inside a transaction you roll back (it executes the statement, DML included)
    - Check for Seq Scans on large tables
    - Verify row estimates match actuals
 
@@ -144,9 +144,9 @@ CREATE INDEX orders_customer_id_idx ON orders (customer_id);
 ### 2. Choose the Right Index Type
 
 | Index Type           | Use Case                 | Operators                           |
-| -------------------- | ------------------------ | ----------------------------------- | ------- |
+| -------------------- | ------------------------ | ----------------------------------- |
 | **B-tree** (default) | Equality, range          | `=`, `<`, `>`, `BETWEEN`, `IN`      |
-| **GIN**              | Arrays, JSONB, full-text | `@>`, `?`, `?&`, `?                 | `, `@@` |
+| **GIN**              | Arrays, JSONB, full-text | `@>`, `?`, `?&`, `?\|`, `@@`        |
 | **BRIN**             | Large time-series tables | Range queries on sorted data        |
 | **Hash**             | Equality only            | `=` (marginally faster than B-tree) |
 
@@ -178,7 +178,8 @@ CREATE INDEX orders_status_created_idx ON orders (status, created_at);
   - `WHERE status = 'pending'`
   - `WHERE status = 'pending' AND created_at > '2024-01-01'`
 - Does NOT work for:
-  - `WHERE created_at > '2024-01-01'` alone
+  - `WHERE created_at > '2024-01-01'` alone (PostgreSQL 18+ can skip-scan the leading column,
+    but only when it has few distinct values — still add a matching index for hot queries)
 
 ### 4. Covering Indexes (Index-Only Scans)
 
@@ -246,9 +247,9 @@ CREATE TABLE users (
 );
 
 -- ✅ Distributed systems: UUIDv7 (time-ordered)
-CREATE EXTENSION IF NOT EXISTS pg_uuidv7;
+-- PostgreSQL 18+: built-in uuidv7(); earlier versions need the pg_uuidv7 extension (uuid_generate_v7())
 CREATE TABLE orders (
-  id uuid DEFAULT uuid_generate_v7() PRIMARY KEY
+  id uuid DEFAULT uuidv7() PRIMARY KEY
 );
 
 -- ❌ AVOID: Random UUIDs cause index fragmentation

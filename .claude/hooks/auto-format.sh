@@ -17,22 +17,20 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HOOK_DIR/_hook_common.sh"
 # shellcheck source=_format_common.sh
 . "$HOOK_DIR/_format_common.sh"
-# 読み込めていなければ fail-open で抜ける。shellcheck は関数の存在までは
-# 見ないので、確認しないと実行時まで気付けない。ここで止めないと、後段の
+# 読み込めていなければ fail-open で抜ける。ここで止めないと、後段の
 # hook_format_file 呼び出しが「command not found」で false 扱いになり、
-# 何も整形していないのに "Formatting completed" と成功を装って抜けてしまう。
+# 何も整形していないのに "Formatting completed" と成功を装って抜けてしまう
+# (shellcheck は関数の存在までは見ない)。
 if ! declare -F hook_log >/dev/null 2>&1 ||
   ! declare -F hook_format_file >/dev/null 2>&1; then
   echo "auto-format.sh: could not load shared hook helpers from $HOOK_DIR" >&2
   exit 0
 fi
 
-# ログ設定
 LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/format.log"
 mkdir -p "$LOG_DIR"
 
-# JSONからファイルパスを取得
 FILE_PATH=$(jq -r '.tool_input.file_path // empty' 2>/dev/null)
 
 if [ -z "$FILE_PATH" ]; then

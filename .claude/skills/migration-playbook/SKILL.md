@@ -25,8 +25,8 @@ Enumerate every affected call site BEFORE changing a single line of production c
 
 ```bash
 # Count and locate all usages of the thing being replaced
-grep -rn "oldImport\|OldAPI\|deprecated_fn" src/ --include="*.ts" | wc -l
-grep -rn "oldImport\|OldAPI\|deprecated_fn" src/ --include="*.ts"
+grep -rn "oldImport\|OldAPI\|deprecated_fn" . --include="*.ts" --exclude-dir={node_modules,.git} | wc -l
+grep -rn "oldImport\|OldAPI\|deprecated_fn" . --include="*.ts" --exclude-dir={node_modules,.git}
 
 # For syntactic patterns, ast-grep gives structural matches
 ast-grep --pattern 'require("old-package")' --lang js
@@ -164,9 +164,9 @@ Do not close the migration until every item in this phase is complete.
 3. Grep for stragglers:
    ```bash
    # Old import paths still present?
-   grep -rn "old-package\|OldClass\|deprecated_fn" src/
+   grep -rn "old-package\|OldClass\|deprecated_fn" . --exclude-dir={node_modules,.git,dist,build}
    # Compatibility layer still referenced?
-   grep -rn "legacyFoo\|compat/" src/
+   grep -rn "legacyFoo\|compat/" . --exclude-dir={node_modules,.git,dist,build}
    ```
 4. Remove the compatibility layer, the adapter module, and any dead configuration that
    existed only to support the old behavior. An incomplete clean-up leaves a trap for the

@@ -53,7 +53,7 @@ def press(tmp_path, key, lines, cursor):
 class TestMoveToCodeblock:
     def test_an_unclosed_fence_on_the_last_line_does_not_throw(self, tmp_path):
         # `between_line = i + 1` is one past the end while the fence is still
-        # being typed; nvim_win_set_cursor rejected it with "out of range".
+        # being typed; nvim_win_set_cursor rejects it as "out of range".
         res = press(tmp_path, ",,n", ["text", "```lua"], cursor=1)
         assert res["ok"], res["err"]
         assert 1 <= res["cursor"] <= 2
@@ -75,8 +75,8 @@ class TestSelectCodeblockText:
         self, tmp_path
     ):
         # Both scans start at the cursor line, so a cursor ON the fence matches
-        # it twice: start = 2, end = 0, the guard passed, `normal! V` ran, and
-        # set_cursor(0) threw mid-selection.
+        # it twice (start = 2, end = 0). The selection must not start `normal! V`
+        # and then throw in set_cursor(0), leaving visual mode behind.
         res = press(tmp_path, ",,s", ["```lua", "print(1)", "```"], cursor=1)
         assert res["ok"], res["err"]
         assert res["mode"] == "n"

@@ -1,12 +1,12 @@
 """lazy.lua's plugin discovery must survive a config path with Lua magic chars.
 
-The spec loader turned each file path into a module name by stripping
-`stdpath("config") .. "/lua/"` -- with `string.gsub`, i.e. as a PATTERN. A
-`-` in the path (`/Users/jane-doe/.config`, a worktree under `dotfiles-main`)
-is a lazy quantifier there, the prefix never matched, every `require` failed,
-and the editor started with zero plugins and forty "skipped plugin spec"
-notifications. Not visible on the primary checkout, whose path happens to
-contain no magic characters.
+The spec loader maps each file path to a module name by stripping
+`stdpath("config") .. "/lua/"`. Done with `string.gsub` that prefix is read as a
+PATTERN: a `-` in the path (`/Users/jane-doe/.config`, a worktree under
+`dotfiles-main`) is a lazy quantifier, the prefix never matches, every `require`
+fails, and the editor starts with zero plugins and a "skipped plugin spec"
+notification per file. Not visible on the primary checkout, whose path happens
+to contain no magic characters. See the comment in lazy.lua's file scan.
 
 Driven through the real lazy.lua with lazy.nvim itself stubbed out: the file
 bootstraps lazy.nvim from git when it is absent, so the probe pre-creates the
