@@ -1,0 +1,6 @@
+{
+  "name": "bash-review-log",
+  "version": "0.1.0",
+  "description": "bash-review の判定ログ (~/.claude/logs/bash-review.log) をペインで表示する /bash-review-log コマンド",
+  "types": "./types/index.d.ts"
+}

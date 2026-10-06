@@ -484,6 +484,11 @@ class TestCreateSymlinks:
         # Claude / Gemini entries are symlinked individually.
         assert (home / ".claude/settings.json").is_symlink()
         assert (home / ".claude/hooks").is_symlink()
+        # settings.json's CLAUDE_CODE_PLUGIN_DIRS names mods under ~/.claude/mods.
+        assert (home / ".claude/mods").is_symlink()
+        assert (home / ".claude/mods").resolve() == (
+            REPO_ROOT / ".claude/mods"
+        ).resolve()
         assert (home / ".gemini/settings.json").is_symlink()
         assert (home / ".config/nvim").resolve() == (
             REPO_ROOT / ".config/nvim"

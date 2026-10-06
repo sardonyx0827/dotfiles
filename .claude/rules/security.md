@@ -8,12 +8,13 @@ Role separation (single source of truth):
 
 ## Triggers
 
-| Situation                                                                                                                           | Action                                      |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Implementing auth, user input handling, secrets, API endpoints, payments, or file uploads                                           | Follow the **security-review** skill        |
-| Before a commit or PR that touches those areas, or the secrets / permission / hook config guarding them                             | Run the **security-reviewer** agent         |
-| Dependency updates or a known CVE, a security-tool alert, a user-reported concern, a production incident, or before a major release | Run the **security-reviewer** agent         |
-| Security issue discovered                                                                                                           | Follow the Security Response Protocol below |
+| Situation                                                                                                                            | Action                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| Implementing auth, user input handling, secrets, API endpoints, payments, or file uploads                                            | Follow the **security-review** skill        |
+| Before a commit or PR that touches those areas, or the secrets / permission / hook config guarding them                              | Run the **security-reviewer** agent         |
+| Before a commit or PR that adds or changes a mod (`.claude/mods/**`) or what loads one (`CLAUDE_CODE_PLUGIN_DIRS`, `enabledPlugins`) | Run the **security-reviewer** agent         |
+| Dependency updates or a known CVE, a security-tool alert, a user-reported concern, a production incident, or before a major release  | Run the **security-reviewer** agent         |
+| Security issue discovered                                                                                                            | Follow the Security Response Protocol below |
 
 ## Pre-Commit Gate
 

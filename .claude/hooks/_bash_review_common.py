@@ -831,8 +831,8 @@ COMPLEX_SHELL_SYNTAX = re.compile(r"[\r\n`<>]|\$\(|(?<!&)&(?!&)")
 # 機密ファイル/秘匿情報へのアクセスは、たとえ cat/head/grep 等のセーフ
 # コマンドであってもレビューをスキップさせない。コマンド文字列全体に対して
 # 大文字小文字を無視して部分一致で判定する。これは settings.json の
-# Read(.env) / Read(**/id_rsa*) / Read(**/*.key) などの deny ルールが Bash 経由の
-# 読み出しで迂回されるのを防ぐためのもの。誤検知 (レビュー行き) はレイテンシ
+# Read(//**/.env) / Read(//**/id_rsa*) / Read(//**/*.key) などの deny ルールが
+# Bash 経由の読み出しで迂回されるのを防ぐためのもの。誤検知 (レビュー行き) はレイテンシ
 # 増のみでブロックにはならないため、疑わしきはマッチさせる方針とする。
 SENSITIVE_PATTERNS = re.compile(
     # .env / .env.local / .env-prod (\b は . や - で成立) に加え、\b が効かない
@@ -850,6 +850,11 @@ SENSITIVE_PATTERNS = re.compile(
     r"|\.netrc"
     r"|\.npmrc"
     r"|\.pypirc"
+    # CLI の認証ファイル (~/.claude.json、~/.codex/auth.json、~/.config/gh/hosts.yml)。
+    # settings.json の Read deny と揃える。cwd が ~ だと相対パスで safe-skip に届く。
+    r"|\.claude\.json"
+    r"|auth\.json"
+    r"|hosts\.yml"
     r"|credentials"
     r"|secret"
     r"|token"
@@ -1262,7 +1267,7 @@ def _is_sensitive_command(cmd: str) -> bool:
 # カレントツリーの外 (絶対パス / ホーム参照 / 親ディレクトリ遡上 / 変数展開) に
 # 届き得る場合はセーフ扱いにせず AI レビューへ回す」という位置ベースのガードを
 # 併用する。これで denylist のもぐら叩きに頼らず、相対パスのローカル読み取り
-# (cat README.md / grep -r foo src) だけを高速パスに残せる。各枝の意図:
+# (cat README.md / rg foo src) だけを高速パスに残せる。各枝の意図:
 #   (?:^|[\s=])[/~]     : 先頭・空白・= の直後の / ~ (絶対パス・ホーム参照)。
 #                         = を含めるのは `--file=/etc/shadow` `--file=~/.ssh` 対策。
 #                         git の HEAD~1 は ~ が英数字の直後なので誤検知しない。
@@ -1497,9 +1502,179 @@ def _has_output_file_flag(cmd: str) -> bool:
     return False
 
 
+# 引用符の外のグロブ/ブレース/括弧文字。シェルはこれをコマンド文字列に現れない
+# 名前に展開する (`cat .e*` -> `cat .env`、`cat .e{n,}v` -> `cat .env .ev`) ため、
+# SENSITIVE_PATTERNS の文字列照合では対象が見えない。Bash ツールのシェルは zsh で、
+# 括弧も展開に使われる: `.e(n)v` はグループ glob で `.env` になり、`*(.)` は glob
+# 修飾子、`=(cmd)` はプロセス置換で cmd を実行する (COMPLEX_SHELL_SYNTAX が拾う
+# `$(` `<(` `>(` と違い、`cat =(curl ...)` が safe-skip で素通りしていた)。
+# 引用符の中 (grep / rg の正規表現 `'a.*b'`) とバックスラッシュでエスケープされた
+# 文字はリテラルとして渡るので展開されず、日常の検索はセーフのまま残る。
+_GLOB_CHARS = frozenset("*?[{()")
+
+
+def _has_unquoted_glob(cmd: str) -> bool:
+    """引用符の外にエスケープされていないグロブ/ブレース/括弧文字があるか判定する。"""
+    quote = ""
+    escaped = False
+    for ch in cmd:
+        if escaped:
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if ch == quote:
+                quote = ""
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch in _GLOB_CHARS:
+            return True
+    return False
+
+
+# ファイル名を明示せずに機密を出力できる検索。コマンドがファイル名を含まないので、
+# settings.json の Read deny もここでは効かない (公式ドキュメントに明記)。
+#
+# grep: Claude Code の Bash ツールでは grep が `ugrep --hidden --ignore-files` を
+# 呼ぶシェル関数に置き換わっている。ディレクトリを渡すと再帰指定なしでも直下の
+# 隠しファイル (.env) を読み、`-3` のような数字フラグは「深さ 3 まで再帰」になる
+# (いずれも実機で確認)。そこで、再帰系のフラグに加え、通常ファイルに見えない
+# オペランド (`.`、`src`、`sub/`、拡張子のない名前) を渡す grep もレビューへ回す。
+# パイプの途中 (`ps aux | grep foo`) や `grep foo file.txt` はセーフのまま残る。
+_GREP_RECURSIVE_LONG = (
+    "--recursive",
+    "--dereference-recursive",
+    "--directories",
+    "--max-depth",
+    "--depth",
+)
+_GREP_RECURSIVE_SHORT = "rRd"
+# 値を取る短フラグ。`-A 3` の `3` をオペランドと数えないために読み飛ばす。
+_GREP_VALUE_SHORT = "efABCmD"
+_DIGIT_FLAG = re.compile(r"-\d+$")
+#
+# rg: 既定で隠しファイルと無視対象 (.env は通常その両方) を読まないが、
+# `-.` / `-u` / `--hidden` / `--unrestricted` / `--no-ignore*` に加え、`-g` / `--glob`
+# / `--iglob` (除外の `!` 以外) と `-t` / `--type` も、その既定を上書きして隠し
+# ファイルを読む (`rg -g '*'`、`rg -t json` で実機確認)。`-L` / `--follow` は
+# ツリー内の symlink をたどってツリー外のファイルを読む。
+_RG_UNRESTRICTED_LONG = (
+    "--hidden",
+    "--unrestricted",
+    "--no-ignore",
+    "--type",
+    "--follow",
+)
+_RG_UNRESTRICTED_SHORT = ".utL"
+_RG_GLOB_LONG = ("--glob", "--iglob")
+
+
+def _looks_like_regular_file(operand: str) -> bool:
+    """`name.ext` の形 (拡張子つき、末尾 / なし) なら通常ファイルとみなす。
+
+    `.`、`..`、`src`、`sub/`、`.gitignore` のような名前はディレクトリかもしれない
+    ので False (保守側)。
+    """
+    name = operand.rsplit("/", 1)[-1]
+    return bool(name) and not operand.endswith("/") and "." in name[1:]
+
+
+def _grep_is_unrestricted(tokens: list[str]) -> bool:
+    operands: list[str] = []
+    pattern_from_flag = False
+    skip_value = False
+    for tok in tokens:
+        if skip_value:
+            skip_value = False
+            continue
+        if tok == "--":
+            break
+        flag = tok.split("=", 1)[0]
+        if flag.startswith("--") and len(flag) > 2:
+            # GNU grep は曖昧でない前方一致の略記も受ける (`--rec` = --recursive)。
+            if any(f.startswith(flag) for f in _GREP_RECURSIVE_LONG):
+                return True
+            if flag in ("--regexp", "--file"):
+                pattern_from_flag = True
+        elif len(flag) >= 2 and flag[0] == "-":
+            if _DIGIT_FLAG.match(flag) or any(
+                c in _GREP_RECURSIVE_SHORT for c in flag[1:]
+            ):
+                return True
+            letters = flag[1:]
+            if "e" in letters or "f" in letters:
+                pattern_from_flag = True
+            # 値を取るフラグが束の末尾にあり値が付いていなければ、次のトークンが値。
+            if letters[-1] in _GREP_VALUE_SHORT:
+                skip_value = True
+        else:
+            operands.append(tok)
+    files = operands if pattern_from_flag else operands[1:]
+    return any(not _looks_like_regular_file(f) for f in files)
+
+
+def _rg_is_unrestricted(tokens: list[str]) -> bool:
+    expect_glob = False
+    for tok in tokens:
+        if expect_glob:
+            expect_glob = False
+            if not tok.startswith("!"):
+                return True
+            continue
+        if tok == "--":
+            break
+        flag, _, value = tok.partition("=")
+        if flag.startswith("--"):
+            if any(
+                flag == f or flag.startswith(f + "-") for f in _RG_UNRESTRICTED_LONG
+            ):
+                return True
+            if flag in _RG_GLOB_LONG:
+                if not value:
+                    expect_glob = True
+                elif not value.startswith("!"):
+                    return True
+        elif len(flag) >= 2 and flag[0] == "-":
+            letters = tok[1:]
+            if "g" in letters:
+                # `-g GLOB` か、束の中の `g` 以降に付いた値 (`-g*.ts`)。
+                attached = letters.split("g", 1)[1]
+                if not attached:
+                    expect_glob = True
+                elif not attached.startswith("!"):
+                    return True
+                letters = letters.split("g", 1)[0]
+            if any(c in _RG_UNRESTRICTED_SHORT for c in letters):
+                return True
+    return False
+
+
+def _is_unrestricted_search(cmd: str) -> bool:
+    """grep / rg が、ファイル名を明示せずに隠しファイルや再帰先を読むか判定する。
+
+    _tokenize はクォートを解決するので `grep '-r'` も `-r` として見える。
+    実行体より前のトークン (`timeout 5`、`VAR=1`) は読み飛ばす。
+    """
+    exe = _resolve_executable(cmd)
+    if exe not in ("grep", "rg"):
+        return False
+    tokens = _tokenize(cmd)
+    start = next(
+        (i + 1 for i, tok in enumerate(tokens) if tok.rsplit("/", 1)[-1] == exe), 1
+    )
+    rest = tokens[start:]
+    return _grep_is_unrestricted(rest) if exe == "grep" else _rg_is_unrestricted(rest)
+
+
 def _is_safe_command(cmd: str) -> bool:
     # 機密パスを含む場合はセーフ扱いにせず AI レビューへ回す (Read deny の迂回防止)
     if _is_sensitive_command(cmd):
+        return False
+    # 引用符の外のグロブ/ブレースは、文字列に現れない名前へ展開される (上の定義参照)
+    if _has_unquoted_glob(cmd):
+        return False
+    # grep の再帰・rg の隠し/無視ファイル解除はファイル名なしで機密を出力できる
+    if _is_unrestricted_search(cmd):
         return False
     # 絶対パス/ホーム参照/親遡上を含む読み取りは denylist を貫通し得るためレビューへ
     if _references_out_of_tree_path(cmd):

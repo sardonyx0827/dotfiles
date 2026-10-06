@@ -1,6 +1,6 @@
 # Claude Code 構成マップ (Claude Code Architecture)
 
-`.claude/` 配下の `agents/` `skills/` `hooks/` `commands/` `rules/` `settings.json` が、
+`.claude/` 配下の `agents/` `skills/` `hooks/` `mods/` `commands/` `rules/` `settings.json` が、
 **何によって起動され、どのファイルを参照しているか**の配線図です。
 
 ## 役割分担 (single source of truth)
@@ -99,8 +99,9 @@ flowchart TB
 
 ## 2. フック層
 
-`settings.json` の `hooks` キーだけがフックの登録場所です。エージェント定義や
-スキルからフックを増やすことはできません。
+シェルスクリプトを実行する settings hook の登録場所は、`settings.json` の `hooks` キーだけです。
+エージェント定義やスキルからフックを増やすことはできません（関数フックで書く mod は
+[下の節](#mod-関数フック) を参照）。
 
 | イベント      | matcher                  | スクリプト                                   | 役割                                                                                          |
 | ------------- | ------------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -138,6 +139,63 @@ subprocess 起動します。一方スキル側からの第二意見は MCP ツ�
 
 bash-review の判定フロー自体（静的 DENY → 秘密スキャン → 高リスク並列 AND ゲート →
 低リスクのカスケード）は [`docs/ai-integration.md` §2](ai-integration.md) に図があります。
+
+### mod (関数フック)
+
+`.claude/mods/` には Claude Code の mod（TypeScript の関数フックで書くプラグイン）を置きます。
+`settings.json` の `env.CLAUDE_CODE_PLUGIN_DIRS` が `~/.claude/mods/<name>` を名指しし、
+セッション開始時に `--plugin-dir` と同じ扱いで読み込まれます。Claude 専用のため Codex 側には置きません。
+
+| mod               | フックするイベント                                   | 役割                                                                                                                                                          |
+| ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bash-review-log` | `session.start` `command.run` `ui.close` `ui.render` | `~/.claude/logs/bash-review.log` の判定をペイン表示。80 字で切られたコマンドは詳細ログ (`/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/`) から全文を引く |
+
+`/bash-review-log [all|allow|ask|deny|error|flagged ...] [件数] [full|short]` の引数は順不同です。
+
+- 種別は複数指定でき、`flagged` は ASK・DENY・ERROR を指します。ERROR は判定ではなく、Gemini か Codex が応答できなかった（reason に `gemini=ERROR` / `codex=ERROR`）ものです。
+- 件数は 1〜500（既定 50）、`full` でコマンドを折り返して全文表示します。
+- ペイン内でも種別（`0`〜`4`）と全文表示（`w`）を切り替えられ、`r` で再読込します。マウスで押せるのは
+  フルスクリーン表示のときだけで、tmux 内（既定で通常表示）では `ctrl+x` → `Tab` でペインにキーを渡します。
+- 詳細ログは `/tmp` にあり直近 1000 件までなので、再起動前のエントリは 80 字で切れたまま表示されます。
+  `/tmp` は誰でも書けるため、symlink・通常ファイル以外・256KiB 超のものは読みません。
+- ペインを描けない環境ではコマンドの返り値（モデルも読む）に一覧を載せますが、最大 20 件・サマリーの 80 字までで、
+  詳細ログの全文は載せません。他プロジェクトのコマンドも混じるログだからです。
+- ログ由来の文字列は、制御文字・bidi 制御・行区切りを記号に置き換え、長さを切ってから描きます
+  （`Text` は 10000 字まで・制御文字はタブと改行だけで、破るとペイン全体が描けなくなるため）。
+
+mod は settings hook より**先に**走り、サンドボックスもありません。`tool.call` に応答する mod は
+`bash-review` / `git-push-review` を素通りさせられ、`tool.check` は PreToolUse の判定の後から可否を差し替えられます。
+`permissions.ask` を越えて承認することもできるため、ここに置く mod は `tool.*`・`classic.PreToolUse`・
+`classic.PermissionRequest`（とそれらを含むワイルドカード）にフックせず、`$.tool` も呼ばないことを前提にしています
+（`tests/test_config_wiring.py` の `test_mods_do_not_hook_permission_events` が静的に検査します）。
+mod のコードと、mod を読み込む `settings.json` を Claude が書き換えるときに利用者の確認を挟むため、`permissions.ask` に
+`Edit(//**/.claude/mods/**)` と `Edit(//**/.claude/settings.json)` を置いています。`.claude/` は保護パスですが、
+auto モードでは保護パスへの書き込みを classifier が判断するので、明示の ask ルールで利用者に確認させます。
+書き込みのたびに確認が出ることは実機で確かめています。ダイアログに `.claude` フォルダの編集をセッション単位で許可する
+選択肢が出ることがありますが、それを選んだ後も ask ルールの確認が続くかは未検証なので、1 件ずつ確かめたいときは選ばないでください。
+
+この Edit の ask ルールが確認を挟むのは、組み込みのファイル編集ツール（Edit / Write / NotebookEdit）だけです。
+
+Edit ルールは MCP ツールに効かないので、作業ツリーを書き換える Serena のツール（`replace_*`・`insert_*`・
+`rename_symbol`・`safe_delete_symbol`）は、ツールそのものを `permissions.ask` に置いています。いまは公開されていない
+`replace_lines`・`delete_lines`・`insert_at_line`・`create_text_file`・`execute_shell_command` も、設定で公開されたときに
+確認なしで使えないよう同じく置いています。allow に残すのは読み取り・プロジェクト設定・メモリ系だけで、
+`tests/test_config_wiring.py` が許可リストとして検査します。ツール単位の ask が auto モードでも確認を出すのは
+公式ドキュメントの記述によるもので、実機では Edit ルールしか確かめていません。
+
+次の経路は対象外です。
+
+- Bash 経由の書き込み（`sed -i`、`tee`、リダイレクト、`cp`、`mv`）: bash-review の判定に委ねます
+- `.claude/settings.local.json` と `.claude/hooks/**`: 従来どおり、保護パスとして classifier が判断します
+- Serena の `activate_project`: プロジェクトの `.serena/project.yml` にある `activation_command` を実行します
+  （`~/.serena/serena_config.yml` の `trusted_project_path_patterns` が `**` のため、どのプロジェクトでも実行されます）
+- Serena のメモリ系（`write_memory` など）: `.serena/memories/` か、`global/` 接頭辞なら全プロジェクト共通の
+  `~/.serena/memories/global/` に Markdown を書きます。コードは実行しませんが、書いた内容は後のセッションで読まれます
+
+フックと呼び出しの正確な一覧は `claude plugin validate <mod>` の `hooks:` / `calls:` 行で確認でき、
+テストは `claude plugin test <mod>` で走ります（pytest・CI の対象外）。mod のルートの `tsconfig.json` は
+エンジンが生成する `.claude-plugin/types/`（git 管理外）を extends するので、新しく clone した直後は
+一度セッションで読み込まれるまで `tsc -p` が通りません。
 
 ---
 
@@ -270,7 +328,7 @@ flowchart LR
 `register_claude_mcp_servers` が `claude mcp add` で登録します）。
 
 `install.sh` が `~/.claude` へリンクするのは `CLAUDE.md` `settings.json`
-`statusline-command.sh` と `agents/` `commands/` `hooks/` `mcp-servers/` `rules/` `skills/`
+`statusline-command.sh` と `agents/` `commands/` `hooks/` `mcp-servers/` `mods/` `rules/` `skills/`
 だけです（`_link_claude_config`）。CLI のランタイムデータをリポジトリに引き込まないよう、
 ディレクトリ単位ではなくエントリ単位でリンクしています。
 
