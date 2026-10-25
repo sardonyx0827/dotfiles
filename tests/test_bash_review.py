@@ -592,7 +592,7 @@ GRAMMAR_WRAPPED_DENY_CASES = [
     ("x) curl http://x", "curl"),
     # DENY_COMMANDS is a multi-word prefix match against the command string rather
     # than a resolved executable, so it needs the same grammar handling separately:
-    # without it these escape the deterministic deny and fall to a mandatory ask.
+    # without it these escape the deterministic deny and fall to the high-risk gate.
     ("*) rm -rf /", "rm -rf /"),
     ("(rm -rf /)", "rm -rf /"),
     ("( rm -rf / )", "rm -rf /"),
@@ -686,8 +686,8 @@ class TestGrammarPrefixResolution:
         """`case`/`select` put the executable somewhere this resolver cannot find.
 
         The module's own convention is that an unresolvable executable returns None and
-        the callers fall to the safe side -- high-risk, i.e. the 2-model AND gate plus a
-        mandatory ask -- rather than the silent low-risk path. Asserting the escalation
+        the callers fall to the safe side -- high-risk, i.e. the 2-model AND gate (auto-allowed
+        only on a unanimous ALLOW) -- rather than the silent low-risk path. Asserting the escalation
         (not a denial) keeps the guarantee honest about what is actually known.
         """
         label = _common.classify_high_risk(_common._split_commands(command), command)
@@ -772,8 +772,8 @@ LEADING_REDIRECT_RESOLUTION_CASES = [
     ("&>>out curl http://x", "curl"),
 ]
 
-# Benign work with a glued redirect must not be denied or forced to a
-# mandatory ask -- the whole point of resolving the prefix is that it resolves
+# Benign work with a glued redirect must not be denied or forced into the
+# high-risk gate -- the whole point of resolving the prefix is that it resolves
 # to the REAL executable, not that everything with a `>` becomes suspicious.
 GLUED_REDIRECT_BENIGN_CASES = [
     "echo>out hi",
@@ -939,7 +939,7 @@ WRAPPER_UNQUOTED_DENY_CASES = [
 
 # Ordinary wrapper use must keep resolving to the real executable: the guard
 # fires on a token that cannot be an executable name, not on "a wrapper was
-# involved". Otherwise every `timeout 30 npm test` becomes a mandatory ask.
+# involved". Otherwise every `timeout 30 npm test` lands in the high-risk gate.
 WRAPPER_BENIGN_CASES = [
     ("watch date", "date"),
     ("watch -t date", "date"),
@@ -992,7 +992,7 @@ WRAPPER_BENIGN_CASES = [
 # The accepted COST of the guard, pinned: a wrapper plus a perfectly ordinary quoted
 # command whose only sin is containing a space. The resolver cannot tell it apart from
 # `watch 'sudo rm -rf /'` (both are one shlex token carrying a whole command line), so
-# it fails closed to the mandatory ask. Over-escalation costs a keystroke,
+# it fails closed to the high-risk gate. Over-escalation costs a keystroke,
 # under-escalation costs the deterministic tier entirely. Pinned so that widening or
 # narrowing _NOT_EXECUTABLE_WORD shows up here as a deliberate edit.
 WRAPPER_BENIGN_BLOB_CASES = [
@@ -1058,9 +1058,9 @@ class TestWrapperQuotedBlobResolution:
         [
             # Resolving the blob PROPERLY yields `echo`, not `sudo`; rsplitting it on "/"
             # would deny these only by accident (the tail happens to spell a denied
-            # binary). They land on the mandatory ask -- the module's stated preference
-            # (see _UNRESOLVABLE_GRAMMAR) -- never auto-executed, but not denied under a
-            # name they do not run.
+            # binary). They land in the high-risk two-model AND gate -- the module's
+            # stated preference (see _UNRESOLVABLE_GRAMMAR) -- never run on a single
+            # model's approval, but not denied under a name they do not run.
             "watch 'echo /bin/sudo'",
             "watch 'echo hello /usr/bin/curl'",
             # A quoted assignment VALUE with whitespace, behind a wrapper, has the same
@@ -1072,7 +1072,7 @@ class TestWrapperQuotedBlobResolution:
         ],
     )
     def test_deny_to_ask_downgrades_are_pinned(self, command):
-        """The only two shapes that land on the mandatory ask instead of a deny.
+        """The only two shapes that land on the high-risk gate instead of a deny.
 
         Neither can be denied without giving up the guard. Both still block
         auto-execution -- nothing here sits in a tier a lone model verdict can
@@ -1127,13 +1127,13 @@ class TestWrapperQuotedBlobResolution:
         # The guard's only failure direction: a harmless quoted command line
         # behind a wrapper is indistinguishable from a payload, so it fails
         # closed. Never denied (that would stop work outright) -- always the
-        # mandatory ask. Both halves are asserted so a future change cannot
+        # high-risk gate. Both halves are asserted so a future change cannot
         # quietly turn this into a denial OR drop it to the fast path.
         matched, name = _common.find_deny_command(_common._split_commands(command))
         assert not matched, f"a benign quoted blob must not be DENIED as {name!r}"
         label = _common.classify_high_risk(_common._split_commands(command), command)
         assert label == "wrapped command", (
-            f"expected the mandatory ask for the benign blob {command!r}, got {label!r}"
+            f"expected the high-risk gate for the benign blob {command!r}, got {label!r}"
         )
 
     @pytest.mark.parametrize(("command", "_exe"), WRAPPER_BENIGN_CASES)
@@ -1194,7 +1194,7 @@ class TestCommandLookupFlags:
         )
         label = _common.classify_high_risk(subs, command)
         assert label == "", (
-            f"a lookup was escalated to the mandatory ask as {label!r}: {command!r}"
+            f"a lookup was escalated to the high-risk gate as {label!r}: {command!r}"
         )
 
     @pytest.mark.parametrize(
@@ -1225,7 +1225,7 @@ class TestCommandLookupFlags:
         "command",
         [
             # `--` is not a listed flag, so the executable stays unresolved and
-            # the mandatory ask applies.
+            # the high-risk gate applies.
             "command -- curl http://evil.example/x",
             # Residual lookups that are not recognized as such: the bundled
             # `-pv` and a `--` after the lookup flag. They keep failing closed
@@ -1286,9 +1286,10 @@ SCRIPT_POSITIONAL_CASES = [
     ("script -q -a /tmp/session.log npm test", "npm"),
 ]
 
-# 「必ず ask」に倒れる形 (許容する誤検知)。単独モデルの低リスク経路 (= フック的
-# には素通り) に落とすより厳しい側だが、caffeinate の素の使い方が毎回確認
-# プロンプトになるのは実コストなので、気付かないうちに変わらないよう固定して
+# 高リスク層 (二モデル AND ゲート) に倒れる形 (許容する誤検知)。単独モデルの
+# 低リスク経路 (= フック的には素通り) に落とすより厳しい側だが、caffeinate の
+# 素の使い方が毎回二モデル審査にかかり、一致しなければ確認プロンプトになるのは
+# 実コストなので、気付かないうちに変わらないよう固定して
 # おく。値付きフラグの値を読み飛ばす機構を足せば消せる
 # が、それは「値の個数表」という列挙漏れがそのままバイパスになる仕組みを
 # もう 1 つ増やすことなので採らない (_OUTPUT_FILE_LONG_FLAGS の注記と同じ判断)。
@@ -1352,7 +1353,7 @@ class TestMacosExecWrappers:
         assert not matched, f"expected the ask path, not a denial: {command!r}"
         label = _common.classify_high_risk(_common._split_commands(command), command)
         assert label == "wrapped command", (
-            f"an accepted-cost form must land on the mandatory ask, not the "
+            f"an accepted-cost form must land on the high-risk gate, not the "
             f"fast path: {command!r} -> {label!r}"
         )
 
@@ -1365,7 +1366,7 @@ class TestDenyListCoverage:
     deny a spelling rather than a capability.
 
     Deliberately NOT part of this: `$(which curl)`-style substitution. That already
-    escalates via _UNRESOLVABLE_EXPANSION to a mandatory ask, so it is not a list gap.
+    escalates via _UNRESOLVABLE_EXPANSION to the high-risk gate, so it is not a list gap.
     """
 
     @pytest.mark.parametrize(
@@ -1396,7 +1397,7 @@ class TestGlobalValueFlags:
 
     _GLOBAL_VALUE_FLAGS has to cover pip, uv, go and gem as well as git/npm/pnpm/yarn/
     docker: otherwise a space-separated global flag swallows the subcommand slot and the
-    package-install high-risk label -- the 2-model AND gate plus a mandatory ask -- is
+    package-install high-risk label -- the 2-model AND gate -- is
     skipped. This is the failure the docker entry's own comment warns a missing
     registration causes.
     """
@@ -2581,9 +2582,9 @@ class TestHighRiskClassifier:
     """Context-dependent dangerous commands are classified for dual review.
 
     The tier sits between static DENY (unconditionally dangerous: sudo, curl)
-    and the ordinary Gemini fast path: high-risk commands are never
-    auto-allowed by model verdicts — they always end in a human ask (or deny
-    when both models agree on DENY).
+    and the ordinary Gemini fast path: high-risk commands are auto-allowed
+    only when both models return ALLOW — otherwise they end in a human ask (or
+    deny when both models agree on DENY).
     """
 
     @pytest.mark.parametrize(
@@ -2864,8 +2865,8 @@ class TestHighRiskClassifier:
             ("timeout 10 -v sudo rm -rf /", "wrapped"),
             # Case-insensitive filesystems resolve these to the real binaries,
             # so the high-risk classifier has to fold case too. Folding only
-            # inside the deny check would leave the "always ask" guarantee -- the
-            # two-model AND gate -- reachable by pressing Shift.
+            # inside the deny check would leave the two-model AND gate
+            # bypassable by pressing Shift.
             ("GIT push --force", "git force push"),
             ("GIT reset --hard HEAD~1", "git reset --hard"),
             ("RM -rf ./src", "rm recursive"),

@@ -29,9 +29,11 @@ Matcher: `Bash`(実行順)
 2. **git-push-review** (`hooks/git-push-review.sh`):
    `git push` を検知し、対象コミットのサマリを添えてブロックする。サマリは
    push が実際に走るリポジトリから取る(`git -C <dir>` と、push より前の
-   リテラルな `cd <dir>` の両方を追う)。変数・`cd -`・`pushd`・サブシェル・
+   リテラルな `cd <dir>` の両方を追う)。変数・`cd -`・`~user`・`pushd` /
+   `popd`・サブシェル・`cd` を含むコマンド中のヒアドキュメント (`<<`) やコメント (`#`)・
    複数の `cd`・オプションや余分な引数付きの `cd`・`..` を含む行き先・
-   クォートされた `~`・実在しない行き先・コマンド中の生の制御文字・
+   クォートされた `~`・実在しない行き先・コマンド中のタブ/改行以外の制御文字
+   (DEL を含む)・`cd` の行き先や `-C` の値に含まれる制御文字・
    `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` の指定・
    フックの環境かコマンド中に `CDPATH` があるときの素の相対 `cd` などで
    確実に決められないときは、サマリの代わりに注記を出す(別リポジトリの
@@ -66,6 +68,9 @@ Matcher: `Write|Edit|MultiEdit`
    一発呼び出しで、監査対象はエージェントが書いたコードではなくユーザ自身の
    未コミットの変更なので、ブロックすると作業ツリーを勝手に直したうえで生成物
    の代わりに「削除しました」という文章が返ってくる。
+
+bash-review がレビューのために起動する入れ子の `codex exec` にも同じ
+`EDITOR_AI_ONESHOT` を付けているため、そのレビュー実行では上の 2 つとも動かない。
 
 ## なぜ `.claude/hooks` と別実装なのか
 
@@ -187,12 +192,12 @@ JSON・sed の 3 層をエスケープして生成するので、そうした環
 構造的に起こらなくしてある。**その 1 つは `.claude/hooks/` 側にあり、この
 `.codex/hooks/` には存在しない** (下記参照):
 
-| ファイル                 | 中身                           | 読み込む側                             |
-| ------------------------ | ------------------------------ | -------------------------------------- |
-| `_bash_review_common.py` | 判定ロジック・レビュー呼び出し | `bash-review.py` が import             |
-| `_hook_common.sh`        | `hook_log` / `hook_notify`     | `lint.sh` / `auto-format.sh` が source |
-| `_lint_common.sh`        | 言語別 静的解析マトリクス      | `lint.sh` が source                    |
-| `_format_common.sh`      | 言語別 フォーマッタマトリクス  | `auto-format.sh` が source             |
+| ファイル                 | 中身                                                 | 読み込む側                             |
+| ------------------------ | ---------------------------------------------------- | -------------------------------------- |
+| `_bash_review_common.py` | 判定ロジック・レビュー呼び出し                       | `bash-review.py` が import             |
+| `_hook_common.sh`        | `hook_log` / `hook_notify` / `hook_find_nearest_bin` | `lint.sh` / `auto-format.sh` が source |
+| `_lint_common.sh`        | 言語別 静的解析マトリクス                            | `lint.sh` が source                    |
+| `_format_common.sh`      | 言語別 フォーマッタマトリクス                        | `auto-format.sh` が source             |
 
 **この `.codex/hooks/` には複製も symlink も置かない**。代わりに読み込む側が
 自分の物理パスから `../../.claude/hooks` を解決して直接読む (`bash-review.py` は

@@ -34,9 +34,12 @@
   The summary is taken from the repository the push will actually run in:
   `git -C <dir>` and a literal `cd <dir>` ahead of the push both retarget it.
   When that directory cannot be determined for certain (a variable, `cd -`,
-  `pushd`, a subshell, several `cd`s, a `cd` with options or extra operands,
-  a `..` component, a quoted `~`, a target that is not an existing
-  directory, any raw control character in the command, `--git-dir` /
+  `~user`, `pushd` / `popd`, a subshell, a heredoc (`<<`) or comment (`#`)
+  in a command that also has a `cd`, several `cd`s, a `cd` with options or
+  extra operands, a `..` component, a quoted `~`, a target that is not an
+  existing directory, a control character in the command other than tab /
+  newline (DEL included) or any control character in the `cd` target or the
+  `-C` value, `--git-dir` /
   `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` anywhere in it, or a plain
   relative `cd` while `CDPATH` is set in the hook's environment or in the
   command itself), the prompt
@@ -108,7 +111,9 @@ feeds both, and lets lint's exit code be the hook's.
   generation-only (commit message, buffer check, hints) and audit the user's
   own uncommitted work rather than anything the agent wrote, so a block there
   made the agent edit the working tree and return "removed the debug
-  statement" in place of the generated text.
+  statement" in place of the generated text. bash-review sets the same marker
+  on its own nested `codex exec` review call, so the Codex-side Stop hooks
+  skip that run too.
 
 ## Shared libraries (`_`-prefixed, not hooks themselves)
 
@@ -134,8 +139,10 @@ Claude and Codex differ in how they receive targets, report verdicts, and place
 hooks on events. See `.codex/hooks/README.md` for the full table and those
 differences.
 
-- **`_hook_common.sh`**: `hook_log` (timestamped, size-capped) and
-  `hook_notify` (terminal-notifier / osascript / notify-send).
+- **`_hook_common.sh`**: `hook_log` (timestamped, size-capped),
+  `hook_notify` (terminal-notifier / osascript / notify-send), and
+  `hook_find_nearest_bin` (nearest `node_modules/.bin` lookup used by lint and
+  format).
 - **`_lint_common.sh`**: `hook_lint_file` — the per-language lint matrix.
 - **`_format_common.sh`**: `hook_format_file` — the per-language formatter matrix.
 - **`_bash_review_common.py`**: bash-review's verdict logic and review calls.
@@ -143,9 +150,10 @@ differences.
 Contract for the shell ones: they define functions and nothing else. Sourcing
 must not print, `mkdir`, or touch `set`/`IFS`/`trap`/cwd — the Codex `lint.sh`
 sources them before `exec 1>/dev/null`, so any output at source time would land
-in the structured-output channel Codex parses and fail the hook. Names are
-namespaced `hook_`/`HOOK_` because bash is dynamically scoped and a collision
-with a caller's local fails silently.
+in the structured-output channel Codex parses and fail the hook. Function names
+are namespaced `hook_` because bash is dynamically scoped and a collision with a
+caller's local fails silently. Variables inside them are not prefixed
+(`FILE_PATH`, `EXTENSION`, …), so callers must not rely on names they share.
 
 ## bash-review — design rationale & threat model
 
@@ -175,12 +183,14 @@ latency low for the common case:
    than matching a literal prefix, so `/usr/bin/curl`, `CURL`, `c"u"rl`,
    `env curl` and `(curl …)` all resolve to `curl` and are denied. What it
    cannot resolve — `$(which curl)`, `${CURL}`, `eval "…"`, `sh -c "…"` — is not
-   waved through either: those escalate to the high-risk gate below (two models
-   must agree, and the run still stops for confirmation).
+   waved through either: those escalate to the high-risk gate below (step 3:
+   it runs only when both models return `ALLOW`; anything short of that stops
+   for confirmation or is denied).
 
    Safe-skip is the conservative side: it matches the raw command string against
-   an allowlist and never consults the resolver, so anything wrapped in grammar
-   simply fails to match and goes to review. A sensitive path (`.env`, `id_rsa`,
+   an allowlist, so anything wrapped in grammar simply fails to match and goes
+   to review. The resolver is consulted only by the exclusions below (grep / rg
+   / tmux / output-file flags), and only to send more commands to review. A sensitive path (`.env`, `id_rsa`,
    `.ssh`, …) forces review even when the prefix looks safe. So do the reads
    that reach a secret without naming it, since such a command names no file
    and the `permissions.deny` Read rules cannot catch it either:
@@ -193,16 +203,24 @@ latency low for the common case:
      recursive flag, a digit flag, or an operand that does not look like a
      regular file (`.`, `src`, `sub/`) sends grep to review; a pipe
      (`… | grep foo`) or `grep foo file.txt` stays fast.
-   - an rg that overrides its hidden/ignored-file skip: `--hidden`, `-u`,
-     `--no-ignore`, and also `-g` / `--glob` (unless an `!` exclusion) and
-     `-t` / `--type`, both of which read hidden files.
+   - an rg that overrides its hidden/ignored-file skip: `--hidden`, `-.`, `-u`,
+     `--unrestricted`, `--no-ignore*`, and also `-g` / `--glob` / `--iglob`
+     (unless an `!` exclusion) and `-t` / `--type`, both of which read hidden
+     files; or `-L` / `--follow`, which follows symlinks out of the tree.
+   - anything else that turns a "read-only" command into execution, a write or
+     an out-of-tree read: an absolute / `~` / `..` path, rg's
+     `--pre` / `--pre-glob` / `--hostname-bin` / `-z` / `-f`, a tmux `#(…)`
+     format or a `;`-chained second tmux command, and output-file flags
+     (`--output` / `--outfile`, `tree -o`).
 
 2. **Secret pre-send scan (no external call).** Before any command is handed to
    an LLM, a static scan (`scan_secrets`) checks the command _and_ the full
    `tool_input` for raw credential **values** — known-format tokens (GitHub /
    AWS / Google / OpenAI / Slack / Stripe), PEM / OpenPGP private keys, JWTs,
-   `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs, and
-   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`).
+   `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs,
+   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`),
+   and a secret-named key followed by its value in known setter CLIs
+   (`aws configure set`, `vault kv put`, `gh secret set`, `heroku config:set`, …).
    A hit fails closed to `ask` (Claude) / block (Codex) **without calling Gemini
    or Codex**, so a secret never leaves the machine for review; the
    reason / notification / logs carry only a generic category label, and the raw
@@ -279,12 +297,13 @@ they are inert, not an active allowlist, so don't read them as protection.
 - The **secret pre-send scan** (step 2) is deliberately narrow: it matches
   credential _values_ by known format and a few structural shapes, tuned for
   _accidental_ inclusion. It does not defeat deliberate obfuscation (base64,
-  quote-splitting, `$(…)`), does not catch very short opaque values (`< 8`
-  chars) or short-flag secrets (`-p<pw>`, which collide with `mkdir -p` etc.),
+  quote-splitting, `$(…)`), does not catch very short opaque values (under 8
+  chars for assignments and setter-CLI arguments, under 6 for `--password`-style
+  long flags) or short-flag secrets (`-p<pw>`, which collide with `mkdir -p` etc.),
   and leaves sensitive _paths_ to normal review. A miss falls through to the
   usual AI review, not to a silent send of an unreviewed secret; a false
   positive only costs an `ask`.
-- Safe-skipped `git` / `jq` / … assume a **trusted** repository. Config-driven
+- Safe-skipped `git status` / `git log` / `git diff` / … assume a **trusted** repository. Config-driven
   execution (`.git/config` `core.pager`, `[alias]`, `diff.external`) is out of
   scope — verifying it on every call would defeat the point of the skip. See the
   inline comments in `_bash_review_common.py`.

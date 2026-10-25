@@ -184,7 +184,7 @@ try:
     short_cmd = command[:60] + "..." if len(command) > 60 else command
     review_started = time.monotonic()
 
-    # --- 高リスクコマンドの並列二重レビュー (モデル合意でも自動実行しない) ---
+    # --- 高リスクコマンドの並列二重レビュー (両モデル ALLOW 一致時のみ自動実行) ---
     risk_label = classify_high_risk(sub_commands, command)
     if risk_label:
         (gemini_verdict, gemini_output), (codex_verdict, codex_output) = (

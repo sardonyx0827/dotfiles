@@ -130,7 +130,7 @@ SAFE_EXACT_COMMANDS = [
 # 即時拒否は「明らかに危険なコマンドを AI 呼び出し前に即拒否する」高速パス
 # の利便性であり、セキュリティ境界ではない。文脈次第で正当になり得るもの
 # (rm -r やパッケージ導入等) はここではなく高リスク層 (_high_risk_label) で
-# 扱い、必ずユーザー確認へ回す。
+# 扱い、両モデルが ALLOW で一致しない限りユーザー確認へ回す。
 #
 # DENY_EXECUTABLES は分割済みサブコマンドの「解決済み実行体」(env/command
 # ラッパーや先頭の VAR=value 代入、絶対パスの dirname を剥がした basename)
@@ -346,7 +346,7 @@ _GLOBAL_VALUE_FLAGS = {
     "yarn": frozenset({"--cwd"}),
     # パッケージインストーラ群。未登録だと値 (プロキシ URL や証明書パス) が
     # サブコマンド扱いになり、`pip install` 等の高リスク判定 = 二重モデル
-    # AND ゲート + 強制 ask が丸ごと外れる。docker の注記と同じ失敗。
+    # AND ゲートが丸ごと外れる。docker の注記と同じ失敗。
     "pip": frozenset(
         {
             "--proxy",
@@ -389,7 +389,7 @@ _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # $(...) / `...` は展開結果が空になり得て、その場合シェルはそのトークンごと
 # 消して次のトークンを実行する (`$(true) sudo rm -rf /` は実際には
 # `sudo rm -rf /` が走る)。展開トークンを実行体と誤認すると分類が "" になり、
-# 必ず ask のはずの高リスク層と即拒否の DENY 層を同時に素通りして単独モデルの
+# 二モデル AND ゲートのはずの高リスク層と即拒否の DENY 層を同時に素通りして単独モデルの
 # fast path へ落ちる。確定できない以上は安全側 (判定不能 → ask) に倒す。
 _UNRESOLVABLE_EXPANSION = re.compile(r"[$`]")
 
@@ -441,7 +441,7 @@ def _normalize_cmd(cmd: str) -> str:
 # こと」と「None が escalate されること」の 2 点で、短絡の有無ではない。
 # tests/test_bash_review.py の TestGrammarPrefixResolution が両方を固定している。
 #
-# 受け入れているコスト: 正当な case/select も一律 escalate = 強制 ask になる。
+# 受け入れているコスト: 正当な case/select も一律 escalate = 高リスク層の二モデル審査になる。
 # 実行体を確定できない以上この過検知は意図的な設計であって事故ではない。
 #
 # 残る限界: 本体セグメント自身は依然として分類されない。`b)` のような
@@ -471,7 +471,7 @@ _GRAMMAR_PREFIXES = frozenset(
 # ため取りこぼしは現実の穴になる。フラグを解する _WRAPPER_EXECUTABLES 側で扱う。
 
 # 実行体の位置をこの解決器では特定できない文法。判定不能 (None) を返して
-# 呼び出し側に安全側 (高リスク = 二重モデル AND ゲート + 強制 ask) へ倒させる。
+# 呼び出し側に安全側 (高リスク = 二重モデル AND ゲート) へ倒させる。
 # 素通りさせるより厳しく、DENY と偽るより正直な扱い。
 _UNRESOLVABLE_GRAMMAR = frozenset({"case", "select", "esac"})
 
@@ -610,7 +610,7 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
     # ラッパーを 1 つでも剥がしたか。ラッパー抜きの形を対象にしないのは、
     # `'/opt/my dir/tool' --flag` のように空白入りパスの実行体を直接書いた形まで
     # 判定不能に倒さないため。ラッパーを挟むと同じ形も倒れる
-    # (`timeout 5 '/Applications/Google Chrome.app/.../Google Chrome'` は強制 ask)
+    # (`timeout 5 '/Applications/Google Chrome.app/.../Google Chrome'` は高リスク層へ)
     # が、それは下の「塊と区別できない」の帰結として受け入れているコスト。
     wrapper_stripped = False
     while i < len(tokens):
@@ -631,9 +631,9 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         # 受け入れているコスト (意図的。緩めないこと): ラッパーの後ろに置いた
         # 「値に空白を含むクォート代入」も倒れる。
         #
-        #   env 'FOO=a b' make build   → 強制 ask (この判定が無ければ make に解決)
-        #   env PATH='/a b:/c' ls      → 強制 ask (この判定が無ければ ls に解決)
-        #   env FOO='a b' sudo whoami  → 強制 ask (この判定が無ければ決定論的 DENY)
+        #   env 'FOO=a b' make build   → 高リスク層 (この判定が無ければ make に解決)
+        #   env PATH='/a b:/c' ls      → 高リスク層 (この判定が無ければ ls に解決)
+        #   env FOO='a b' sudo whoami  → 高リスク層 (この判定が無ければ決定論的 DENY)
         #
         # `FOO=a b` と `A=1 sudo rm -rf /` は shlex 後どちらも
         # `^[A-Za-z_]\w*=` + 空白という同じ語形で、**静的に区別する規則が書けない**。
@@ -1754,9 +1754,10 @@ def find_deny_command(sub_commands: list[str]) -> tuple[bool, str]:
 # -------------------------------------------------------------------
 # 高リスク層の分類
 # 「文脈次第では正当だが、誤ると影響が大きい」コマンド。ここに一致した
-# コマンドは AI 判定に関わらず自動許可せず、Gemini / Codex 両モデルの判定を
-# 理由文に添えて必ずユーザー確認 (ask) へ回す。deny になるのは両モデルが
-# DENY で一致した場合のみ (どうしても必要ならユーザーが手動実行すればよい)。
+# コマンドは Gemini / Codex 両モデルの並列レビューにかけ、両モデルが ALLOW で
+# 一致した場合のみ自動許可する。それ以外は両モデルの判定を理由文に添えて
+# ユーザー確認 (ask) へ回す。deny になるのは両モデルが DENY で一致した場合のみ
+# (どうしても必要ならユーザーが手動実行すればよい)。
 # 文脈を問わず危険なもの (sudo 等) は DENY_EXECUTABLES で即拒否する。
 # リストは意図的に狭く始め、サマリーログの highrisk 行を見ながら調整する。
 # -------------------------------------------------------------------
@@ -1825,7 +1826,7 @@ _SHELL_STDIN_FLAG = re.compile(r"^-[A-Za-z]*s")
 # docker はデーモン (root 相当) 経由で動くため、コンテナの分離を明示的に破る
 # 起動形はホスト root 相当の操作に直結する (--privileged、ホスト root /
 # docker.sock のマウント、ホスト PID 名前空間、SYS_ADMIN 級 capability)。
-# この「脱出級」の形だけを rm -r 等と同じ高リスク層 (二モデル AND + 必ず ask)
+# この「脱出級」の形だけを rm -r 等と同じ高リスク層 (二モデル AND ゲート)
 # に載せる。素の `docker run img` は分離が保たれるため対象外で、
 # 単独モデルの通常レビューに残す (リストは意図的に狭く始める方針に従う)。
 _DOCKER_RUN_SUBCOMMANDS = frozenset({"run", "create"})
@@ -1906,7 +1907,7 @@ def _pkg_install_word(pkg_exe: str, args: list[str]) -> str:
     サブコマンド位置 (_find_subcommand) だけを見る判定は、値付きグローバル
     フラグの登録漏れ (`pip --trusted-host <host> install` / `npm --registry
     <url> install`) で値がサブコマンド枠に入った途端に外れ、二モデル AND
-    ゲート + 強制 ask が丸ごと飛ぶ。表は網羅できないので、フラグ以外の語を
+    ゲートが丸ごと飛ぶ。表は網羅できないので、フラグ以外の語を
     全て走査して fail-closed にする (_docker_high_risk_label の全引数走査と
     同じ割り切り。誤検知しても ask が 1 回増えるだけで、許可が漏れる側には
     倒れない)。
@@ -1974,7 +1975,7 @@ def _high_risk_label(cmd: str) -> str:
     のラッパーを剥がしてから分類する。ラッパーの値付き/未知フラグで実行体を
     確定できない形 (`env -u X rm -rf /` 等) は難読化の可能性があるため、安全側
     で高リスク (ask) に倒す。剥がしを省くと `env rm -rf ./x` が高リスク層を
-    素通りして単独モデルの fast path に流れてしまう (必ず ask の保証が破れる)。
+    素通りして単独モデルの fast path に流れてしまう (二モデル AND ゲートの保証が破れる)。
     """
     tokens = _tokenize(cmd)
     if not tokens:
@@ -2201,12 +2202,12 @@ def classify_high_risk(sub_commands: list[str], command: str) -> str:
     high_risk_label (サブコマンド単位の分類) は区切り種別を持たないためパイプ
     受け手の裸インタプリタを拾えない。生コマンドを見る stdin_interpreter_label を
     併せて両エントリ (claude / codex 変種) が同じ判定に載るよう共有モジュールで
-    結合する。どちらかが非空なら高リスク層 (二モデル AND ゲート + 必ず ask)。
+    結合する。どちらかが非空なら高リスク層 (二モデル AND ゲート)。
     """
     parts = [high_risk_label(sub_commands), stdin_interpreter_label(command)]
     # $'...' は任意のリテラルを再構成できる (`$'\\x72\\x6d'` = rm) ため、字面の
     # 分類では安全性を確定できない。_is_sensitive_command が safe-skip を一律に
-    # 拒むのと対称に、こちらは高リスク層 (二モデル AND + 必ず ask) へ倒す。
+    # 拒むのと対称に、こちらは高リスク層 (二モデル AND ゲート) へ倒す。
     if _DOLLAR_QUOTE.search(command):
         parts.append("ansi-c quoting")
     return ", ".join(p for p in parts if p)
@@ -2603,8 +2604,8 @@ def build_codex_adversarial_prompt(tool_name: str, tool_input) -> str:
 
     並列 2 モデルに同じ質問をしても情報量が増えないため観点を分担させる:
     Gemini (build_review_prompt) は安全性の総合判定、Codex は迂回・機密の
-    外部送信・実行連鎖を積極的に探す敵対的レビュアー。判定は人間への参考
-    情報として提示され、自動許可には使われない。
+    外部送信・実行連鎖を積極的に探す敵対的レビュアー。両モデルが ALLOW で
+    一致したときだけ自動許可になり、それ以外は人間への参考情報として提示される。
     """
     return (
         "あなたは Bash コマンドの敵対的セキュリティレビュアーです。\n"
@@ -2634,8 +2635,8 @@ def run_parallel_reviews(
     """高リスク層: Gemini と Codex を並列実行し両者の (verdict, output) を返す。
 
     返り値は ((gemini_verdict, gemini_output), (codex_verdict, codex_output))。
-    どちらの結果も自動許可には使わず、combine_high_risk_verdicts で ask/deny
-    に合成する。想定外の例外は握り潰さず伝播させ、呼び出し側 (エントリの
+    両者の結果は combine_high_risk_verdicts で allow/ask/deny に合成する
+    (allow は両者 ALLOW 一致時のみ)。想定外の例外は握り潰さず伝播させ、呼び出し側 (エントリの
     トップレベル except) でフェイルクローズさせる。
     """
     codex_prompt = build_codex_adversarial_prompt(tool_name, tool_input)
