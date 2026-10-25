@@ -103,12 +103,12 @@ flowchart TB
 エージェント定義やスキルからフックを増やすことはできません（関数フックで書く mod は
 [下の節](#mod-関数フック) を参照）。
 
-| イベント      | matcher                  | スクリプト                                   | 役割                                                                                          |
-| ------------- | ------------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `PreToolUse`  | `Bash`                   | `bash-review-launcher.sh` → `bash-review.py` | Bash コマンドの多層セーフティゲート。判定不能時は `ask` にフェイルセーフ                      |
-| `PreToolUse`  | `Bash`                   | `git-push-review.sh`                         | `git push` を検出して確認プロンプトを強制（`rules/git-workflow.md` の push 前確認だけを実装） |
-| `PostToolUse` | `Write\|Edit\|MultiEdit` | `auto-format.sh` → `lint.sh`                 | 整形してから静的解析。lint は exit 2 で Claude に差し戻す                                     |
-| `Stop`        | —                        | `stop-audit.sh`                              | ターン終了時にデバッグ文の消し忘れを検出してブロック（`EDITOR_AI_ONESHOT` 時は監査しない）    |
+| イベント      | matcher                  | スクリプト                                            | 役割                                                                                                                                                    |
+| ------------- | ------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PreToolUse`  | `Bash`                   | `bash-review-launcher.sh` → `bash-review.py`          | Bash コマンドの多層セーフティゲート。判定不能時は `ask` にフェイルセーフ                                                                                |
+| `PreToolUse`  | `Bash`                   | `git-push-review.sh`                                  | `git push` を検出して確認プロンプトを強制（`rules/git-workflow.md` の push 前確認だけを実装）                                                           |
+| `PostToolUse` | `Write\|Edit\|MultiEdit` | `format-then-lint.sh`（`auto-format.sh` → `lint.sh`） | 整形してから静的解析。lint は exit 2 で Claude に差し戻す。同一イベントのハンドラは並列に走り順序が保証されないため、1 本のハンドラに畳んで順に実行する |
+| `Stop`        | —                        | `stop-audit.sh`                                       | ターン終了時にデバッグ文の消し忘れを検出してブロック（`EDITOR_AI_ONESHOT` 時は監査しない）                                                              |
 
 `_` 始まりの 4 ファイル（`_hook_common.sh` `_lint_common.sh` `_format_common.sh`
 `_bash_review_common.py`）はフックではなく**共有ライブラリ**で、Claude 側と Codex 側の
@@ -188,7 +188,9 @@ Edit ルールは MCP ツールに効かないので、作業ツリーを書き�
 - Bash 経由の書き込み（`sed -i`、`tee`、リダイレクト、`cp`、`mv`）: bash-review の判定に委ねます
 - `.claude/settings.local.json` と `.claude/hooks/**`: 従来どおり、保護パスとして classifier が判断します
 - Serena の `activate_project`: プロジェクトの `.serena/project.yml` にある `activation_command` を実行します
-  （`~/.serena/serena_config.yml` の `trusted_project_path_patterns` が `**` のため、どのプロジェクトでも実行されます）
+  （信頼リストは dotfiles の管理外にあるマシンローカルの `~/.serena/serena_config.yml` の `trusted_project_path_patterns` で、
+  執筆時点の値は `[]` で、その場合 `activation_command` は実行されません。`**` にすると、どのプロジェクトでも実行されるようになります。
+  リポジトリでは管理もテストもしていないため、各マシンで実際の値を確認してください）
 - Serena のメモリ系（`write_memory` など）: `.serena/memories/` か、`global/` 接頭辞なら全プロジェクト共通の
   `~/.serena/memories/global/` に Markdown を書きます。コードは実行しませんが、書いた内容は後のセッションで読まれます
 
@@ -218,7 +220,7 @@ flowchart LR
 
     subgraph CX["第二意見・デバッグ"]
         K3["skills/codex-consultation<br/>skills/debugging-protocol"] --o M3["mcp__codex__codex"]
-        K3 -.->|"代替の入口"| A3["agents/codex-delegator"]
+        K3 -.->|"もう一つの入口"| A3["agents/codex-delegator"]
         A3 --o M3
     end
 ```
@@ -229,8 +231,10 @@ flowchart LR
   （チェックリストと、レビュー手順・報告形式が別々の正であるという分離がそのまま出ています）。
 - **画像生成**はエージェントを持たず、スキルから直接 Codex MCP に降ります。
 - **第二意見**もスキル → エージェントの直列ではありません。`codex-consultation` /
-  `debugging-protocol` は自分で MCP ツールを呼ぶのが主経路で、`codex-delegator` は
-  「同じ Codex への代替の入口」として並記されています。
+  `debugging-protocol` は、MCP ツール（`mcp__codex__codex`）を直接呼ぶ入口と `codex-delegator`
+  エージェント経由の入口を並べており、どちらかが主経路とは決めていません。`debugging-protocol` は
+  エージェントを先に挙げて MCP 直呼びを括弧書きの代替とし、`codex-consultation` は `sandbox` / `model` を
+  細かく指定したいときや `codex-reply` で会話を続けたいときに直接呼ぶ、と使い分けを書いています。
 - **`rules/git-workflow.md` にはスキルもエージェントもありません。** ルール本文の大半
   （コミットメッセージ規約・commit / PR の手順・PR 品質基準）は Claude 自身が従う指示のままで、
   フック化されているのは push 前の確認ゲートだけです（`git-push-review.sh`）。
@@ -264,16 +268,19 @@ flowchart LR
 | `/update-codemaps` / `/update-docs` | `doc-updater`                                                             |
 | `/verify`                           | `security-reviewer`（条件付き。下記参照）                                 |
 | `/requests`                         | `request-worker`                                                          |
+| `/requests-watch`                   | `request-worker`（条件付き。下記参照）                                    |
 | `/auto-improve`                     | `refactor-cleaner`, `doc-updater`, `security-reviewer`                    |
 | `/orchestrate`                      | `architect`, `planner`, `tdd-guide`, `code-reviewer`, `security-reviewer` |
 
-エージェントを起動しないコマンド（`/checkpoint` `/eval` `/learn` `/requests-watch`
-`/test-coverage`）は、スキルの読み込みか手順の提示のみを行います。
+エージェントを起動しないコマンド（`/checkpoint` `/eval` `/learn` `/test-coverage`）は、
+スキルの読み込みか手順の提示のみを行います。`/requests-watch` は `request-harness` スキルの
+Watch Mode に従い、独立チケットを並列実行する場合に限って `request-worker` を起動します
+（`.claude/skills/request-harness/SKILL.md` 参照）。
 
 いくつかのコマンドは末尾に「関連コマンド」節を持ち、`code-reviewer` などを*次にやること*として
 案内していますが、これはコマンドが起動するものではなくユーザー向けの提案です。上の表には含めていません。
 
-`/verify` だけは他の行と性質が違います。既定の動作は `verification-loop` スキルを自分で実行する
+`/verify` も `/requests-watch` と同じく、他の行と性質が違います。既定の動作は `verification-loop` スキルを自分で実行する
 ことで、エージェントは起動しません。`security-reviewer` を呼ぶのは、変更が認証・ユーザー入力・
 シークレット・決済のいずれかに触れる場合だけです（`.claude/commands/verify.md` 参照）。
 `/db-review` → `database-reviewer` のような無条件の薄いラッパーとして読まないでください。
@@ -305,7 +312,7 @@ flowchart LR
     end
 
     CS -->|"相対シンボリックリンク"| XS
-    CA -->|"gen_codex_agents.py で生成"| XA
+    CA -->|"gen_codex_agents.py で生成<br/>(codex-delegator のみ手書き)"| XA
     XH -->|"実行時に realpath で解決"| CH
 ```
 
@@ -314,10 +321,13 @@ flowchart LR
   Claude 固有の 7 つ（`codex-consultation` `codex-image-gen` `debugging-protocol`
   `iterative-retrieval` `subagent-prompt-design` `project-guidelines-example`
   `session-report`）は共有しません。
-- **エージェント**: 同じ 14 個ですが、リンクではなく `scripts/gen_codex_agents.py` が
-  `.claude/agents/*.md` から生成した `.toml` です。Codex CLI がビルド無しで読めるよう
-  生成物をコミットしてあり、CI が `--check` で手動編集と SSOT 側だけの更新を弾きます。
-  `.claude/` 側が唯一の上流です。
+- **エージェント**: 同じ 14 個ですが、リンクではなく `.toml` です。うち 13 個は
+  `scripts/gen_codex_agents.py` が `.claude/agents/*.md` から生成したもので、Codex CLI が
+  ビルド無しで読めるよう生成物をコミットしてあり、CI が `--check` で手動編集と SSOT 側だけの
+  更新を弾きます。`codex-delegator` だけは手書きです（Claude 側の本文にある advisor 優先の
+  エスカレーション層が Codex 側に対応物を持たないため）。`--check` は本文を再生成せず
+  「存在し、有効な TOML であること」だけを確かめ、`description` が `.md` と一致していることは
+  `tests/test_agent_parity.py` が固定します。`.claude/` 側が唯一の上流です。
 - **フック**: 実体もリンクも置かず、`.codex/hooks/*` が自身の**物理パス**
   （`realpath(__file__)` / `cd -P`）から `../../.claude/hooks` を解決して共有ライブラリを
   読み込みます。シンボリックリンクを避けているのは `core.symlinks=false` の
