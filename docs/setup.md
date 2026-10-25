@@ -54,6 +54,7 @@ sudo apt-get update
 
 ```bash
 brew install git zsh vim neovim tmux curl wget
+brew install fzf jq ripgrep bat fd universal-ctags
 brew install --cask wezterm
 brew install --cask font-ubuntu-mono font-hack-nerd-font
 ```
@@ -62,6 +63,14 @@ brew install --cask font-ubuntu-mono font-hack-nerd-font
 
 ```bash
 sudo apt-get install -y git zsh vim neovim tmux curl wget build-essential xsel
+sudo apt-get install -y fzf jq ripgrep bat fd-find universal-ctags
+
+# Debian/Ubuntu では bat / fd が batcat / fdfind という名前で入る。
+# 設定 (.zshrc の vf()、Neovim の telescope) は bat / fd を呼ぶので、別名を用意する
+# (install.sh も同じ。~/.local/bin が PATH に入っている前提)
+mkdir -p ~/.local/bin
+ln -sf "$(command -v batcat)" ~/.local/bin/bat
+ln -sf "$(command -v fdfind)" ~/.local/bin/fd
 
 # WezTerm
 curl -fsSL https://apt.fury.io/wez/gpg.key | sudo gpg --yes --dearmor -o /usr/share/keyrings/wezterm-fury.gpg
@@ -267,13 +276,26 @@ nvim  # lazy.nvimが自動的にプラグインをインストール
 
 </details>
 
+<details>
+<summary>11. tmux プラグインマネージャー（tpm）のインストール</summary>
+
+`.tmux.conf` は末尾で `~/.tmux/plugins/tpm/tpm` を実行します（7. で `.tmux.conf` をリンクしたあとに行う）。tpm 本体は自動では入らないので、手動で clone します。
+
+```bash
+git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+```
+
+その後 tmux を起動し、prefix（`Ctrl+a`）に続けて `I`（大文字）を押すと、`.tmux.conf` に宣言されたプラグインが導入されます。
+
+</details>
+
 ## 元に戻す（バックアップと復旧）
 
 `install.sh` はシンボリックリンクを張る前に、**既存の実ファイルを退避**します（シンボリックリンクは自前の生成物とみなして退避せず削除します）。
 
 **退避先**: `~/.dotfiles_backup_<YYYYMMDD_HHMMSS>/`
 
-実行のたびにタイムスタンプ付きの新しいディレクトリが作られ、**`$HOME` からの相対パス構造がそのまま保たれます**（`backup_if_real` / `install.sh`）。フラットに basename だけで退避すると、`settings.json` のように別ディレクトリで同名のファイルが上書きで消えるためです。
+実際に退避するものがあった実行でだけタイムスタンプ付きのディレクトリが残り（何も退避しなかった実行では作成後に削除され、`--dry-run` では作成されません）、**`$HOME` からの相対パス構造がそのまま保たれます**（`backup_if_real` / `install.sh`）。フラットに basename だけで退避すると、`settings.json` のように別ディレクトリで同名のファイルが上書きで消えるためです。
 
 ```bash
 # 退避ディレクトリの一覧（新しい順）
@@ -322,7 +344,7 @@ cp -a "$BACKUP/.tmux.conf" "$TARGET"
 cd "$BACKUP" && find . -mindepth 1
 ```
 
-なお退避ディレクトリに入っているのは**そのとき実ファイルだった分だけ**です。2 回目以降の実行では対象が既に symlink になっており（`backup_if_real` はリンクを退避せず削除する）、退避ディレクトリは空か、ほぼ空になります。
+なお退避ディレクトリに入っているのは**そのとき実ファイルだった分だけ**です。2 回目以降の実行では対象が既に symlink になっており（`backup_if_real` はリンクを退避せず削除する）、何も退避しなかった実行では退避ディレクトリ自体が残りません。
 
 > **⚠️ 退避とリンク作成は原子的ではありません。** `backup_if_real`（退避）と
 > `link_entry`（リンク作成）は別ステップなので、その間で `Ctrl-C` やクラッシュが
@@ -362,8 +384,13 @@ brew install --cask font-hack-nerd-font
 ### Neovimでエラーが発生する
 
 ```bash
-# lazy.nvimのクリーンインストール
+# lazy.nvimのクリーンインストール（プラグインに加え、Mason で入れた LSP / DAP も消える）
 rm -rf ~/.local/share/nvim
-rm -rf ~/.config/nvim/lazy-lock.json
 nvim  # lazy.nvimが自動的に再インストールされる
 ```
+
+`~/.config/nvim` はリポジトリの `.config/nvim` へのシンボリックリンクで、`lazy-lock.json`
+（プラグインのバージョン固定）は**リポジトリで追跡されているファイル**です。消すとピン留めが失われるので
+削除しないでください。lockfile に合わせて入れ直すには、Neovim 内で `:Lazy restore` を実行します。
+Mason で入れていた LSP / DAP は `:Mason` から入れ直します。
+lockfile を書き換えてしまった場合は `git -C ~/dotfiles checkout -- .config/nvim/lazy-lock.json` で戻せます。

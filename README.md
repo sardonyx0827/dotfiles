@@ -5,7 +5,7 @@
 
 個人用の開発環境設定ファイル（dotfiles）のリポジトリです。Zsh、Vim、Neovim、tmux、WezTerm などの設定に加え、母艦となる Claude Code（＋ Codex・Gemini CLI・GitHub Copilot CLI）の AI 開発ツールのエージェント／スキル／フック設定とセットアップスクリプトを一括管理しています。全体を [Rosé Pine](https://rosepinetheme.com/) カラースキームで統一し、macOS / Ubuntu / WSL に対応した `install.sh` でシンボリックリンクを自動生成します。
 
-> **English summary**: Personal dotfiles unifying Zsh, Vim, Neovim, tmux, and WezTerm under the Rosé Pine theme, plus agent / skill / hook configurations for AI coding tools built around Claude Code as the hub (with Codex, Gemini CLI, and Copilot CLI alongside). A cross-platform `install.sh` (macOS / Ubuntu / WSL) symlinks everything, and the hook / installer logic is covered by a pytest suite with a 90% coverage gate in CI. Deep-dive docs (in English): [hook system](.claude/hooks/README.md), [custom agents](.claude/agents/README.md).
+> **English summary**: Personal dotfiles unifying Zsh, Vim, Neovim, tmux, and WezTerm under the Rosé Pine theme, plus agent / skill / hook configurations for AI coding tools built around Claude Code as the hub (with Codex, Gemini CLI, and Copilot CLI alongside). A cross-platform `install.sh` (macOS / Ubuntu / WSL) symlinks everything, and the repo is tested by a pytest suite: CI enforces a 90% coverage gate on the Python code (hooks, MCP servers, skill scripts, and `scripts/`), while `install.sh` sits outside that measurement and is covered by hermetic subprocess tests plus an `install.sh --dry-run` smoke test in CI. Deep-dive docs (in English): [hook system](.claude/hooks/README.md), [custom agents](.claude/agents/README.md).
 
 <p align="center">
   <img src="assets/architecture.svg" alt="dotfiles アーキテクチャ図 — install.sh が macOS / Ubuntu / WSL を検出し、Shell・Editors・AI Dev Tools・CI を Rosé Pine で統一管理する構成" width="100%">
@@ -102,16 +102,23 @@ cd ~/dotfiles
 - プラットフォームの検出（macOS/Ubuntu/Windows）
 - 設定ファイルのシンボリックリンク作成（既存の実ファイルは `~/.dotfiles_backup_<timestamp>/` へ自動退避。戻し方は[元に戻す](docs/setup.md#元に戻すバックアップと復旧)を参照）
   - **最初に実行される**。以降のステップはネットワークやパッケージ名の変更で失敗しうるため、先にリンクを張り終える（最後に実行していた頃は、途中の失敗でdotfiles が一切リンクされないまま終わることがあった）
+  - Git のコミット名義（`user.name` / `user.email`）を `~/.config/git/user.gitconfig` に保存。既存の Git 設定から引き継げない場合のみ、対話端末で入力を求める
+  - `~/.zsh_secrets`（API キー等の置き場）の雛形を、存在しない場合のみ権限 600 で作成
 - 必要なパッケージのインストール
   - macOS: Homebrew経由でVim、Neovim、tmux、WezTermなど
   - Ubuntu: APT経由でVim、Neovim、tmux、WezTermなど
 - CLI ツール（ripgrep、fd、bat、universal-ctags、tree-sitter、lazydocker など）のインストール
+- GitHub CLI（gh）、pyenv、uv、glow のインストール
+- Docker のインストール
+  - macOS: Homebrew Cask で Docker Desktop を導入（導入後に一度起動すると docker CLI が PATH に載る）
+  - Ubuntu: `get.docker.com` のスクリプトを `sudo sh` で実行し、ユーザーを `docker` グループに追加（反映にはログアウト／ログインが必要）
 - Oh My Zshとプラグインのインストール
 - vim-plugのインストール
+- tmux プラグインマネージャー（tpm）のインストール（プラグイン本体は下記の手順 6 で導入）
 - Node.jsとnpmのセットアップ
 - Linter / Formatter（prettier、eslint など。フックが利用）のインストール
 - フォントのインストール
-- Claude Code への MCP サーバー登録
+- Claude Code への MCP サーバー登録（`claude` コマンドが PATH にある場合のみ。無ければ警告してスキップ）
 - デフォルトシェルをZshに変更
 
 3. **AIツールのインストール（オプション）**
@@ -130,6 +137,10 @@ cd ~/dotfiles
 # Neovimを開いてlazy.nvimプラグインを自動インストール
 nvim
 ```
+
+6. **tmux プラグインのインストール**
+
+`install.sh` が入れるのは tpm 本体だけです。tmux を起動し、prefix（`Ctrl+a`）に続けて `I`（大文字）を押すと、`.tmux.conf` に宣言されたプラグインが導入されます。
 
 > **注意**: プラットフォーム固有の詳細な手順やトラブルシューティングについては、[INSTALL_PLATFORM.md](INSTALL_PLATFORM.md)を参照してください。
 
@@ -169,7 +180,7 @@ npm install -g @github/copilot
 
 ### MCP サーバーの登録
 
-`install.sh` は Claude Code に以下の MCP サーバーをユーザースコープで登録します（冪等）。手動で行う場合は `claude mcp add` を使用します。
+`install.sh` は Claude Code に以下の MCP サーバーをユーザースコープで登録します（冪等）。ただし登録するのは `claude` コマンドが PATH にある場合だけで、無い場合は `claude CLI not found; skipping MCP server registration` と警告してスキップします。Claude Code を導入した後に `./install.sh` を再実行すれば登録されます。手動で行う場合は `claude mcp add` を使用します。
 
 | サーバー            | 用途                            |
 | ------------------- | ------------------------------- |
@@ -184,6 +195,11 @@ npm install -g @github/copilot
 # すべてのAIツールを更新 (Claude Code / Codex / Gemini CLI / Copilot CLI)
 ./scripts/update_ai_tools.sh
 ```
+
+更新方法はツールごとに異なります。
+
+- Claude Code / Copilot CLI: 各 CLI 自身の `update` サブコマンドを実行します（未インストールならスキップ）。
+- Codex / Gemini CLI: **npm 管理のグローバルパッケージである場合のみ** `npm install -g <pkg>@latest` で更新します。Homebrew など npm 以外で入れたものは `skip: <pkg> is not an npm-managed global; leaving it alone` と表示して何もしません（npm 管理の二重コピーを作らないため）。
 
 ## 詳細ドキュメント
 

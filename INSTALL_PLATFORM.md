@@ -19,7 +19,7 @@ xcode-select --install
 
 #### Apple Silicon (M1/M2/M3) の場合
 
-Homebrewは `/opt/homebrew` にインストールされます。インストールスクリプトは自動的にPATHを設定します。
+Homebrewは `/opt/homebrew` にインストールされます。インストールスクリプト自身が行うPATH設定（`brew shellenv`）はスクリプトの実行中だけ有効です。恒久的なPATH設定は、リンクされる `.zshrc` が `brew shellenv` を実行することで行われます（端末を開き直すと反映）。
 
 #### Intel Mac の場合
 
@@ -54,6 +54,10 @@ tmux設定（`.tmux.conf`）で `pbcopy` と `pbpaste` を使用しています�
 - Ubuntu 20.04 LTS 以降
 - Debian 11 (Bullseye) 以降
 
+> **Neovim は 0.12 以降が必要です（CI は v0.12.4 で検証）。** `install.sh` は `apt` から `neovim` を入れますが、
+> 現行の Ubuntu LTS（24.04 を含む）の `apt` 版は古く、この設定の要件を満たしません。
+> 後述の「[Neovimのバージョンが古い](#neovimのバージョンが古い)」の手順で新しい版を入れてください。
+
 ### 前提条件
 
 ```bash
@@ -68,11 +72,7 @@ sudo apt-get upgrade -y
 
 tmuxでのクリップボード操作には `xsel` を使用します（インストールスクリプトで自動インストール）。
 
-Waylandを使用している場合は `wl-clipboard` も必要になる場合があります：
-
-```bash
-sudo apt-get install -y wl-clipboard
-```
+この設定のクリップボード連携（`.tmux.conf`）は `xsel` のみを呼び出します。`wl-copy` / `wl-paste`（`wl-clipboard`）は使っていません。
 
 #### フォントの追加設定
 
@@ -97,7 +97,7 @@ sudo rm /usr/share/keyrings/wezterm-fury.gpg
 
 #### Neovimのバージョンが古い
 
-Ubuntu 20.04などでNeovimのバージョンが古い場合は、PPAを使用：
+この設定は Neovim 0.12 以降を前提にしています（`vim.keymap.set` の `buf` オプションなど 0.12 の API に移行済み。`vim.lsp.config` は 0.11+ の機能。CI は v0.12.4 で検証）。Ubuntu 20.04 に限らず、24.04 を含む現行の Ubuntu LTS の `apt` 版 `neovim` は古く、この要件を満たしません。`nvim --version` で確認し、PPA（または公式リリース）を使用：
 
 ```bash
 sudo add-apt-repository ppa:neovim-ppa/unstable
@@ -163,10 +163,19 @@ Git Bash環境では以下の機能に制限があります：
 
 #### 手動インストールが必要なツール
 
+Git Bash では `install.sh` は OS パッケージ（Homebrew / APT 相当）の導入を行わず、警告を出すだけです。次のものは自分で用意してください：
+
 1. **Vim**: [https://www.vim.org/download.php](https://www.vim.org/download.php)
 2. **Neovim**: [https://neovim.io/](https://neovim.io/)
 3. **tmux**: Windows Terminalの使用を推奨（tmuxの代替）
 4. **WezTerm**: [https://wezfurlong.org/wezterm/](https://wezfurlong.org/wezterm/)
+5. **zsh**: 未導入の場合、デフォルトシェルの変更（`chsh`）は警告してスキップされます。Oh My Zsh も zsh を前提とします
+6. **フォント**: `install.sh` が導入するのは macOS / Ubuntu のみです
+7. **CLI ツール**（fzf、jq、ripgrep、bat、fd、universal-ctags）
+8. **GitHub CLI（gh）**: Windows 向けの導入経路はありません。既に入っている場合のみ、git の資格情報ヘルパーとして使われます
+9. **glow / Docker / lazydocker / pyenv**: 導入は macOS / Ubuntu のみです（pyenv は macOS では Homebrew 経由）
+10. **Node.js / Python**: Git Bash では自動導入されません（無い場合は npm / pip 製のツールも導入されません）
+11. **Linter / Formatter**: prettier・eslint・ruff など npm / pip 製のものは Node.js / Python があれば導入されます。それ以外は、scoop があれば shellcheck / shfmt / cppcheck のみ自動導入され、残り（clang-format、staticcheck など）は手動です
 
 ### Windows Terminalの設定
 
@@ -242,11 +251,16 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting ~/.oh-my-zsh/cust
 ### Neovimプラグインのインストールに失敗
 
 ```bash
-# lazy.nvimのクリーンインストール
+# lazy.nvimのクリーンインストール（プラグインに加え、Mason で入れた LSP / DAP も消える）
 rm -rf ~/.local/share/nvim
-rm -rf ~/.config/nvim/lazy-lock.json
 nvim  # 再度開いて自動インストール
 ```
+
+`~/.config/nvim` はリポジトリの `.config/nvim` へのシンボリックリンクで、`lazy-lock.json`
+（プラグインのバージョン固定）は**リポジトリで追跡されているファイル**です。消すとピン留めが失われるので
+削除しないでください。lockfile に合わせて入れ直すには、Neovim 内で `:Lazy restore` を実行します。
+Mason で入れていた LSP / DAP は `:Mason` から入れ直します。
+lockfile を書き換えてしまった場合は `git -C ~/dotfiles checkout -- .config/nvim/lazy-lock.json` で戻せます。
 
 ### Vimプラグインのインストールに失敗
 
@@ -335,7 +349,15 @@ ls ~/.oh-my-zsh/custom/plugins/
 ```bash
 cd ~/dotfiles
 git pull origin main
+
+# 設定の再適用（冪等）
+./install.sh
 ```
+
+`git pull` だけでは反映されないものがあります。`~/.codex/hooks.json` は `install.sh` が
+テンプレートから生成したコピー（シンボリックリンクではない）で、また `~/.claude/mods` のように
+新しく追加されたリンクは `install.sh` が張るまで存在しません。pull の後は `./install.sh` を
+再実行してください（`./install.sh --dry-run` で事前に確認できます）。
 
 ### インストール済みツールの更新
 
