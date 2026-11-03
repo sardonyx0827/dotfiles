@@ -19,6 +19,7 @@ import io
 import os
 import subprocess
 import sys
+import time
 import types
 
 import pytest
@@ -168,6 +169,44 @@ class TestCliSubprocess:
         r = self._run("just some ordinary code without secrets")
         assert r.returncode == 0
         assert r.stdout == ""
+
+    @pytest.mark.parametrize("unit", ["token", "password", "secret", "api_key"])
+    def test_large_payload_of_repeated_keyword_finishes_quickly(self, unit):
+        """The editors call this synchronously with no timeout: a 100 KB buffer of
+        a credential keyword with no separators used to take minutes (the
+        assignment pattern's unbounded name suffix backtracked once per
+        occurrence). The bound is far above the linear cost and far below the
+        quadratic one, so a slow CI host cannot flip it."""
+        payload = unit * (100_000 // len(unit))
+        started = time.perf_counter()
+        r = self._run(payload)
+        elapsed = time.perf_counter() - started
+        assert r.returncode == 0, r.stderr
+        assert r.stdout == ""
+        assert elapsed < 5.0, f"{unit!r} x N took {elapsed:.1f}s"
+
+    def test_credential_reference_in_buffer_is_clean(self):
+        # Editor buffers are full of code; reading a credential from the
+        # environment is not a credential value.
+        r = self._run("api_key = os.getenv('GEMINI_API_KEY')\n")
+        assert r.returncode == 0
+        assert r.stdout == ""
+
+    @pytest.mark.parametrize(
+        ("payload", "label"),
+        [
+            ("npm_" + "a" * 36, "npm token"),
+            ("hf_" + "c" * 34, "Hugging Face token"),
+            (
+                "https://hooks.slack.com/services/T0000000A/B0000000B/" + "g" * 24,
+                "Slack webhook URL",
+            ),
+        ],
+    )
+    def test_bare_token_formats_exit_1_with_their_label(self, payload, label):
+        r = self._run(payload)
+        assert r.returncode == 1
+        assert r.stdout.strip() == label
 
     def _run_bytes(self, data, env=None):
         return subprocess.run(

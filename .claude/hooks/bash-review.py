@@ -21,8 +21,10 @@ from _bash_review_common import (
     build_review_prompt,
     classify_high_risk,
     combine_high_risk_verdicts,
+    ensure_private_dir,
     find_deny_command,
     format_dual_verdict_reason,
+    input_limit_reason,
     notify,
     prune_dir,
     scan_secrets,
@@ -108,7 +110,8 @@ try:
     # ログ設定
     # 詳細ログ (コマンドごとに1ファイル)
     log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
-    os.makedirs(log_dir, exist_ok=True)
+    # 0700 で作り、既存でも root 配下を 0700 に絞る (ログにはコマンド全文が入る)。
+    ensure_private_dir(log_dir, root="/tmp/claude_hooks")  # nosec B108
     # ナノ秒 + PID でファイル名を一意化する。秒粒度 (int(time.time())) だと
     # 同一秒内に複数コマンドをレビューした際に同名となり、後のログが前を上書き
     # して監査ログが失われる。
@@ -118,6 +121,24 @@ try:
     # サマリーログ (1ファイルに追記・500行でローテーション)
     summary_log = os.path.expanduser("~/.claude/logs/bash-review.log")
     os.makedirs(os.path.dirname(summary_log), exist_ok=True)
+
+    # --- 入力サイズの上限 (何よりも先に。分割・秘密スキャン・プロンプト生成より前) ---
+    # 上限超過は二次の計算量になり得る入力。解析せず ask に倒す (deny でも無言 allow でも
+    # ない)。解析していない = 秘密の有無も分からないので、生コマンドはログへ書かない。
+    limit_reason = input_limit_reason(command, tool_input)
+    if limit_reason:
+        omitted = "[input not logged: over the review size limit]"
+        reason = (
+            f"{limit_reason}; not analysed or sent to external review — "
+            "confirm manually"
+        )
+        emit_decision("ask", reason)
+        _write_detail_log(
+            log_file, tool_name, {"command": omitted}, {"Result": "ASK (input limit)"}
+        )
+        _log_summary(summary_log, omitted, "ASK", "size", reason)
+        notify("Bash Review - 確認が必要", "入力が大きすぎるため静的解析を省略", 8)
+        sys.exit(0)
 
     # 一次処理: Gemini API 用プロンプト (tool_input に依存するので try 内で組む)
     prompt = build_review_prompt(tool_name, tool_input)

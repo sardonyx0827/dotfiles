@@ -16,7 +16,8 @@
   (no AI call), a static secret pre-send scan that refuses to forward commands
   carrying raw credentials to any LLM, a parallel Gemini+Codex AND-gate for
   high-risk commands, and a Gemini→Codex cascade for the low-risk majority.
-  Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
+  Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`
+  (directory 0700, files 0600).
   `settings.json` launches it through the launcher, not bare `python3`: a hook
   command that cannot start (no `python3`, missing file) or crashes with an
   unexpected exit code is treated by Claude Code as a _non-blocking_ error —
@@ -175,14 +176,19 @@ Given that model, the flow is tuned by **how dangerous the command is**, keeping
 latency low for the common case:
 
 1. **Fast pre-block / safe-skip (no AI call).** Dangerous executables (`curl`,
-   `nc`/`netcat`/`ncat`, `dd`, `sudo`, …) are denied outright and obvious
+   `nc`/`netcat`/`ncat`, `scp`/`sftp`/`telnet`/`socat`/`ftp`/`slogin`, `dd`,
+   `sudo`, …) are denied outright and obvious
    read-only commands (`ls`, `cat`, `git status`, …) are allowed — both without
    any API/CLI round-trip.
 
    The two sides are not symmetric. Denial **resolves the executable** rather
    than matching a literal prefix, so `/usr/bin/curl`, `CURL`, `c"u"rl`,
-   `env curl` and `(curl …)` all resolve to `curl` and are denied. What it
-   cannot resolve — `$(which curl)`, `${CURL}`, `eval "…"`, `sh -c "…"` — is not
+   `env curl`, `(curl …)`, a `noglob` / `nocorrect` / `builtin` / `lockf` /
+   `sandbox-exec` / `xcrun` prefix, a `FOO+=x` prefix and
+   `function f { curl …; }` all resolve to `curl` and are denied. What it
+   cannot resolve — `$(which curl)`, `${CURL}`, `eval "…"`, `sh -c "…"`, an
+   executable with an unquoted glob (`/usr/bin/cur?`; a heredoc body line
+   such as `**Why**:` in a commit message is data, not an executable) — is not
    waved through either: those escalate to the high-risk gate below (step 3:
    it runs only when both models return `ALLOW`; anything short of that stops
    for confirmation or is denied).
@@ -216,11 +222,15 @@ latency low for the common case:
 2. **Secret pre-send scan (no external call).** Before any command is handed to
    an LLM, a static scan (`scan_secrets`) checks the command _and_ the full
    `tool_input` for raw credential **values** — known-format tokens (GitHub /
-   AWS / Google / OpenAI / Slack / Stripe), PEM / OpenPGP private keys, JWTs,
+   AWS / Google / OpenAI / Slack (incl. app tokens and webhook URLs) / Stripe /
+   npm / GitLab / Hugging Face / SendGrid / PyPI / Docker / DigitalOcean),
+   PEM / OpenPGP private keys, JWTs,
    `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs,
    credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`),
    and a secret-named key followed by its value in known setter CLIs
    (`aws configure set`, `vault kv put`, `gh secret set`, `heroku config:set`, …).
+   References to a credential in code (`os.getenv(…)`, `os.environ[…]`,
+   `self.token`) are not values and are not flagged.
    A hit fails closed to `ask` (Claude) / block (Codex) **without calling Gemini
    or Codex**, so a secret never leaves the machine for review; the
    reason / notification / logs carry only a generic category label, and the raw
@@ -234,7 +244,11 @@ latency low for the common case:
    not entropy or de-obfuscation.
 3. **High-risk commands → parallel two-model AND-gate.** Commands that are
    dangerous _depending on context_ (`rm -r`, package installs like
-   `pip install` / `npm i`, …; see `high_risk_label`) are reviewed by Gemini
+   `pip install` / `npm i`, other shells' `-c` (csh / tcsh / fish / ash / pwsh),
+   `osascript` / `bun` / `lua` inline eval, `deno eval`, remote runners
+   (`npm exec`, `bunx`, `pipx run`, `uv tool run`), abbreviated destructive git
+   options (`reset --har`, `clean --forc`, `push --forc`), …; see
+   `high_risk_label`) are reviewed by Gemini
    **and** Codex run _in parallel_, and their verdicts are combined as an
    AND-gate (`combine_high_risk_verdicts`): `allow` only when **both** return
    `ALLOW`, `deny` only when **both** return `DENY`, and everything else —
@@ -269,11 +283,22 @@ latency low for the common case:
    `bash-review-launcher.sh` turns a missing `python3`, a missing
    `bash-review.py`, or a crash (any exit other than 0/2) into an explicit
    `ask`, where the bare `python3 …/bash-review.py` wiring would have been
-   downgraded by Claude Code to a non-blocking error — i.e. fail-open. What
-   the launcher cannot cover is its own failure to start (a missing `bash`
-   itself); that residual case is bounded by `permissions.deny`, which mirrors
-   the hook's context-free hard-deny set — `sudo`/`su`/`doas`/`pkexec`,
-   `ssh`/`curl`/`wget`/`nc`, `dd`/`shred`/`mkfs` — so none of them run
+   downgraded by Claude Code to a non-blocking error — i.e. fail-open. The
+   review **never finishing** is covered too: the launcher's entry in
+   `settings.json` carries `"timeout": 180` and `"onFailure": "block"`
+   (Claude Code 2.1.295+), so a timeout — or the launcher itself failing to
+   start — blocks the command instead of letting it run. 180 s sits above the
+   review's own worst case (Gemini 30 s plus Codex 60 s). And input too large to
+   analyse in that budget never reaches the analysis: a `tool_input` over
+   32 KiB of JSON, or more than 32 command substitutions (`$(`, `<(`, `>(`, a
+   backtick pair), resolves to `ask` (Codex: block) before step 1, with no
+   external review and never `deny`. That bounds the quadratic cost of nested
+   `$(`. `git-push-review.sh` stays fail-open (no `onFailure`), backed by
+   `Bash(git push:*)` in `ask`.
+   Should the hook layer be disabled altogether, `permissions.deny` still
+   mirrors the hook's context-free hard-deny set — `sudo`/`su`/`doas`/`pkexec`,
+   `ssh`/`slogin`/`scp`/`sftp`/`telnet`/`socat`/`ftp`/`curl`/`wget`/`nc`/`netcat`/`ncat`,
+   `dd`/`shred`/`mkfs` — so none of them run
    unreviewed even with the hook down. The one residual: `permissions.deny`
    matches on word boundaries and cannot express the `mkfs.<fs>` family
    (`mkfs.ext4`, `mkfs.xfs`, …) in a single rule, so the common members are
