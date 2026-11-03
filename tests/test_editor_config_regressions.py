@@ -4,12 +4,14 @@ luacheck reads names and scopes; it has no model of another plugin's argv gramma
 Nothing lints Vimscript -- `.vim/rc/` has no linter, so its checks live here. The bugs
 pinned here pass every other gate while being plainly wrong at runtime.
 
-The toggleterm and Copilot-guard checks are content assertions, not behavior tests:
-driving real toggleterm keymaps or a real `:saveas` would need a live Neovim/Vim session
-with plugins installed, which this suite deliberately does not build. The assertions are
-written against the specific malformed shapes so they stay meaningful rather than merely
-present. The 70-ai.vim port tests further down do drive a real Vim (no plugins needed)
-and skip when none is available.
+The toggleterm count-prefix and Copilot-guard checks are content assertions, not
+behavior tests: driving real toggleterm commands or a real `:saveas` would need a
+live Neovim/Vim session with plugins installed, which this suite deliberately does
+not build. The assertions are written against the specific malformed shapes so they
+stay meaningful rather than merely present. The toggleterm Esc-mapping, nvim-treesitter
+and command-line-window checks near the end do drive a real Neovim, against stand-ins
+for the plugin APIs they touch. The 70-ai.vim port tests further down do drive a real
+Vim (no plugins needed) and skip when none is available.
 """
 
 import json
@@ -1631,3 +1633,177 @@ call add(g:R, 'TARGET_AFTER=' . string(getbufline(s:ctx.target_buf, 1, '$')))
         # tmpfile while the other job still reads it.
         assert got["PENDING"] == "0", got
         assert got["TMPFILE_LEFT"] == "0", got
+
+
+# ---------------------------------------------------------------------------
+# B1: nvim-treesitter on the `main` branch, without the get_node_text patch.
+# ---------------------------------------------------------------------------
+TREESITTER_SPEC = (
+    REPO_ROOT / ".config/nvim/lua/setup/plugins/visual/nvim-treesitter.lua"
+)
+LAZY_LOCK = REPO_ROOT / ".config/nvim/lazy-lock.json"
+# The frozen `master` pin this migration replaced (README: "Neovim 0.12 is not supported").
+OLD_MASTER_COMMIT = "cf12346a3414fa1b06af75c79faebe7f76df080a"
+
+
+def _lua_code(path) -> str:
+    """The file's text without whole-line `--` comments (the new comments quote the
+    old API as the thing not to write)."""
+    return "\n".join(
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("--")
+    )
+
+
+class TestTreesitterSpecIsOnMain:
+    def test_the_spec_names_the_main_branch(self):
+        assert re.search(r'branch\s*=\s*"main"', _lua_code(TREESITTER_SPEC))
+
+    def test_the_lockfile_pins_a_real_main_commit(self):
+        entry = json.loads(LAZY_LOCK.read_text(encoding="utf-8"))["nvim-treesitter"]
+        assert entry["branch"] == "main", entry
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["commit"]), entry
+        assert entry["commit"] != OLD_MASTER_COMMIT, entry
+
+    def test_no_master_branch_api_is_left(self):
+        """`nvim-treesitter.configs` and its modules do not exist on main."""
+        code = _lua_code(TREESITTER_SPEC)
+        for dead in (
+            "nvim-treesitter.configs",
+            "ensure_installed",
+            "auto_install",
+            "additional_vim_regex_highlighting",
+        ):
+            assert dead not in code, f"master-only `{dead}` is still configured"
+
+    def test_get_node_text_is_not_monkeypatched(self):
+        """The patch swallowed errors and returned "" -- which silently dropped
+        language injection (a ```lua fence in Markdown lost its highlighting)."""
+        assert not re.search(r"get_node_text\s*=", _lua_code(TREESITTER_SPEC))
+
+
+class TestTreesitterSpecBehaviour:
+    """The spec's `config`, run against a recording stand-in for the plugin API that
+    the main-branch README documents (`install`, plus `get_available`)."""
+
+    PROBE = """
+local calls = { start = {}, install = {} }
+local pending = {}
+local have_tools = true
+local available = { "foo", "bar", "ipkg", "lua" }
+local loadable = { lua = true }
+
+-- master-only module: stubbed so the pre-migration config can run to the end and
+-- fail on the assertions rather than on a missing module.
+local configs_called = false
+package.loaded["nvim-treesitter.configs"] = {
+  setup = function() configs_called = true end,
+}
+package.loaded["nvim-treesitter"] = {
+  setup = function() end,
+  get_available = function() return available end,
+  install = function(langs)
+    table.insert(calls.install, type(langs) == "table" and langs[1] or langs)
+    return { await = function(_, cb) table.insert(pending, cb) end }
+  end,
+}
+vim.fn.executable = function() return have_tools and 1 or 0 end
+vim.treesitter.language.get_lang = function(ft) return ft end
+vim.treesitter.language.add = function(lang) return loadable[lang] and true or nil end
+vim.treesitter.start = function(buf) table.insert(calls.start, buf) end
+
+local before = vim.treesitter.get_node_text
+require("setup.plugins.visual.nvim-treesitter").config()
+local node_text_untouched = rawequal(before, vim.treesitter.get_node_text)
+
+local function open(ft)
+  local buf = vim.api.nvim_create_buf(true, false)
+  vim.bo[buf].filetype = ft
+  return buf
+end
+local function started(buf) return vim.tbl_contains(calls.start, buf) end
+
+local lua_buf = open("lua")
+local installed_before_foo = #calls.install
+
+local foo = open("foo")
+local foo_started_before_install = started(foo)
+local installs_for_foo = #calls.install - installed_before_foo
+for _, cb in ipairs(pending) do cb(nil, true) end
+vim.wait(100)
+local foo_started_after_install = started(foo)
+
+local foo2 = open("foo")
+local installs_after_second_foo = #calls.install
+
+local ipkg = open("ipkg")
+local unknown = open("not_a_parser")
+have_tools = false
+local bar = open("bar")
+
+emit({
+  node_text_untouched = node_text_untouched,
+  configs_called = configs_called,
+  lua_started = started(lua_buf),
+  installed_for_loadable = installed_before_foo,
+  installs_for_foo = installs_for_foo,
+  foo_started_before_install = foo_started_before_install,
+  foo_started_after_install = foo_started_after_install,
+  installs_after_second_foo = installs_after_second_foo,
+  installs_total = calls.install,
+  ipkg_started = started(ipkg),
+  unknown_started = started(unknown),
+  bar_started = started(bar),
+}
+)
+"""
+
+    @pytest.fixture(scope="class")
+    def probe(self, tmp_path_factory):
+        return _nvim_probe(tmp_path_factory.mktemp("treesitter"), self.PROBE)
+
+    def test_config_leaves_get_node_text_alone(self, probe):
+        assert probe["node_text_untouched"] is True, probe
+
+    def test_config_does_not_use_the_master_configs_module(self, probe):
+        assert probe["configs_called"] is False, probe
+
+    def test_an_available_parser_starts_highlighting(self, probe):
+        assert probe["lua_started"] is True, probe
+        assert probe["installed_for_loadable"] == 0, "installed a parser that loads"
+
+    def test_a_missing_parser_is_installed_once_then_the_buffer_is_started(self, probe):
+        assert probe["installs_for_foo"] == 1, probe
+        assert probe["foo_started_before_install"] is False, probe
+        assert probe["foo_started_after_install"] is True, probe
+        assert probe["installs_after_second_foo"] == 1, (
+            "a second buffer of the same filetype re-triggered the install"
+        )
+
+    def test_ipkg_and_unknown_filetypes_are_never_installed(self, probe):
+        assert probe["installs_total"] == ["foo"], probe
+        assert probe["ipkg_started"] is False, probe
+        assert probe["unknown_started"] is False, probe
+
+    def test_nothing_is_installed_without_the_build_tools(self, probe):
+        # `bar` is available and missing, but the tree-sitter CLI stand-in says absent.
+        assert "bar" not in probe["installs_total"], probe
+        assert probe["bar_started"] is False, probe
+
+
+def test_treesitter_loads_eagerly_because_main_cannot_be_lazy_loaded(tmp_path):
+    got = _nvim_probe(
+        tmp_path,
+        """
+local spec = require("setup.plugins.visual.nvim-treesitter")
+emit({ lazy = spec.lazy, event = spec.event, cmd = spec.cmd, ft = spec.ft,
+       branch = spec.branch, build = spec.build })
+""",
+    )
+    assert got["lazy"] is False, got
+    assert got["branch"] == "main", got
+    # Parsers installed under an older plugin revision must be rebuilt on update.
+    assert got["build"] == ":TSUpdate", got
+    for trigger in ("event", "cmd", "ft"):
+        assert trigger not in got, f"lazy trigger `{trigger}` on an eager plugin: {got}"

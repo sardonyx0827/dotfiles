@@ -94,7 +94,7 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 | 定義 + 直上コメント まで解決 | Lua, Python（デコレータ・docstring 込み）, TypeScript/JavaScript（アロー関数・メソッド）, Go（関数・`type`）, Rust, C, C++, C#, Java, Kotlin, Ruby, PHP, Scala, Zig, Bash, Vim script |
 | 未対応                       | Elixir（`def` が汎用の `call` ノードで、関数呼び出しと区別できない）、Dart（トップレベル関数に囲みノードが無い）、Haskell（定義ノードが `function`、型シグネチャは別ノード）          |
 
-未対応の言語でも壊れず、「カーソル位置に…見つかりません」と通知して終了します。パーサー未導入の言語（`auto_install` が取りに行く前など）は段落フォールバックになります。
+未対応の言語でも壊れず、「カーソル位置に…見つかりません」と通知して終了します。パーサー未導入の言語（nvim-treesitter が初回に自動インストールする前など）は段落フォールバックになります。
 
 - 実装は [`context.lua`](../.config/nvim/lua/setup/functions/ai/context.lua)（範囲の決定）と `prompt.hint_system`（「範囲内のコードを必ず引用する」「修正版コードや diff は返さない」を課すプロンプト）に分かれています。
 

@@ -185,9 +185,9 @@ local function node_rows(node)
 end
 
 --- Text of a node's `name` field, or nil. Read straight out of the buffer
---- rather than through vim.treesitter.get_node_text, which the treesitter
---- plugin spec monkey-patches to swallow errors and return "" -- a silent empty
---- name is indistinguishable from a grammar that has no name field.
+--- rather than through vim.treesitter.get_node_text, so a node that cannot be
+--- read gives nil instead of "" -- a silent empty name is indistinguishable from
+--- a grammar that has no name field.
 --- @param buf integer
 --- @param node userdata TSNode
 --- @return string|nil
