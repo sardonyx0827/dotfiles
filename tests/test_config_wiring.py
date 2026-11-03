@@ -179,7 +179,7 @@ def test_mods_do_not_hook_permission_events():
 # the boundary actually covers writes. A secret path denied for reads but not
 # for writes is guarded by bash-review alone, which has had a hole there
 # (git --output).
-# Read-denied build artifacts (node_modules, dist, build) are deliberately NOT
+# Read-denied noise directories (node_modules, .next) are deliberately NOT
 # listed: those denies exist to cut noise, and writing them is legitimate.
 #
 # The verb is `Edit`, never `Write`. Claude Code evaluates file permission rules
@@ -221,6 +221,10 @@ SECRET_PATH_PATTERNS = [
 HOME_SECRET_PATHS = [
     "~/.claude.json",
     "~/.codex/auth.json",
+    # Rendered from .codex/config.toml.template on first install and then left
+    # alone, so it can hold credentials that never reach the repo (an MCP
+    # server's token, for one).
+    "~/.codex/config.toml",
     "~/.config/gh/hosts.yml",
     "~/.npmrc",
     "~/.netrc",
@@ -300,6 +304,47 @@ def test_environment_dumps_are_denied():
     missing = [rule for rule in ENV_DUMP_DENIES if rule not in permissions["deny"]]
     assert not missing, f"permissions.deny is missing env dump guards: {missing}"
     assert "Bash(export:*)" not in permissions["allow"]
+
+
+# Commands that print a stored credential. Same reasoning as the env dumps
+# above: the secret never touches a file path a Read deny could see. These match
+# the usual spellings only; other forms still go through bash-review.
+CREDENTIAL_PRINT_DENIES = [
+    "Bash(gh auth token:*)",
+    "Bash(gh auth status --show-token:*)",
+    "Bash(gh auth status -t:*)",
+    "Bash(git credential:*)",
+    "Bash(git credential-osxkeychain:*)",
+    "Bash(security find-generic-password:*)",
+    "Bash(security find-internet-password:*)",
+    "Bash(security dump-keychain:*)",
+]
+
+
+def test_credential_printing_commands_are_denied():
+    deny = _deny_rules()
+    missing = [rule for rule in CREDENTIAL_PRINT_DENIES if rule not in deny]
+    assert not missing, f"permissions.deny is missing credential guards: {missing}"
+
+
+# A Read deny also blocks Edit and Write on the same path, and a single-segment
+# pattern such as `build/**` matches at any depth (Claude Code permissions
+# docs). So `Read(build/**)` meant to cut noise also made every nested
+# build/, dist/ or out/ directory uneditable -- `build/package/Dockerfile`,
+# `cmd/out/main.go` -- which is ordinary source in many projects.
+BUILD_OUTPUT_READ_DENIES = [
+    "Read(build/**)",
+    "Read(./build/**)",
+    "Read(dist/**)",
+    "Read(./dist/**)",
+    "Read(out/**)",
+    "Read(./out/**)",
+]
+
+
+def test_build_output_dirs_are_not_read_denied():
+    leftovers = sorted(_deny_rules() & set(BUILD_OUTPUT_READ_DENIES))
+    assert not leftovers, f"these denies also block editing source: {leftovers}"
 
 
 def test_secret_paths_are_read_denied_and_anchored():
@@ -498,6 +543,28 @@ def test_mod_and_settings_edits_ask_the_user():
         assert rule in ask, f"permissions.ask is missing {rule}; current: {ask}"
 
 
+# The other files that decide what a session may run: the hook scripts
+# themselves (bash-review is the gate every Bash call passes), settings.local.json
+# (it can add allow rules and hooks, same as settings.json), and Codex's
+# hooks.json / config.toml. Same threat as above: under the bare `Edit` allow a
+# prompt-injected session could rewrite any of them without a prompt.
+# ~/.codex/** covers the live hooks.json and config.toml; the repo copies of the
+# hook scripts are reached through //**/.codex/hooks/** and //**/.claude/hooks/**.
+GATE_FILE_ASKS = [
+    "Edit(//**/.claude/hooks/**)",
+    "Edit(//**/.claude/settings.local.json)",
+    "Edit(//**/.codex/hooks/**)",
+    "Edit(~/.codex/**)",
+]
+
+
+def test_hook_and_gate_config_edits_ask_the_user():
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    ask = settings["permissions"].get("ask", [])
+    missing = [rule for rule in GATE_FILE_ASKS if rule not in ask]
+    assert not missing, f"permissions.ask is missing {missing}"
+
+
 # Serena's tools that write the working tree, run a shell, or create files.
 # Edit rules never see an MCP tool, so while the writers sat in allow they could
 # rewrite a mod or settings.json with no prompt, around the ask rules above.
@@ -603,6 +670,28 @@ def test_bash_review_is_wired_through_failclosed_launcher():
     )
     direct = [c for c in commands if "bash-review.py" in c]
     assert not direct, f"bash-review.py must not be invoked directly: {direct}"
+
+
+def test_bash_review_fails_closed_on_timeout():
+    """The launcher covers a review that cannot start, not one that never ends.
+
+    A PreToolUse hook that times out is a non-blocking error by default, so the
+    command runs unreviewed. `onFailure: "block"` (Claude Code 2.1.295+) turns a
+    timeout, a hook that cannot start, an unexpected exit code or invalid JSON
+    into a block. The timeout sits above the review's own worst case (Gemini 30s
+    plus Codex 60s) so a slow but healthy review is not cut off.
+
+    git-push-review stays fail-open on purpose (a broken summary must never block
+    a real command; `Bash(git push:*)` in ask is its backstop), so it must not
+    carry the block setting.
+    """
+    hooks = _pretooluse_bash_hooks()
+    launcher = [h for h in hooks if "bash-review-launcher.sh" in h["command"]]
+    assert len(launcher) == 1, launcher
+    assert launcher[0].get("onFailure") == "block"
+    assert launcher[0].get("timeout", 600) >= 120
+    push = [h for h in hooks if "git-push-review.sh" in h["command"]]
+    assert push and all("onFailure" not in h for h in push)
 
 
 def test_codex_bash_review_is_wired_through_failclosed_launcher():

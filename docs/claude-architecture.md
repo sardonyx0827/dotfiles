@@ -105,7 +105,7 @@ flowchart TB
 
 | イベント      | matcher                  | スクリプト                                            | 役割                                                                                                                                                    |
 | ------------- | ------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PreToolUse`  | `Bash`                   | `bash-review-launcher.sh` → `bash-review.py`          | Bash コマンドの多層セーフティゲート。判定不能時は `ask` にフェイルセーフ                                                                                |
+| `PreToolUse`  | `Bash`                   | `bash-review-launcher.sh` → `bash-review.py`          | Bash コマンドの多層セーフティゲート。判定不能時は `ask` にフェイルセーフ。`timeout: 180` と `onFailure: "block"` で時間切れ・起動失敗もブロック         |
 | `PreToolUse`  | `Bash`                   | `git-push-review.sh`                                  | `git push` を検出して確認プロンプトを強制（`rules/git-workflow.md` の push 前確認だけを実装）                                                           |
 | `PostToolUse` | `Write\|Edit\|MultiEdit` | `format-then-lint.sh`（`auto-format.sh` → `lint.sh`） | 整形してから静的解析。lint は exit 2 で Claude に差し戻す。同一イベントのハンドラは並列に走り順序が保証されないため、1 本のハンドラに畳んで順に実行する |
 | `Stop`        | —                        | `stop-audit.sh`                                       | ターン終了時にデバッグ文の消し忘れを検出してブロック（`EDITOR_AI_ONESHOT` 時は監査しない）                                                              |
@@ -169,7 +169,10 @@ mod は settings hook より**先に**走り、サンドボックスもありま
 `classic.PermissionRequest`（とそれらを含むワイルドカード）にフックせず、`$.tool` も呼ばないことを前提にしています
 （`tests/test_config_wiring.py` の `test_mods_do_not_hook_permission_events` が静的に検査します）。
 mod のコードと、mod を読み込む `settings.json` を Claude が書き換えるときに利用者の確認を挟むため、`permissions.ask` に
-`Edit(//**/.claude/mods/**)` と `Edit(//**/.claude/settings.json)` を置いています。`.claude/` は保護パスですが、
+`Edit(//**/.claude/mods/**)` と `Edit(//**/.claude/settings.json)` を置いています。同じ理由で、セッションが実行できるものを
+決める他のファイル、つまり `Edit(//**/.claude/settings.local.json)`・`Edit(//**/.claude/hooks/**)`・
+`Edit(//**/.codex/hooks/**)`・`Edit(~/.codex/**)`（Codex の `hooks.json` と `config.toml`）も ask に置いています。
+`~/.codex/config.toml` は資格情報を含みうるため、さらに Read / Edit とも deny にしています（deny は ask より優先）。`.claude/` は保護パスですが、
 auto モードでは保護パスへの書き込みを classifier が判断するので、明示の ask ルールで利用者に確認させます。
 書き込みのたびに確認が出ることは実機で確かめています。ダイアログに `.claude` フォルダの編集をセッション単位で許可する
 選択肢が出ることがありますが、それを選んだ後も ask ルールの確認が続くかは未検証なので、1 件ずつ確かめたいときは選ばないでください。
@@ -186,7 +189,6 @@ Edit ルールは MCP ツールに効かないので、作業ツリーを書き�
 次の経路は対象外です。
 
 - Bash 経由の書き込み（`sed -i`、`tee`、リダイレクト、`cp`、`mv`）: bash-review の判定に委ねます
-- `.claude/settings.local.json` と `.claude/hooks/**`: 従来どおり、保護パスとして classifier が判断します
 - Serena の `activate_project`: プロジェクトの `.serena/project.yml` にある `activation_command` を実行します
   （信頼リストは dotfiles の管理外にあるマシンローカルの `~/.serena/serena_config.yml` の `trusted_project_path_patterns` で、
   執筆時点の値は `[]` で、その場合 `activation_command` は実行されません。`**` にすると、どのプロジェクトでも実行されるようになります。
