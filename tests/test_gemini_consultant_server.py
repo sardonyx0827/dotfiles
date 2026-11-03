@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import ssl
 import subprocess
 import sys
 import time
@@ -690,6 +691,36 @@ class TestUpstreamFailures:
             fake_gemini(http.client.IncompleteRead(b"{", 400), "recovered"),
         )
         assert server.call_gemini("question") == "recovered"
+
+    # A socket error raised while the body is being read is NOT wrapped in
+    # URLError (urllib only wraps errors from the connect phase), so naming
+    # (URLError, TimeoutError, HTTPException) let a reset connection escape
+    # without a retry, a log line or a notification. scripts/gemini_api.py
+    # catches OSError for the same reason; the server matches it.
+    _SOCKET_ERRORS = [
+        ConnectionResetError(54, "Connection reset by peer"),
+        ssl.SSLError("record layer failure"),
+        OSError("network is unreachable"),
+    ]
+
+    @pytest.mark.parametrize("err", _SOCKET_ERRORS, ids=type)
+    def test_a_socket_error_mid_body_is_retried(self, server, monkeypatch, err):
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini(err, "recovered"))
+        assert server.call_gemini("question") == "recovered"
+
+    @pytest.mark.parametrize("err", _SOCKET_ERRORS, ids=type)
+    @pytest.mark.parametrize("tool", ["consult_gemini", "review_gemini"])
+    def test_an_exhausted_socket_error_is_reported_as_a_string(
+        self, server, monkeypatch, err, tool
+    ):
+        sleeps, calls = [], []
+        monkeypatch.setattr(time, "sleep", sleeps.append)
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini(err, calls=calls))
+        result = getattr(server, tool)("anything")
+        assert result.startswith("Gemini API error:")
+        assert len(calls) == 3
+        assert sleeps == [1, 2]
 
     @pytest.mark.parametrize(
         "body",

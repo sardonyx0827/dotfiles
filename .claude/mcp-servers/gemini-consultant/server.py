@@ -415,7 +415,12 @@ def call_gemini(
             last_error = _upstream_error(e)
             if e.code not in RETRYABLE_STATUS:
                 raise last_error from e
-        except (urllib.error.URLError, TimeoutError, http.client.HTTPException) as e:
+        except (OSError, http.client.HTTPException) as e:
+            # OSError は URLError / TimeoutError を含み、加えて本文の読み取り中に
+            # 出るソケット例外 (ConnectionResetError, ssl.SSLError など) も拾う。
+            # urllib が URLError で包むのは接続フェーズの例外だけなので、
+            # URLError を名指しするだけでは読み取り中の切断がリトライされずに
+            # MCP の外へ抜ける (scripts/gemini_api.py も OSError で捕まえている)。
             # HTTPException は本文の途中で接続が切れた IncompleteRead など。
             # OSError 系ではないため、ここで名指ししないとリトライされず、
             # ツール側の except にも掛からずに MCP の外へ抜ける。
@@ -460,8 +465,7 @@ def consult_gemini(question: str) -> str:
     # JSON パース失敗が「予期しないエラー」に化ける。
     except (
         GeminiUpstreamError,
-        urllib.error.URLError,
-        TimeoutError,
+        OSError,  # URLError / TimeoutError / 読み取り中のソケット例外を含む
         http.client.HTTPException,
         json.JSONDecodeError,
         IndexError,
@@ -511,8 +515,7 @@ def review_gemini(question: str) -> str:
     # 例外の順序の理由は consult_gemini の同じ腕を参照。
     except (
         GeminiUpstreamError,
-        urllib.error.URLError,
-        TimeoutError,
+        OSError,  # URLError / TimeoutError / 読み取り中のソケット例外を含む
         http.client.HTTPException,
         json.JSONDecodeError,
         IndexError,
