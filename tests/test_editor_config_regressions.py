@@ -1461,3 +1461,173 @@ emit({ tools = tools, tool_terminals = #tool_bufs, tool_mapped = tool_mapped,
 
     def test_an_ordinary_shell_terminal_keeps_the_mapping(self, probe):
         assert probe["shell_mapped"] is True, probe
+
+
+# ---------------------------------------------------------------------------
+# B5: a job's exit is not the end of its output.
+# ---------------------------------------------------------------------------
+class TestVimJobFinalizesAfterAllOutput:
+    """Vim may still deliver out_cb / err_cb data after exit_cb has run.
+
+    The finish callbacks used to be scheduled straight from exit_cb, so a reply that
+    was still in flight when the process ended was cut short -- and then offered for
+    `y` (replace the selection) as if it were complete. The Ollama path got a JSON
+    document with its tail missing. The finish step may only run once exit_cb has
+    given the status AND the channel's close_cb has fired (all output delivered).
+
+    Driven through real jobs. A deterministic race needs no timing luck: the fake
+    tool prints, hands the rest of its output to a background child that sleeps, and
+    exits at once -- so exit_cb is guaranteed to run ~300 ms before that output
+    arrives. The new behaviour never depends on the timing; only the RED run does.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        return _real_vim_or_skip()
+
+    WAIT_PENDING = """
+let s:n = 0
+while s:n < 400 && {cond}
+  sleep 20m
+  let s:n += 1
+endwhile
+"""
+
+    def tool(self, tmp_path, name, body):
+        script = tmp_path / name
+        script.write_text(body, encoding="utf-8")
+        script.chmod(0o755)
+        return script
+
+    def payload(self, tmp_path):
+        payload = tmp_path / "payload"
+        payload.write_text("payload\n", encoding="utf-8")
+        return payload
+
+    def single(self, vim, tmp_path, body, *, exit_cb="s:AI_SingleExit", tool="claude"):
+        script = self.tool(tmp_path, "fake-tool.sh", body)
+        payload = self.payload(tmp_path)
+        wait = self.WAIT_PENDING.format(cond="s:st.status ==# 'pending'")
+        return _run_ai_scenario(
+            vim,
+            f"""
+call setline(1, {_vim_list(TARGET_LINES)})
+let s:ctx = {{'tool': '{tool}', 'selected': ['T2', 'T3'], 'ft': 'text',
+      \\ 'target_buf': bufnr('%'), 'start': 2, 'end': 3, 'changedtick': b:changedtick}}
+call s:AI_RunJob(s:ctx, '{payload}', 'sh {script}', '{exit_cb}')
+let s:st = b:ai_state
+{wait}
+call add(g:R, 'STATUS=' . s:st.status)
+call add(g:R, 'RESP=' . string(getbufline(s:st.resp_buf, 1, '$')))
+call add(g:R, 'TARGET_AFTER=' . string(getbufline(s:ctx.target_buf, 1, '$')))
+""",
+        )
+
+    def test_late_stdout_is_part_of_the_reply(self, vim, tmp_path):
+        got = self.single(
+            vim,
+            tmp_path,
+            "printf 'A\\n'\n(sleep 0.3; printf 'B\\nC\\n') &\nexit 0\n",
+        )
+        assert got["STATUS"] == "done", got
+        assert got["RESP"] == str(["A", "B", "C"]), (
+            f"the reply was finalized before all of it arrived: {got}"
+        )
+
+    def test_late_stderr_still_explains_a_failure(self, vim, tmp_path):
+        got = self.single(
+            vim,
+            tmp_path,
+            "(sleep 0.3; echo 'quota exceeded' >&2) &\nexit 3\n",
+        )
+        assert got["STATUS"] == "failed", got
+        assert "quota exceeded" in got["RESP"], got
+        assert "exit 3" in got["RESP"], got
+
+    def test_a_late_tail_does_not_break_the_ollama_json(self, vim, tmp_path):
+        got = self.single(
+            vim,
+            tmp_path,
+            "printf '%s\\n' '{\"response\": \"R1\\nR2\",'\n"
+            "(sleep 0.3; printf '%s\\n' ' \"done\": true}') &\nexit 0\n",
+            exit_cb="s:AI_OllamaExit",
+            tool="gemma",
+        )
+        assert got["STATUS"] == "done", got
+        assert got["RESP"] == str(["R1", "R2"]), got
+
+    def test_an_ordinary_fast_job_still_completes(self, vim, tmp_path):
+        """Regression guard: a gate that never opens passes every test above by
+        hanging, which the wait loop would report as a stuck 'pending'."""
+        got = self.single(vim, tmp_path, "printf 'A\\nB\\n'\n")
+        assert got["STATUS"] == "done", got
+        assert got["RESP"] == str(["A", "B"]), got
+
+    def test_cancelling_a_running_job_still_removes_the_tmpfile(self, vim, tmp_path):
+        """`q` while pending stops the job; waiting for the channel must not turn
+        that into a leaked selection on disk."""
+        script = self.tool(tmp_path, "slow.sh", "sleep 30\n")
+        payload = self.payload(tmp_path)
+        got = _run_ai_scenario(
+            vim,
+            f"""
+call setline(1, {_vim_list(TARGET_LINES)})
+let s:ctx = {{'tool': 'claude', 'selected': ['T2', 'T3'], 'ft': 'text',
+      \\ 'target_buf': bufnr('%'), 'start': 2, 'end': 3, 'changedtick': b:changedtick}}
+call s:AI_RunJob(s:ctx, '{payload}', 'sh {script}', 's:AI_SingleExit')
+let s:st = b:ai_state
+sleep 200m
+call s:AI_Close(s:st)
+let s:n = 0
+while s:n < 200 && filereadable('{payload}')
+  sleep 20m
+  let s:n += 1
+endwhile
+call add(g:R, 'TMPFILE_LEFT=' . filereadable('{payload}'))
+call add(g:R, 'TARGET_AFTER=' . string(getbufline(s:ctx.target_buf, 1, '$')))
+""",
+        )
+        assert got["TMPFILE_LEFT"] == "0", got
+        assert got["TARGET_AFTER"] == UNTOUCHED, got
+
+    def test_all_mode_finishes_every_tab_after_its_late_output(self, vim, tmp_path):
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        for name, tag in (("claude", "A"), ("codex", "B")):
+            tool = bindir / name
+            tool.write_text(
+                f"#!/bin/sh\nprintf '{tag}1\\n'\n(sleep 0.3; printf '{tag}2\\n') &\nexit 0\n",
+                encoding="utf-8",
+            )
+            tool.chmod(0o755)
+        payload = self.payload(tmp_path)
+        wait = self.WAIT_PENDING.format(
+            cond="(s:st.status[1] ==# 'pending' || s:st.status[2] ==# 'pending')"
+        )
+        got = _run_ai_scenario(
+            vim,
+            f"""
+let $PATH = '{bindir}:' . $PATH
+let s:ai_all_tools = ['claude', 'codex']
+call setline(1, {_vim_list(TARGET_LINES)})
+let s:ctx = {{'selected': ['T2', 'T3'], 'ft': 'text',
+      \\ 'target_buf': bufnr('%'), 'start': 2, 'end': 3, 'changedtick': b:changedtick}}
+call s:AI_RunAll(s:ctx, 'SYS', '{payload}')
+let s:st = b:ai_state
+{wait}
+call add(g:R, 'STATUS1=' . s:st.status[1])
+call add(g:R, 'STATUS2=' . s:st.status[2])
+call add(g:R, 'RESP1=' . string(getbufline(s:st.bufs[1], 1, '$')))
+call add(g:R, 'RESP2=' . string(getbufline(s:st.bufs[2], 1, '$')))
+call add(g:R, 'PENDING=' . s:st.pending)
+call add(g:R, 'TMPFILE_LEFT=' . filereadable('{payload}'))
+call add(g:R, 'TARGET_AFTER=' . string(getbufline(s:ctx.target_buf, 1, '$')))
+""",
+        )
+        assert (got["STATUS1"], got["STATUS2"]) == ("done", "done"), got
+        assert got["RESP1"] == str(["A1", "A2"]), got
+        assert got["RESP2"] == str(["B1", "B2"]), got
+        # Counted exactly once per job: a double decrement would free the shared
+        # tmpfile while the other job still reads it.
+        assert got["PENDING"] == "0", got
+        assert got["TMPFILE_LEFT"] == "0", got
