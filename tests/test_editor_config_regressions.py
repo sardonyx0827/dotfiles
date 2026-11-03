@@ -1295,3 +1295,92 @@ os.exit(0)
 """,
         )
         assert got == {"BufEnter": True, "WinEnter": True, "FocusGained": True}, got
+
+
+# ---------------------------------------------------------------------------
+# B7: cnoreabbrev must only expand when it is the whole ':' command line.
+# ---------------------------------------------------------------------------
+VIM_PLUGINS_CONFIG_RC = REPO_ROOT / ".vim/rc/30-plugins-config.vim"
+
+# (typed keys, command line as it stands after the abbreviation had its chance).
+# Typed text ends in a space, which is what triggers expansion; the cmdline is read
+# back with <C-r>= and abandoned with <C-c>, so nothing is ever executed (`:wq`
+# would quit the probe).
+ABBREV_EXPANDS = [
+    (":W ", ":w "),
+    (":Q ", ":q "),
+    (":Wq ", ":wq "),
+    (":wQ ", ":wq "),
+    (":WQ ", ":wq "),
+    (":Wa ", ":wa "),
+    (":Qall ", ":qall "),
+    (":W! ", ":w! "),
+    (":Q! ", ":q! "),
+    (":Qall! ", ":qall! "),
+    (":f ", ":Files "),
+    (":gf ", ":GFiles "),
+]
+ABBREV_LEFT_ALONE = [
+    ("/f ", "/f "),
+    ("?f ", "?f "),
+    ("/W ", "/W "),
+    ("/gf ", "/gf "),
+    (":e f.txt ", ":e f.txt "),
+    (":e gf.c ", ":e gf.c "),
+    (":e W ", ":e W "),
+    (":s/a/Q/ ", ":s/a/Q/ "),
+    (":echo Wq ", ":echo Wq "),
+]
+
+
+class TestVimCmdlineAbbreviations:
+    """`cnoreabbrev f Files` fires wherever `f` is a word -- `/f` searched for "Files"
+    and `:e f.txt` opened `Files.txt`. Each one may expand only as the whole ':' line.
+    """
+
+    @pytest.fixture(scope="class")
+    def result(self):
+        vim = _real_vim_or_skip()
+        cases = [typed for typed, _ in ABBREV_EXPANDS + ABBREV_LEFT_ALONE]
+        script = f"""
+set nocompatible
+source {VIM_PLUGINS_CONFIG_RC}
+let g:R = []
+function! Cap() abort
+  call add(g:R, getcmdtype() . getcmdline())
+  return ''
+endfunction
+for s:keys in {_vim_list(cases)}
+  call feedkeys(s:keys . "\\<C-r>=Cap()\\<CR>\\<C-c>", 'xt')
+endfor
+call writefile(g:R, $PROBE_OUT)
+qa!
+"""
+        raw = _run_vim_script(vim, script, extra_source=None)
+        got = raw.splitlines()
+        assert len(got) == len(cases), f"probe lost cases: {raw!r}"
+        return dict(zip(cases, got, strict=True))
+
+    @pytest.mark.parametrize(("typed", "expected"), ABBREV_EXPANDS)
+    def test_still_expands_as_a_whole_ex_command(self, result, typed, expected):
+        assert result[typed] == expected
+
+    @pytest.mark.parametrize(("typed", "expected"), ABBREV_LEFT_ALONE)
+    def test_does_not_expand_in_searches_or_mid_command(self, result, typed, expected):
+        assert result[typed] == expected
+
+    def test_enter_alone_runs_the_fzf_command(self):
+        """The expansion also has to happen when <CR> is the trigger, not a space."""
+        vim = _real_vim_or_skip()
+        raw = _run_vim_script(
+            vim,
+            f"""
+set nocompatible
+source {VIM_PLUGINS_CONFIG_RC}
+command! Files call writefile(['Files'], $PROBE_OUT)
+call feedkeys(":f\\<CR>", 'xt')
+qa!
+""",
+            extra_source=None,
+        )
+        assert raw.strip() == "Files"
