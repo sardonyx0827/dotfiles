@@ -56,11 +56,28 @@ return {
       direction = "tab"
     }
 
-    -- <esc> leaves terminal-insert mode in any terminal buffer.
+    -- <esc> leaves terminal-insert mode in an ordinary shell terminal. Not in the
+    -- terminals toggle_tool() opens (lazydocker / claude / gemini / codex): those are
+    -- TUIs that need Esc themselves (cancel, close a menu, vi mode), and the mapping
+    -- would swallow every press before it reached them. <C-\><C-n> still leaves
+    -- terminal mode there. toggleterm fixes `bufnr` before it starts the job, so the
+    -- buffer is already known when TermOpen fires.
+    local function is_tool_terminal(buf)
+      for _, term in pairs(terminals) do
+        if term.bufnr == buf then
+          return true
+        end
+      end
+      return false
+    end
+
     vim.api.nvim_create_autocmd("TermOpen", {
       pattern = "term://*",
-      callback = function()
-        vim.keymap.set("t", "<esc>", [[<C-\><C-n>]], { buf = 0 })
+      callback = function(args)
+        if is_tool_terminal(args.buf) then
+          return
+        end
+        vim.keymap.set("t", "<esc>", [[<C-\><C-n>]], { buf = args.buf })
       end,
     })
   end,

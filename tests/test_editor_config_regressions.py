@@ -1384,3 +1384,80 @@ qa!
             extra_source=None,
         )
         assert raw.strip() == "Files"
+
+
+# ---------------------------------------------------------------------------
+# B8: Esc must reach the CUI tools toggle_tool() opens.
+# ---------------------------------------------------------------------------
+class TestToggletermEscMapping:
+    PROBE = """
+-- Stand-in for toggleterm's Terminal: like the real one it fixes self.bufnr BEFORE
+-- it starts the job, so TermOpen fires for a buffer the spec already knows about.
+local function start_term(buf)
+  vim.api.nvim_buf_call(buf, function()
+    vim.fn.jobstart({ "sh", "-c", "true" }, { term = true })
+  end)
+end
+package.loaded["toggleterm"] = { setup = function() end }
+package.loaded["toggleterm.terminal"] = { Terminal = {
+  new = function(_, opts)
+    local term = { cmd = opts.cmd }
+    function term:toggle()
+      self.bufnr = vim.api.nvim_create_buf(false, true)
+      start_term(self.bufnr)
+    end
+    return term
+  end,
+} }
+
+local spec = require("setup.plugins.utilities.toggleterm")
+spec.config()
+
+local function esc_mapped(buf)
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, "t")) do
+    if map.lhs:lower() == "<esc>" then return true end
+  end
+  return false
+end
+
+local tools = {}
+for _, key in ipairs(spec.keys) do
+  if type(key[2]) == "function" then
+    key[2]()
+    table.insert(tools, key[1])
+  end
+end
+-- Buffers the tool handlers created, found by being terminals.
+local tool_bufs = {}
+for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+  if vim.bo[buf].buftype == "terminal" then table.insert(tool_bufs, buf) end
+end
+
+local shell = vim.api.nvim_create_buf(false, true)
+start_term(shell)
+
+local tool_mapped = {}
+for _, buf in ipairs(tool_bufs) do
+  if esc_mapped(buf) then table.insert(tool_mapped, buf) end
+end
+emit({ tools = tools, tool_terminals = #tool_bufs, tool_mapped = tool_mapped,
+       shell_mapped = esc_mapped(shell) })
+"""
+
+    @pytest.fixture(scope="class")
+    def probe(self, tmp_path_factory):
+        return _nvim_probe(tmp_path_factory.mktemp("toggleterm"), self.PROBE)
+
+    def test_the_probe_opened_the_tool_terminals(self, probe):
+        # Anchor: without it, "no tool terminal has the mapping" holds trivially.
+        assert len(probe["tools"]) >= 4, probe
+        assert probe["tool_terminals"] >= 3, probe
+
+    def test_tool_terminals_do_not_swallow_esc(self, probe):
+        assert probe["tool_mapped"] == [], (
+            "t-mode <Esc> is remapped in a claude/codex/gemini/lazydocker terminal, "
+            f"so the TUI never receives it: {probe}"
+        )
+
+    def test_an_ordinary_shell_terminal_keeps_the_mapping(self, probe):
+        assert probe["shell_mapped"] is True, probe
