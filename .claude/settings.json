@@ -334,5 +334,6 @@
   "teammateMode": "tmux",
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false
+  "voiceEnabled": false,
+  "inputNeededNotifEnabled": true
 }
