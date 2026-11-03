@@ -4,7 +4,6 @@
 model_reasoning_effort = "xhigh"
 
 hide_agent_reasoning = true
-network_access = true
 personality = "pragmatic"
 web_search = "live"
 
@@ -16,3 +15,9 @@ max_depth = 1
 streamable_shell = true
 multi_agent = true
 js_repl = false
+
+# Codex reads network access only from this table (it applies to the
+# workspace-write sandbox). A top-level `network_access` is not a Codex key
+# and is silently ignored.
+[sandbox_workspace_write]
+network_access = true

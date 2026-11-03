@@ -642,6 +642,19 @@ def test_codex_config_is_valid_toml():
     tomllib.loads(CODEX_CONFIG.read_text(encoding="utf-8"))
 
 
+def test_codex_network_access_lives_under_sandbox_workspace_write():
+    """Codex reads network access only from [sandbox_workspace_write]; a
+    top-level `network_access` is not a Codex key and is silently ignored, so
+    the workspace-write sandbox kept the network off (npm/pip installs, git
+    fetch and gh failing) while the template claimed it was on."""
+    config = tomllib.loads(CODEX_CONFIG.read_text(encoding="utf-8"))
+    assert "network_access" not in config, (
+        "top-level network_access is ignored by Codex; "
+        "put it under [sandbox_workspace_write]"
+    )
+    assert config.get("sandbox_workspace_write", {}).get("network_access") is True
+
+
 def test_gemini_settings_is_valid_json():
     json.loads(GEMINI_SETTINGS.read_text(encoding="utf-8"))
 
