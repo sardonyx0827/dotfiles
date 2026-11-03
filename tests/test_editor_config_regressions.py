@@ -1069,3 +1069,55 @@ def test_mapleader_is_assigned_once_before_lazy_setup():
     lazy_at = init_lua.find('require("setup.lazy")')
     remap_at = init_lua.find('require("setup.remap")')
     assert 0 <= lazy_at < remap_at, "setup/init.lua must load lazy.lua before remap.lua"
+
+
+# ---------------------------------------------------------------------------
+# B4: nvim_listen must not expose the msgpack-RPC socket to the network.
+# ---------------------------------------------------------------------------
+ZSHRC = REPO_ROOT / ".zshrc"
+
+
+def _zsh_alias(name: str) -> str:
+    prefix = f"alias {name}="
+    lines = [
+        line
+        for line in ZSHRC.read_text(encoding="utf-8").splitlines()
+        if line.startswith(prefix)
+    ]
+    assert len(lines) == 1, f"expected exactly one `{prefix}...` line: {lines}"
+    return lines[0]
+
+
+def test_nvim_listen_binds_to_loopback_only():
+    """`--listen 0.0.0.0:PORT` serves unauthenticated msgpack-RPC to the whole LAN.
+
+    Anyone who can reach the port can make the editor run arbitrary commands
+    (`nvim_command('!...')`, `jobstart`), so the alias must listen on loopback
+    only. Remote use goes through an SSH tunnel instead.
+    """
+    alias = _zsh_alias("nvim_listen")
+    assert "--listen" in alias, alias
+    # The literal is what the test forbids, not a bind.
+    any_interface = "0.0.0.0"  # nosec B104
+    assert any_interface not in alias, (
+        f"nvim_listen is reachable from the network: {alias}"
+    )
+    assert re.search(r"--listen\s+(127\.0\.0\.1|localhost):\d+", alias), alias
+
+
+def test_nvim_attach_targets_the_port_nvim_listen_serves():
+    listen = re.search(r":(\d+)", _zsh_alias("nvim_listen"))
+    attach = re.search(r"--server\s+\S+:(\d+)", _zsh_alias("nvim_attach"))
+    assert listen and attach
+    assert listen.group(1) == attach.group(1)
+
+
+def test_nvim_listen_comment_points_remote_use_at_an_ssh_tunnel():
+    lines = ZSHRC.read_text(encoding="utf-8").splitlines()
+    at = next(
+        n for n, line in enumerate(lines) if line.startswith("alias nvim_listen=")
+    )
+    nearby = "\n".join(lines[max(0, at - 4) : at]).lower()
+    assert "ssh" in nearby and "tunnel" in nearby, (
+        "say next to the alias why it is loopback-only and how to reach it remotely"
+    )

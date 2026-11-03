@@ -143,7 +143,10 @@ alias vim="nvim"
 alias vimdiff="nvim -d"
 alias view="nvim -R"
 
-alias nvim_listen="nvim --headless --listen 0.0.0.0:22222"
+# Loopback only: the RPC socket is unauthenticated (anyone who can reach it can run
+# commands as you), so never bind 0.0.0.0. For remote use, forward the port over an
+# SSH tunnel (ssh -L 22222:127.0.0.1:22222 host) and attach to localhost.
+alias nvim_listen="nvim --headless --listen 127.0.0.1:22222"
 alias nvim_attach="nvim --remote-ui --server localhost:22222"
 
 # change directory to workspace
