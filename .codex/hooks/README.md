@@ -41,7 +41,25 @@ Matcher: `Bash`(実行順)
    `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` の指定・
    フックの環境かコマンド中に `CDPATH` があるときの素の相対 `cd` などで
    確実に決められないときは、サマリの代わりに注記を出す(別リポジトリの
-   サマリは無いより悪い)。
+   サマリは無いより悪い)。要約先は push 自身の `-C` だけで決め、同じコマンド中の
+   別の git 呼び出しの `-C` には引きずられない。
+   サマリの前に push の宛先(remote と refspec)を出し、`--force` / `-f` /
+   `--force-with-lease` / `--force-if-includes` / `+` refspec / `--delete` / `-d` /
+   `:dst` refspec / `--mirror` / `--all` / `--tags` / `--prune` は `WARNING` 行で
+   強調する。refspec の source が現在ブランチでない場合や `--all` 等で送る ref が
+   変わる場合は、下のコミット一覧が実際に送られるものとは限らないと注記する。
+   引数を信頼できる形で読めないとき(eval / `sh -c` / `watch` / `--exec` の中、
+   展開を含む refspec、未知のオプション、4000 文字超、制御文字)は推測せず注記に
+   する。URL の userinfo は伏せる。
+   検知は、コメント(語頭の `#`)・ヒアドキュメント本文・`$'...'` の中の偶発的な
+   アポストロフィが偽のクォートを開いて後続行の push を隠すことがない。終端行の
+   無い `<<`(算術シフトの `$((1<<2))` 等)はヒアドキュメントとみなさず、コードで
+   ある本文の行継続(`\` + 改行)はシェルと同じく畳む。空白を含まないクォート語
+   (`git "push"` / `"git" push`)も 1 語として扱い(`then` / `{` / `!` の後や
+   `timeout 5` 等のラッパー越しでも同じ)、文字列を
+   実行する `git submodule foreach` / `git rebase --exec`(`-x`)/ `watch` の中の
+   push も検知する(`submodule foreach` は各サブモジュールの中で走るので要約は
+   諦めて注記にする)。
 
 ### PostToolUse
 

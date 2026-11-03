@@ -45,7 +45,29 @@
   relative `cd` while `CDPATH` is set in the hook's environment or in the
   command itself), the prompt
   carries a note instead of a summary — a summary of the wrong repository
-  is worse than none.
+  is worse than none. Only the push's own `-C` picks the repository; a `-C`
+  on another git call in the same command does not.
+  Ahead of the summary the prompt names the push target (remote and
+  refspec), and a `WARNING` line calls out `--force` / `-f` /
+  `--force-with-lease` / `--force-if-includes` / a `+` refspec / `--delete` /
+  `-d` / a `:dst` refspec / `--mirror` / `--all` / `--tags` / `--prune`. When
+  the refspec source is not the current branch, or `--all` and the like change
+  which refs are sent, a note says the commit list below may not be what is
+  actually pushed. When the arguments cannot be read reliably (inside `eval` /
+  `sh -c` / `watch` / `--exec`, a refspec with an expansion, an unknown option,
+  over 4000 characters, a control character) it does not guess and shows a
+  note instead. URL userinfo is masked.
+  On detection: a stray apostrophe inside a comment (word-initial `#`), a
+  heredoc body or `$'...'` can no longer open a false quote and hide a push on
+  a later line. A `<<` with no terminator line (an arithmetic shift such as
+  `$((1<<2))`) is not taken for a heredoc, and a heredoc body that is code
+  folds `\`-newline continuations as the shell does. A quoted word with no
+  whitespace (`git "push"`, `"git" push`) counts as one word, also after
+  `then` / `{` / `!` or behind a wrapper such as `timeout 5`, and a push inside
+  the string that `git submodule
+foreach`, `git rebase --exec` (`-x`) or `watch` runs is detected too
+  (`submodule foreach` runs in each submodule, so it shows a note instead of a
+  summary).
   This entry used to carry `if: Bash(git push*)`. That filter prefix-matches
   each sub-command, so it never fired for the very forms this script exists
   to catch — `git -C <dir> push`, `git --no-pager push`, `git -c k=v push`,
