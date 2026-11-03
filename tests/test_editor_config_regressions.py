@@ -1121,3 +1121,177 @@ def test_nvim_listen_comment_points_remote_use_at_an_ssh_tunnel():
     assert "ssh" in nearby and "tunnel" in nearby, (
         "say next to the alias why it is loopback-only and how to reach it remotely"
     )
+
+
+# ---------------------------------------------------------------------------
+# B6: `checktime` is E11 inside the command-line window.
+# ---------------------------------------------------------------------------
+def _real_vim_or_skip():
+    binary = _real_vim()
+    if binary is None:
+        pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+    return binary
+
+
+class TestVimChecktimeAndCmdwin:
+    """Opening `q:` / `q/` / `<C-f>` fires BufEnter, and `checktime` is not allowed there.
+
+    Every open of the command-line window therefore raised E11 (and set v:errmsg),
+    which Neovim also prints as an "Error in BufEnter Autocommands". The checktime
+    autocmd has to stay off while getcmdwintype() is non-empty.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        return _real_vim_or_skip()
+
+    def run(self, vim, tmp_path, body):
+        script = (
+            "set nocompatible\nlet g:R = []\n"
+            f"source {VIM_COMMANDS_RC}\n"
+            + body
+            + "\ncall writefile(g:R, $PROBE_OUT)\nqa!\n"
+        )
+        got = {}
+        for line in _run_vim_script(vim, script, extra_source=None).splitlines():
+            key, _, value = line.partition("=")
+            got[key] = value
+        return got
+
+    def test_opening_the_cmdwin_raises_no_e11(self, vim, tmp_path):
+        got = self.run(
+            vim,
+            tmp_path,
+            """
+let v:errmsg = ''
+autocmd CmdwinEnter * call add(g:R, 'TYPE=' . getcmdwintype())
+call feedkeys("q:\\<C-c>\\<C-c>", 'xt')
+call add(g:R, 'ERRMSG=' . v:errmsg)
+""",
+        )
+        assert got.get("TYPE") == ":", f"the command-line window never opened: {got}"
+        assert "E11" not in got["ERRMSG"], got["ERRMSG"]
+
+    def test_checktime_is_still_registered_for_all_three_events(self, vim, tmp_path):
+        """Positive control: the guard must not switch the autocmd off everywhere.
+
+        A reload-based control cannot work: both editors re-check the file on their
+        own when a buffer is re-entered, and an autocmd-driven `checktime` is deferred
+        until typed input in a script, so a changed file proves nothing either way.
+        """
+        got = self.run(
+            vim,
+            tmp_path,
+            """
+for s:ev in ['BufEnter', 'WinEnter', 'FocusGained']
+  call add(g:R, s:ev . '=' . substitute(execute('autocmd vimrc-checktime ' . s:ev),
+        \\ '\\_s\\+', ' ', 'g'))
+endfor
+""",
+        )
+        for event in ("BufEnter", "WinEnter", "FocusGained"):
+            assert "checktime" in got[event], got
+
+
+NVIM_INIT_LUA = REPO_ROOT / ".config/nvim/lua/setup/init.lua"
+
+
+def _nvim_headless(tmp_path, body: str) -> dict:
+    """Run `body` as the init of a real `nvim --headless` and return its JSON line.
+
+    Unlike `nvim -l` this pumps the event loop, which the command-line window needs.
+    The probe must call `emit(...)` and then `qa!` itself; a probe that never does
+    is a hang, killed by the timeout rather than reported as a pass.
+    """
+    if NVIM is None:
+        pytest.skip("nvim not installed")
+    probe = tmp_path / "headless_probe.lua"
+    probe.write_text(_PROBE_PRELUDE + body, encoding="utf-8")
+    proc = subprocess.run(
+        [NVIM, "--headless", "-u", str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+        },
+    )
+    out = [line for line in proc.stdout.splitlines() if line.startswith("{")]
+    assert out, (
+        f"probe printed no JSON (rc={proc.returncode}): {proc.stdout!r} {proc.stderr!r}"
+    )
+    return json.loads(out[-1])
+
+
+_STUB_SETUP_MODULES = """
+-- setup/init.lua pulls in the whole config; only its autocmds are under test.
+for _, name in ipairs({ "setup.lazy", "setup.set", "setup.remap",
+                        "setup.functions.file", "setup.functions.ai" }) do
+  package.loaded[name] = true
+end
+"""
+
+
+class TestNvimChecktimeAndCmdwin:
+    def test_opening_the_cmdwin_raises_no_e11(self, tmp_path):
+        got = _nvim_headless(
+            tmp_path,
+            _STUB_SETUP_MODULES
+            + f"""
+dofile({str(NVIM_INIT_LUA)!r})
+vim.v.errmsg = ""
+vim.api.nvim_create_autocmd("CmdwinEnter", {{ callback = function()
+  vim.schedule(function()
+    emit({{ type = vim.fn.getcmdwintype(), errmsg = vim.v.errmsg }})
+    vim.cmd("qa!")
+  end)
+end }})
+vim.api.nvim_feedkeys("q:", "nt", false)
+""",
+        )
+        assert got["type"] == ":", f"the command-line window never opened: {got}"
+        assert "E11" not in got["errmsg"], got["errmsg"]
+
+    def test_checktime_still_runs_on_all_three_events_outside_the_cmdwin(
+        self, tmp_path
+    ):
+        """Positive control: the guard must not switch the autocmd off everywhere.
+
+        Observed without relying on a reload: re-entering a buffer reloads a changed
+        file on its own, so a reload cannot tell the autocmd apart from no autocmd.
+        An autocmd is accepted either as a plain `:checktime` command or as a callback
+        that runs it (seen through a spy on `vim.cmd`).
+        """
+        got = _nvim_headless(
+            tmp_path,
+            _STUB_SETUP_MODULES
+            + f"""
+dofile({str(NVIM_INIT_LUA)!r})
+local seen = {{}}
+local function record(what) seen[#seen + 1] = what end
+vim.cmd = setmetatable({{}}, {{
+  __call = function(_, command) record(command) end,
+  __index = function(_, name) return function() record(name) end end,
+}})
+local function runs_checktime(event)
+  for _, au in ipairs(vim.api.nvim_get_autocmds({{ group = "setup", event = event }})) do
+    if au.command == "checktime" then return true end
+  end
+  seen = {{}}
+  vim.api.nvim_exec_autocmds(event, {{ group = "setup" }})
+  return vim.tbl_contains(seen, "checktime")
+end
+local per_event = {{}}
+for _, event in ipairs({{ "BufEnter", "WinEnter", "FocusGained" }}) do
+  per_event[event] = runs_checktime(event)
+end
+emit(per_event)
+os.exit(0)
+""",
+        )
+        assert got == {"BufEnter": True, "WinEnter": True, "FocusGained": True}, got
