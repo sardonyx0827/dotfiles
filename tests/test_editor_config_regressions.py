@@ -961,6 +961,92 @@ emit({ cmd = cmd or {} })
     assert set(got["cmd"]) <= {"Trouble"}, got["cmd"]
 
 
+def test_emmylua_ls_serves_only_call_hierarchy(tmp_path):
+    """emmylua_ls runs beside lua_ls for one job: incoming calls.
+
+    lua_ls advertises no callHierarchyProvider, so Trouble's
+    `lsp_incoming_calls` is always empty in Lua; emmylua_ls implements
+    incomingCalls (its outgoingCalls is a stub). Everything else -- completion,
+    hover, definitions, formatting, semantic tokens, diagnostics -- stays with
+    lua_ls. If emmylua_ls kept its other capabilities, every hover, completion
+    item and diagnostic would arrive twice, so its on_init must drop them and
+    its pushed diagnostics must never reach vim.diagnostic.
+    """
+    got = _nvim_probe(
+        tmp_path,
+        """
+package.loaded["mason-lspconfig"] = { setup = function() end }
+local configs = {}
+vim.lsp.config = setmetatable({}, {
+  __call = function(_, name, cfg) configs[name] = cfg end,
+})
+require("setup.plugins.utilities.nvim-lspconfig")[2].config()
+local cfg = configs.emmylua_ls
+if not cfg then
+  emit({ found = false })
+  return
+end
+local client = {
+  server_capabilities = {
+    positionEncoding = "utf-16",
+    textDocumentSync = { openClose = true, change = 2 },
+    callHierarchyProvider = true,
+    completionProvider = { triggerCharacters = { "." } },
+    hoverProvider = true,
+    definitionProvider = true,
+    referencesProvider = true,
+    documentFormattingProvider = true,
+    semanticTokensProvider = { full = true },
+    inlayHintProvider = true,
+    codeLensProvider = {},
+    diagnosticProvider = {},
+    -- blink.cmp reads this straight off server_capabilities, not via supports_method.
+    signatureHelpProvider = { triggerCharacters = { "(" } },
+    workspace = { workspaceFolders = { supported = true } },
+    -- A key nothing here knows about: the strip must be an allowlist.
+    experimental = {},
+  },
+}
+cfg.on_init(client, {})
+local kept = vim.tbl_keys(client.server_capabilities)
+table.sort(kept)
+local publish = (cfg.handlers or {})["textDocument/publishDiagnostics"]
+if publish then
+  publish(nil, {
+    uri = vim.uri_from_fname("/tmp/emmylua_probe.lua"),
+    diagnostics = {
+      { range = { start = { line = 0, character = 0 }, ["end"] = { line = 0, character = 1 } },
+        message = "duplicate", severity = 2 },
+    },
+  }, { client_id = 1, method = "textDocument/publishDiagnostics" })
+end
+local settings = (cfg.settings or {}).emmylua or {}
+emit({
+  found = true,
+  kept = kept,
+  has_publish_handler = publish ~= nil,
+  diagnostics_after_publish = #vim.diagnostic.get(),
+  diagnostics_enabled = vim.tbl_get(settings, "diagnostics", "enable"),
+  codelens_enabled = vim.tbl_get(settings, "codeLens", "enable"),
+  hint_enabled = vim.tbl_get(settings, "hint", "enable"),
+})
+""",
+    )
+    assert got["found"], "nvim-lspconfig no longer configures emmylua_ls"
+    assert got["kept"] == [
+        "callHierarchyProvider",
+        "positionEncoding",
+        "textDocumentSync",
+    ], got["kept"]
+    assert got["has_publish_handler"], "emmylua_ls diagnostics reach vim.diagnostic"
+    assert got["diagnostics_after_publish"] == 0, got
+    # The server need not compute what the client throws away. codeLens and hint
+    # also override nvim-lspconfig's emmylua_ls default of enable = true.
+    assert got["diagnostics_enabled"] is False, got
+    assert got["codelens_enabled"] is False, got
+    assert got["hint_enabled"] is False, got
+
+
 def test_telescope_pickers_hold_only_option_tables(tmp_path):
     """Every `pickers` value is an option table for the picker it is keyed by.
 

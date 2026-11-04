@@ -35,6 +35,38 @@ local lspconfig = {
       },
     })
 
+    -- emmylua_ls は lua_ls と併用し、呼び出し元の検索 (callHierarchy) だけに使う。
+    -- lua_ls は callHierarchyProvider を持たず、emmylua_ls は incomingCalls だけを
+    -- 実装している (outgoingCalls は未実装)。補完・ホバー・診断などは lua_ls に任せ、
+    -- 二重に出ないよう、それ以外の server_capabilities を on_init で落とす。
+    local emmylua_kept_capabilities = {
+      positionEncoding = true,
+      textDocumentSync = true,
+      callHierarchyProvider = true,
+    }
+    vim.lsp.config('emmylua_ls', {
+      on_init = function(client)
+        for key in pairs(client.server_capabilities) do
+          if not emmylua_kept_capabilities[key] then
+            client.server_capabilities[key] = nil
+          end
+        end
+      end,
+      handlers = {
+        -- 診断は lua_ls が出す。emmylua_ls は pull (textDocument/diagnostic) で
+        -- 診断を出すので diagnosticProvider を落とせば止まる。これは push で
+        -- 届いた場合の保険。
+        ['textDocument/publishDiagnostics'] = function() end,
+      },
+      settings = {
+        emmylua = {
+          diagnostics = { enable = false },
+          codeLens = { enable = false },
+          hint = { enable = false },
+        },
+      },
+    })
+
     require('mason-lspconfig').setup({
       ensure_installed = {},
     })
