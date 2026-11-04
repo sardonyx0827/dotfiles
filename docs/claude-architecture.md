@@ -149,6 +149,7 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
 | mod               | フックするイベント                                   | 役割                                                                                                                                                          |
 | ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bash-review-log` | `session.start` `command.run` `ui.close` `ui.render` | `~/.claude/logs/bash-review.log` の判定をペイン表示。80 字で切られたコマンドは詳細ログ (`/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/`) から全文を引く |
+| `doc-browser`     | `session.start` `command.run` `ui.render`            | リポジトリの Markdown（`git ls-files`）と `~/.claude/reports/` のセッションレポート・dossier を一覧し、選んだものをブラウザで開く                             |
 
 `/bash-review-log [all|allow|ask|deny|error|flagged ...] [件数] [full|short]` の引数は順不同です。
 
@@ -162,6 +163,21 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
   詳細ログの全文は載せません。他プロジェクトのコマンドも混じるログだからです。
 - ログ由来の文字列は、制御文字・bidi 制御・行区切りを記号に置き換え、長さを切ってから描きます
   （`Text` は 10000 字まで・制御文字はタブと改行だけで、破るとペイン全体が描けなくなるため）。
+
+`/doc-browser [docs|config|reports] [all] [絞り込み語 ...]` でペインを開き、`/doc-browser open <番号>` はペインを描けない環境で本文に返した一覧から開きます。
+
+- タブは「ドキュメント」（README・`docs/` など）・「設定系」（`.claude/` など先頭がドットのディレクトリ）・「レポート」の 3 つで、
+  `d` `c` `s` で切り替え、`1`〜`9` で開き、`n` `p` でページを送ります。`a` はレポートを全プロジェクト分に広げます。
+- レポートの HTML はそのまま開きます。Markdown は session-report の `render_report.py --base-dir` で
+  `~/.cache/claude-doc-browser/` に描いてから開きます（リポジトリの文書もレポートの Markdown も同じ）。
+  リポジトリにもレポート置き場にも書き込まず、README の `assets/*.svg` のような相対パスは元の場所で解決されます。
+- リポジトリから開くのは `.md` だけです。`.md` に見せた symlink が `.html` を指していても、サニタイズを通さない
+  HTML をそのまま開くことはありません。
+- 開く直前に毎回、項目の realPath が許可した根（リポジトリ・レポート置き場・プレビュー置き場）の下の通常ファイルで、
+  拡張子が根ごとに許可したものであることを確かめます。描画結果のパスは renderer の出力ではなく出力先と元の名前から組み立て、
+  外部コマンド（`git`・`python3`・`open` / `xdg-open`）はシェルを通さず argv で渡し、`git` には `core.fsmonitor=false` を付けます。
+- 一覧の文字列は制御文字・書式文字（ゼロ幅・bidi・タグ文字）を置き換えてから描き、ペインを描けない環境の本文（モデルも読む）には
+  絶対パスを載せません。
 
 mod は settings hook より**先に**走り、サンドボックスもありません。`tool.call` に応答する mod は
 `bash-review` / `git-push-review` を素通りさせられ、`tool.check` は PreToolUse の判定の後から可否を差し替えられます。

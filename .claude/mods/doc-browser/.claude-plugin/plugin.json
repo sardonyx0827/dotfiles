@@ -1,0 +1,6 @@
+{
+  "name": "doc-browser",
+  "version": "0.1.0",
+  "description": "リポジトリの Markdown とセッションレポートを一覧し、選んだものをブラウザで開く /doc-browser コマンド",
+  "types": "./types/index.d.ts"
+}
