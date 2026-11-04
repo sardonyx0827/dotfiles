@@ -1,11 +1,11 @@
 return {
-  "selimacerbas/markdown-preview.nvim",
+  "selimacerbas/mdkite.nvim",
   keys = {
-    { "<leader>mp", "<cmd>MarkdownPreview<cr>", desc = "Markdown Preview" },
+    { "<leader>mp", "<cmd>MdKite start<cr>", desc = "Markdown Preview" },
   },
-  dependencies = { "selimacerbas/live-server.nvim" },
+  dependencies = { "selimacerbas/kitehost.nvim" },
   config = function()
-    require("markdown_preview").setup({
+    require("mdkite").setup({
       instance_mode = "takeover",
       default_theme = "dark",
       debounce_ms = 300,
