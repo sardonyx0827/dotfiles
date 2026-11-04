@@ -372,6 +372,9 @@ class TestEmbeddedScript:
             ("mailto:someone@example.com", True),
             ("#section-1", True),
             ("./sibling.html", True),
+            # session-dossier contract: a report links each claim to the
+            # dossier step written beside it in the same reports directory.
+            ("./20260102-030405-dossier-11111111.html#tu-toolu_01Ab", True),
             ("/absolute/path", True),
             ("", True),
         ],

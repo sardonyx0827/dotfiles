@@ -58,6 +58,22 @@ Get the timestamp from `date +%Y%m%d-%H%M%S` — never guess it.
 4. **Report back in one or two lines** with the `.md` path. Do not restate the
    report's contents in chat — that would defeat the purpose.
 
+## Linking to the dossier
+
+A summary is only as trustworthy as the reader's ability to check it. When the
+work is worth checking step by step, back the report with a session-dossier
+(the mechanically generated full record, see that skill):
+
+1. Render the dossier for the same range. Both skills write to
+   `~/.claude/reports/<project-slug>/`, so the two files end up side by side.
+2. Take the dossier's file name and anchor IDs from its `.json` manifest.
+3. In 判断と根拠 and 検証結果, link each claim to the step that supports it with a
+   relative link: `[根拠](./<dossier>.html#tu-<tool_use_id>)`.
+
+Relative links keep working as long as both files stay in the same directory.
+The page's URL filter lets them through (pinned in `tests/test_render_report.py`).
+Do not link to an anchor that is not in the manifest.
+
 ## Report structure
 
 Size the report so the user can read it top to bottom in about a minute. A report

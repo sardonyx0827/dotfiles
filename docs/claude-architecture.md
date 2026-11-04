@@ -20,7 +20,7 @@
 > `CLAUDE.md` の委譲ポリシーを複製し、矛盾するまでドリフトさせた前科があります。
 > ここでは繰り返しません。委譲の判断ルールを書きたくなったら、それは `CLAUDE.md` の仕事です。
 
-また、この図は**全インベントリを描きません**。エージェント 14・スキル 25・コマンド 21 を
+また、この図は**全インベントリを描きません**。エージェント 14・スキル 26・コマンド 21 を
 一枚に並べても読めないため、レイヤと代表的な連鎖だけを描いています。
 一覧は `agents/README.md` と各 `SKILL.md` の frontmatter が正です。
 
@@ -55,7 +55,7 @@ flowchart TB
     subgraph CONTEXT["指示層 — Claude が文章として読む"]
         CM["CLAUDE.md<br/>委譲・モデル選択の唯一の判断元"]
         RULE["rules/*.md<br/>git-workflow・security・image-generation"]
-        SKILL["skills/*/SKILL.md<br/>25 スキル"]
+        SKILL["skills/*/SKILL.md<br/>26 スキル"]
     end
 
     subgraph ACTOR["実行層 — 起動される"]
@@ -302,7 +302,7 @@ Watch Mode に従い、独立チケットを並列実行する場合に限って
 ```mermaid
 flowchart LR
     subgraph CLAUDE[".claude/"]
-        CS["skills/ (25)"]
+        CS["skills/ (26)"]
         CA["agents/*.md (14)"]
         CH["hooks/_*.sh, _*.py<br/>共有ライブラリ"]
     end
@@ -319,10 +319,10 @@ flowchart LR
 ```
 
 - **スキル**: `.codex/skills/<name>` が `../../.claude/skills/<name>` への相対シンボリック
-  リンクです。共有する / やめるはこのリンクの増減だけで決まります。25 中 18 を共有し、
-  Claude 固有の 7 つ（`codex-consultation` `codex-image-gen` `debugging-protocol`
+  リンクです。共有する / やめるはこのリンクの増減だけで決まります。26 中 18 を共有し、
+  Claude 固有の 8 つ（`codex-consultation` `codex-image-gen` `debugging-protocol`
   `iterative-retrieval` `subagent-prompt-design` `project-guidelines-example`
-  `session-report`）は共有しません。
+  `session-report` `session-dossier`）は共有しません。
 - **エージェント**: 同じ 14 個ですが、リンクではなく `.toml` です。うち 13 個は
   `scripts/gen_codex_agents.py` が `.claude/agents/*.md` から生成したもので、Codex CLI が
   ビルド無しで読めるよう生成物をコミットしてあり、CI が `--check` で手動編集と SSOT 側だけの
