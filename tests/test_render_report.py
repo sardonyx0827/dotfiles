@@ -399,3 +399,158 @@ class TestEmbeddedScript:
 
         assert result.returncode == 0, result.stderr
         assert result.stdout == str(safe).lower(), f"{url!r} -> {result.stdout}"
+
+
+# --------------------------------------------------------------------------
+# --base-dir: relative image/link paths resolve against the markdown's own
+# directory when the page is written somewhere else (doc-browser previews).
+# --------------------------------------------------------------------------
+def decode_embedded_base(html: str) -> str:
+    match = re.search(r'const BASE_B64 = "([^"]*)"', html)
+    assert match, "generated page carries no BASE_B64 payload"
+    return base64.b64decode(match.group(1)).decode("utf-8")
+
+
+class TestBaseDir:
+    def test_no_base_by_default(self):
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS
+        )
+        assert decode_embedded_base(html) == ""
+        assert "file://" not in html
+
+    def test_base_is_the_resolved_directory_as_a_file_uri(self, tmp_path):
+        base = tmp_path / "日本語 dir"
+        base.mkdir()
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS, base_dir=base
+        )
+        assert decode_embedded_base(html) == base.resolve().as_uri() + "/"
+
+    def test_a_title_spelling_the_base_placeholder_is_not_expanded(self, tmp_path):
+        html = render_report.build_html(
+            "# __BASE_B64__\n",
+            title="__BASE_B64__",
+            assets=render_report.CDN_ASSETS,
+            base_dir=tmp_path,
+        )
+        assert "<title>__BASE_B64__</title>" in html
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("assets/a.svg", "file:///r/docs/assets/a.svg"),
+            ("../assets/x.svg", "file:///r/assets/x.svg"),
+            ("#section", "#section"),
+            ("https://example.com/a", "https://example.com/a"),
+            ("mailto:a@b.example", "mailto:a@b.example"),
+            ("//host/x", "//host/x"),
+            ("/abs/path", "/abs/path"),
+            ("", ""),
+        ],
+    )
+    def test_resolve_relative_only_touches_relative_paths(self, url, expected):
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node is not installed")
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS
+        )
+        fn = re.search(
+            r"(( *)function resolveRelative\(value, base\) \{.*?\n\2\})",
+            html,
+            re.DOTALL,
+        )
+        assert fn, "resolveRelative is gone"
+        script = (
+            f"{fn.group(1)}\n"
+            "process.stdout.write(String(resolveRelative(process.argv[1], process.argv[2])));\n"
+        )
+        result = subprocess.run(
+            [node, "-e", script, "--", url, "file:///r/docs/"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == expected
+        empty = subprocess.run(
+            [node, "-e", script, "--", url, ""], capture_output=True, text=True
+        )
+        assert empty.stdout == url
+
+    def test_cli_base_dir_writes_only_to_out_and_rejects_a_missing_dir(
+        self, tmp_path, capsys
+    ):
+        src = tmp_path / "repo"
+        src.mkdir()
+        md = src / "README.md"
+        md.write_text("# r\n![x](assets/a.svg)\n", encoding="utf-8")
+        out = tmp_path / "preview"
+
+        rc = render_report.main(
+            ["--no-open", "--out", str(out), "--base-dir", str(src), "--", str(md)]
+        )
+
+        assert rc == 0
+        assert sorted(p.name for p in src.iterdir()) == ["README.md"]
+        page = (out / "README.html").read_text(encoding="utf-8")
+        assert decode_embedded_base(page) == src.resolve().as_uri() + "/"
+        assert (
+            render_report.main(
+                ["--no-open", "--base-dir", str(tmp_path / "missing"), str(md)]
+            )
+            == 1
+        )
+        assert "no such directory" in capsys.readouterr().err
+
+
+class TestWriteSafety:
+    def test_an_existing_symlink_at_the_output_is_replaced_not_followed(self, tmp_path):
+        victim = tmp_path / "victim.txt"
+        victim.write_text("KEEP", encoding="utf-8")
+        md = tmp_path / "x.md"
+        md.write_text("# x\n", encoding="utf-8")
+        (tmp_path / "x.html").symlink_to(victim)
+
+        out = render_report.render(md, open_browser=False)
+
+        assert victim.read_text(encoding="utf-8") == "KEEP"
+        assert not out.is_symlink()
+        assert "<title>x</title>" in out.read_text(encoding="utf-8")
+
+    def test_resolve_relative_survives_an_unparseable_url(self):
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node is not installed")
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS
+        )
+        fn = re.search(
+            r"(( *)function resolveRelative\(value, base\) \{.*?\n\2\})",
+            html,
+            re.DOTALL,
+        )
+        assert fn
+        script = f"{fn.group(1)}\nprocess.stdout.write(String(resolveRelative('\\\\\\\\[', 'file:///r/')));\n"
+        result = subprocess.run([node, "-e", script], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
+
+class TestWriteModeAndRootBase:
+    def test_the_page_honours_the_umask(self, tmp_path):
+        import os
+
+        md = tmp_path / "x.md"
+        md.write_text("# x\n", encoding="utf-8")
+        old = os.umask(0o077)
+        try:
+            out = render_report.render(md, open_browser=False)
+        finally:
+            os.umask(old)
+        assert out.stat().st_mode & 0o777 == 0o600
+
+    def test_the_filesystem_root_as_base_has_one_trailing_slash(self, tmp_path):
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS, base_dir=Path("/")
+        )
+        assert decode_embedded_base(html) == "file:///"

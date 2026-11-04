@@ -30,10 +30,12 @@ from __future__ import annotations
 import argparse
 import base64
 import html as html_mod
+import os
 import platform
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Pinned to majors: both are loaded from a local file, so a surprise breaking
@@ -122,9 +124,26 @@ def extract_title(markdown: str, fallback: str) -> str:
     return fallback
 
 
-def build_html(markdown: str, title: str, assets: dict[str, str]) -> str:
-    """Wrap `markdown` in the standalone viewer shell."""
+def build_html(
+    markdown: str,
+    title: str,
+    assets: dict[str, str],
+    base_dir: Path | None = None,
+) -> str:
+    """Wrap `markdown` in the standalone viewer shell.
+
+    `base_dir`, when given, is the directory relative image and link paths in
+    the markdown are resolved against: a page written away from its markdown
+    (a preview in a cache directory) would otherwise lose them. Empty, the
+    page resolves them against its own location, as before.
+    """
     payload = base64.b64encode(markdown.encode("utf-8")).decode("ascii")
+    # The filesystem root's URI already ends in "/"; every other one needs it.
+    base = ""
+    if base_dir is not None:
+        uri = base_dir.resolve().as_uri()
+        base = uri if uri.endswith("/") else f"{uri}/"
+    base_payload = base64.b64encode(base.encode("utf-8")).decode("ascii")
     # The title goes in LAST. It is the only substitution that carries user
     # text, and html.escape leaves underscores alone, so a heading that spells
     # `__MD_B64__` would otherwise be a live placeholder for the replaces that
@@ -133,12 +152,16 @@ def build_html(markdown: str, title: str, assets: dict[str, str]) -> str:
         _TEMPLATE.replace("__MERMAID_SRC__", assets["mermaid"])
         .replace("__MARKED_SRC__", assets["marked"])
         .replace("__MD_B64__", payload)
+        .replace("__BASE_B64__", base_payload)
         .replace("__TITLE__", html_mod.escape(title, quote=True))
     )
 
 
 def render(
-    md_path: Path, out_dir: Path | None = None, open_browser: bool = True
+    md_path: Path,
+    out_dir: Path | None = None,
+    open_browser: bool = True,
+    base_dir: Path | None = None,
 ) -> Path:
     """Render `md_path` to HTML beside it (or into `out_dir`) and return the path."""
     # errors="replace": a stray byte in a hand-edited report must not turn into
@@ -151,12 +174,28 @@ def render(
         .replace("\r", "\n")
     )
     title = extract_title(markdown, md_path.stem)
-    html = build_html(markdown, title, resolve_assets())
+    html = build_html(markdown, title, resolve_assets(), base_dir=base_dir)
 
     target_dir = out_dir or md_path.parent
     target_dir.mkdir(parents=True, exist_ok=True)
     html_path = target_dir / f"{md_path.stem}.html"
-    html_path.write_text(html, encoding="utf-8")
+    # Write a temp file and rename it over the target: write_text would follow
+    # a symlink already sitting at html_path and overwrite whatever it points
+    # at; os.replace swaps the link itself for the new page.
+    fd, tmp_name = tempfile.mkstemp(dir=target_dir, prefix=".render-", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(html)
+        # mkstemp creates 0600; give the page the mode a plain write would
+        # have had under the caller's umask, no looser.
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
+        os.replace(tmp, html_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
     if open_browser:
         opener = "open" if platform.system() == "Darwin" else "xdg-open"
@@ -186,6 +225,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_false",
         help="write the page but do not open it",
     )
+    parser.add_argument(
+        "--base-dir",
+        type=Path,
+        default=None,
+        help="directory relative paths in the markdown resolve against "
+        "(default: the page's own location)",
+    )
     args = parser.parse_args(argv)
 
     md_path = Path(args.markdown).expanduser()
@@ -193,7 +239,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"render_report: no such markdown file: {md_path}", file=sys.stderr)
         return 1
 
-    print(render(md_path, out_dir=args.out, open_browser=args.open_browser))
+    base_dir = args.base_dir.expanduser() if args.base_dir is not None else None
+    if base_dir is not None and not base_dir.is_dir():
+        print(f"render_report: no such directory: {base_dir}", file=sys.stderr)
+        return 1
+
+    print(
+        render(
+            md_path,
+            out_dir=args.out,
+            open_browser=args.open_browser,
+            base_dir=base_dir,
+        )
+    )
     return 0
 
 
@@ -269,6 +327,10 @@ _TEMPLATE = r"""<!doctype html>
 (function () {
   // Base64 rather than inline text: report prose quotes closing script tags.
   const MD_B64 = "__MD_B64__";
+  // Where relative paths in the markdown point (render_report.py --base-dir);
+  // empty leaves them relative to this page, the default.
+  const BASE_B64 = "__BASE_B64__";
+  const BASE = new TextDecoder().decode(Uint8Array.from(atob(BASE_B64), (c) => c.charCodeAt(0)));
   const md = new TextDecoder().decode(Uint8Array.from(atob(MD_B64), (c) => c.charCodeAt(0)));
   const content = document.getElementById("content");
 
@@ -318,6 +380,21 @@ _TEMPLATE = r"""<!doctype html>
     return !/^[a-z][a-z0-9+.-]*:/.test(v);
   }
 
+  // Runs after isSafeUrl, on what it let through: a path with no scheme and no
+  // leading "#", "/" or "?" is re-based onto BASE. Anything with a scheme,
+  // a fragment or an absolute path is left exactly as the filter passed it.
+  function resolveRelative(value, base) {
+    const v = String(value);
+    if (!base || v === "" || /^[a-z][a-z0-9+.-]*:/i.test(v) || /^[#/?]/.test(v)) return v;
+    // An unparseable value is left as the filter passed it: throwing here
+    // would stop the script before the content is shown at all.
+    try {
+      return new URL(v, base).href;
+    } catch (_) {
+      return v;
+    }
+  }
+
   const URL_ATTRS = /^(href|src|xlink:href|formaction|action|poster|data|background)$/;
   inert.body.querySelectorAll("*").forEach((el) => {
     Array.from(el.attributes).forEach((attr) => {
@@ -332,6 +409,8 @@ _TEMPLATE = r"""<!doctype html>
         }
       } else if (URL_ATTRS.test(name) && !isSafeUrl(attr.value)) {
         el.removeAttribute(attr.name);
+      } else if (name === "src" || name === "href") {
+        attr.value = resolveRelative(attr.value, BASE);
       }
     });
   });
