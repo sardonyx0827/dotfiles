@@ -1,0 +1,65 @@
+# bash-review-log
+
+bash-review フック（Bash コマンドを実行前に審査する PreToolUse フック）の判定ログ
+`~/.claude/logs/bash-review.log` を、ペインに一覧する Claude Code の mod です。
+
+## 読み込み
+
+`.claude/settings.json` の `env.CLAUDE_CODE_PLUGIN_DIRS` に `~/.claude/mods/bash-review-log` が入っていれば、
+セッション開始時に読み込まれます。設定を変えたときは Claude Code を再起動してください。
+
+## 使い方
+
+```text
+/bash-review-log                  直近 50 件を全種別で表示
+/bash-review-log flagged          ASK・DENY・ERROR だけを表示
+/bash-review-log deny ask 200     DENY と ASK を直近 200 件まで
+/bash-review-log full             コマンドを折り返して全文表示
+```
+
+引数は順不同です。
+
+| 引数                         | 意味                                                                             |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `allow` `ask` `deny` `error` | 表示する種別。複数指定でき、省略すると全種別                                     |
+| `all`                        | 全種別。ほかの種別と一緒に指定しても全種別になる                                 |
+| `flagged`                    | ASK・DENY・ERROR をまとめて指定                                                  |
+| 数字                         | 表示する件数（既定 50）。500 を超える値は 500 として扱い、0 は使い方の表示になる |
+| `full` / `short`             | コマンドを折り返して全文表示する／1 行に切り詰める（既定）                       |
+
+種別の ERROR は判定ではありません。Gemini か Codex が応答できなかったもので、reason に `gemini=ERROR` / `codex=ERROR` と出ます。
+
+### ペインの操作
+
+| キー     | 動作                                                 |
+| -------- | ---------------------------------------------------- |
+| `0`      | 全種別を表示                                         |
+| `1`〜`4` | ALLOW・ASK・DENY・ERROR の表示を切り替える（複数可） |
+| `w`      | コマンドの全文表示と 1 行表示を切り替える            |
+| `r`      | ログを読み直す                                       |
+
+- ペインを開いている間は、ログの更新を 2 秒ごとに拾って表示し直します。
+- ペインにキーを渡すには `ctrl+x` → `Tab` を押します。
+- マウスでボタンを押せるのはフルスクリーン表示のときだけです。tmux の中では既定で通常表示になります。
+- 「閉じる」ボタンでペインを閉じます。
+
+### 表示について
+
+- サマリーログはコマンドを 80 字で切っています。
+  - 全文は詳細ログ `/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/` から引きます。
+  - 詳細ログは `/tmp` にあり、直近 1000 件までです。再起動より前のエントリは 80 字で切れたまま表示されます。
+  - `/tmp` は誰でも書き込めるので、symlink・通常ファイルでないもの・256KiB を超えるものは読みません。
+- ペインを描けない環境では、コマンドの返り値に一覧を載せます。
+  - 載せるのは最大 20 件、サマリーの 80 字までです。
+  - この一覧はモデルも読み、ほかのプロジェクトのコマンドも混じるので、詳細ログの全文は載せません。
+
+## 開発
+
+```bash
+claude plugin test .claude/mods/bash-review-log       # テスト（ログの解析とコマンド・ペイン）
+claude plugin validate .claude/mods/bash-review-log   # マニフェストとフックの検査
+```
+
+この mod はログを読んで見せるだけです。ツールの実行可否に関わるイベント（`tool.*` など）にはフックしません。
+フックすると、bash-review や git-push-review を素通りさせる余地が生まれるためです。
+設計と安全上の前提は [docs/claude-architecture.md の「mod (関数フック)」](../../../docs/claude-architecture.md#mod-関数フック) にあります。
