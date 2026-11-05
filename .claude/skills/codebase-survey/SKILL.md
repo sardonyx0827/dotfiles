@@ -133,19 +133,27 @@ List such links under 未調査・不明点 as 外向き symlink.
 6. **Render** (it writes the `.html` beside the `.md` and opens it):
 
    ```bash
-   python3 ~/.claude/skills/session-report/render_report.py '<md>' --base-dir '<root>'
+   python3 ~/.claude/skills/session-report/render_report.py '<md>' --base-dir '<root>' --block-remote
    ```
 
+   - Always pass `--block-remote`. The page then carries a Content-Security-Policy
+     that refuses images, fonts, stylesheets and connections from outside local
+     files, so a URL that slipped into the document is not fetched when the
+     page opens (verified in Chrome; a click on a link still navigates). Blocked
+     loads are counted in a banner at the top. The renderer also turns it on
+     for any file named `<stamp>-survey-<name>.md`, and doc-browser opens a
+     survey's `.html` only if it carries this policy, re-rendering from the
+     `.md` otherwise; the flag is still stated so the command says what it does.
    - Spell out the `.md` path literally, never as a shell variable.
      session-dossier tells a survey render apart from a session-report run by
      the file name in the command; hidden behind `"$md"`, the survey would move
      its "last report" marker.
    - Never pass `--out`. doc-browser opens the `.html` beside the `.md`; with
-     no `.html` there it renders the `.md` itself against the reports
-     directory, and every source link breaks.
+     no `.html` there it renders the `.md` itself (with `--block-remote`, but
+     against the reports directory), and every source link breaks.
    - Confirm the `.html` now exists. If rendering failed, fix it and run again.
-   - After correcting the Markdown, re-render with `--no-open`; the user only
-     needs to reload the tab.
+   - After correcting the Markdown, re-render with the same command plus
+     `--no-open` (keep `--block-remote`); the user only needs to reload the tab.
    - The renderer is always under `~/.claude/skills/` (as for session-report),
      while the reports directory follows `CLAUDE_CONFIG_DIR` (as doc-browser
      does).
@@ -312,7 +320,8 @@ apply, but always keep TL;DR, 対象と範囲 and 未調査・不明点.
   anything but `.md` from a repository for the same reason.
 - No images from URLs (`![](https://…)`): an image loads the moment the page
   opens, and its URL can carry data out. Write external URLs as code, not as
-  links.
+  links. `--block-remote` stops such loads as a backstop; it does not stop a
+  click on a link.
 - `file://` links are stripped by the renderer's URL filter; do not use them.
 
 ### Diagrams

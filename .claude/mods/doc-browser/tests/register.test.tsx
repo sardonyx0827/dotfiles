@@ -2,6 +2,8 @@ import { describe, expect, mock, test } from "claude-code/testing";
 import type { Engine } from "claude-code/testing";
 import type { On } from "claude-code";
 
+import { BLOCK_REMOTE_CSP_META, RENDERED_HEAD } from "../hooks/paths";
+
 const HOME = "/home/tester";
 const ROOT = "/work/repo";
 const REPORTS = `${HOME}/.claude/reports`;
@@ -36,6 +38,10 @@ function world(
     renderStdout?: string;
     lsTruncated?: boolean;
     openDeny?: string;
+    // fs.read が返す本文 (無いパスは読めない)
+    files?: Record<string, string>;
+    // fs.stat が見つけられないパス
+    missing?: string[];
   } = {},
 ) {
   mock.env(on, { HOME });
@@ -105,7 +111,13 @@ function world(
 
     return ok("");
   });
+  on("fs.read", ($, e) => {
+    const text = options.files?.[e.path];
+
+    return text === undefined ? { deny: "ENOENT" } : { value: text };
+  });
   on("fs.stat", ($, e) => {
+    if (options.missing?.includes(e.path)) return { deny: "ENOENT" };
     const stat = options.stats?.[e.path] ?? {
       kind: e.path === REPORTS || e.path.endsWith("/repo") ? "dir" : "file",
       realPath: e.path,
@@ -434,6 +446,140 @@ describe("セキュリティレビューの指摘", () => {
     await ui.press({ key: "item:doc:README.md" });
 
     expect(w.openRuns()).toEqual([["open", `${PREVIEW}/repo/README.html`]]);
+    await ui.unmount();
+  });
+});
+
+describe("外部からの読み込みの遮断", () => {
+  test("調査ドキュメントの Markdown は --block-remote を付けて描く (html が無いときの経路)", async ($, on) => {
+    const w = world(on, {
+      reports: [{ name: "20261105-120000-survey-repo.md" }],
+    });
+    await run($, "reports");
+    const ui = await mountPane($);
+
+    await ui.press({ key: "item:rep:repo/20261105-120000-survey-repo" });
+
+    expect(w.renderRuns()).toEqual([
+      [
+        "python3",
+        RENDERER,
+        "--no-open",
+        "--out",
+        `${PREVIEW}/_reports/repo`,
+        "--base-dir",
+        `${REPORTS}/repo`,
+        "--block-remote",
+        "--",
+        `${REPORTS}/repo/20261105-120000-survey-repo.md`,
+      ],
+    ]);
+    expect(w.openRuns()).toEqual([
+      ["open", `${PREVIEW}/_reports/repo/20261105-120000-survey-repo.html`],
+    ]);
+    await ui.unmount();
+  });
+});
+
+describe("調査ドキュメントの HTML", () => {
+  const SURVEY = `${REPORTS}/repo/20261105-120000-survey-repo`;
+  const reports = [
+    { name: "20261105-120000-survey-repo.md" },
+    { name: "20261105-120000-survey-repo.html" },
+  ];
+  const withCsp = `${RENDERED_HEAD}${BLOCK_REMOTE_CSP_META}\n<style></style>`;
+  const withoutCsp = `${RENDERED_HEAD}<style></style>`;
+  const rerender = [
+    "python3",
+    RENDERER,
+    "--no-open",
+    "--out",
+    `${PREVIEW}/_reports/repo`,
+    "--base-dir",
+    `${REPORTS}/repo`,
+    "--block-remote",
+    "--",
+    `${SURVEY}.md`,
+  ];
+
+  test("--block-remote の CSP 付きで描かれていれば、そのまま開く", async ($, on) => {
+    const w = world(on, {
+      reports,
+      files: { [`${SURVEY}.html`]: withCsp },
+    });
+    await run($, "reports");
+    const ui = await mountPane($);
+
+    await ui.press({ key: "item:rep:repo/20261105-120000-survey-repo" });
+
+    expect(w.renderRuns()).toEqual([]);
+    expect(w.openRuns()).toEqual([["open", `${SURVEY}.html`]]);
+    await ui.unmount();
+  });
+
+  test("CSP が無ければ、そのまま開かずに md から --block-remote で描き直して開く", async ($, on) => {
+    const w = world(on, {
+      reports,
+      files: { [`${SURVEY}.html`]: withoutCsp },
+    });
+    await run($, "reports");
+    const ui = await mountPane($);
+
+    await ui.press({ key: "item:rep:repo/20261105-120000-survey-repo" });
+
+    expect(w.renderRuns()).toEqual([rerender]);
+    expect(w.openRuns()).toEqual([
+      ["open", `${PREVIEW}/_reports/repo/20261105-120000-survey-repo.html`],
+    ]);
+    await ui.unmount();
+  });
+
+  test("HTML が読めなければ CSP 無しとして描き直す", async ($, on) => {
+    const w = world(on, { reports });
+    await run($, "reports");
+    const ui = await mountPane($);
+
+    await ui.press({ key: "item:rep:repo/20261105-120000-survey-repo" });
+
+    expect(w.renderRuns()).toEqual([rerender]);
+    await ui.unmount();
+  });
+
+  test("CSP が無く md も無ければ開かない", async ($, on) => {
+    const w = world(on, {
+      reports,
+      files: { [`${SURVEY}.html`]: withoutCsp },
+      missing: [`${SURVEY}.md`],
+    });
+    await run($, "reports");
+    const ui = await mountPane($);
+
+    await ui.press({ key: "item:rep:repo/20261105-120000-survey-repo" });
+
+    expect(w.renderRuns()).toEqual([]);
+    expect(w.openRuns()).toEqual([]);
+    expect((await ui.find({ type: "Text", text: STATUS }))?.text).toBe(
+      "開けません: survey-repo（外部からの読み込みを止める設定が無く、描き直せる同名の Markdown もありません）",
+    );
+    await ui.unmount();
+  });
+
+  test("ふつうのレポートの HTML は中身を確かめずにそのまま開く", async ($, on) => {
+    const w = world(on, {
+      reports: [
+        { name: "20261104-103000-fix-login.md" },
+        { name: "20261104-103000-fix-login.html" },
+      ],
+    });
+    await run($, "reports");
+    const ui = await mountPane($);
+
+    await ui.press({ key: "item:rep:repo/20261104-103000-fix-login" });
+
+    expect(w.renderRuns()).toEqual([]);
+    expect(w.openRuns()).toEqual([
+      ["open", `${REPORTS}/repo/20261104-103000-fix-login.html`],
+    ]);
     await ui.unmount();
   });
 });

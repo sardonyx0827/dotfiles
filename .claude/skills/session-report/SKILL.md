@@ -57,6 +57,9 @@ Get the timestamp from `date +%Y%m%d-%H%M%S` — never guess it.
    page somewhere other than next to the markdown.
    With `--out`, add `--base-dir <markdown's directory>` so relative image and
    link paths in the markdown still resolve (the doc-browser mod does this).
+   `--block-remote` adds a CSP that refuses loads from outside local files; it
+   is for pages written from untrusted sources (codebase-survey uses it), and a
+   session report leaves it off so remote images keep showing.
 4. **Report back in one or two lines** with the `.md` path. Do not restate the
    report's contents in chat — that would defeat the purpose.
 

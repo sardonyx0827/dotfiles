@@ -744,7 +744,8 @@ class TestMarkerAndLinkFollowUps:
         b.bash(
             "s1",
             "python3 ~/.claude/skills/session-report/render_report.py"
-            ' "/h/.claude/reports/p/20261105-120000-survey-p.md" --base-dir /x',
+            ' "/h/.claude/reports/p/20261105-120000-survey-p.md" --base-dir /x'
+            " --block-remote",
             "survey.html",
         )
         b.bash(

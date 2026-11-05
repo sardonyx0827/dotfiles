@@ -1,6 +1,9 @@
 import { describe, expect, test } from "claude-code/testing";
 
 import {
+  BLOCK_REMOTE_CSP_META,
+  RENDERED_HEAD,
+  hasBlockRemoteCsp,
   isInside,
   isSafeRel,
   openArgv,
@@ -55,6 +58,35 @@ describe("previewDir", () => {
   });
 });
 
+describe("hasBlockRemoteCsp", () => {
+  const rest =
+    '<meta name="viewport" content="x">\n<title>t</title>\n<style>a{}</style>\n</head><body><script src="x.js"></script></body></html>';
+
+  test("render_report.py --block-remote が書いた先頭と一致すれば真", () => {
+    expect(
+      hasBlockRemoteCsp(`${RENDERED_HEAD}${BLOCK_REMOTE_CSP_META}\n${rest}`),
+    ).toBe(true);
+  });
+
+  test("CSP が無い・緩い・コメントの中・後ろにあるものは偽", () => {
+    const weak =
+      '<meta http-equiv="Content-Security-Policy" content="img-src *">';
+    expect(hasBlockRemoteCsp(`${RENDERED_HEAD}${rest}`)).toBe(false);
+    expect(hasBlockRemoteCsp(`${RENDERED_HEAD}${weak}\n${rest}`)).toBe(false);
+    expect(
+      hasBlockRemoteCsp(
+        `${RENDERED_HEAD}<!-- ${BLOCK_REMOTE_CSP_META} -->\n${rest}`,
+      ),
+    ).toBe(false);
+    expect(
+      hasBlockRemoteCsp(
+        `${RENDERED_HEAD}<SCRIPT src="x.js"></SCRIPT>\n${BLOCK_REMOTE_CSP_META}\n${rest}`,
+      ),
+    ).toBe(false);
+    expect(hasBlockRemoteCsp("")).toBe(false);
+  });
+});
+
 describe("argv", () => {
   test("renderer は python3 で、ブラウザを開かせず、md のディレクトリを基点にし、-- の後に md を渡す", () => {
     expect(
@@ -71,6 +103,28 @@ describe("argv", () => {
       "/c/out",
       "--base-dir",
       "/r",
+      "--",
+      "/r/a.md",
+    ]);
+  });
+
+  test("blockRemote なら --block-remote を -- より前に付ける", () => {
+    expect(
+      renderArgv(
+        "/h/.claude/skills/session-report/render_report.py",
+        "/c/out",
+        "/r/a.md",
+        { blockRemote: true },
+      ),
+    ).toEqual([
+      "python3",
+      "/h/.claude/skills/session-report/render_report.py",
+      "--no-open",
+      "--out",
+      "/c/out",
+      "--base-dir",
+      "/r",
+      "--block-remote",
       "--",
       "/r/a.md",
     ]);

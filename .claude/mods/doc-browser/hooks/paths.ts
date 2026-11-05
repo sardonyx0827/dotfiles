@@ -40,10 +40,13 @@ export function previewDir(
 
 // session-report の renderer で Markdown を HTML にする。ブラウザは開かせず
 // (開くのはこちらで検査してから)、"--" の後に md を置いて引数と取り違えない。
+// blockRemote は、信頼できない内容から書かれた文書 (codebase-survey の調査) を
+// 描くとき: 手元のファイル以外からの読み込みを CSP で止めさせる。
 export function renderArgv(
   renderer: string,
   outDir: string,
   markdown: string,
+  options: { blockRemote?: boolean } = {},
 ): string[] {
   const base = markdown.slice(0, Math.max(1, markdown.lastIndexOf("/")));
 
@@ -56,9 +59,25 @@ export function renderArgv(
     // 相対パスの画像やリンク (README の assets/*.svg) を元の場所で解決させる。
     "--base-dir",
     base,
+    ...(options.blockRemote === true ? ["--block-remote"] : []),
     "--",
     markdown,
   ];
+}
+
+// render_report.py --block-remote が書くページの先頭: <meta charset> の直後に CSP
+// を置く (meta の CSP はそれより後に読み込まれるものにしか効かない)。緩い CSP、
+// コメントの中の meta、後ろに置かれた meta を通さないよう、renderer の出力と
+// 1 文字違わず一致するかで判定する。この 2 つの値は tests/test_render_report.py が
+// render_report.py の出力と突き合わせて固定している。
+// reports の HTML は renderer しか書かない前提なので、これはフラグの付け忘れや
+// 旧版の HTML を見つける検査であり、手書きの HTML の偽造は防がない。
+export const RENDERED_HEAD =
+  '<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n';
+export const BLOCK_REMOTE_CSP_META = `<meta http-equiv="Content-Security-Policy" content="img-src file: data:; font-src file: data:; style-src 'unsafe-inline' file:; media-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'; script-src-attr 'none'">`;
+
+export function hasBlockRemoteCsp(html: string): boolean {
+  return html.startsWith(`${RENDERED_HEAD}${BLOCK_REMOTE_CSP_META}\n`);
 }
 
 export function openArgv(opener: string, absolute: string): string[] {

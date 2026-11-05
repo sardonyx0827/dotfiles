@@ -55,7 +55,12 @@
 ### 開き方
 
 - レポートの HTML は加工せずにブラウザで開きます。レポート置き場（`~/.claude/reports/`）の中身を信頼する前提です。
+  - 例外として、調査ドキュメントの HTML は `--block-remote` の CSP が付いているときだけそのまま開きます。付いて
+    いなければ Markdown から `--block-remote` で描き直して開き、Markdown も無ければ開きません。
+    フラグの付け忘れや古い HTML を拾うための検査で、手書きの HTML の偽造までは防ぎません。
 - Markdown は session-report の `render_report.py`（サニタイズ付き）で HTML にしてから開きます。
+  - 調査ドキュメント（codebase-survey）の Markdown は `--block-remote` を付けて描き、手元のファイル以外からの
+    画像などの読み込みを CSP で止めます。README のバッジを出すため、それ以外の文書には付けません。
   - 出力先は既定で `~/.cache/claude-doc-browser/` です（`XDG_CACHE_HOME` が設定されていればその下）。
     リポジトリにもレポート置き場にも書き込みません。
   - README の `assets/*.svg` のような相対パスの画像は、元の場所を基点に表示されます。

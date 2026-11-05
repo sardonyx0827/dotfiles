@@ -170,6 +170,8 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
   `d` `c` `s` で切り替え、`1`〜`9` で開き、`n` `p` でページを送ります。`a` はレポートを全プロジェクト分に広げます。
 - レポートの HTML はそのまま開きます。Markdown は session-report の `render_report.py --base-dir` で
   `~/.cache/claude-doc-browser/` に描いてから開きます（リポジトリの文書もレポートの Markdown も同じ）。
+  調査ドキュメント（`codebase-survey`）の Markdown だけは `--block-remote` を付け、手元のファイル以外からの読み込みを CSP で止めます。
+  調査ドキュメントの HTML は、その CSP が付いているときだけそのまま開き、無ければ Markdown から描き直します。
   リポジトリにもレポート置き場にも書き込まず、README の `assets/*.svg` のような相対パスは元の場所で解決されます。
 - リポジトリから開くのは `.md` だけです。`.md` に見せた symlink が `.html` を指していても、サニタイズを通さない
   HTML をそのまま開くことはありません。
