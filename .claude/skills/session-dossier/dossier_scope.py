@@ -23,6 +23,11 @@ from dossier_link import Session
 from dossier_model import Event, ToolCall
 
 SESSION_REPORT_MARKER = "session-report/render_report.py"
+# codebase-survey renders its documents with the same script. Its file names
+# (<stamp>-survey-<name>.md, the shape the doc-browser mod recognizes) are how
+# such a run is told apart from a report on the session's own work. Keep it in
+# step with SURVEY_SLUG in .claude/mods/doc-browser/hooks/catalog.ts.
+_SURVEY_MARKDOWN = re.compile(r"^\d{8}-\d{6}-survey-[0-9A-Za-z-]+\.md$")
 
 
 class ScopeError(Exception):
@@ -132,7 +137,8 @@ def _runs_session_report(command: str) -> bool:
     """True when some step of ``command`` executes the report renderer.
 
     Mentioning the path is not enough: grep, ruff or an editor on the file must
-    not move the "last report" marker.
+    not move the "last report" marker. Nor does a codebase-survey render: it
+    documents a codebase, not the work done so far in this session.
     """
     for step in re.split(r"&&|\|\||[;|\n]", command):
         try:
@@ -140,7 +146,10 @@ def _runs_session_report(command: str) -> bool:
         except ValueError:
             continue
         if len(argv) >= 2 and Path(argv[0]).name.startswith("python"):
-            if any(arg.endswith(SESSION_REPORT_MARKER) for arg in argv[1:]):
+            args = argv[1:]
+            if any(arg.endswith(SESSION_REPORT_MARKER) for arg in args) and not any(
+                _SURVEY_MARKDOWN.match(Path(arg).name) for arg in args
+            ):
                 return True
     return False
 

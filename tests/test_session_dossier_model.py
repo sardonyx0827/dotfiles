@@ -732,6 +732,52 @@ class TestMarkerAndLinkFollowUps:
         marker = dossier_scope.find_last_report_uuid(session, tmp_path / "none")
         assert marker == session.tool_call("ok1").result_uuid
 
+    def test_codebase_survey_renders_are_not_session_report_markers(self, tmp_path):
+        # codebase-survey reuses the same renderer, but a survey says nothing
+        # about where the session's work was last reported.
+        b = three_prompt_session()
+        b.bash(
+            "ok1",
+            "python3 ~/.claude/skills/session-report/render_report.py r.md",
+            "r.html",
+        )
+        b.bash(
+            "s1",
+            "python3 ~/.claude/skills/session-report/render_report.py"
+            ' "/h/.claude/reports/p/20261105-120000-survey-p.md" --base-dir /x',
+            "survey.html",
+        )
+        b.bash(
+            "s2",
+            "python3 ~/.claude/skills/session-report/render_report.py"
+            " --no-open --base-dir /x /r/20261105-120001-survey-p-nvim.md",
+            "survey.html",
+        )
+        session = load(b.write(tmp_path / "home"))
+        marker = dossier_scope.find_last_report_uuid(session, tmp_path / "none")
+        assert marker == session.tool_call("ok1").result_uuid
+
+    @pytest.mark.parametrize(
+        "md",
+        [
+            "/r/20261105-120000-add-survey-skill.md",
+            "/r/20261105-120000-survey-foo_bar.md",
+        ],
+    )
+    def test_names_outside_the_survey_rule_stay_markers(self, tmp_path, md):
+        # Only <stamp>-survey-<[0-9A-Za-z-]+>.md is a survey: a session-report
+        # slug that mentions "survey", or a name doc-browser would not list as
+        # 調査, still marks the last report.
+        b = three_prompt_session()
+        b.bash(
+            "ok1",
+            f"python3 ~/.claude/skills/session-report/render_report.py {md}",
+            "r.html",
+        )
+        session = load(b.write(tmp_path / "home"))
+        marker = dossier_scope.find_last_report_uuid(session, tmp_path / "none")
+        assert marker == session.tool_call("ok1").result_uuid
+
     def test_non_string_manifest_marker_is_ignored(self, tmp_path):
         b = three_prompt_session()
         session = load(b.write(tmp_path / "home"))
