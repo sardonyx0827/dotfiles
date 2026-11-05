@@ -31,8 +31,8 @@ import {
   renderArgv,
 } from "./paths";
 
-// リポジトリの Markdown と、session-report / session-dossier が書いたレポートを
-// 一覧し、選んだものをブラウザで開くだけの mod。ツールの実行可否に関わる
+// リポジトリの Markdown と、session-report / session-dossier / codebase-survey が
+// 書いたレポートを一覧し、選んだものをブラウザで開くだけの mod。ツールの実行可否に関わる
 // イベント (tool.call / tool.check など) には一切フックしない: mod は settings
 // hook の前後で判定を差し替えられるため、触れると bash-review などを素通りさせる
 // 余地が生まれる (tests/test_config_wiring.py が静的に検査している)。

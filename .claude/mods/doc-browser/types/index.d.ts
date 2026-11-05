@@ -4,12 +4,13 @@
 
 // docs: 先頭がドットでないディレクトリ (README・docs/ など)
 // config: .claude/ .codex/ .github/ など先頭がドットのディレクトリ
-// reports: ~/.claude/reports/<project>/ の session-report と session-dossier
+// reports: ~/.claude/reports/<project>/ の session-report・session-dossier・codebase-survey
 export type DocTab = "docs" | "config" | "reports";
 
 // report: session-report (md と html を 1 行に束ねる)
 // dossier: session-dossier の詳細ページ / dossier-share: その共有版
-export type DocKind = "doc" | "report" | "dossier" | "dossier-share";
+// survey: codebase-survey の調査ドキュメント (report と同じく md と html を束ねる)
+export type DocKind = "doc" | "report" | "dossier" | "dossier-share" | "survey";
 
 export type DocItem = {
   // "doc:<rel>" | "rep:<rel>"

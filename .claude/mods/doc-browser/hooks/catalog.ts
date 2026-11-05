@@ -26,13 +26,17 @@ const KIND_LABEL: Record<DocKind, string> = {
   report: "レポート",
   dossier: "詳細記録",
   "dossier-share": "詳細記録（共有版）",
+  survey: "調査",
 };
 
 // <YYYYMMDD>-<HHMMSS>-<slug>[.share|.artifact].<md|html|json>
-// session-report は md と html を、session-dossier は html と json を書く。
+// session-report と codebase-survey は md と html を、session-dossier は html と json を書く。
 const REPORT_NAME =
   /^(\d{8})-(\d{6})-(.+?)(\.share|\.artifact)?\.(md|html|json)$/;
 const DOSSIER_SLUG = /^dossier-[0-9A-Za-z-]+$/;
+// codebase-survey の命名規則。session-dossier の dossier_scope.py の _SURVEY_MARKDOWN と
+// 同じ形なので、変えるときは両方を揃える。
+const SURVEY_SLUG = /^survey-[0-9A-Za-z-]+$/;
 
 // 制御文字 (Cc)・書式文字 (Cf: ゼロ幅、BOM、bidi の書き換え、タグ文字)・既定で無視される
 // 文字 (異体字セレクタ、ハングルの空白文字など) と行区切り。
@@ -125,7 +129,9 @@ export function reportItems(
       ? suffix === ".share"
         ? "dossier-share"
         : "dossier"
-      : "report";
+      : SURVEY_SLUG.test(slug)
+        ? "survey"
+        : "report";
     const key = `${date}-${time}-${slug}${suffix ?? ""}`;
     const group: ReportGroup = groups.get(key) ?? {
       stamp: `${date}-${time}`,

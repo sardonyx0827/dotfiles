@@ -1,7 +1,7 @@
 # doc-browser
 
-リポジトリの Markdown と、Claude が書いたセッションレポート（session-report・session-dossier）を
-ペインに一覧し、選んだものをブラウザで開く Claude Code の mod です。
+リポジトリの Markdown と、Claude が書いたセッションレポート（session-report・session-dossier）・
+調査ドキュメント（codebase-survey）をペインに一覧し、選んだものをブラウザで開く Claude Code の mod です。
 
 ## 読み込み
 
@@ -15,6 +15,7 @@
 /doc-browser reports              レポートのタブで開く
 /doc-browser reports all          全プロジェクトのレポートを出す
 /doc-browser docs setup           パスに「setup」を含む文書だけに絞る
+/doc-browser reports survey       パスに「survey」を含むレポートに絞る（調査ドキュメントはこれで拾える）
 /doc-browser open 3               ペインを描けない環境で、本文の一覧の 3 番を開く
 ```
 
@@ -26,11 +27,11 @@
 
 ### タブ
 
-| タブ         | 中身                                                                                         |
-| ------------ | -------------------------------------------------------------------------------------------- |
-| ドキュメント | README・`docs/` など、パスの先頭がドットでない Markdown                                      |
-| 設定系       | `.claude/` `.codex/` `.github/` など、パスの先頭がドットの Markdown                          |
-| レポート     | `~/.claude/reports/<リポジトリ名>/` のセッションレポートと dossier（新しい順）。共有版も含む |
+| タブ         | 中身                                                                                                                    |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| ドキュメント | README・`docs/` など、パスの先頭がドットでない Markdown                                                                 |
+| 設定系       | `.claude/` `.codex/` `.github/` など、パスの先頭がドットの Markdown                                                     |
+| レポート     | `~/.claude/reports/<リポジトリ名>/` のセッションレポート・dossier・調査ドキュメント（新しい順）。dossier は共有版も含む |
 
 リポジトリの Markdown は `git ls-files --cached --others --exclude-standard` で集めます。コミット済みのものに加え、
 `.gitignore` で除外されていない未追跡のファイルも出ます。

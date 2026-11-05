@@ -105,6 +105,79 @@ describe("reportItems", () => {
     const [item] = reportItems("other", [file("20261101-000000-x.html")], true);
     expect(item?.detail).toBe("2026-11-01 00:00 · レポート · other");
   });
+
+  test("codebase-survey の調査は md と html を 1 行に束ね、「調査」と表示する", () => {
+    const items = reportItems(
+      "dotfiles",
+      [
+        file("20261105-120000-survey-dotfiles.md"),
+        file("20261105-120000-survey-dotfiles.html"),
+        file("20261105-090000-survey-dotfiles-nvim.md"),
+      ],
+      false,
+    );
+
+    expect(items.map((i) => [i.kind, i.rel])).toEqual([
+      ["survey", "dotfiles/20261105-120000-survey-dotfiles.html"],
+      ["survey", "dotfiles/20261105-090000-survey-dotfiles-nvim.md"],
+    ]);
+    expect(items[0]).toMatchObject({
+      tab: "reports",
+      root: "reports",
+      label: "survey-dotfiles",
+      detail: "2026-11-05 12:00 · 調査",
+    });
+  });
+
+  test("調査の共有版・Artifact 用の断片・manifest は出さない", () => {
+    const items = reportItems(
+      "dotfiles",
+      [
+        file("20261105-120000-survey-x.share.html"),
+        file("20261105-120000-survey-x.share.md"),
+        file("20261105-120000-survey-x.artifact.html"),
+        file("20261105-120000-survey-x.json"),
+      ],
+      false,
+    );
+
+    expect(items).toEqual([]);
+  });
+
+  test("survey- に続く文字が英数字とハイフンだけでなければ、普通のレポートとして出す", () => {
+    const items = reportItems(
+      "dotfiles",
+      [
+        file("20261105-120000-survey-foo.nvim.html"),
+        file("20261105-120001-survey-foo_bar.html"),
+        file("20261105-120002-my-survey-x.html"),
+        file("20261105-120003-survey-.html"),
+      ],
+      false,
+    );
+
+    expect(items.map((i) => i.kind)).toEqual([
+      "report",
+      "report",
+      "report",
+      "report",
+    ]);
+  });
+
+  test("全プロジェクト表示の調査にもプロジェクト名を添え、他の種類と新しい順に並べる", () => {
+    const items = reportItems(
+      "other",
+      [
+        file("20261105-120000-survey-other.html"),
+        file("20261105-130000-fix-it.html"),
+        file("20261105-110000-dossier-abcd1234.html"),
+      ],
+      true,
+    );
+
+    expect(items.map((i) => i.kind)).toEqual(["report", "survey", "dossier"]);
+    expect(items[1]?.detail).toBe("2026-11-05 12:00 · 調査 · other");
+  });
 });
 
 describe("visible / paginate", () => {
