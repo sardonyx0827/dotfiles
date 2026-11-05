@@ -20,7 +20,7 @@
 > `CLAUDE.md` の委譲ポリシーを複製し、矛盾するまでドリフトさせた前科があります。
 > ここでは繰り返しません。委譲の判断ルールを書きたくなったら、それは `CLAUDE.md` の仕事です。
 
-また、この図は**全インベントリを描きません**。エージェント 14・スキル 26・コマンド 21 を
+また、この図は**全インベントリを描きません**。エージェント 14・スキル 27・コマンド 21 を
 一枚に並べても読めないため、レイヤと代表的な連鎖だけを描いています。
 一覧は `agents/README.md` と各 `SKILL.md` の frontmatter が正です。
 
@@ -55,7 +55,7 @@ flowchart TB
     subgraph CONTEXT["指示層 — Claude が文章として読む"]
         CM["CLAUDE.md<br/>委譲・モデル選択の唯一の判断元"]
         RULE["rules/*.md<br/>git-workflow・security・image-generation"]
-        SKILL["skills/*/SKILL.md<br/>26 スキル"]
+        SKILL["skills/*/SKILL.md<br/>27 スキル"]
     end
 
     subgraph ACTOR["実行層 — 起動される"]
@@ -146,10 +146,10 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
 `settings.json` の `env.CLAUDE_CODE_PLUGIN_DIRS` が `~/.claude/mods/<name>` を名指しし、
 セッション開始時に `--plugin-dir` と同じ扱いで読み込まれます。Claude 専用のため Codex 側には置きません。
 
-| mod               | フックするイベント                                   | 役割                                                                                                                                                          |
-| ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bash-review-log` | `session.start` `command.run` `ui.close` `ui.render` | `~/.claude/logs/bash-review.log` の判定をペイン表示。80 字で切られたコマンドは詳細ログ (`/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/`) から全文を引く |
-| `doc-browser`     | `session.start` `command.run` `ui.render`            | リポジトリの Markdown（`git ls-files`）と `~/.claude/reports/` のセッションレポート・dossier を一覧し、選んだものをブラウザで開く                             |
+| mod               | フックするイベント                                   | 役割                                                                                                                                                                    |
+| ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bash-review-log` | `session.start` `command.run` `ui.close` `ui.render` | `~/.claude/logs/bash-review.log` の判定をペイン表示。80 字で切られたコマンドは詳細ログ (`/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/`) から全文を引く           |
+| `doc-browser`     | `session.start` `command.run` `ui.render`            | リポジトリの Markdown（`git ls-files`）と `~/.claude/reports/` のセッションレポート・dossier・調査ドキュメント（`codebase-survey`）を一覧し、選んだものをブラウザで開く |
 
 `/bash-review-log [all|allow|ask|deny|error|flagged ...] [件数] [full|short]` の引数は順不同です。
 
@@ -318,7 +318,7 @@ Watch Mode に従い、独立チケットを並列実行する場合に限って
 ```mermaid
 flowchart LR
     subgraph CLAUDE[".claude/"]
-        CS["skills/ (26)"]
+        CS["skills/ (27)"]
         CA["agents/*.md (14)"]
         CH["hooks/_*.sh, _*.py<br/>共有ライブラリ"]
     end
@@ -335,10 +335,10 @@ flowchart LR
 ```
 
 - **スキル**: `.codex/skills/<name>` が `../../.claude/skills/<name>` への相対シンボリック
-  リンクです。共有する / やめるはこのリンクの増減だけで決まります。26 中 18 を共有し、
-  Claude 固有の 8 つ（`codex-consultation` `codex-image-gen` `debugging-protocol`
+  リンクです。共有する / やめるはこのリンクの増減だけで決まります。27 中 18 を共有し、
+  Claude 固有の 9 つ（`codex-consultation` `codex-image-gen` `debugging-protocol`
   `iterative-retrieval` `subagent-prompt-design` `project-guidelines-example`
-  `session-report` `session-dossier`）は共有しません。
+  `session-report` `session-dossier` `codebase-survey`）は共有しません。
 - **エージェント**: 同じ 14 個ですが、リンクではなく `.toml` です。うち 13 個は
   `scripts/gen_codex_agents.py` が `.claude/agents/*.md` から生成したもので、Codex CLI が
   ビルド無しで読めるよう生成物をコミットしてあり、CI が `--check` で手動編集と SSOT 側だけの

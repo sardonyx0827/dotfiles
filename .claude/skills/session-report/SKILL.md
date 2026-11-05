@@ -33,6 +33,8 @@ track of, which is the opposite of the point.
 
 - `<project-slug>`: the repository directory name (`basename` of the git toplevel), or `no-repo` outside one.
 - `<slug>`: 2–4 English kebab-case words describing the work (`add-session-report-skill`).
+  Do not start it with `dossier-` or `survey-`: the doc-browser mod reads those
+  prefixes as a session-dossier page and a codebase-survey document.
 - Deliberately **outside** the user's repository: reports are session artifacts, not project files, and must never show up in `git status` or need a `.gitignore` entry.
 
 Get the timestamp from `date +%Y%m%d-%H%M%S` — never guess it.
