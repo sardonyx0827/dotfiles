@@ -11,8 +11,9 @@ web_search = "live"
 max_threads = 6
 max_depth = 1
 
+# streamable_shell is gone: Codex CLI 0.167 reports `features.streamable_shell`
+# as an unrecognized setting on every run (it ignores the key).
 [features]
-streamable_shell = true
 multi_agent = true
 js_repl = false
 
