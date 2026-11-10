@@ -39,6 +39,13 @@
 #   3. 低リスク層: Gemini ALLOW → 即許可。疑義時のみ Codex 二次確認。ただし
 #      意見を伴う Gemini 判定 (明示的 DENY / 要確認 ASK) は Codex の ALLOW 単独
 #      では自動上書きしない (ask へ)。ERROR (無意見) のみ Codex ALLOW で解消。
+
+# 注釈の評価を遅延させる: macOS 既定の /usr/bin/python3 は 3.9 で、`list[str] | None`
+# を def 時に評価すると TypeError で import ごと落ちる。GUI 起動の Neovim はこの
+# python3 で scripts/secret_scan.py を動かすため、落ちるとエディタの秘密ゲートが
+# 毎回 "unavailable" (= 警告だけで送信) になる。tests/test_python39_compat.py が固定。
+from __future__ import annotations
+
 import concurrent.futures
 import contextlib
 import json

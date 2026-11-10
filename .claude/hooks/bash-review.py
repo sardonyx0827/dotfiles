@@ -8,6 +8,10 @@
 # 保持しており、codex 変種 (.codex/hooks/bash-review.py) 側に意図的にミラーした
 # 複製がある。この木を変更するときは両方の入口を揃えて直すこと。分岐の理由
 # コメントはこの .claude 側にまとめて書いてあり、.codex 側は参照のみに留める。
+# 注釈の遅延評価は Python 3.9 (macOS の /usr/bin/python3) で import を通すため
+# (_bash_review_common.py の同じ行のコメントを参照)。
+from __future__ import annotations
+
 import json
 import os
 import sys

@@ -57,6 +57,10 @@ sentence the user wrote; these payloads are whatever happens to be in the
 buffer, which is not the same thing at all.
 """
 
+# Annotations stay strings so the module imports on Python 3.9 (macOS
+# /usr/bin/python3) and the exit-code contract above holds there too.
+from __future__ import annotations
+
 import argparse
 import contextlib
 import http.client

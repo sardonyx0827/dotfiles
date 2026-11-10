@@ -30,6 +30,11 @@ Payload is read from stdin, never argv: a secret on argv would show up in
 `ps aux`, which is its own leak.
 """
 
+# Annotations stay strings: on Python 3.9 (macOS /usr/bin/python3, which a
+# GUI-launched Neovim picks up) evaluating `str | None` at def time raises at
+# import, and exit 2 here means the editor sends the payload unscanned.
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

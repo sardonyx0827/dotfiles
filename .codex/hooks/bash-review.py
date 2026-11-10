@@ -15,6 +15,10 @@
 # あり、claude 変種 (.claude/hooks/bash-review.py) 側の木を意図的にミラーした
 # 複製である。変更するときは両方の入口を揃えて直すこと。共有分岐の理由コメントは
 # .claude 側を正とし、こちらは参照と Codex 固有の注記に留める。
+# 注釈の遅延評価は Python 3.9 で import を通すため (下の `decided_exit: int | None`
+# はモジュール直下の注釈なので、これが無いと 3.9 では実行時に評価されて落ちる)。
+from __future__ import annotations
+
 import json
 import os
 import sys
