@@ -51,9 +51,11 @@ augroup END
 set autoread
 
 "" Check if file changed when focus is gained
+"" Skipped inside the command-line window (q: q/ <C-f>): opening it fires BufEnter,
+"" and :checktime is E11 there, so an unguarded autocmd errors on every open.
 augroup vimrc-checktime
   autocmd!
-  autocmd WinEnter,FocusGained,BufEnter * checktime
+  autocmd WinEnter,FocusGained,BufEnter * if getcmdwintype() ==# '' | checktime | endif
 augroup END
 
 "" go/make: use tabs instead of spaces

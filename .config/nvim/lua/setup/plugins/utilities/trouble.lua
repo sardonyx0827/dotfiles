@@ -31,6 +31,16 @@ return {
       desc = "LSP Definitions / references / ... (Trouble)",
     },
     {
+      "<leader>xi",
+      "<cmd>Trouble lsp_incoming_calls toggle focus=false win.position=right<cr>",
+      desc = "LSP Incoming Calls (Trouble)",
+    },
+    {
+      "<leader>xo",
+      "<cmd>Trouble lsp_outgoing_calls toggle focus=false win.position=right<cr>",
+      desc = "LSP Outgoing Calls (Trouble)",
+    },
+    {
       "<leader>xL",
       "<cmd>Trouble loclist toggle<cr>",
       desc = "Location List (Trouble)",

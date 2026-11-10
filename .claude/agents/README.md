@@ -6,7 +6,8 @@ Role separation (single source of truth):
   SubAgents to spawn — the only place those rules live
 - **Each agent's own `description`**: the situation that agent covers, including when it
   applies (`code-reviewer` says "before a commit or PR")
-- **`CLAUDE.md` § Model Selection Guidelines**: model tier and effort per agent
+- **`CLAUDE.md` § Model Selection Guidelines**: the general policy for model tier and
+  effort; each agent's actual `model` (and any `effort` pin) lives in its own frontmatter
 - **This README**: a catalog of which agents exist and what each one is for. It carries no
   delegation policy; if something here reads like an instruction to launch an agent, it
   has drifted and `CLAUDE.md` wins
@@ -43,12 +44,12 @@ Located in `~/.claude/agents/`:
 
 ### Review & Quality
 
-| Agent             | Model  | Purpose                                   | When to Use                    |
-| ----------------- | ------ | ----------------------------------------- | ------------------------------ |
-| code-reviewer     | sonnet | General code review                       | Before a commit or PR          |
-| security-reviewer | sonnet | Security & OWASP Top 10 analysis          | Before commits                 |
-| go-reviewer       | sonnet | Idiomatic Go review (concurrency, errors) | Go code changes                |
-| database-reviewer | sonnet | PostgreSQL/Supabase query & schema review | SQL, migrations, schema design |
+| Agent             | Model  | Purpose                                   | When to Use                                                                                                                                                                             |
+| ----------------- | ------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| code-reviewer     | sonnet | General code review                       | Before a commit or PR                                                                                                                                                                   |
+| security-reviewer | sonnet | Security & OWASP Top 10 analysis          | Before a commit or PR touching auth / input / APIs / secrets / payments / uploads, or permission / hook / mod config; after dependency updates or CVEs (full list: `rules/security.md`) |
+| go-reviewer       | sonnet | Idiomatic Go review (concurrency, errors) | Go code changes                                                                                                                                                                         |
+| database-reviewer | sonnet | PostgreSQL/Supabase query & schema review | SQL, migrations, schema design                                                                                                                                                          |
 
 ### Build & Maintenance
 

@@ -113,7 +113,7 @@
   <rect x="40" y="824" width="1160" height="92" rx="14" fill="#1f1d2e" stroke="#403d52"/>
   <text x="66" y="850" font-size="13" font-weight="700" fill="#6e6a86">設計ポイント</text>
   <g class="mono" font-size="12.5" fill="#908caa">
-    <text x="66" y="874">統一 backend.run — CLI(stdin) / Ollama(HTTP:11434) · run_with_fallback で claude→gemini フォールバック</text>
+    <text x="66" y="874">統一 backend.run — CLI(stdin)/Gemini(REST)/Ollama(HTTP:11434) · run_with_fallback で claude→gemini フォールバック</text>
     <text x="66" y="898">構造化編集は original を buffer と照合して安全適用（不一致はスキップ） · all は複数ツール同時 → Tab 切替</text>
   </g>
 

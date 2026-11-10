@@ -15,7 +15,7 @@
   <rect x="40" y="124" width="6" height="84" rx="3" fill="#ebbcba"/>
   <text x="66" y="162" font-size="19" font-weight="700" fill="#e0def4">Claude Code</text>
   <text x="210" y="162" font-size="13" fill="#6e6a86" class="mono">— 母艦・主エンジン (Opus session)</text>
-  <text x="66" y="192" font-size="13" fill="#908caa" class="mono">14 agents · 21 commands · 25 skills · hooks · statusline · gemini‑consultant MCP</text>
+  <text x="66" y="192" font-size="13" fill="#908caa" class="mono">14 agents · 21 commands · 27 skills · hooks · statusline · gemini‑consultant MCP</text>
 
   <text x="620" y="230" font-size="12.5" fill="#6e6a86" text-anchor="middle">──  4 つの連携面  ──</text>
 
@@ -63,8 +63,8 @@
   <g class="mono" font-size="13">
     <text x="656" y="502" fill="#e0def4">Claude ⇆ Codex を対で維持</text>
     <text x="656" y="527" fill="#e0def4">agents (14 ⇆ 14) · hooks · skills</text>
-    <text x="656" y="552" fill="#e0def4">_bash_review_common.py は実体 1 つを symlink 共有</text>
-    <text x="656" y="577" fill="#6e6a86" font-size="12">test_hook_sync がリンクの形を固定</text>
+    <text x="656" y="552" fill="#e0def4">_bash_review_common.py は実体 1 つ (codex 側は realpath で import)</text>
+    <text x="656" y="577" fill="#6e6a86" font-size="12">test_hook_sync が複製・リンク無しを固定</text>
   </g>
 
   <!-- vendor -> role legend -->

@@ -530,6 +530,110 @@ DETECTION_CASES = [
     ("echo \"git push\" && echo 'git push'", False),
     ('echo "costs \\$(git push)"', False),
     ("echo 'see $(git push)'", False),
+    # --- A2-a: a comment, a heredoc body or a `$'..'` string must not open a phantom
+    # quote. The lone apostrophe used to swallow the real push on a LATER line.
+    ("# Check what's changed\ngit status\ngit push origin main", True),
+    ("git commit -F - <<'EOF'\ndon't\nEOF\ngit push", True),
+    ('git commit -m "x" # it\'s\ngit push', True),
+    ("echo $'it\\'s'; git push", True),
+    ("# it's\ngit --no-pager push", True),
+    # every heredoc spelling: unquoted / <<- (tab-indented delimiter) / "quoted"
+    ("cat <<EOF\ndon't\nEOF\ngit push", True),
+    ("cat <<-EOF\n\tdon't\n\tEOF\ngit push", True),
+    ('cat <<"EOF"\ndon\'t\nEOF\ngit push', True),
+    # the rest of the `<<WORD` line is still code
+    ("cat <<'EOF' && git push\ndon't\nEOF", True),
+    # an unterminated quote fails toward detection (bash itself would reject it)
+    ("echo don't; git push", True),
+    ("echo \"it's; git push", True),
+    # guards: these were detected before the change and must stay detected. A heredoc
+    # body can be CODE (`bash <<EOF`), `$(...)` in an unquoted heredoc executes, and a
+    # `#` that is not at word start is not a comment.
+    ("bash <<'EOF'\ngit push origin main\nEOF", True),
+    # a heredoc body that is code folds its line continuations, as the shell does
+    ("bash <<'EOF'\ngit \\\npush origin main\nEOF", True),
+    ("sh -s <<EOF\ngit pu\\\nsh\nEOF", True),
+    # `<<` in arithmetic is a shift, not a heredoc: a `<<WORD` with no WORD line must
+    # not swallow the lines after it (a line-continued push there still runs)
+    ("echo $((1<<2))\ngit \\\npush", True),
+    ("let x=1<<2\ngit pu\\\nsh", True),
+    ('echo $((1<<2));\ngit "pu\\\nsh"', True),
+    ("sh -s <<EOF\ngit push\nEOF", True),
+    ("cat <<EOF\n$(git push)\nEOF", True),
+    ('cat <<< "it\'s"; git push', True),
+    ("echo $#; git push", True),
+    ("echo ${#PATH}; git push", True),
+    ('echo "x"#y; git push', True),
+    # `)` of a `$(...)` / `$((...))` does not start a new word: `#x` continues it, so the
+    # shell goes on to run the push after the `;` (checked in bash 3.2 and zsh)
+    ('echo "z" $(true)#x; git push', True),
+    ('echo "z" $((1))#x; git push', True),
+    ('echo "z" `true`#x; git push', True),
+    ('echo "z" ${HOME}#x; git push', True),
+    # a `#` inside `${...}` (here after a space) is part of the pattern, not a comment
+    ('echo "z" ${x/ #/y}; git push', True),
+    ("echo a\\#b; git push", True),
+    ("echo it\\'s # c\ngit push", True),
+    # a real comment is inert, so push words inside it do not count
+    ("git status # it's not git push", False),
+    ("# it's git push time\ngit status", False),
+    ('git commit -m "x" # git push later', False),
+    # --- A2-b: a quoted span with no whitespace is one word, so its content counts.
+    ('"git" push origin main', True),
+    ('git "push" origin main', True),
+    ("git 'push' origin", True),
+    ("git $'push' origin", True),
+    ('git $"push" origin', True),
+    ('g"i"t push', True),
+    ('"/usr/bin/git" push', True),
+    ('git -C "/tmp/x" "push"', True),
+    ('git "pu""sh"', True),
+    # ...but a span WITH whitespace is still a message, not a command
+    ('git commit -m "git push docs"', False),
+    ("git commit -m 'git push docs'", False),
+    ('git commit -m "push"', False),
+    ('git "stash" push', False),
+    ('git pus"XX"h', False),
+    # ...and a bare `push` WORD after another subcommand is that subcommand's argument,
+    # quoted or not (these did not prompt before the quoted-word change, and must not)
+    ('git --no-pager log --grep "push"', False),
+    ("git log -S 'push'", False),
+    ('git --no-pager commit -m "push"', False),
+    ('echo "git" "push"', False),
+    ("echo 'git' 'push'", False),
+    ("git --no-pager log --grep push", False),
+    ("git -c core.pager=cat commit -m push", False),
+    # the quoted-word rule applies where git is the command: after an env assignment or
+    # a shell prefix word too
+    ('FOO=1 git "push"', True),
+    ('time "git" push', True),
+    # ...and after reserved words and wrapper commands, where the push still runs
+    ('if true; then git "push"; fi', True),
+    ('if true; then "git" push; fi', True),
+    ('{ git "push"; }', True),
+    ('! git "push"', True),
+    ("for x in 1; do git 'push'; done", True),
+    ('case x in x) git "push";; esac', True),
+    ('env A=1 git "push"', True),
+    ('timeout 5 git "push"', True),
+    ('nice git "push"', True),
+    ('command -p git "push"', True),
+    # options whose value is a separate word are skipped as a pair
+    ("git --namespace n push", True),
+    ("git --work-tree /w --git-dir /g push", True),
+    # --- A2-c: forms that execute a string argument
+    ("git submodule foreach 'git push origin main'", True),
+    ('git submodule foreach --recursive "git push"', True),
+    ('git rebase --exec "git push" HEAD~1', True),
+    ('git rebase -x "git push" HEAD~1', True),
+    ("git rebase -i --exec='git push' main", True),
+    ('watch "git push"', True),
+    ("watch -n 5 'git push origin main'", True),
+    ("eval $'git push origin main'", True),
+    ('git submodule foreach "git status"', False),
+    ('git rebase --exec "make test" HEAD~1', False),
+    ('git rebase main && echo "git push"', False),
+    ('watch "ls -la"', False),
 ]
 
 VARIANTS = [("claude", CLAUDE_HOOK), ("codex", CODEX_HOOK)]
@@ -660,6 +764,51 @@ def test_large_quoted_push_command_stays_fast(shell_env, git_repo, variant, hook
     _assert_push_detected(res, variant, "echo <40KB> && git push")
     assert elapsed < _QUADRATIC_BUDGET_SECONDS, (
         f"{variant}: a 40KB quoted push command took {elapsed:.2f}s"
+    )
+
+
+# Under the 4000-character cap the quote scan runs in full, and strip_span_counts runs
+# once per whitespace-free quoted span. Locating the span's segment with a leading-`*`
+# pattern (`${out##*[;&|(]}`) re-tries every prefix of the output so far, so a command
+# of many short quoted words went cubic: 50s for 3.6KB measured, against 0.6s without
+# span counting. A hook that slow outruns the hook timeout, and a timed-out push hook
+# lets the push through unreviewed. The budget is loose for the same reason as above;
+# it separates "under a second or two" from "tens of seconds".
+_SPAN_SCAN_BUDGET_SECONDS = 8.0
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "echo 'a'\n" * 430,
+        'echo "a"\n' * 430,
+        "git push origin main " + '"a" ' * 900,
+        # every `<<` here lacks a terminator line, so none of them is a heredoc; the
+        # terminator lookup must not rescan the rest of the command per `<<`
+        "echo $((1<<2))\n" * 250,
+    ],
+    ids=[
+        "single-quoted-lines",
+        "double-quoted-lines",
+        "one-long-segment",
+        "arithmetic-shift-lines",
+    ],
+)
+def test_many_quoted_words_under_the_cap_stay_fast(
+    shell_env, git_repo, variant, hook, body
+):
+    """Thousands of characters of short quoted words, still under the size cap."""
+    big = "git -C . push origin main\n" + body
+    assert len(big) <= 4000, len(big)
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin=payload(big), cwd=git_repo)
+    elapsed = time.monotonic() - started
+
+    _assert_push_detected(res, variant, "git -C . push + many quoted words")
+    assert elapsed < _SPAN_SCAN_BUDGET_SECONDS, (
+        f"{variant}: a {len(big)}-char command of short quoted words took "
+        f"{elapsed:.2f}s -- per-span segment lookup is super-linear"
     )
 
 
@@ -1984,3 +2133,401 @@ def test_cd_quoting_oracle_sweep(shell_env, tmp_path, variant, hook):
         f"shapes ({resolved} summarised) in {elapsed:.2f}s:\n"
         + "\n".join(all_violations[:20])
     )
+
+
+# --- B10-a: the summary follows the PUSH segment's own -C -------------------------
+# A `-C` on some other git call in the same command line must never retarget the
+# summary of a push that has no -C of its own: cwd is the repository the push runs in.
+# "A summary of the wrong repository is worse than none."
+OWN_DASH_C_CASES = [
+    # (template, summarised repo) -- {B} is the other repo, {A} is the hook's cwd
+    ('git -C "{B}" status && git push', "a"),
+    ('git -C "{B}" log --oneline; git push origin main', "a"),
+    ('git -C "{B}" fetch && git push', "a"),
+    ('git push && git -C "{B}" status', "a"),
+    # `stash push` is not a push: the real push below carries the -C
+    ('git stash push && git -C "{B}" push', "b"),
+    ('git -C "{A}" status && git -C "{B}" push', "b"),
+    # `-c k=v` takes a value; it must not hide a later -C or the subcommand
+    ('git -c core.pager=cat -C "{B}" push', "b"),
+    ('git -C "{B}" -c core.pager=cat push', "b"),
+    # a wrapper word before `git` must not hide the push segment from the reader (it
+    # would then fall back to the other call's -C)
+    ('git -C "{B}" status && FOO=1 git push', "a"),
+    ('git -C "{B}" status && time git push', "a"),
+    ('FOO=1 git -C "{B}" push', "b"),
+    ('time git -C "{B}" push', "b"),
+]
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("template,expected", OWN_DASH_C_CASES)
+def test_summary_uses_the_dash_c_of_the_push_segment_only(
+    shell_env, tmp_path, git_repo, variant, hook, template, expected
+):
+    other = make_target_repo(tmp_path)
+    cmd = template.format(A=git_repo, B=other)
+    res = shell_env.run(hook, stdin=payload(cmd), cwd=git_repo)
+    _assert_push_detected(res, variant, cmd)
+    reason = _summary_text(res, variant)
+    if expected == "a":
+        assert "branch: main" in reason, reason
+        assert "feature-target" not in reason, reason
+    else:
+        assert "branch: feature-target" in reason, reason
+
+
+# --- B10-b: the reason states what the push TARGETS, not just HEAD vs upstream -----
+def _push_reason(shell_env, hook, variant, cmd, cwd):
+    res = shell_env.run(hook, stdin=payload(cmd), cwd=cwd)
+    _assert_push_detected(res, variant, cmd)
+    return _summary_text(res, variant)
+
+
+# (command, substrings that must appear in the WARNING part)
+DESTRUCTIVE_PUSH_CASES = [
+    ("git push --force origin main", ["--force"]),
+    ("git push -f origin main", ["--force"]),
+    ("git push --force-with-lease origin main", ["--force-with-lease"]),
+    (
+        "git push --force-with-lease=main:abc123 origin main",
+        ["--force-with-lease=main:abc123"],
+    ),
+    ("git push --force-if-includes origin main", ["--force-if-includes"]),
+    ("git push origin +main", ["+main"]),
+    ("git push origin +main:main", ["+main:main"]),
+    ("git push --delete origin old-branch", ["--delete"]),
+    ("git push -d origin old-branch", ["--delete"]),
+    ("git push origin :old-branch", [":old-branch"]),
+    ("git push --mirror origin", ["--mirror"]),
+    ("git push --all origin", ["--all"]),
+    ("git push --tags origin", ["--tags"]),
+    ("git push --prune origin", ["--prune"]),
+    # short-flag clusters, either order
+    ("git push -fu origin main", ["--force"]),
+    ("git push -uf origin main", ["--force"]),
+    ("git push -df origin old", ["--force", "--delete"]),
+    # options after the positionals count too
+    ("git push origin main --force", ["--force"]),
+    # a quoted option is still the option
+    ('git push "--force" origin main', ["--force"]),
+    ("git push 'origin' '+main'", ["+main"]),
+]
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("cmd,named", DESTRUCTIVE_PUSH_CASES)
+def test_force_and_destructive_push_options_are_called_out(
+    shell_env, git_repo, variant, hook, cmd, named
+):
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "WARNING" in reason, reason
+    for fragment in named:
+        assert fragment in reason.split("WARNING", 1)[1], (fragment, reason)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git push",
+        "git push origin main",
+        "git push -u origin HEAD",
+        "git push --set-upstream origin main",
+        "git push -o ci.skip origin main",
+        "git push --dry-run origin main",
+        "git push --follow-tags origin main",
+        "git push origin main:main",
+        "git push origin main # force it",
+        "git push origin main > /dev/null 2>&1",
+    ],
+)
+def test_an_ordinary_push_carries_no_destructive_warning(
+    shell_env, git_repo, variant, hook, cmd
+):
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "WARNING" not in reason, reason
+    assert "not the current branch" not in reason, reason
+    assert "commits to push:" in reason, reason
+
+
+PUSH_TARGET_CASES = [
+    # (command, exact `push target:` line)
+    ("git push origin main", "push target: remote=origin refspec=main"),
+    ("git push -u origin HEAD", "push target: remote=origin refspec=HEAD"),
+    # `-o ci.skip` takes a value: it must not be read as the remote
+    ("git push -o ci.skip origin main", "push target: remote=origin refspec=main"),
+    ("git push --push-option=x origin main", "push target: remote=origin refspec=main"),
+    ("git push --repo=upstream main", "push target: remote=upstream refspec=main"),
+    ("git push origin main feature", "push target: remote=origin refspec=main feature"),
+    ("git push origin", "push target: remote=origin refspec=(default)"),
+    ("git push", "push target: remote=(default) refspec=(default)"),
+    ("git push \"origin\" 'main'", "push target: remote=origin refspec=main"),
+    ("git push origin main && echo done", "push target: remote=origin refspec=main"),
+    ("git push origin main # it's fine", "push target: remote=origin refspec=main"),
+    ("git push origin main > /tmp/log 2>&1", "push target: remote=origin refspec=main"),
+    ("git --no-pager push origin main", "push target: remote=origin refspec=main"),
+]
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("cmd,line", PUSH_TARGET_CASES)
+def test_the_reason_names_the_remote_and_refspecs(
+    shell_env, git_repo, variant, hook, cmd, line
+):
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert line in reason.splitlines(), reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_the_push_target_comes_before_the_branch_summary(
+    shell_env, git_repo, variant, hook
+):
+    reason = _push_reason(
+        shell_env, hook, variant, "git push --force origin main", git_repo
+    )
+    assert reason.index("push target:") < reason.index("branch: main"), reason
+    assert reason.index("WARNING") < reason.index("branch: main"), reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git push origin feature:main",
+        "git push origin other",
+        "git push origin other:other",
+        "git push --all origin",
+        "git push --tags origin",
+        "git push --mirror origin",
+        "git push --delete origin old",
+    ],
+)
+def test_a_target_that_is_not_the_current_branch_is_not_presented_as_the_commit_list(
+    shell_env, git_repo, variant, hook, cmd
+):
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "commits to push:" not in reason, reason
+    assert "NOT necessarily" in reason, reason
+    # the HEAD summary is still shown, labelled for what it is
+    assert "branch: main" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_the_note_names_the_refspec_source_that_differs(
+    shell_env, git_repo, variant, hook
+):
+    reason = _push_reason(
+        shell_env, hook, variant, "git push origin feature:main", git_repo
+    )
+    assert "refspec source 'feature' is not the current branch 'main'" in reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git push origin HEAD",
+        "git push origin main",
+        "git push origin refs/heads/main",
+        "git push origin HEAD:refs/heads/main",
+        "git push origin main:main",
+        "git push origin +HEAD",
+        "git push origin @",
+        "git push -u origin HEAD",
+    ],
+)
+def test_a_refspec_that_is_the_current_branch_keeps_the_commit_list(
+    shell_env, git_repo, variant, hook, cmd
+):
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "not the current branch" not in reason, reason
+    assert "commits to push:" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        'git push origin "$BRANCH"',
+        "git push origin $(git branch --show-current)",
+        'git push origin "HEAD:$DEST"',
+    ],
+)
+def test_an_expansion_in_the_refspec_is_reported_as_unverifiable(
+    shell_env, git_repo, variant, hook, cmd
+):
+    # Never claim a mismatch (or a match) the hook cannot evaluate.
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "expansion" in reason, reason
+    assert "not the current branch" not in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_every_push_in_a_chain_is_reported(shell_env, git_repo, variant, hook):
+    cmd = "git push origin a && git push --force origin b"
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert reason.count("push target") == 2, reason
+    assert "remote=origin refspec=a" in reason, reason
+    assert "remote=origin refspec=b" in reason, reason
+    assert "--force" in reason.split("WARNING", 1)[1], reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        'eval "git push --force origin main"',
+        "watch 'git push -f'",
+        "git submodule foreach 'git push --force'",
+        'git rebase --exec "git push -f" HEAD~1',
+    ],
+)
+def test_a_push_inside_an_executed_string_says_its_args_were_not_parsed(
+    shell_env, git_repo, variant, hook, cmd
+):
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "push arguments could not be parsed" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_submodule_foreach_push_does_not_get_this_repos_summary(
+    shell_env, git_repo, variant, hook
+):
+    # The push runs inside each submodule, not in the hook's repository.
+    cmd = "git submodule foreach 'git push origin main'"
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "target repository could not be determined" in reason, reason
+    assert "branch: main" not in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_unrecognised_push_option_is_flagged(shell_env, git_repo, variant, hook):
+    reason = _push_reason(
+        shell_env, hook, variant, "git push --made-up origin main", git_repo
+    )
+    assert "unrecognised push option" in reason, reason
+    assert "--made-up" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_the_push_target_survives_an_unresolvable_repository(
+    shell_env, tmp_path, git_repo, variant, hook
+):
+    # Even when the repository summary is a note, the push's own arguments are
+    # exact information about the command and must still reach the prompt.
+    cmd = f"cd {tmp_path}/no-such-dir && git push --force origin main"
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "target repository could not be determined" in reason, reason
+    assert "WARNING" in reason, reason
+    assert "push target: remote=origin refspec=main" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_credentials_in_a_remote_url_are_not_echoed(shell_env, git_repo, variant, hook):
+    cmd = "git push https://user:s3cr3t@example.com/r.git main"
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "s3cr3t" not in reason, reason
+    assert "example.com/r.git" in reason, reason
+
+
+# --- the argument/-C reader follows the same shell syntax as the detector ----------
+# The commit-message-then-push chain is the most common way a push is spelled, and a
+# comment or heredoc body with a lone apostrophe must not blind the reader to the
+# push that follows (it would fall back to "could not be parsed" or, worse, the wrong
+# -C).
+HEREDOC_THEN_FORCE_PUSH = [
+    "git commit -m \"$(cat <<'EOF'\nfix: a thing\nEOF\n)\" && git push --force origin main",
+    "git commit -m \"$(cat <<'EOF'\nfix: don't break\nEOF\n)\" && git push --force origin main",
+    "git commit -F - <<'EOF'\ndon't\nEOF\ngit push --force origin main",
+    "cat <<-EOF\n\tit's\n\tEOF\ngit push --force origin main",
+    "# what's up\ngit push --force origin main",
+    'git commit -m "$(echo a)" -m "$(echo b)" && git push --force origin main',
+]
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("cmd", HEREDOC_THEN_FORCE_PUSH)
+def test_a_force_push_after_a_heredoc_or_comment_is_still_called_out(
+    shell_env, git_repo, variant, hook, cmd
+):
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "push target: remote=origin refspec=main" in reason, reason
+    assert "--force" in reason.split("WARNING", 1)[1], reason
+    assert "could not be parsed" not in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_dash_c_after_a_commit_message_heredoc_still_selects_the_repo(
+    shell_env, tmp_path, git_repo, variant, hook
+):
+    other = make_target_repo(tmp_path)
+    cmd = (
+        "git commit -m \"$(cat <<'EOF'\nfix: don't break\nEOF\n)\" "
+        f'&& git -C "{other}" push'
+    )
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "branch: feature-target" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_an_arithmetic_shift_does_not_hide_the_push_segment_from_the_dash_c_reader(
+    shell_env, tmp_path, git_repo, variant, hook
+):
+    # `$((1<<2))` is a shift. Read as a heredoc opener with no `2` line, it would skip
+    # every later line as body, lose the push segment, and summarise the cwd repo.
+    other = make_target_repo(tmp_path)
+    cmd = f'echo $((1<<2))\ngit -C "{other}" push'
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "branch: feature-target" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_a_push_hidden_in_a_heredoc_body_is_not_reported_as_the_target(
+    shell_env, git_repo, variant, hook
+):
+    # `bash <<EOF` runs its body, so it is still caught...
+    cmd = "bash <<'EOF'\ngit push --force origin main\nEOF"
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    # ...but the argument reader skips heredoc bodies, so it must say it did not parse
+    assert "push arguments could not be parsed" in reason, reason
+
+
+# --- a -C that belongs to a DIFFERENT segment than the push never picks the summary -----
+# When the reader cannot find the push segment (the push is inside an executed string),
+# the only -C it may fall back to is one on the segment that carries that string.
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "template",
+    [
+        'git -C "{B}" status && eval "git push"',
+        'git -C "{B}" status && watch "git push"',
+        'git -C "{B}" status; sh -c "git push origin main"',
+    ],
+)
+def test_a_dash_c_on_another_segment_is_not_used_for_a_push_inside_a_string(
+    shell_env, tmp_path, git_repo, variant, hook, template
+):
+    other = make_target_repo(tmp_path)
+    cmd = template.format(B=other)
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "target repository could not be determined" in reason, reason
+    assert "feature-target" not in reason, reason
+    assert "branch:" not in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "template",
+    [
+        'git -C "{B}" rebase --exec "git push" HEAD~1',
+        "git -C \"{B}\" rebase -x 'git push origin main' HEAD~1",
+    ],
+)
+def test_dash_c_on_the_segment_that_carries_the_pushing_string_still_selects_the_repo(
+    shell_env, tmp_path, git_repo, variant, hook, template
+):
+    other = make_target_repo(tmp_path)
+    cmd = template.format(B=other)
+    reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
+    assert "branch: feature-target" in reason, reason

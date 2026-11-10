@@ -2,7 +2,7 @@
   "env": {
     "BASH_DEFAULT_TIMEOUT_MS": "600000",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/bash-review-log",
+    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/bash-review-log:~/.claude/mods/doc-browser",
     "CLAUDE_CODE_THISTLE_GREBE": "default"
   },
   "attribution": {
@@ -162,6 +162,7 @@
       "Read(//**/.zsh_secrets)",
       "Read(~/.claude.json)",
       "Read(~/.codex/auth.json)",
+      "Read(~/.codex/config.toml)",
       "Read(~/.config/gh/hosts.yml)",
       "Read(~/.npmrc)",
       "Read(~/.netrc)",
@@ -171,6 +172,7 @@
       "Edit(//**/.zsh_secrets)",
       "Edit(~/.claude.json)",
       "Edit(~/.codex/auth.json)",
+      "Edit(~/.codex/config.toml)",
       "Edit(~/.config/gh/hosts.yml)",
       "Edit(~/.npmrc)",
       "Edit(~/.netrc)",
@@ -186,12 +188,26 @@
       "Bash(declare -*)",
       "Bash(typeset)",
       "Bash(typeset -*)",
+      "Bash(gh auth token:*)",
+      "Bash(gh auth status --show-token:*)",
+      "Bash(gh auth status -t:*)",
+      "Bash(git credential:*)",
+      "Bash(git credential-osxkeychain:*)",
+      "Bash(security find-generic-password:*)",
+      "Bash(security find-internet-password:*)",
+      "Bash(security dump-keychain:*)",
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(nc:*)",
       "Bash(netcat:*)",
       "Bash(ncat:*)",
       "Bash(ssh:*)",
+      "Bash(slogin:*)",
+      "Bash(scp:*)",
+      "Bash(sftp:*)",
+      "Bash(telnet:*)",
+      "Bash(socat:*)",
+      "Bash(ftp:*)",
       "Bash(psql:*)",
       "Bash(mysql:*)",
       "Bash(mongod:*)",
@@ -199,17 +215,16 @@
       "Read(./node_modules/**)",
       "Read(.git/**)",
       "Read(./.git/**)",
-      "Read(build/**)",
-      "Read(./build/**)",
-      "Read(dist/**)",
-      "Read(./dist/**)",
-      "Read(out/**)",
       "Read(./.next/**)"
     ],
     "ask": [
       "Bash(git push:*)",
       "Edit(//**/.claude/mods/**)",
       "Edit(//**/.claude/settings.json)",
+      "Edit(//**/.claude/settings.local.json)",
+      "Edit(//**/.claude/hooks/**)",
+      "Edit(//**/.codex/hooks/**)",
+      "Edit(~/.codex/**)",
       "mcp__serena__replace_symbol_body",
       "mcp__serena__replace_content",
       "mcp__serena__replace_in_files",
@@ -243,7 +258,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/bash-review-launcher.sh"
+            "command": "bash ~/.claude/hooks/bash-review-launcher.sh",
+            "timeout": 180,
+            "onFailure": "block"
           },
           {
             "type": "command",
@@ -297,12 +314,20 @@
   },
   "effortLevel": "xhigh",
   "modelSettings": {
-    "claude-opus-5-5": { "effortLevel": "xhigh" },
-    "claude-fable-5-1": { "effortLevel": "xhigh" }
+    "claude-opus-5-5": {
+      "effortLevel": "xhigh"
+    },
+    "claude-fable-5-1": {
+      "effortLevel": "xhigh"
+    }
   },
   "advisorModel": "opus",
   "autoUpdatesChannel": "latest",
   "tui": "default",
+  "voice": {
+    "enabled": false,
+    "mode": "hold"
+  },
   "autoMemoryEnabled": false,
   "skipWorkflowUsageWarning": true,
   "theme": "dark",
@@ -310,5 +335,6 @@
   "teammateMode": "tmux",
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
-  "voiceEnabled": false
+  "voiceEnabled": false,
+  "inputNeededNotifEnabled": true
 }

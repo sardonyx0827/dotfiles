@@ -14,7 +14,7 @@
 
 - **テーマ**: `px-rose-pine`（`.oh-my-zsh/custom/themes/` に vendored。[pixeljae](https://github.com/pixeljae) 製の agnoster ベーステーマを Rosé Pine 配色に合わせて調整したもので、完全な自作ではありません）
 - **プラグイン**: `git` / `zsh-autosuggestions` / `zsh-syntax-highlighting` / `z`
-- **PATH設定**: Go、npm global、PHP 8.4、pyenv、Rust (cargo)
+- **PATH設定**: Homebrew（macOS のみ。`brew shellenv`）、Go、npm global、`~/.local/bin`、pyenv、Rust (cargo)
 - **言語環境**: `pyenv`（インストール時のみ初期化）、Rust の cargo bin
 - **履歴**: 10万件・`share_history` / 重複除去などの最適化
 - **秘密情報**: `~/.zsh_secrets`（存在すれば末尾で `source`）。`~/.zshrc` はチェックアウトへのシンボリックリンクなので、API キーを `.zshrc` に直接書くと git の管理下に入る。`install.sh` は未作成のときだけ 600 の雛形を生成し、既存ファイルは決して上書きしない
@@ -22,15 +22,19 @@
 - **プロジェクト雛形**: `np [-n|--dry-run] [DIR]` — `scripts/new_project.sh` を呼んで雛形を用意し、作成先へ移動する（詳細は下記「ユーティリティスクリプト」）
 - **AI ツールのエイリアス / 関数**:
   - `c` / `cl`: Claude Code、`cx`: Codex、`ge`: Gemini CLI、`cop`: GitHub Copilot CLI
+  - `cct`: `claude-teammates` 関数のエイリアス。tmux 内で閉じ残った AgentTeams の teammate ペインを一覧表示（`-f` で kill、`-i` で fzf 選択）
   - `mc`（補完付き）: `mc explain` / `mc translate` / `mc commit` / `mc push` など Claude を用途別モデルで起動
   - `commit` / `push` / `pull_request` / `translate`: Gemini CLI ベースの Git・翻訳ショートカット
+  - `commit_message` / `explain`: `gemini -y -p …` で、変更内容から Commit メッセージだけを出力 / カレントディレクトリのプロジェクト概要を説明
+  - `gemma`: `ollama run gemma4:e4b`（Ollama でローカルの Gemma を起動）
   - `update_ai_tools`: `scripts/update_ai_tools.sh` を実行
 
 ```bash
 # 主要なPATH設定
+eval "$(brew shellenv zsh)"                         # Homebrew（macOS のみ。実際は brew の場所を探して実行する簡略表記。以下の PATH 追加より先に評価）
 export PATH=~/go/bin:$PATH                          # Go
 export PATH=~/.npm-global/bin:$PATH                 # npm global
-export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"   # PHP 8.4
+export PATH=~/.local/bin:$PATH                      # uv / uvx など install.sh が導入するツール
 export PATH="$PYENV_ROOT/bin:$PATH"                 # pyenv
 export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 ```
@@ -44,8 +48,8 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
   - NERDTree: ファイルエクスプローラー（フローティングプレビュー付き）
   - vim-fugitive / vim-rhubarb / vim-gitgutter: Git 統合
   - vim-airline: ステータスライン
-  - fzf / fzf.vim: ファジーファインダー（Neovim 側 telescope と同一キーマップ）
-  - vim-lsp + vim-lsp-settings + asyncomplete 系: LSP・補完（対象ファイルを開いて `:LspInstallServer` でサーバー導入。キーマップは Neovim 側 `nvim-lspconfig.lua` と同一: `gd` / `K` / `<leader>ra` / `<leader>ca` / `gr` / `[d` / `]d` など）
+  - fzf / fzf.vim: ファジーファインダー（主要キーは Neovim 側 telescope と共通。telescope のみのキー: `<leader>ls` / `<leader>sl` / `<leader>jl` / `<leader>rg` / `<leader>so` / `<leader>sO` など。fzf のみ: `<leader>y`）
+  - vim-lsp + vim-lsp-settings + asyncomplete 系: LSP・補完（対象ファイルを開いて `:LspInstallServer` でサーバー導入。キーマップは Neovim 側 `nvim-lspconfig.lua` と共通: `gd` / `K` / `<leader>ra` / `<leader>ca` / `gr` / `[d` / `]d` など。ただし `gl` は Vim が診断一覧（`lsp-document-diagnostics`）、Neovim が診断のフロート表示（`vim.diagnostic.open_float`）で異なる）
   - ALE: 非同期 Lint（LSP 機能は vim-lsp に委譲）
   - tagbar: タグ一覧表示（`F4`）
   - vim-gutentags: 保存時に `tags` を自動生成・更新（`universal-ctags` が必要）
@@ -75,7 +79,7 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 ### VS Code (.config/Code/User/)
 
 - **管理対象**: `settings.json` と `keybindings.json` の 2 ファイルのみ。`User/` ディレクトリごとリンクしないのは、VS Code が同じ場所へ `globalStorage/` などの実行時データを書くため
-- **リンク先が OS 依存**: macOS は `~/Library/Application Support/Code/User/`、それ以外は `~/.config/Code/User/`（`install.sh` の `_link_editor_configs` が判定）
+- **リンク先が OS 依存**: macOS は `~/Library/Application Support/Code/User/`、Windows（Git Bash。`APPDATA` 設定時）は `$APPDATA/Code/User/`、それ以外（Linux など）は `~/.config/Code/User/`（`install.sh` の `_link_editor_configs` が判定）
 - **Vim エミュレーション**: VSCodeVim。リーダーキーは `,`、easymotion 有効
 - **キーマップ**: Vim / Neovim 側と揃えた移動・検索に加えて、`<leader>tc` で Claude Code、`<leader>cx` で Codex をターミナルペインに起動
 - **エクスプローラー**: `a` 新規ファイル / `shift+a` 新規ディレクトリ / `r` リネーム（NERDTree・nvim-tree と同じ操作感）
@@ -85,7 +89,7 @@ export PATH="$HOME/.cargo/bin:$PATH"                # Rust
 - **プレフィックスキー**: `Ctrl+a` (デフォルトの `Ctrl+b` から変更)
 - **256色ターミナル**: RGBカラー対応
 - **viモード**: コピーモードでviキーバインド使用
-- **マウス操作**: ペイン端のダブルクリックで分割、それ以外はコピーモード
+- **マウス操作**: ペインの右端から 5 セル以内のダブルクリックで左右に分割（`split-window -h`）、下端から 5 セル以内なら上下に分割（`split-window -v`）。それ以外の場所ではコピーモードに入り、クリックした単語を選択
 - **テーマ / プラグイン**（tpm で管理）: `rose-pine/tmux`（moon）、`tmux-mode-indicator`、`tmux-sensible`、`tmux-logging`、`tmux-easy-motion`（`f` プレフィックスで高速カーソル移動）
 - **クリップボード統合**: コピー (`y` / `Enter`) は OS を問わず `pbcopy`
   - macOS: 純正の `/usr/bin/pbcopy`
@@ -108,6 +112,7 @@ Ctrl+a C-v      # 縦分割 (current path)
 Ctrl+a e        # 全ペイン同期 (synchronize-panes)
 Ctrl+a o        # カレント以外のペインを閉じる
 Ctrl+a C-q      # カレントペインを閉じる
+Ctrl+a S        # コマンドを入力し、カレントウィンドウ内の nvim 以外の全ペインへ送信
 
 # ウィンドウ操作
 Ctrl+a c        # 新規ウィンドウ (current path)
@@ -117,7 +122,11 @@ Ctrl+a C-c      # 右に幅30%のペインを開き claude を起動
 # コピーモード
 Ctrl+a [        # コピーモード開始
 v               # 選択開始
+V               # 行選択
+Ctrl-v          # 矩形選択の切り替え
+Esc             # 選択解除
 y               # ヤンク（コピー）
+Enter           # ヤンクしてコピーモードを終了（y と同じ）
 Ctrl+a ]        # ペースト
 ```
 
@@ -139,7 +148,8 @@ Ctrl+a ]        # ペースト
   - `git ls`: グラフ付きログ（簡潔版）
   - `git ll`: グラフ付きログ（詳細版）
   - `git la`: グラフ付きログ（完全版）
-- **GitHub CLI統合**: 認証情報ヘルパー
+- **認証情報ヘルパー（GitHub CLI統合）**: `.gitconfig` には直書きせず、`install.sh` が生成する `~/.config/git/os.gitconfig` を `[include]` で読み込む。macOS は osxkeychain、それ以外は cache を使い、`gh` を使える環境（macOS / Ubuntu、または `gh` 導入済み）では github.com / gist.github.com に限り `!gh auth git-credential` を優先する
+- **ユーザー情報**: name / email も直書きせず、`install.sh` が生成する `~/.config/git/user.gitconfig` を `[include]` で読み込む（既存ファイルは上書きしない）
 
 ### AI 開発環境の設定（.claude / .codex / .gemini）
 
@@ -157,7 +167,8 @@ Ctrl+a ]        # ペースト
 > `Bash(cargo:*)` / `Bash(docker:*)` など**任意コード実行になり得るコマンドを自動承認**します。
 > これは単体で安全なのではなく、`PreToolUse` フック `hooks/bash-review-launcher.sh`
 > （`bash-review.py` を起動）が**実行前に Bash コマンドをレビューし、API/CLI 不在時は
-> `ask` にフェイルクローズする**ことと**セットで**成り立っています（機密ファイル読取や
+> `ask` にフェイルクローズする**（フック自体の時間切れ・起動失敗も `onFailure: "block"`
+> でブロックする）ことと**セットで**成り立っています（機密ファイル読取や
 > `git push` も別フックでガード）。高リスクコマンド（再帰 `rm`・force push・
 > パッケージ導入・インラインシェル等）は Gemini / Codex を並列実行する **AND
 > ゲート**で、**両モデルが ALLOW で一致したときのみ許可**、DENY 一致で拒否、
@@ -190,7 +201,7 @@ Ctrl+a ]        # ペースト
 
 ### scripts/tmux_send_to_all_except_nvim.sh
 
-tmuxの全ペインにコマンドを送信しますが、nvimが実行中のペインは除外します。
+tmuxのカレントウィンドウ内の全ペインにコマンドを送信しますが、nvimが実行中のペインは除外します。
 
 ```bash
 # 使用例

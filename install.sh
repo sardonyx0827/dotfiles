@@ -383,30 +383,6 @@ install_brew_packages() {
   print_success "Homebrew packages installed"
 }
 
-# Compare two dotted versions; true when $1 >= $2. Only the numeric
-# major.minor.patch is compared, so a development build ("0.12.5-dev-1+gabc")
-# is treated as its release number -- close enough for a "is this new enough
-# to run .config/nvim" gate, and it avoids pretending to implement semver
-# pre-release ordering. `sort -V` is deliberately not used: this has to agree
-# with itself on BSD and GNU userland alike.
-version_at_least() {
-  local have="${1%%-*}" want="${2%%-*}" i h w
-  local -a hp wp
-  IFS=. read -r -a hp <<<"$have"
-  IFS=. read -r -a wp <<<"$want"
-  for i in 0 1 2; do
-    h="${hp[i]:-0}"
-    w="${wp[i]:-0}"
-    # Strip anything non-numeric (a "+gabcdef" build suffix on the patch
-    # field) so the arithmetic below cannot be fed a non-number.
-    h="${h//[!0-9]/}"
-    w="${w//[!0-9]/}"
-    ((10#${h:-0} > 10#${w:-0})) && return 0
-    ((10#${h:-0} < 10#${w:-0})) && return 1
-  done
-  return 0
-}
-
 # Echo the version of the nvim binary at $1 ("0.12.5"), or return 1 when it is
 # missing, not executable, or does not run here (a tarball built against a
 # newer glibc than this machine has fails exactly this way).
@@ -873,18 +849,80 @@ install_docker() {
   fi
 }
 
-# Install the tree-sitter CLI — nvim treesitter `auto_install` needs it to
-# build grammars that ship only a grammar.js.
+# nvim-treesitter (main branch) builds every parser with the tree-sitter CLI
+# and needs this version or later. Its README rejects the npm package: npm's
+# install script downloads the real binary, and when that step is blocked a
+# shim that cannot run is left on PATH, where `command -v` still finds it.
+TREE_SITTER_CLI_MIN_VERSION="0.26.1"
+
+# True when dotted version $1 is at least $2 (numeric per field, so 0.26.10
+# sorts above 0.26.9; missing fields count as 0). Each field is cut at its
+# first non-digit, so a development build ("0.12.5-dev-1+gabc") compares as its
+# release number. `sort -V` is deliberately not used: this has to agree with
+# itself on BSD and GNU userland alike. Shared by install_neovim
+# (NEOVIM_MIN_VERSION) and the tree-sitter CLI check below.
+version_at_least() {
+  local -a have want
+  local i h w
+  IFS=. read -r -a have <<<"$1"
+  IFS=. read -r -a want <<<"$2"
+  for i in 0 1 2; do
+    h="${have[i]:-0}"
+    w="${want[i]:-0}"
+    h="${h%%[!0-9]*}"
+    w="${w%%[!0-9]*}"
+    if ((10#${h:-0} > 10#${w:-0})); then return 0; fi
+    if ((10#${h:-0} < 10#${w:-0})); then return 1; fi
+  done
+  return 0
+}
+
+# Print the version of a tree-sitter CLI that actually runs (e.g. 0.27.1).
+# Prints nothing when it is missing or cannot run.
+tree_sitter_cli_version() {
+  command_exists tree-sitter || return 0
+  # A shim that cannot run fails the pipeline; under `set -eo pipefail` that
+  # would abort the caller's `have=$(...)`, so report "no version" instead.
+  tree-sitter --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true
+}
+
+# Install the tree-sitter CLI that nvim-treesitter builds parsers with.
 install_tree_sitter_cli() {
-  if command_exists tree-sitter; then
-    print_success "tree-sitter CLI already installed"
+  local have
+  have="$(tree_sitter_cli_version)"
+  if [ -n "$have" ] && version_at_least "$have" "$TREE_SITTER_CLI_MIN_VERSION"; then
+    print_success "tree-sitter CLI $have already installed"
     return
   fi
-  if command_exists npm; then
-    print_info "Installing tree-sitter CLI via npm..."
-    try_install "tree-sitter CLI" npm install -g tree-sitter-cli
+  if [ -n "$have" ]; then
+    print_warning "tree-sitter CLI $have is older than $TREE_SITTER_CLI_MIN_VERSION, which nvim-treesitter needs"
+  elif command_exists tree-sitter; then
+    print_warning "tree-sitter on PATH does not run (likely an npm shim); remove it with: npm uninstall -g tree-sitter-cli"
+  fi
+  print_info "Installing tree-sitter CLI..."
+  if [[ "$OS" == "macos" ]]; then
+    # `brew install` also upgrades the formula when it is already installed.
+    try_install "tree-sitter CLI" brew install tree-sitter-cli
+  elif [[ "$OS" == "ubuntu" ]]; then
+    # apt's tree-sitter-cli is older than the minimum, so build it with cargo.
+    if command_exists cargo; then
+      try_install "tree-sitter CLI" cargo install --locked tree-sitter-cli
+      export PATH="$HOME/.cargo/bin:$PATH"
+    else
+      print_warning "cargo not found; install tree-sitter CLI >= $TREE_SITTER_CLI_MIN_VERSION from https://github.com/tree-sitter/tree-sitter/releases (not npm)"
+      return
+    fi
   else
-    print_warning "npm not found; skipping tree-sitter CLI"
+    print_warning "No tree-sitter CLI installer for $OS; install >= $TREE_SITTER_CLI_MIN_VERSION from https://github.com/tree-sitter/tree-sitter/releases (not npm)"
+    return
+  fi
+  have="$(tree_sitter_cli_version)"
+  if [ -n "$have" ] && version_at_least "$have" "$TREE_SITTER_CLI_MIN_VERSION"; then
+    print_success "tree-sitter CLI $have installed"
+  else
+    # インストールが通っても、PATH の先にある古い CLI や動かない npm shim が
+    # 新しいものを隠していることがある。黙って終えると nvim 側で初めて気づく。
+    print_warning "tree-sitter on PATH is still not >= $TREE_SITTER_CLI_MIN_VERSION (found: ${have:-none that runs}); check PATH order (\`command -v tree-sitter\`) -- an npm shim may shadow it"
   fi
 }
 

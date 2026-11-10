@@ -20,7 +20,7 @@
 > `CLAUDE.md` の委譲ポリシーを複製し、矛盾するまでドリフトさせた前科があります。
 > ここでは繰り返しません。委譲の判断ルールを書きたくなったら、それは `CLAUDE.md` の仕事です。
 
-また、この図は**全インベントリを描きません**。エージェント 14・スキル 25・コマンド 21 を
+また、この図は**全インベントリを描きません**。エージェント 14・スキル 27・コマンド 21 を
 一枚に並べても読めないため、レイヤと代表的な連鎖だけを描いています。
 一覧は `agents/README.md` と各 `SKILL.md` の frontmatter が正です。
 
@@ -55,7 +55,7 @@ flowchart TB
     subgraph CONTEXT["指示層 — Claude が文章として読む"]
         CM["CLAUDE.md<br/>委譲・モデル選択の唯一の判断元"]
         RULE["rules/*.md<br/>git-workflow・security・image-generation"]
-        SKILL["skills/*/SKILL.md<br/>25 スキル"]
+        SKILL["skills/*/SKILL.md<br/>27 スキル"]
     end
 
     subgraph ACTOR["実行層 — 起動される"]
@@ -103,12 +103,12 @@ flowchart TB
 エージェント定義やスキルからフックを増やすことはできません（関数フックで書く mod は
 [下の節](#mod-関数フック) を参照）。
 
-| イベント      | matcher                  | スクリプト                                   | 役割                                                                                          |
-| ------------- | ------------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `PreToolUse`  | `Bash`                   | `bash-review-launcher.sh` → `bash-review.py` | Bash コマンドの多層セーフティゲート。判定不能時は `ask` にフェイルセーフ                      |
-| `PreToolUse`  | `Bash`                   | `git-push-review.sh`                         | `git push` を検出して確認プロンプトを強制（`rules/git-workflow.md` の push 前確認だけを実装） |
-| `PostToolUse` | `Write\|Edit\|MultiEdit` | `auto-format.sh` → `lint.sh`                 | 整形してから静的解析。lint は exit 2 で Claude に差し戻す                                     |
-| `Stop`        | —                        | `stop-audit.sh`                              | ターン終了時にデバッグ文の消し忘れを検出してブロック（`EDITOR_AI_ONESHOT` 時は監査しない）    |
+| イベント      | matcher                  | スクリプト                                            | 役割                                                                                                                                                    |
+| ------------- | ------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PreToolUse`  | `Bash`                   | `bash-review-launcher.sh` → `bash-review.py`          | Bash コマンドの多層セーフティゲート。判定不能時は `ask` にフェイルセーフ。`timeout: 180` と `onFailure: "block"` で時間切れ・起動失敗もブロック         |
+| `PreToolUse`  | `Bash`                   | `git-push-review.sh`                                  | `git push` を検出して確認プロンプトを強制（`rules/git-workflow.md` の push 前確認だけを実装）                                                           |
+| `PostToolUse` | `Write\|Edit\|MultiEdit` | `format-then-lint.sh`（`auto-format.sh` → `lint.sh`） | 整形してから静的解析。lint は exit 2 で Claude に差し戻す。同一イベントのハンドラは並列に走り順序が保証されないため、1 本のハンドラに畳んで順に実行する |
+| `Stop`        | —                        | `stop-audit.sh`                                       | ターン終了時にデバッグ文の消し忘れを検出してブロック（`EDITOR_AI_ONESHOT` 時は監査しない）                                                              |
 
 `_` 始まりの 4 ファイル（`_hook_common.sh` `_lint_common.sh` `_format_common.sh`
 `_bash_review_common.py`）はフックではなく**共有ライブラリ**で、Claude 側と Codex 側の
@@ -146,9 +146,10 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
 `settings.json` の `env.CLAUDE_CODE_PLUGIN_DIRS` が `~/.claude/mods/<name>` を名指しし、
 セッション開始時に `--plugin-dir` と同じ扱いで読み込まれます。Claude 専用のため Codex 側には置きません。
 
-| mod               | フックするイベント                                   | 役割                                                                                                                                                          |
-| ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bash-review-log` | `session.start` `command.run` `ui.close` `ui.render` | `~/.claude/logs/bash-review.log` の判定をペイン表示。80 字で切られたコマンドは詳細ログ (`/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/`) から全文を引く |
+| mod               | フックするイベント                                   | 役割                                                                                                                                                                    |
+| ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bash-review-log` | `session.start` `command.run` `ui.close` `ui.render` | `~/.claude/logs/bash-review.log` の判定をペイン表示。80 字で切られたコマンドは詳細ログ (`/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/`) から全文を引く           |
+| `doc-browser`     | `session.start` `command.run` `ui.render`            | リポジトリの Markdown（`git ls-files`）と `~/.claude/reports/` のセッションレポート・dossier・調査ドキュメント（`codebase-survey`）を一覧し、選んだものをブラウザで開く |
 
 `/bash-review-log [all|allow|ask|deny|error|flagged ...] [件数] [full|short]` の引数は順不同です。
 
@@ -163,13 +164,33 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
 - ログ由来の文字列は、制御文字・bidi 制御・行区切りを記号に置き換え、長さを切ってから描きます
   （`Text` は 10000 字まで・制御文字はタブと改行だけで、破るとペイン全体が描けなくなるため）。
 
+`/doc-browser [docs|config|reports] [all] [絞り込み語 ...]` でペインを開き、`/doc-browser open <番号>` はペインを描けない環境で本文に返した一覧から開きます。
+
+- タブは「ドキュメント」（README・`docs/` など）・「設定系」（`.claude/` など先頭がドットのディレクトリ）・「レポート」の 3 つで、
+  `d` `c` `s` で切り替え、`1`〜`9` で開き、`n` `p` でページを送ります。`a` はレポートを全プロジェクト分に広げます。
+- レポートの HTML はそのまま開きます。Markdown は session-report の `render_report.py --base-dir` で
+  `~/.cache/claude-doc-browser/` に描いてから開きます（リポジトリの文書もレポートの Markdown も同じ）。
+  調査ドキュメント（`codebase-survey`）の Markdown だけは `--block-remote` を付け、手元のファイル以外からの読み込みを CSP で止めます。
+  調査ドキュメントの HTML は、その CSP が付いているときだけそのまま開き、無ければ Markdown から描き直します。
+  リポジトリにもレポート置き場にも書き込まず、README の `assets/*.svg` のような相対パスは元の場所で解決されます。
+- リポジトリから開くのは `.md` だけです。`.md` に見せた symlink が `.html` を指していても、サニタイズを通さない
+  HTML をそのまま開くことはありません。
+- 開く直前に毎回、項目の realPath が許可した根（リポジトリ・レポート置き場・プレビュー置き場）の下の通常ファイルで、
+  拡張子が根ごとに許可したものであることを確かめます。描画結果のパスは renderer の出力ではなく出力先と元の名前から組み立て、
+  外部コマンド（`git`・`python3`・`open` / `xdg-open`）はシェルを通さず argv で渡し、`git` には `core.fsmonitor=false` を付けます。
+- 一覧の文字列は制御文字・書式文字（ゼロ幅・bidi・タグ文字）を置き換えてから描き、ペインを描けない環境の本文（モデルも読む）には
+  絶対パスを載せません。
+
 mod は settings hook より**先に**走り、サンドボックスもありません。`tool.call` に応答する mod は
 `bash-review` / `git-push-review` を素通りさせられ、`tool.check` は PreToolUse の判定の後から可否を差し替えられます。
 `permissions.ask` を越えて承認することもできるため、ここに置く mod は `tool.*`・`classic.PreToolUse`・
 `classic.PermissionRequest`（とそれらを含むワイルドカード）にフックせず、`$.tool` も呼ばないことを前提にしています
 （`tests/test_config_wiring.py` の `test_mods_do_not_hook_permission_events` が静的に検査します）。
 mod のコードと、mod を読み込む `settings.json` を Claude が書き換えるときに利用者の確認を挟むため、`permissions.ask` に
-`Edit(//**/.claude/mods/**)` と `Edit(//**/.claude/settings.json)` を置いています。`.claude/` は保護パスですが、
+`Edit(//**/.claude/mods/**)` と `Edit(//**/.claude/settings.json)` を置いています。同じ理由で、セッションが実行できるものを
+決める他のファイル、つまり `Edit(//**/.claude/settings.local.json)`・`Edit(//**/.claude/hooks/**)`・
+`Edit(//**/.codex/hooks/**)`・`Edit(~/.codex/**)`（Codex の `hooks.json` と `config.toml`）も ask に置いています。
+`~/.codex/config.toml` は資格情報を含みうるため、さらに Read / Edit とも deny にしています（deny は ask より優先）。`.claude/` は保護パスですが、
 auto モードでは保護パスへの書き込みを classifier が判断するので、明示の ask ルールで利用者に確認させます。
 書き込みのたびに確認が出ることは実機で確かめています。ダイアログに `.claude` フォルダの編集をセッション単位で許可する
 選択肢が出ることがありますが、それを選んだ後も ask ルールの確認が続くかは未検証なので、1 件ずつ確かめたいときは選ばないでください。
@@ -186,9 +207,10 @@ Edit ルールは MCP ツールに効かないので、作業ツリーを書き�
 次の経路は対象外です。
 
 - Bash 経由の書き込み（`sed -i`、`tee`、リダイレクト、`cp`、`mv`）: bash-review の判定に委ねます
-- `.claude/settings.local.json` と `.claude/hooks/**`: 従来どおり、保護パスとして classifier が判断します
 - Serena の `activate_project`: プロジェクトの `.serena/project.yml` にある `activation_command` を実行します
-  （`~/.serena/serena_config.yml` の `trusted_project_path_patterns` が `**` のため、どのプロジェクトでも実行されます）
+  （信頼リストは dotfiles の管理外にあるマシンローカルの `~/.serena/serena_config.yml` の `trusted_project_path_patterns` で、
+  執筆時点の値は `[]` で、その場合 `activation_command` は実行されません。`**` にすると、どのプロジェクトでも実行されるようになります。
+  リポジトリでは管理もテストもしていないため、各マシンで実際の値を確認してください）
 - Serena のメモリ系（`write_memory` など）: `.serena/memories/` か、`global/` 接頭辞なら全プロジェクト共通の
   `~/.serena/memories/global/` に Markdown を書きます。コードは実行しませんが、書いた内容は後のセッションで読まれます
 
@@ -218,7 +240,7 @@ flowchart LR
 
     subgraph CX["第二意見・デバッグ"]
         K3["skills/codex-consultation<br/>skills/debugging-protocol"] --o M3["mcp__codex__codex"]
-        K3 -.->|"代替の入口"| A3["agents/codex-delegator"]
+        K3 -.->|"もう一つの入口"| A3["agents/codex-delegator"]
         A3 --o M3
     end
 ```
@@ -229,8 +251,10 @@ flowchart LR
   （チェックリストと、レビュー手順・報告形式が別々の正であるという分離がそのまま出ています）。
 - **画像生成**はエージェントを持たず、スキルから直接 Codex MCP に降ります。
 - **第二意見**もスキル → エージェントの直列ではありません。`codex-consultation` /
-  `debugging-protocol` は自分で MCP ツールを呼ぶのが主経路で、`codex-delegator` は
-  「同じ Codex への代替の入口」として並記されています。
+  `debugging-protocol` は、MCP ツール（`mcp__codex__codex`）を直接呼ぶ入口と `codex-delegator`
+  エージェント経由の入口を並べており、どちらかが主経路とは決めていません。`debugging-protocol` は
+  エージェントを先に挙げて MCP 直呼びを括弧書きの代替とし、`codex-consultation` は `sandbox` / `model` を
+  細かく指定したいときや `codex-reply` で会話を続けたいときに直接呼ぶ、と使い分けを書いています。
 - **`rules/git-workflow.md` にはスキルもエージェントもありません。** ルール本文の大半
   （コミットメッセージ規約・commit / PR の手順・PR 品質基準）は Claude 自身が従う指示のままで、
   フック化されているのは push 前の確認ゲートだけです（`git-push-review.sh`）。
@@ -264,16 +288,19 @@ flowchart LR
 | `/update-codemaps` / `/update-docs` | `doc-updater`                                                             |
 | `/verify`                           | `security-reviewer`（条件付き。下記参照）                                 |
 | `/requests`                         | `request-worker`                                                          |
+| `/requests-watch`                   | `request-worker`（条件付き。下記参照）                                    |
 | `/auto-improve`                     | `refactor-cleaner`, `doc-updater`, `security-reviewer`                    |
 | `/orchestrate`                      | `architect`, `planner`, `tdd-guide`, `code-reviewer`, `security-reviewer` |
 
-エージェントを起動しないコマンド（`/checkpoint` `/eval` `/learn` `/requests-watch`
-`/test-coverage`）は、スキルの読み込みか手順の提示のみを行います。
+エージェントを起動しないコマンド（`/checkpoint` `/eval` `/learn` `/test-coverage`）は、
+スキルの読み込みか手順の提示のみを行います。`/requests-watch` は `request-harness` スキルの
+Watch Mode に従い、独立チケットを並列実行する場合に限って `request-worker` を起動します
+（`.claude/skills/request-harness/SKILL.md` 参照）。
 
 いくつかのコマンドは末尾に「関連コマンド」節を持ち、`code-reviewer` などを*次にやること*として
 案内していますが、これはコマンドが起動するものではなくユーザー向けの提案です。上の表には含めていません。
 
-`/verify` だけは他の行と性質が違います。既定の動作は `verification-loop` スキルを自分で実行する
+`/verify` も `/requests-watch` と同じく、他の行と性質が違います。既定の動作は `verification-loop` スキルを自分で実行する
 ことで、エージェントは起動しません。`security-reviewer` を呼ぶのは、変更が認証・ユーザー入力・
 シークレット・決済のいずれかに触れる場合だけです（`.claude/commands/verify.md` 参照）。
 `/db-review` → `database-reviewer` のような無条件の薄いラッパーとして読まないでください。
@@ -293,7 +320,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     subgraph CLAUDE[".claude/"]
-        CS["skills/ (25)"]
+        CS["skills/ (27)"]
         CA["agents/*.md (14)"]
         CH["hooks/_*.sh, _*.py<br/>共有ライブラリ"]
     end
@@ -305,19 +332,22 @@ flowchart LR
     end
 
     CS -->|"相対シンボリックリンク"| XS
-    CA -->|"gen_codex_agents.py で生成"| XA
+    CA -->|"gen_codex_agents.py で生成<br/>(codex-delegator のみ手書き)"| XA
     XH -->|"実行時に realpath で解決"| CH
 ```
 
 - **スキル**: `.codex/skills/<name>` が `../../.claude/skills/<name>` への相対シンボリック
-  リンクです。共有する / やめるはこのリンクの増減だけで決まります。25 中 18 を共有し、
-  Claude 固有の 7 つ（`codex-consultation` `codex-image-gen` `debugging-protocol`
+  リンクです。共有する / やめるはこのリンクの増減だけで決まります。27 中 18 を共有し、
+  Claude 固有の 9 つ（`codex-consultation` `codex-image-gen` `debugging-protocol`
   `iterative-retrieval` `subagent-prompt-design` `project-guidelines-example`
-  `session-report`）は共有しません。
-- **エージェント**: 同じ 14 個ですが、リンクではなく `scripts/gen_codex_agents.py` が
-  `.claude/agents/*.md` から生成した `.toml` です。Codex CLI がビルド無しで読めるよう
-  生成物をコミットしてあり、CI が `--check` で手動編集と SSOT 側だけの更新を弾きます。
-  `.claude/` 側が唯一の上流です。
+  `session-report` `session-dossier` `codebase-survey`）は共有しません。
+- **エージェント**: 同じ 14 個ですが、リンクではなく `.toml` です。うち 13 個は
+  `scripts/gen_codex_agents.py` が `.claude/agents/*.md` から生成したもので、Codex CLI が
+  ビルド無しで読めるよう生成物をコミットしてあり、CI が `--check` で手動編集と SSOT 側だけの
+  更新を弾きます。`codex-delegator` だけは手書きです（Claude 側の本文にある advisor 優先の
+  エスカレーション層が Codex 側に対応物を持たないため）。`--check` は本文を再生成せず
+  「存在し、有効な TOML であること」だけを確かめ、`description` が `.md` と一致していることは
+  `tests/test_agent_parity.py` が固定します。`.claude/` 側が唯一の上流です。
 - **フック**: 実体もリンクも置かず、`.codex/hooks/*` が自身の**物理パス**
   （`realpath(__file__)` / `cd -P`）から `../../.claude/hooks` を解決して共有ライブラリを
   読み込みます。シンボリックリンクを避けているのは `core.symlinks=false` の

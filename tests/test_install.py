@@ -296,6 +296,7 @@ class TestFetchSiteInventory:
     NOT_FETCHED: ClassVar[set[str]] = {
         "https://checkstyle.sourceforge.io/",
         "https://github.com/google/google-java-format",
+        "https://github.com/tree-sitter/tree-sitter/releases",
         "https://%s",
     }
 
@@ -3551,14 +3552,14 @@ class TestTryInstall:
         assert res.returncode == 0, res.stderr
         assert "downloading 100%" not in res.stdout
 
-    def test_tree_sitter_install_surfaces_npm_failure(self, shell_env):
-        # A real caller (install_tree_sitter_cli) must report why npm failed
+    def test_tree_sitter_install_surfaces_brew_failure(self, shell_env):
+        # A real caller (install_tree_sitter_cli) must report why brew failed
         # instead of a bare "Failed to install tree-sitter CLI".
-        shell_env.stub("npm", body='echo "npm ERR! 403 Forbidden" >&2\nexit 1')
+        shell_env.stub("brew", body='echo "Error: 403 Forbidden" >&2\nexit 1')
         res = run_sourced(
             'command_exists() { case "$1" in tree-sitter) return 1 ;; '
             '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
-            "install_tree_sitter_cli",
+            "OS=macos install_tree_sitter_cli",
             shell_env.env,
         )
         assert res.returncode == 0, res.stderr
@@ -4030,3 +4031,100 @@ class TestGithubCredentialHelper:
             "\n[credential]"
         ), text
         assert _git_config_all(rendered, "credential.helper") == ["osxkeychain"], text
+
+
+# nvim-treesitter's main branch builds every parser with the tree-sitter CLI,
+# needs 0.26.1 or later, and its README rejects the npm package (npm's install
+# script fetches the real binary; when that step is blocked, a shim that cannot
+# run is left on PATH and `command -v` still finds it).
+_TS_ABSENT = (
+    'command_exists() { case "$1" in tree-sitter) return 1 ;; '
+    '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+)
+
+
+class TestInstallTreeSitterCli:
+    @pytest.mark.parametrize(
+        ("have", "want", "expected"),
+        [
+            ("0.26.1", "0.26.1", True),
+            ("0.27.1", "0.26.1", True),
+            ("1.0.0", "0.26.1", True),
+            ("0.26.10", "0.26.9", True),
+            ("0.26.0", "0.26.1", False),
+            ("0.25.9", "0.26.1", False),
+            ("0.9.99", "0.26.1", False),
+        ],
+    )
+    def test_version_at_least(self, shell_env, have, want, expected):
+        res = run_sourced(
+            f'if version_at_least "{have}" "{want}"; then echo YES; else echo NO; fi',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert res.stdout.strip().splitlines()[-1] == ("YES" if expected else "NO")
+
+    def test_macos_installs_with_brew_not_npm(self, shell_env):
+        res = run_sourced(
+            _TS_ABSENT + "OS=macos install_tree_sitter_cli", shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert "brew install tree-sitter-cli" in shell_env.calls
+        assert not any(c.startswith("npm ") for c in shell_env.calls)
+
+    def test_a_recent_cli_is_left_alone(self, shell_env):
+        shell_env.stub("tree-sitter", body='echo "tree-sitter 0.27.1 (abc123)"')
+        res = run_sourced("OS=macos install_tree_sitter_cli", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "already installed" in res.stdout
+        assert not any(c.startswith(("brew ", "npm ")) for c in shell_env.calls)
+
+    def test_an_outdated_cli_is_replaced(self, shell_env):
+        shell_env.stub("tree-sitter", body='echo "tree-sitter 0.25.3 (abc123)"')
+        res = run_sourced("OS=macos install_tree_sitter_cli", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "0.25.3" in res.stdout and "0.26.1" in res.stdout
+        assert "brew install tree-sitter-cli" in shell_env.calls
+
+    def test_a_cli_that_cannot_run_is_not_trusted(self, shell_env):
+        # The npm shim left behind when its binary download was blocked.
+        shell_env.stub(
+            "tree-sitter",
+            body='echo "Error: ENOENT: no such file or directory" >&2',
+            exit_code=1,
+        )
+        res = run_sourced("OS=macos install_tree_sitter_cli", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "already installed" not in res.stdout
+        assert "npm uninstall -g tree-sitter-cli" in res.stdout
+        assert "brew install tree-sitter-cli" in shell_env.calls
+
+    def test_a_cli_still_shadowed_after_install_is_reported(self, shell_env):
+        # brew succeeded, but the broken npm shim comes first on PATH: the check
+        # after installing still finds no runnable CLI, and must say so rather
+        # than finish silently.
+        shell_env.stub("tree-sitter", body="exit 1", exit_code=1)
+        res = run_sourced("OS=macos install_tree_sitter_cli", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "brew install tree-sitter-cli" in shell_env.calls
+        tail = res.stdout.split("Installing tree-sitter CLI", 1)[1]
+        assert "still" in tail and "PATH" in tail, res.stdout
+
+    def test_ubuntu_builds_it_with_cargo(self, shell_env):
+        shell_env.stub("cargo")
+        res = run_sourced(
+            _TS_ABSENT + "OS=ubuntu install_tree_sitter_cli", shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert "cargo install --locked tree-sitter-cli" in shell_env.calls
+        assert not any(c.startswith("npm ") for c in shell_env.calls)
+
+    def test_ubuntu_without_cargo_explains_instead_of_using_npm(self, shell_env):
+        shell_env.hide("cargo")
+        res = run_sourced(
+            _TS_ABSENT + "OS=ubuntu install_tree_sitter_cli", shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert "cargo not found" in res.stdout
+        assert "tree-sitter/releases" in res.stdout
+        assert not any(c.startswith("npm ") for c in shell_env.calls)

@@ -13,7 +13,7 @@ Claude Code が主エンジンとして駆動し、他の LLM は **第二意見
 </p>
 
 - **Claude Code** — 主エンジン（Opus セッション / agents・commands・skills・hooks・MCP）
-- **advisor (Opus)** — 全軌跡を見る高速なセルフチェック（一次の第二意見）。ツールエラーで呼べないときは Codex → Gemini(Pro) の順にフォールバックする（後者2つは軌跡を直接見ないため、状況を再構成して渡す）
+- **advisor (Opus)** — 全軌跡を見る高速なセルフチェック（一次の第二意見）。advisor ツールがセッションに無いとき、または呼び出し自体がエラーになったときは Codex → Gemini(Pro) の順にフォールバックする（後者2つは軌跡を直接見ないため、状況を再構成して渡す）
 - **Codex** — クロスベンダーの独立レビュー / 委譲先（`codex-consultation` skill・`codex-delegator` agent）
 - **Gemini** — 高速な一次審査と相談（自作 `gemini-consultant` MCP サーバー）
 - **GitHub Copilot** — 補完 + CLI
@@ -23,7 +23,7 @@ Claude Code が主エンジンとして駆動し、他の LLM は **第二意見
 
 ## 2. Bash 安全ゲート (bash-review)
 
-Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DENY` を決定します。まず **LLM へ渡す前の静的な秘密スキャン**を挟み、コマンドや `tool_input` に生の資格情報(既知トークン・PEM / OpenPGP 秘密鍵・JWT・`Authorization: Bearer`/`Basic`・`user:pass@`・`SECRET=値`・`--password 値` 等)が載っていれば Gemini/Codex を一切呼ばず ask に倒します(値は理由文・通知・ローカルログのいずれにも残さず種別ラベルのみ。機密「パス」は値ではないため対象外=通常レビューへ)。危険度に応じた層構成では、高リスク層は Gemini と Codex を **並列 AND ゲート**にかけ、両者が一致して ALLOW/DENY した場合のみ自動判定、それ以外はすべて両判定を添えてユーザー確認 (ask) に回します。判定を出す前の例外は必ず ask に倒すフェイルセーフ設計です。
+Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DENY` を決定します。まず **LLM へ渡す前の静的な秘密スキャン**を挟み、コマンドや `tool_input` に生の資格情報(既知トークン・PEM / OpenPGP 秘密鍵・JWT・`Authorization: Bearer`/`Basic`・`user:pass@`・`SECRET=値`・`--password 値` 等)が載っていれば Gemini/Codex を一切呼ばず ask に倒します(値は理由文・通知・ローカルログのいずれにも残さず種別ラベルのみ。機密「パス」は値ではないため対象外=通常レビューへ)。危険度に応じた層構成では、高リスク層は Gemini と Codex を **並列 AND ゲート**にかけ、両者が一致して ALLOW/DENY した場合のみ自動判定、それ以外はすべて両判定を添えてユーザー確認 (ask) に回します。判定を出す前の例外は必ず ask に倒すフェイルセーフ設計です。解析の前には入力サイズも確かめ、`tool_input` が 32 KiB 超、またはコマンド置換が 32 個超なら解析せず ask に倒します(フックの時間切れを防ぐため。フック自体が 180 秒で時間切れになった場合も `onFailure: "block"` でブロック)。
 
 <p align="center">
   <img src="../assets/bash-review-flow.svg" alt="bash-review 多層セーフティゲート フロー図 — 静的DENY→セーフスキップ→秘密の送信前スキャン→高リスク(Gemini∥Codex 並列ANDゲート)→低リスク(Gemini一次→Codex二次)、判定前例外はask" width="100%">
@@ -43,7 +43,7 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
   <img src="../assets/nvim-ai.svg" alt="Neovim AI 機能図 — 5ツール統一バックエンド、インライン補完・バッファ校正・コミット生成・選択リライト・カーソル文脈ヒント・診断コピー・ファイル行参照、claude→geminiフォールバック、送信前の秘密スキャンガード" width="100%">
 </p>
 
-- **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`context` = カーソル位置の構文単位の解決、`backend` = ツール起動、`ui` = フローティングウィンドウ）
+- **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`context` = カーソル位置の構文単位の解決、`backend` = ツール起動、`ui` = 表示ドライバ — `run_multi` はフローティングウィンドウ（popup / diff タブ）、`open_report` は右側の縦分割で、校正 `<leader>qf` とヒント `<leader>qh` / `<leader>qg` が使う）
 - インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES · 機密パスは `should_attach` で除外）
 
 #### ツールごとの経路（`backend.lua` の `TOOLS.kind`）
@@ -94,13 +94,14 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 | 定義 + 直上コメント まで解決 | Lua, Python（デコレータ・docstring 込み）, TypeScript/JavaScript（アロー関数・メソッド）, Go（関数・`type`）, Rust, C, C++, C#, Java, Kotlin, Ruby, PHP, Scala, Zig, Bash, Vim script |
 | 未対応                       | Elixir（`def` が汎用の `call` ノードで、関数呼び出しと区別できない）、Dart（トップレベル関数に囲みノードが無い）、Haskell（定義ノードが `function`、型シグネチャは別ノード）          |
 
-未対応の言語でも壊れず、「カーソル位置に…見つかりません」と通知して終了します。パーサー未導入の言語（`auto_install` が取りに行く前など）は段落フォールバックになります。
+未対応の言語でも壊れず、「カーソル位置に…見つかりません」と通知して終了します。パーサー未導入の言語（nvim-treesitter が初回に自動インストールする前など）は段落フォールバックになります。
 
 - 実装は [`context.lua`](../.config/nvim/lua/setup/functions/ai/context.lua)（範囲の決定）と `prompt.hint_system`（「範囲内のコードを必ず引用する」「修正版コードや diff は返さない」を課すプロンプト）に分かれています。
 
 ### classic Vim との対応関係
 
-**揃っているのは「選択範囲のリライト」だけ**です。この機能に限れば両エディタが同じ 5 ツール
+**自作の AI 機能のうち両エディタで揃っているのは「選択範囲のリライト」だけ**です（Copilot のインライン補完は
+プラグインとして両エディタにあります）。この機能に限れば両エディタが同じ 5 ツール
 （Claude / Codex / Gemini / Copilot / Gemma）を同じキーで提供し、`<C-l>`（all）が並列に起動する
 のも同じ 4 ツール（Claude / Codex / Gemini / Copilot）です。ここを揃えてあるのは、2 つのエディタ
 を行き来しても指が同じキーで同じ相手に届くようにするためです。
@@ -113,8 +114,11 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 | `<C-l>`                     | all（上記 4 ツールを並列実行し、タブで比較） |
 
 **揃っていないもの** — Neovim だけが持つ機能は classic Vim には無く、移植の予定もありません
-（コミットメッセージ生成・バッファ校正・カーソル文脈ヒント・LSP 診断コピー・インライン補完、
-および `claude → gemini` フォールバック）。カーソル文脈ヒントは treesitter で範囲を決めるため、
+（コミットメッセージ生成・バッファ校正・カーソル文脈ヒント・LSP 診断コピー・ファイル行参照のコピー
+（ビジュアルモードの `<leader><leader>c` で `@path#L1-2` 形式をクリップボードへ）、
+および `claude → gemini` フォールバック）。Copilot のインライン補完は classic Vim にも
+`copilot.vim` で入っており、Neovim の `copilot.lua` と同じく機密パスのバッファでは無効にする
+パスガード（[`.vim/rc/70-ai.vim`](../.vim/rc/70-ai.vim)）を備えます。カーソル文脈ヒントは treesitter で範囲を決めるため、
 classic Vim には等価物がありません。コミットメッセージ生成の `all` は Neovim 内でも別構成で、Gemini を含まず
 Claude / Codex / Copilot の 3 つです。
 

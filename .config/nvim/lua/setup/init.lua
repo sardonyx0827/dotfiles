@@ -41,11 +41,17 @@ autocmd({ "BufWritePre" }, {
   end,
 })
 
--- Check if file changed when its buffer is entered or focus is gained
+-- Check if file changed when its buffer is entered or focus is gained.
+-- Skipped inside the command-line window (q: q/ <C-f>): opening it fires BufEnter,
+-- and :checktime is E11 there, so an unguarded autocmd errors on every open.
 autocmd({ "WinEnter", "FocusGained", "BufEnter" }, {
   group = setupGroup,
   pattern = "*",
-  command = "checktime",
+  callback = function()
+    if vim.fn.getcmdwintype() == "" then
+      vim.cmd("checktime")
+    end
+  end,
 })
 
 -- Soft-wrap Markdown: visual folding only (no hard line breaks); keep the

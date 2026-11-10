@@ -46,6 +46,7 @@ import os
 import platform
 import re
 import shlex
+import stat
 import subprocess
 import tempfile
 import time
@@ -130,7 +131,7 @@ SAFE_EXACT_COMMANDS = [
 # 即時拒否は「明らかに危険なコマンドを AI 呼び出し前に即拒否する」高速パス
 # の利便性であり、セキュリティ境界ではない。文脈次第で正当になり得るもの
 # (rm -r やパッケージ導入等) はここではなく高リスク層 (_high_risk_label) で
-# 扱い、必ずユーザー確認へ回す。
+# 扱い、両モデルが ALLOW で一致しない限りユーザー確認へ回す。
 #
 # DENY_EXECUTABLES は分割済みサブコマンドの「解決済み実行体」(env/command
 # ラッパーや先頭の VAR=value 代入、絶対パスの dirname を剥がした basename)
@@ -146,6 +147,15 @@ DENY_EXECUTABLES = frozenset(
         "netcat",
         "ncat",
         "ssh",
+        # ssh と同じネットワーク送出 (リモートへのファイル転送・対話セッション・任意の
+        # ソケット中継) を持つ別名・兄弟ツール。nc / netcat / ncat と同じ理由で、綴りでは
+        # なく能力を拒否する。slogin は ssh への symlink (/usr/bin/slogin -> ssh)。
+        "slogin",
+        "scp",
+        "sftp",
+        "telnet",
+        "socat",
+        "ftp",
         "shred",
         "dd",
         # 権限昇格 (文脈を問わず自動実行させない)
@@ -201,6 +211,21 @@ _WRAPPER_EXECUTABLES = frozenset(
         # シェル組み込みだが実行体を後続に取る点はラッパーと同じ。文法トークンとして
         # 無条件に剥がすとフラグが実行体に化けるため、こちらで扱う (定義側の注記参照)。
         "exec",
+        # zsh の precommand modifier (`noglob curl ...` / `nocorrect sudo ...`)。
+        # フラグを取らず、直後のコマンドをそのまま実行する。bash には無いが、Bash ツールの
+        # シェルは zsh なので実際に走る。
+        "noglob",
+        "nocorrect",
+        # `builtin exec curl ...` / `builtin eval '...'`。後続のビルトインを呼ぶだけで、
+        # 剥がした先の exec / eval / command は上の規則でそのまま解決される。
+        "builtin",
+        # macOS の /usr/bin/lockf と sandbox-exec と xcrun は、いずれも後続を exec する。
+        # caffeinate / script と同じ理由で、剥がさないと `curl` が単独モデルの経路へ
+        # 落ちる。lockf と sandbox-exec と xcrun は値付きフラグを持つので
+        # _WRAPPER_VALUE_FLAGS とも対で登録する。
+        "lockf",
+        "sandbox-exec",
+        "xcrun",
     }
 )
 
@@ -212,6 +237,21 @@ _WRAPPER_VALUELESS_FLAGS = {
     # -v / -V は後続を実行しない検索フラグなので、ここではなく
     # _WRAPPER_LOOKUP_FLAGS 側に置く (定義側の注記参照)。
     "command": frozenset({"-p"}),
+    "noglob": frozenset(),
+    "nocorrect": frozenset(),
+    "builtin": frozenset(),
+    # lockf(1): `lockf [-kns] [-t timeout] file command [arguments]`。-t <秒> は値付き
+    # (_WRAPPER_VALUE_FLAGS)。file は位置引数 (_WRAPPER_POSITIONAL_ARGS)。
+    "lockf": frozenset({"-k", "-n", "-s"}),
+    # sandbox-exec(1): `-f file` / `-n name` / `-p string` / `-D key=value` はすべて値付き
+    # (_WRAPPER_VALUE_FLAGS)。値なしフラグは無い。
+    "sandbox-exec": frozenset(),
+    # xcrun(1): 後続のツールを PATH / ツールチェーンから探して exec する。-f/--find や
+    # --show-sdk-path 等の「実行せず表示するだけ」の形は意図的に未収録 = 判定不能 (ask)
+    # へ倒す (収録すると走りもしないツール名をハード DENY してしまう。script -p と同じ判断)。
+    "xcrun": frozenset(
+        {"-v", "--verbose", "-l", "--log", "-n", "--no-cache", "-k", "--kill-cache"}
+    ),
     "nohup": frozenset(),
     "nice": frozenset(),  # -n は値付き。無印 nice のみ透過
     # -a NAME は値付き → 未収録のまま判定不能 (None → ask) へ倒す
@@ -333,7 +373,22 @@ _WRAPPER_LOOKUP_FLAGS = {
 # 素通りするだけだが、script の file は攻撃者が綴りを選べる: `script /usr/bin/ls
 # curl ...` のように任意の basename を実行体の位置へ置けるので、未登録のまま
 # ラッパー集合にだけ足すと「ls と判定した」と偽る経路になる。
-_WRAPPER_POSITIONAL_ARGS = {"timeout": 1, "flock": 1, "script": 1}
+_WRAPPER_POSITIONAL_ARGS = {"timeout": 1, "flock": 1, "script": 1, "lockf": 1}
+
+# 「値を 1 つ取る」と確実に分かっているラッパーのフラグ。_WRAPPER_VALUELESS_FLAGS の
+# 保守的な allowlist (値付きは判定不能へ倒す) を補う表で、フラグと値を 2 トークンまとめて
+# 読み飛ばす。ここに載せるのは「値を取る」と分かっているものだけで、載せ漏れは従来どおり
+# 判定不能 (None → ask) に倒れるので、列挙漏れがバイパスにはならない。
+#
+# sandbox-exec は全フラグが値付きなので、これが無いと `-n no-network curl ...` の値
+# `no-network` が実行体に化ける (名前を攻撃者が選べる)。値が展開を含む場合は、空展開で
+# 後続トークンが値の側へずれるため確定できない (None)。密着形 (`-Dk=v` / `-t5`) は
+# 1 トークンで完結するが、同じ理由で展開を含めば確定できない。
+_WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
+    "lockf": frozenset({"-t"}),
+    "sandbox-exec": frozenset({"-f", "-n", "-p", "-D"}),
+    "xcrun": frozenset({"-sdk", "--sdk", "-toolchain", "--toolchain"}),
+}
 
 # サブコマンドの前に置かれ得る「値を空白区切りで取る」グローバルフラグ。
 # `git -C <dir> reset --hard` の <dir> をサブコマンドと誤認しないよう、
@@ -346,7 +401,7 @@ _GLOBAL_VALUE_FLAGS = {
     "yarn": frozenset({"--cwd"}),
     # パッケージインストーラ群。未登録だと値 (プロキシ URL や証明書パス) が
     # サブコマンド扱いになり、`pip install` 等の高リスク判定 = 二重モデル
-    # AND ゲート + 強制 ask が丸ごと外れる。docker の注記と同じ失敗。
+    # AND ゲートが丸ごと外れる。docker の注記と同じ失敗。
     "pip": frozenset(
         {
             "--proxy",
@@ -383,13 +438,27 @@ _GLOBAL_VALUE_FLAGS = {
     ),
 }
 
-_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# `NAME=value` に加え、追記代入 `NAME+=value` も実行体の前置になる (bash / zsh とも
+# 後続コマンドの環境へ渡す形として受理する)。`+` を許さないと `FOO+=x curl ...` の
+# `FOO+=x` が実行体に化け、その後ろの curl が DENY 層を素通りする。
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
+
+# 実行体トークンに含まれる、シェルが別名へ展開する glob 文字 (`*` / `?` / 対応する
+# `[...]`)。展開結果は静的に決まらない (`/usr/bin/cur?` → curl) ので、_UNRESOLVABLE_EXPANSION
+# と同じく実行体を確定できないものとして扱う。単独の `[` / `[[` (test ビルトイン) は対応する
+# `]` を同じトークンに持たないので一致しない。英数字を 1 つも含まないトークン (`*` 単独、
+# Markdown の箇条書き `* item` が heredoc 本体の行頭に現れる形) は対象外にする: 本体行は
+# 行単位の分類にも掛かるため、除外しないと文書を書く heredoc が丸ごと高リスク層に倒れる。
+# 英数字を含む本文の行頭語 (`**Why**:` / `[WIP]` / `*.py`) は high_risk_label が本文の
+# 行として外す (_heredoc_body_lines)。
+_GLOB_IN_EXECUTABLE = re.compile(r"[*?]|\[[^\]]*\]")
+_HAS_ALNUM = re.compile(r"[A-Za-z0-9]")
 
 # 実行体の位置に現れる「静的に中身を確定できない」トークン。$VAR / ${VAR} /
 # $(...) / `...` は展開結果が空になり得て、その場合シェルはそのトークンごと
 # 消して次のトークンを実行する (`$(true) sudo rm -rf /` は実際には
 # `sudo rm -rf /` が走る)。展開トークンを実行体と誤認すると分類が "" になり、
-# 必ず ask のはずの高リスク層と即拒否の DENY 層を同時に素通りして単独モデルの
+# 二モデル AND ゲートのはずの高リスク層と即拒否の DENY 層を同時に素通りして単独モデルの
 # fast path へ落ちる。確定できない以上は安全側 (判定不能 → ask) に倒す。
 _UNRESOLVABLE_EXPANSION = re.compile(r"[$`]")
 
@@ -441,7 +510,7 @@ def _normalize_cmd(cmd: str) -> str:
 # こと」と「None が escalate されること」の 2 点で、短絡の有無ではない。
 # tests/test_bash_review.py の TestGrammarPrefixResolution が両方を固定している。
 #
-# 受け入れているコスト: 正当な case/select も一律 escalate = 強制 ask になる。
+# 受け入れているコスト: 正当な case/select も一律 escalate = 高リスク層の二モデル審査になる。
 # 実行体を確定できない以上この過検知は意図的な設計であって事故ではない。
 #
 # 残る限界: 本体セグメント自身は依然として分類されない。`b)` のような
@@ -471,7 +540,7 @@ _GRAMMAR_PREFIXES = frozenset(
 # ため取りこぼしは現実の穴になる。フラグを解する _WRAPPER_EXECUTABLES 側で扱う。
 
 # 実行体の位置をこの解決器では特定できない文法。判定不能 (None) を返して
-# 呼び出し側に安全側 (高リスク = 二重モデル AND ゲート + 強制 ask) へ倒させる。
+# 呼び出し側に安全側 (高リスク = 二重モデル AND ゲート) へ倒させる。
 # 素通りさせるより厳しく、DENY と偽るより正直な扱い。
 _UNRESOLVABLE_GRAMMAR = frozenset({"case", "select", "esac"})
 
@@ -577,7 +646,9 @@ def _tokenize(cmd: str) -> list[str]:
         return _normalize_cmd(cmd).split()
 
 
-def _split_prefix(tokens: list[str]) -> list[str] | None:
+def _split_prefix(
+    tokens: list[str], *, glob_unresolvable: bool = True
+) -> list[str] | None:
     """先頭の VAR=value 代入・シェル文法・ラッパーを剥がした残余トークン列を返す。
 
     剥がす対象は 4 種で、それぞれ定義側にコメントがある:
@@ -602,6 +673,9 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
     - 実行体位置を特定できない文法 (_UNRESOLVABLE_GRAMMAR): `case` / `select` / `esac`
     - ラッパーを剥がした先のクォートされた塊 (_NOT_EXECUTABLE_WORD):
       `watch 'sudo rm -rf /'` の `sudo rm -rf /`
+    - 実行体位置の glob 文字 (_GLOB_IN_EXECUTABLE)。glob_unresolvable=False で外す
+      (heredoc 本文の行頭語のように、実行体ではないと分かっている行のため)。ただし
+      `/` を含む glob (`/usr/b*/env`) は外さない
 
     全トークンが剥がし対象だった場合は空リストを返す (None とは別物で、
     こちらは「実行体が無い」= 判定対象なしを意味する)。
@@ -610,7 +684,7 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
     # ラッパーを 1 つでも剥がしたか。ラッパー抜きの形を対象にしないのは、
     # `'/opt/my dir/tool' --flag` のように空白入りパスの実行体を直接書いた形まで
     # 判定不能に倒さないため。ラッパーを挟むと同じ形も倒れる
-    # (`timeout 5 '/Applications/Google Chrome.app/.../Google Chrome'` は強制 ask)
+    # (`timeout 5 '/Applications/Google Chrome.app/.../Google Chrome'` は高リスク層へ)
     # が、それは下の「塊と区別できない」の帰結として受け入れているコスト。
     wrapper_stripped = False
     while i < len(tokens):
@@ -631,9 +705,9 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         # 受け入れているコスト (意図的。緩めないこと): ラッパーの後ろに置いた
         # 「値に空白を含むクォート代入」も倒れる。
         #
-        #   env 'FOO=a b' make build   → 強制 ask (この判定が無ければ make に解決)
-        #   env PATH='/a b:/c' ls      → 強制 ask (この判定が無ければ ls に解決)
-        #   env FOO='a b' sudo whoami  → 強制 ask (この判定が無ければ決定論的 DENY)
+        #   env 'FOO=a b' make build   → 高リスク層 (この判定が無ければ make に解決)
+        #   env PATH='/a b:/c' ls      → 高リスク層 (この判定が無ければ ls に解決)
+        #   env FOO='a b' sudo whoami  → 高リスク層 (この判定が無ければ決定論的 DENY)
         #
         # `FOO=a b` と `A=1 sudo rm -rf /` は shlex 後どちらも
         # `^[A-Za-z_]\w*=` + 空白という同じ語形で、**静的に区別する規則が書けない**。
@@ -661,6 +735,13 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
             return None
         if lowered in _GRAMMAR_PREFIXES:
             i += 1
+            continue
+        # `function NAME { body }` / `function NAME() { body }`。`function` と関数名は
+        # どちらも実行体ではなく、本体は `{` 以降 (上で剥がされる) に始まる。関数名を
+        # 読み飛ばさないと名前 (`f`) が実行体に化け、本体の curl が DENY 層を素通りする。
+        # 名前を 1 語読み飛ばすだけで、関数名を攻撃者が選んでも解決先は本体の先頭語になる。
+        if lowered == "function":
+            i += 2
             continue
         # `(curl` のように文法記号が語へ密着している形。記号だけ剥がして
         # 同じトークンを実行体として読み直す (`(`/`{` は語の一部になり得ない)。
@@ -723,6 +804,17 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         if cut > 0 and not tok[:cut].isdigit():
             tokens = [*tokens[:i], tok[:cut], *tokens[i + 1 :]]
             continue
+        # 実行体トークンの glob 文字 (定義は _GLOB_IN_EXECUTABLE)。ラッパー判定より先に
+        # 見るのは、`/usr/b*/env` のようなパスがラッパー名に化けて素通りしないため。
+        # glob_unresolvable=False (heredoc 本文の行) でも、パスを含む glob は倒す: 本文の
+        # 判定は算術シフト + 区切り語だけの行で偽装でき (`let x=1<<2` ... `2`)、
+        # `/usr/b*/env` は文書の行頭にまず現れない。
+        if (
+            (glob_unresolvable or "/" in tok)
+            and _GLOB_IN_EXECUTABLE.search(tok)
+            and _HAS_ALNUM.search(tok)
+        ):
+            return None
         # ラッパー名も case-insensitive な FS では解決するので畳む (`ENV sudo` は
         # 本当に env 経由で sudo を走らせる)。剥がしはこの関数で起きるため、
         # _resolve_executable の戻り値を畳むだけでは間に合わない。
@@ -730,6 +822,7 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
         if base in _WRAPPER_EXECUTABLES:
             valueless = _WRAPPER_VALUELESS_FLAGS.get(base, frozenset())
             lookup = _WRAPPER_LOOKUP_FLAGS.get(base, frozenset())
+            value_flags = _WRAPPER_VALUE_FLAGS.get(base, frozenset())
             wrapper_at = i
             lookup_only = False
             i += 1
@@ -737,9 +830,27 @@ def _split_prefix(tokens: list[str]) -> list[str] | None:
                 # フラグ側は畳まない: `env -I` は `env -i` ではなく、`xargs -I` も
                 # `xargs -i` と別物。未知フラグを既知へ畳むと「実行体を確定できない
                 # → レビュー行き」という安全側の判定が働かなくなる。
-                if tokens[i] in lookup:
+                flag = tokens[i]
+                if flag in lookup:
                     lookup_only = True
-                elif tokens[i] not in valueless:
+                elif flag in valueless:
+                    pass
+                elif flag in value_flags:
+                    # 値は次のトークン。値が展開を含むと、空展開でシェルが値ごと消して
+                    # 後続が値の側へずれるため、どれが実行体か確定できない。
+                    if i + 1 < len(tokens) and _UNRESOLVABLE_EXPANSION.search(
+                        tokens[i + 1]
+                    ):
+                        return None
+                    i += 1
+                elif (
+                    len(flag) > 2
+                    and flag[1] != "-"
+                    and flag[:2] in value_flags
+                    and not _UNRESOLVABLE_EXPANSION.search(flag)
+                ):
+                    pass  # 密着形 (`-Dk=v` / `-t5`): フラグと値が 1 トークンで完結
+                else:
                     return None  # 値付き/未知フラグ: 実行体を確定できない
                 i += 1
             # 検索フラグ (`command -v X`) は後続を実行しないので、ラッパー自身を
@@ -853,6 +964,8 @@ SENSITIVE_PATTERNS = re.compile(
     # CLI の認証ファイル (~/.claude.json、~/.codex/auth.json、~/.config/gh/hosts.yml)。
     # settings.json の Read deny と揃える。cwd が ~ だと相対パスで safe-skip に届く。
     r"|\.claude\.json"
+    # Codex の設定は MCP サーバーの認証ヘッダ (Authorization / API キー) を保持する。
+    r"|\.codex/config\.toml"
     r"|auth\.json"
     r"|hosts\.yml"
     r"|credentials"
@@ -1111,23 +1224,25 @@ def _read_heredoc_delimiter(cmd: str, i: int) -> tuple[str, bool, int]:
 def _skip_heredoc_bodies(cmd: str, i: int, heredocs: list[tuple[str, bool]]) -> int:
     """i (本体の先頭行) から、積まれた順に各ヒアドキュメントの本体を読み飛ばす。
 
-    終端語だけの行 (`<<-` は先頭タブを除いて比較) で 1 つ閉じる。終端行が無ければ
-    入力末尾まで本体 (bash も同じく EOF まで読む)。次に読むべき位置を返す。
+    終端語だけの行 (`<<-` は先頭タブを除いて比較) で 1 つ閉じる。次に読むべき位置を
+    返す。終端行が無い `<<` はヒアドキュメントとして読まず、その位置で止める (残りは
+    コードとして読む)。bash は入力末尾までを本体にするが、算術シフト (`$((1<<2))` /
+    `let x=1<<2`) を開始と誤認して後続のコマンド行まで本体として消すと、本文行だけを
+    特別扱いする判定 (high_risk_label の glob) が本物のコマンド行に掛からなくなる。
     """
-    n = len(cmd)
     for delim, strip_tabs in heredocs:
-        while i < n:
-            nl = cmd.find("\n", i)
-            end = n if nl < 0 else nl
-            line = cmd[i:end]
-            i = end + 1
-            if (line.lstrip("\t") if strip_tabs else line) == delim:
-                break
-    return min(i, n)
+        tabs = r"\t*" if strip_tabs else ""
+        m = re.compile(rf"^{tabs}{re.escape(delim)}$", re.M).search(cmd, i)
+        if m is None:
+            break
+        i = m.end() + 1
+    return min(i, len(cmd))
 
 
-def _mask_inert_text(cmd: str) -> str:
+def _mask_inert_text(cmd: str, bodies: list[str] | None = None) -> str:
     """コメントとヒアドキュメント本体を取り除いた綴りを返す (改行は残す)。
+
+    bodies を渡すと、取り除いた heredoc 本体 (終端行を含む) をそこへ追加する。
 
     どちらもシェルにとってはデータなのに、各走査器 (_iter_top_level /
     _substitutions_at_level) はクォート状態をコマンド全体で追うため、
@@ -1139,8 +1254,9 @@ def _mask_inert_text(cmd: str) -> str:
 
     結果は元の綴りを置き換えずに「もう 1 つの分類対象」として足す
     (_classification_texts)。heredoc 本体は `bash <<EOF` ならコードなので、元の
-    綴りの行単位判定からは外さない。こちらで解釈を誤っても (算術 `$((1<<2))` を
-    heredoc と読む等) 追加の綴りが効かなくなるだけで、既存の検出は減らない。
+    綴りの行単位判定からは外さない。終端行の無い `<<` (算術シフト等) は heredoc と
+    読まない (_skip_heredoc_bodies)。取り除いた本体は high_risk_label が「本文の
+    行」の判定にも使うため、本物のコマンド行を本体として取り込んではならない。
     """
     out: list[str] = []
     in_single = in_double = in_ansi = prev_dollar = False
@@ -1180,7 +1296,10 @@ def _mask_inert_text(cmd: str) -> str:
         if not quoted and ch == "\n" and heredocs:
             # 本体は heredoc 演算子のある行の、クォート外の改行の次から始まる
             out.append(ch)
-            i = _skip_heredoc_bodies(cmd, i + 1, heredocs)
+            body_start = i + 1
+            i = _skip_heredoc_bodies(cmd, body_start, heredocs)
+            if bodies is not None:
+                bodies.append(cmd[body_start:i])
             heredocs = []
             prev_dollar = False
             at_word_start = True
@@ -1754,9 +1873,10 @@ def find_deny_command(sub_commands: list[str]) -> tuple[bool, str]:
 # -------------------------------------------------------------------
 # 高リスク層の分類
 # 「文脈次第では正当だが、誤ると影響が大きい」コマンド。ここに一致した
-# コマンドは AI 判定に関わらず自動許可せず、Gemini / Codex 両モデルの判定を
-# 理由文に添えて必ずユーザー確認 (ask) へ回す。deny になるのは両モデルが
-# DENY で一致した場合のみ (どうしても必要ならユーザーが手動実行すればよい)。
+# コマンドは Gemini / Codex 両モデルの並列レビューにかけ、両モデルが ALLOW で
+# 一致した場合のみ自動許可する。それ以外は両モデルの判定を理由文に添えて
+# ユーザー確認 (ask) へ回す。deny になるのは両モデルが DENY で一致した場合のみ
+# (どうしても必要ならユーザーが手動実行すればよい)。
 # 文脈を問わず危険なもの (sudo 等) は DENY_EXECUTABLES で即拒否する。
 # リストは意図的に狭く始め、サマリーログの highrisk 行を見ながら調整する。
 # -------------------------------------------------------------------
@@ -1778,9 +1898,14 @@ _PKG_INSTALL_SUBCOMMANDS = {
 }
 
 # ネットワークから取得したコードをそのまま実行する系 (サプライチェーン直結)。
-_REMOTE_EXEC_EXECUTABLES = frozenset({"npx", "uvx"})
+_REMOTE_EXEC_EXECUTABLES = frozenset({"npx", "uvx", "bunx"})
+# 同じ「取得して実行」を、別コマンドのサブコマンドとして持つ形。npm exec は npx と同一
+# (`npm x` は別名)、`pipx run` / `uv tool run` は uvx と同型。
+_NPM_EXEC_SUBCOMMANDS = frozenset({"exec", "x"})
 
-_SHELL_EXECUTABLES = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
+_SHELL_EXECUTABLES = frozenset(
+    {"bash", "sh", "zsh", "dash", "ksh", "csh", "tcsh", "fish", "ash", "pwsh"}
+)
 
 # インタープリタのインライン実行フラグ (python3 -c / node -e 等)。コード文字列に
 # 何でも隠せる点はシェルの -c と同じなので、同じ高リスク層に載せる。実行系フラグ
@@ -1793,6 +1918,12 @@ _INTERPRETER_EVAL_FLAGS = {
     "perl": frozenset({"-e", "-E"}),
     "ruby": frozenset({"-e"}),
     "php": frozenset({"-r"}),
+    # AppleScript は `do shell script "..."` で任意のシェルコマンドを実行できる。
+    "osascript": frozenset({"-e"}),
+    # bun / lua のインライン実行。bun の -p (--print) は `bun run dev -p 3000` のように
+    # スクリプトへ渡すポート指定と衝突するため含めない (node は既存のまま)。
+    "bun": frozenset({"-e", "--eval"}),
+    "lua": frozenset({"-e"}),
 }
 
 # python3 / python3.12 のようなバージョン接尾辞を剥がして上の表を引く。
@@ -1825,11 +1956,23 @@ _SHELL_STDIN_FLAG = re.compile(r"^-[A-Za-z]*s")
 # docker はデーモン (root 相当) 経由で動くため、コンテナの分離を明示的に破る
 # 起動形はホスト root 相当の操作に直結する (--privileged、ホスト root /
 # docker.sock のマウント、ホスト PID 名前空間、SYS_ADMIN 級 capability)。
-# この「脱出級」の形だけを rm -r 等と同じ高リスク層 (二モデル AND + 必ず ask)
+# この「脱出級」の形だけを rm -r 等と同じ高リスク層 (二モデル AND ゲート)
 # に載せる。素の `docker run img` は分離が保たれるため対象外で、
 # 単独モデルの通常レビューに残す (リストは意図的に狭く始める方針に従う)。
 _DOCKER_RUN_SUBCOMMANDS = frozenset({"run", "create"})
 _DOCKER_ESCAPE_CAPS = frozenset({"SYS_ADMIN", "ALL"})
+
+
+def _is_long_option_abbrev(tok: str, full: str) -> bool:
+    """tok が長オプション full、またはその前方一致の略記 (`--har` -> `--hard`) か。
+
+    git は曖昧でない前方一致の略記を受理する (parse-options)。完全一致だけを見ると
+    `git reset --har` / `git clean --forc` が破壊的形として分類されず、単独モデルの
+    低リスク経路に落ちる。曖昧で git 自身が拒否する略記 (`--f` など) にも一致するが、
+    余分な確認が増えるだけなので許容する (fail-closed)。`=値` は落として比較する。
+    """
+    name = tok.split("=", 1)[0]
+    return len(name) > 2 and name.startswith("--") and full.startswith(name)
 
 
 def _docker_escape_mount(source: str) -> str:
@@ -1906,7 +2049,7 @@ def _pkg_install_word(pkg_exe: str, args: list[str]) -> str:
     サブコマンド位置 (_find_subcommand) だけを見る判定は、値付きグローバル
     フラグの登録漏れ (`pip --trusted-host <host> install` / `npm --registry
     <url> install`) で値がサブコマンド枠に入った途端に外れ、二モデル AND
-    ゲート + 強制 ask が丸ごと飛ぶ。表は網羅できないので、フラグ以外の語を
+    ゲートが丸ごと飛ぶ。表は網羅できないので、フラグ以外の語を
     全て走査して fail-closed にする (_docker_high_risk_label の全引数走査と
     同じ割り切り。誤検知しても ask が 1 回増えるだけで、許可が漏れる側には
     倒れない)。
@@ -1967,19 +2110,32 @@ def _python_module_args(args: list[str]) -> list[str]:
     return []
 
 
-def _high_risk_label(cmd: str) -> str:
+def _is_pwsh_command_flag(tok: str) -> bool:
+    """pwsh がコード文字列を実行するフラグか (`-c` / `-Command` / `-EncodedCommand` / `-ec`)。
+
+    PowerShell のフラグは大小を区別せず、曖昧でない前方一致の略記を受理する。POSIX
+    シェルの束ね短フラグ規則 (_COMMAND_FLAG) は流用しない: `-NonInteractive` や
+    `-ExecutionPolicy` は小文字の c を含むだけで -c ではなく、束ね規則だと誤検出する。
+    """
+    t = tok.lower()
+    if len(t) < 2 or t[0] != "-":
+        return False
+    return t == "-ec" or "-command".startswith(t) or "-encodedcommand".startswith(t)
+
+
+def _high_risk_label(cmd: str, *, glob_unresolvable: bool = True) -> str:
     """コマンド 1 行が高リスク分類に一致すればラベル、しなければ "" を返す。
 
     クォート/バックスラッシュを除去し、先頭の VAR=value 代入と env/command 等
     のラッパーを剥がしてから分類する。ラッパーの値付き/未知フラグで実行体を
     確定できない形 (`env -u X rm -rf /` 等) は難読化の可能性があるため、安全側
     で高リスク (ask) に倒す。剥がしを省くと `env rm -rf ./x` が高リスク層を
-    素通りして単独モデルの fast path に流れてしまう (必ず ask の保証が破れる)。
+    素通りして単独モデルの fast path に流れてしまう (二モデル AND ゲートの保証が破れる)。
     """
     tokens = _tokenize(cmd)
     if not tokens:
         return ""
-    rest = _split_prefix(tokens)
+    rest = _split_prefix(tokens, glob_unresolvable=glob_unresolvable)
     if rest is None:
         # ラッパー付きで実行体を確定できない: 安全側で高リスク扱いにする。
         return "wrapped command"
@@ -2000,18 +2156,20 @@ def _high_risk_label(cmd: str) -> str:
     if exe == "git":
         # `-f` は束ね対応の _FORCE_FLAG が拾う (`-fu` = force+set-upstream 等)。
         # `--force` / `--force-with-lease` は 2 本ダッシュで束ねないので個別照合。
+        # 長形式は略記も拾う (_is_long_option_abbrev)。`--force-with-lease` を基準に
+        # するので `--force` / `--forc` / `--force-w` / `--force-with-lease=ref` が全て当たる。
         if sub == "push" and any(
-            _FORCE_FLAG.match(t)
-            or t in ("--force", "--force-with-lease")
-            or t.startswith("--force-with-lease=")
+            _FORCE_FLAG.match(t) or _is_long_option_abbrev(t, "--force-with-lease")
             for t in rest
         ):
             return "git force push"
-        if sub == "reset" and "--hard" in rest:
+        if sub == "reset" and any(_is_long_option_abbrev(t, "--hard") for t in rest):
             return "git reset --hard"
         # clean は force 無しでは no-op なので、破壊的なのは force を伴う形。
-        # 短縮 `-f`/`-fd` は _FORCE_FLAG、長形式 `--force` は個別に拾う。
-        if sub == "clean" and any(_FORCE_FLAG.match(t) or t == "--force" for t in rest):
+        # 短縮 `-f`/`-fd` は _FORCE_FLAG、長形式 `--force` (とその略記) は個別に拾う。
+        if sub == "clean" and any(
+            _FORCE_FLAG.match(t) or _is_long_option_abbrev(t, "--force") for t in rest
+        ):
             return "git clean -f"
         return ""
     if exe == "docker":
@@ -2043,13 +2201,24 @@ def _high_risk_label(cmd: str) -> str:
         words = [t for t in rest if not t.startswith("-")]
         if any(words[i : i + 2] == ["pip", "install"] for i in range(len(words) - 1)):
             return "uv pip install"
+        if any(words[i : i + 2] == ["tool", "run"] for i in range(len(words) - 1)):
+            return f"{exe_raw} tool run (remote code execution)"
     if exe in ("pnpm", "yarn") and sub == "dlx":
         return f"{exe_raw} dlx"
     if exe in _REMOTE_EXEC_EXECUTABLES:
         return f"{exe_raw} (remote code execution)"
+    if (exe == "npm" and sub in _NPM_EXEC_SUBCOMMANDS) or (
+        exe == "pipx" and sub == "run"
+    ):
+        return f"{exe_raw} {sub} (remote code execution)"
+    if exe == "deno" and sub == "eval":
+        return "deno eval"
     # `-c` は POSIX シェルで一律「コマンド文字列を実行」を意味する唯一の c フラグ
     # なので、束ね形 (`bash -xc`) も _COMMAND_FLAG で拾う。
-    if exe in _SHELL_EXECUTABLES and any(_COMMAND_FLAG.match(t) for t in rest):
+    if exe in _SHELL_EXECUTABLES and any(
+        (_is_pwsh_command_flag(t) if exe == "pwsh" else _COMMAND_FLAG.match(t))
+        for t in rest
+    ):
         return f"{exe_raw} -c"
     eval_flags = _INTERPRETER_EVAL_FLAGS.get(_VERSION_SUFFIX.sub("", exe))
     if eval_flags:
@@ -2079,17 +2248,74 @@ def _high_risk_label(cmd: str) -> str:
     return ""
 
 
-def high_risk_label(sub_commands: list[str]) -> str:
+# heredoc 本文 (やプロセス置換の出力) を現在のシェルでコードとして実行する実行体。
+# `bash <<EOF` と違い stdin インタプリタ (stdin_interpreter_label) としては拾われない
+# ので、これらがあるコマンドでは本文の行を glob 判定から外さない。
+_SOURCING_EXECUTABLES = frozenset({"source", ".", "eval"})
+_PROCESS_SUBSTITUTION = re.compile(r"[<>]\(")
+
+
+def _heredoc_may_run_as_code(sub_commands: list[str], command: str) -> bool:
+    """heredoc 本文がコードとして実行されうる形 (source / . / eval / `<(`) か。"""
+    if _PROCESS_SUBSTITUTION.search(command):
+        return True
+    return any(
+        _resolve_executable(line.strip()) in _SOURCING_EXECUTABLES
+        for part in sub_commands
+        for line in part.splitlines()
+    )
+
+
+def _heredoc_body_lines(command: str) -> set[str]:
+    """コマンド中の heredoc 本文の行 (strip 済み、空行は除く) を返す。
+
+    元の綴りと行継続を畳んだ綴り、それぞれの置換の中身を _mask_inert_text と同じ規則で
+    走査する。置換の中身も走査するのは、`"$(cat <<'EOF' ...)"` の heredoc が
+    ダブルクォートの内側にあり、外側の綴りの走査では本文として認識されないため。
+    終端行の無い `<<` (算術シフト等) は本文を持たない (_skip_heredoc_bodies)。
+    """
+    joined = _join_line_continuations(command)
+    bodies: list[str] = []
+    for variant in dict.fromkeys((command, joined)):
+        for text in [variant, *_substitution_bodies(variant)]:
+            _mask_inert_text(text, bodies)
+    return {line.strip() for body in bodies for line in body.splitlines()} - {""}
+
+
+def high_risk_label(sub_commands: list[str], command: str | None = None) -> str:
     """コマンド全体の高リスクラベルを返す (非高リスクなら "")。
 
     _split_commands は改行を区切りとして扱わない (シェルは扱う) ため、
     各サブコマンドをさらに行単位に分けて検査する。改行の後ろに隠した
     rm -rf 等が単独モデルの fast path に流れるのを防ぐ。
+
+    command (元のコマンド) を渡すと、heredoc 本文の行では実行体位置の glob を「確定できない実行体」に数えない。本文はデータ
+    (`**Why**:` / `[WIP]` / `*.py` で始まるコミットメッセージや Markdown) なので、
+    数えると日常の heredoc が二モデル AND ゲートに倒れる。本文をシェルに渡す
+    `bash <<EOF` は stdin インタプリタ (stdin_interpreter_label) として別途高リスク。
+    本文を現在のシェルで実行しうる形 (`source` / `.` / `eval` / プロセス置換) が
+    同居するときは免除しない (_heredoc_may_run_as_code)。
+    本文の行の収集 (_heredoc_body_lines) は glob が理由の行があるときだけ遅延計算する。
+    同じ綴りの行が本文の外にもあると、そちらも glob では倒れない (単独モデルの
+    低リスク経路 = この判定を入れる前と同じ扱いに戻るだけ)。
     """
     labels: list[str] = []
+    inert: set[str] | None = None
     for sub_cmd in sub_commands:
-        for line in sub_cmd.splitlines():
-            label = _high_risk_label(line.strip())
+        for raw in sub_cmd.splitlines():
+            line = raw.strip()
+            label = _high_risk_label(line)
+            if label == "wrapped command" and command is not None:
+                relaxed = _high_risk_label(line, glob_unresolvable=False)
+                if relaxed != label:
+                    if inert is None:
+                        inert = (
+                            set()
+                            if _heredoc_may_run_as_code(sub_commands, command)
+                            else _heredoc_body_lines(command)
+                        )
+                    if line in inert:
+                        label = relaxed
             if label and label not in labels:
                 labels.append(label)
     return ", ".join(labels)
@@ -2201,12 +2427,12 @@ def classify_high_risk(sub_commands: list[str], command: str) -> str:
     high_risk_label (サブコマンド単位の分類) は区切り種別を持たないためパイプ
     受け手の裸インタプリタを拾えない。生コマンドを見る stdin_interpreter_label を
     併せて両エントリ (claude / codex 変種) が同じ判定に載るよう共有モジュールで
-    結合する。どちらかが非空なら高リスク層 (二モデル AND ゲート + 必ず ask)。
+    結合する。どちらかが非空なら高リスク層 (二モデル AND ゲート)。
     """
-    parts = [high_risk_label(sub_commands), stdin_interpreter_label(command)]
+    parts = [high_risk_label(sub_commands, command), stdin_interpreter_label(command)]
     # $'...' は任意のリテラルを再構成できる (`$'\\x72\\x6d'` = rm) ため、字面の
     # 分類では安全性を確定できない。_is_sensitive_command が safe-skip を一律に
-    # 拒むのと対称に、こちらは高リスク層 (二モデル AND + 必ず ask) へ倒す。
+    # 拒むのと対称に、こちらは高リスク層 (二モデル AND ゲート) へ倒す。
     if _DOLLAR_QUOTE.search(command):
         parts.append("ansi-c quoting")
     return ", ".join(p for p in parts if p)
@@ -2229,6 +2455,71 @@ def _parse_verdict(output: str) -> str:
         if verdict in verdicts:
             return verdict
     return "ASK"
+
+
+# -------------------------------------------------------------------
+# 入力サイズの上限 (静的解析の計算量ガード)
+# 分割 (_split_commands)・秘密スキャン・分類は、入力が悪い形をすると入力長に対して
+# 二次の計算量になる。実測 (CPython 3.13、Apple silicon):
+#   * ネストした `$(` : 深さ d・全長 L でおよそ d * L に比例する (d=2000 / L=4 KB で
+#     約 6 s、L=8 KB で約 26 s)。置換の中身を 1 段ずつ別の分類対象として、4 通りの
+#     綴り (_classification_texts) ごとに再走査する設計に由来する。
+#   * 区切りなしの `token` / `password` 連打 : "secret assignment" の `[A-Za-z0-9_]*` が
+#     連打の末尾まで貪欲に食って失敗するたびに全体を巻き戻す (現在は `{0,64}` で有界)。
+# どちらもエージェントの偶発的な出力というより暴走時の産物だが、フックは Bash 呼び出しの
+# たびに同期で走るため、1 回の暴走が分単位でセッションを止める。
+#
+# 上限を超えたら「解析しない」= ask (確認) に倒す。deny にしないのは、解析していない
+# ものを危険と断定できないから。無言で allow しないのは言うまでもない。
+#
+# 上限は長さと置換の個数の 2 本立て。長さだけで 5 s 以内に収めるとネスト最悪形
+# (約 3.5 KB) に合わせるしかなく、正当な heredoc (コミットメッセージ・設定ファイル
+# 生成) が日常的に確認プロンプトになる。二次の項は置換のネスト深さ d に比例する
+# (d <= 置換の個数) ので、個数に上限を置けば長さ側は線形領域の大きさまで緩められる。
+# 個数は `$(` / `<(` / `>(` と、バッククォート 2 個で 1 組を数える。
+#
+# 値の根拠 (上限ちょうどの最悪形を実測): 32 段ネストの最内に 32 KB の本体を置いた形で
+# 約 2.1 s、複数行の本体で約 2.6 s。区切りなしの連打・長い 1 語・大量の行や `;` は
+# 32 KB で 1 s 未満。5 s の予算に対して約 2 倍の余裕を残す (個数を 50 にすると最悪形が
+# 約 4 s まで伸びて余裕が無い)。正当なコマンドが 32 個を超える置換を持つことはまず無い。
+#
+# 長さは tool_input 全体の JSON 長で測る。秘密スキャンとレビュー用プロンプトは
+# command 以外のフィールドも処理するため。JSON は文字を縮めない (エスケープで増える
+# だけ) ので command の長さの上限にもなる。
+# -------------------------------------------------------------------
+MAX_INPUT_CHARS = 32_768
+MAX_SUBSTITUTION_OPENERS = 32
+
+
+def input_limit_reason(command, tool_input) -> str:
+    """入力が静的解析の上限内なら ""、超過なら理由文を返す。
+
+    エントリポイントが _split_commands / scan_secrets / build_review_prompt より
+    前に最初に呼ぶ。例外は投げない (シリアライズ不能な入力は長さを数えずに
+    置換の個数だけで判定する。残りの扱いは後段の既存の例外処理に任せる)。
+    """
+    try:
+        size = len(json.dumps(tool_input, ensure_ascii=False))
+    except (TypeError, ValueError):
+        size = 0
+    if size > MAX_INPUT_CHARS:
+        return (
+            f"Command input too large for static review "
+            f"({size} > {MAX_INPUT_CHARS} chars)"
+        )
+    if isinstance(command, str):
+        openers = (
+            command.count("$(")
+            + command.count("<(")
+            + command.count(">(")
+            + command.count("`") // 2
+        )
+        if openers > MAX_SUBSTITUTION_OPENERS:
+            return (
+                f"Command has too many command substitutions for static review "
+                f"({openers} > {MAX_SUBSTITUTION_OPENERS})"
+            )
+    return ""
 
 
 # -------------------------------------------------------------------
@@ -2259,6 +2550,34 @@ def _parse_verdict(output: str) -> str:
 #
 # ラベルは種別 (汎用) のみを返し、一致した値そのものは決して返さない。理由文・
 # 通知・ログへ二次的に漏らさないための不変条件。
+# 代入の右辺が資格情報の「値」ではなく「参照」であるコードの形。非クォートの値にだけ
+# 負の先読みとして掛ける (クォートで開いた値は文字列リテラルなので参照ではない)。
+#   * 呼び出し / 添字 : `os.getenv('K')` / `os.environ['K']` / `self.next_token()`
+#     括弧が閉じ、そこでトークンが終わる (空白・行末・コードの区切り `; , ) ] }`・
+#     クォート・`\` が続く) ときに限る。代入ごとクォートの内側に書いた .env 行
+#     (`echo "PASSWORD=Tr0ub4dor(3)x" > .env`) では値がクォートで始まらないので、
+#     「開き括弧があればコード」とみなすと括弧入りの本物のパスワードを落とす。
+#     閉じ括弧で終わるパスワード (`Summer2024[x]`) は `items[0]` と区別できず、
+#     参照扱いのまま残る (割り切り)。
+#   * 属性参照        : `self.token` / `settings.SECRET_KEY` / `process.env.API_TOKEN`
+#     ドット区切りの識別子は `correct.horse.battery` のようなパスワードとも同形なので、
+#     先頭が典型的なレシーバ名のときに限る (限らないと本物の値を取りこぼす)。
+# 裸の識別子 (`hunter2hunter2`) は値と区別できないので参照扱いしない。
+# 引数の括弧は 1 段の入れ子まで (`get_token(cfg.get('x'))`)。各選択肢は先頭 1 文字で
+# 排他なので、閉じない括弧でもバックトラックは線形に収まる。数字で始まる引数は呼び出し
+# とみなさない: `Tr0ub4dor(3)` / `Passw0rd(1)(2)` のような値の方がずっとありがちで、
+# 資格情報を数字 1 つで引く参照は稀 (添字の `passwords[0]` は _SUBSCRIPT 側で残す)。
+_CALL_ARGS = r"\((?![0-9])(?:[^()\n]|\([^()\n]*\))*\)"
+_SUBSCRIPT = r"\[[^\[\]\n]*\]"
+_CREDENTIAL_REFERENCE = (
+    rf"(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:{_CALL_ARGS}|{_SUBSCRIPT})"
+    rf"(?:\.[A-Za-z_]\w*|{_CALL_ARGS}|{_SUBSCRIPT})*"
+    r"|(?:self|this|cls|os|process|env|config|conf|cfg|settings|secrets|args|opts"
+    r"|options|params|ctx|props)(?:\.[A-Za-z_]\w*)+)"
+    # json.dumps した tool_input では閉じクォートが `\"` になるので `\` も区切りに含める。
+    r"(?=[\s;,)\]}\"'`\\]|$)"
+)
+
 _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
     ("GitHub PAT", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
@@ -2266,8 +2585,33 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
     ("Google OAuth token", re.compile(r"\bya29\.[0-9A-Za-z_\-]{20,}")),
     ("OpenAI key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
-    ("Slack token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}")),
+    # xapp- は Slack のアプリレベルトークン (Socket Mode)。
+    (
+        "Slack token",
+        re.compile(r"\b(?:xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,})"),
+    ),
     ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
+    # 以下は接頭辞だけで高精度に判定できる既知形式 (キーワード付き代入の助けが無い
+    # 裸の値でも拾う)。長さは各サービスの発行形式に合わせ、near-miss は拾わない。
+    ("npm token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
+    ("GitLab token", re.compile(r"\bglpat-[0-9A-Za-z_\-]{20,}")),
+    ("Hugging Face token", re.compile(r"\bhf_[A-Za-z0-9]{34,}")),
+    (
+        "SendGrid key",
+        re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}"),
+    ),
+    # PyPI のトークンは macaroon で、`AgEI` は pypi.org (`AgEN` は test.pypi.org) を指す
+    # 固定の先頭。
+    ("PyPI token", re.compile(r"\bpypi-AgE[IN][A-Za-z0-9_\-]{16,}")),
+    (
+        "Slack webhook URL",
+        re.compile(
+            r"hooks\.slack\.com/services/T[A-Z0-9]{6,}/B[A-Z0-9]{6,}/[A-Za-z0-9]{12,}"
+        ),
+    ),
+    ("Docker PAT", re.compile(r"\bdckr_pat_[A-Za-z0-9_\-]{20,}")),
+    # DigitalOcean: dop (PAT) / doo (OAuth) / dor (refresh) はいずれも v1_ + 64 桁 hex。
+    ("DigitalOcean token", re.compile(r"\bdo[opr]_v1_[a-f0-9]{64}\b")),
     # OpenPGP の armor は `PRIVATE KEY BLOCK-----` で終わる (gpg
     # --export-secret-keys --armor の出力)。`KEY-----` 直結だけだと
     # PEM 形式 (OPENSSH / RSA / EC / ENCRYPTED) しか拾えず、PGP 秘密鍵は素通り
@@ -2279,7 +2623,10 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ),
     (
         "JWT",
-        re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+        # ヘッダ部は有界にする (JWT のヘッダは数百文字)。無制限だと `eyJ-eyJ-...` の
+        # ように `eyJ` が連続する入力で、各出現が入力末尾まで走ってから失敗し二次になる
+        # (100 KB で約 2 秒)。ペイロード以降は `.` で区切られるので有界化しない。
+        re.compile(r"\beyJ[A-Za-z0-9_\-]{1,2048}\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
     ),
     # Bearer / Basic は Authorization ヘッダ文脈に限定する。単に "Bearer" /
     # "Basic" という英単語 (コミットメッセージ等) での誤検知を避けるため。
@@ -2356,10 +2703,17 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
         re.compile(
             r"(?i)(?:password|passwd|passphrase|secret|token|credential"
             r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
-            r"[A-Za-z0-9_]*(?:\\*[\"'])?\s*[=:]\s*"
+            # 末尾の識別子は 64 文字までに有界化する。無制限 (`*`) だと、区切りなしの
+            # `token` 連打が各出現で連打の末尾まで貪欲に食い、`[=:]` に届かず巻き戻す
+            # ことを出現ごとに繰り返して入力長の二次になる (100 KB で分単位)。
+            # 所有量化子 / アトミックグループは使えない: Python 3.10 (Ubuntu 22.04) では
+            # コンパイルできず、import 失敗でフックが fail-open する。
+            r"[A-Za-z0-9_]{0,64}(?:\\*[\"'])?\s*[=:]\s*"
             # 値: クォートで開いた場合は閉じクォートまで (空白入りパスワードも
             # 1 値として拾う)、非クォートなら次の空白までを 1 トークンとして拾う。
-            r"(?:\"(?!\$)[^\"\n]{8,}|'(?!\$)[^'\n]{8,}|(?!\$)\S{8,})"
+            # 非クォートは資格情報の参照 (_CREDENTIAL_REFERENCE) を除く。
+            rf"(?:\"(?!\$)[^\"\n]{{8,}}|'(?!\$)[^'\n]{{8,}}"
+            rf"|(?!\$)(?!{_CREDENTIAL_REFERENCE})\S{{8,}})"
         ),
     ),
     # 空白区切りの長フラグ形式 (--password value / --token value 等)。短縮フラグ
@@ -2603,8 +2957,8 @@ def build_codex_adversarial_prompt(tool_name: str, tool_input) -> str:
 
     並列 2 モデルに同じ質問をしても情報量が増えないため観点を分担させる:
     Gemini (build_review_prompt) は安全性の総合判定、Codex は迂回・機密の
-    外部送信・実行連鎖を積極的に探す敵対的レビュアー。判定は人間への参考
-    情報として提示され、自動許可には使われない。
+    外部送信・実行連鎖を積極的に探す敵対的レビュアー。両モデルが ALLOW で
+    一致したときだけ自動許可になり、それ以外は人間への参考情報として提示される。
     """
     return (
         "あなたは Bash コマンドの敵対的セキュリティレビュアーです。\n"
@@ -2634,8 +2988,8 @@ def run_parallel_reviews(
     """高リスク層: Gemini と Codex を並列実行し両者の (verdict, output) を返す。
 
     返り値は ((gemini_verdict, gemini_output), (codex_verdict, codex_output))。
-    どちらの結果も自動許可には使わず、combine_high_risk_verdicts で ask/deny
-    に合成する。想定外の例外は握り潰さず伝播させ、呼び出し側 (エントリの
+    両者の結果は combine_high_risk_verdicts で allow/ask/deny に合成する
+    (allow は両者 ALLOW 一致時のみ)。想定外の例外は握り潰さず伝播させ、呼び出し側 (エントリの
     トップレベル except) でフェイルクローズさせる。
     """
     codex_prompt = build_codex_adversarial_prompt(tool_name, tool_input)
@@ -2840,6 +3194,57 @@ def log_summary(
     append_and_rotate(summary_log, line)
 
 
+_PRIVATE_DIR_MODE = 0o700
+_PRIVATE_FILE_MODE = 0o600
+
+
+def _tighten_dir(path: str) -> None:
+    """自分が所有する実ディレクトリのパーミッションを 0700 に絞る。
+
+    symlink や他人所有のディレクトリには触らない (/tmp は誰でも先回りして作れる)。
+    絞れなかった場合はそのまま続行する: ログの秘匿は多層防御の一枚であって、
+    絞れないことでフックの判定を落とさない。
+    """
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    if not stat.S_ISDIR(st.st_mode):
+        return
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None and st.st_uid != geteuid():
+        return
+    if st.st_mode & 0o077:
+        with contextlib.suppress(OSError):
+            os.chmod(path, _PRIVATE_DIR_MODE)
+
+
+def ensure_private_dir(path: str, root: str | None = None) -> None:
+    """path を 0700 で作り、既存でも root から path までの各ディレクトリを 0700 に絞る。
+
+    詳細ログ (/tmp 配下) にはコマンド全文とレビューモデルの応答が入る。umask 任せ
+    (0755) だと同じホストの他ユーザーが読める。os.makedirs の mode は Python 3.7 以降
+    中間ディレクトリに効かないので、root 配下の各階層を明示的に絞る (root が path の
+    祖先でなければ path 自身だけ)。権限を持たない階層より上は触らない。
+    """
+    os.makedirs(path, mode=_PRIVATE_DIR_MODE, exist_ok=True)
+    top = path
+    if root is not None:
+        rel = os.path.relpath(path, root)
+        if rel != os.curdir and not rel.startswith(os.pardir):
+            top = root
+    levels = [top]
+    if top != path:
+        for part in os.path.relpath(path, top).split(os.sep):
+            levels.append(os.path.join(levels[-1], part))
+    for level in levels:
+        _tighten_dir(level)
+
+
+def _open_private(path: str, flags: int) -> int:
+    return os.open(path, flags, _PRIVATE_FILE_MODE)
+
+
 def write_detail_log(
     log_file: str,
     tool_name: str,
@@ -2853,7 +3258,8 @@ def write_detail_log(
     redact_input=True のときは tool_input の生ダンプを書かずプレースホルダにする
     (log_summary の redact_command と同じ理由: 検出した秘密をディスクへ残さない)。
     """
-    with open(log_file, "w", encoding="utf-8") as f:
+    # 0600 で作る (umask に依らず本人だけが読める。ensure_private_dir とセット)。
+    with open(log_file, "w", encoding="utf-8", opener=_open_private) as f:
         f.write(f"Tool Name: {tool_name}\n")
         if redact_input:
             f.write("Tool Input: [REDACTED - credential detected]\n")

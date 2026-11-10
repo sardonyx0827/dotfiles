@@ -7,14 +7,31 @@ with the reason on stderr. Nothing is ever printed to stdout.
 """
 
 import io
+import json
 import subprocess
 import sys
 import types
 from urllib.error import URLError
 
+import pytest
 from conftest import REPO_ROOT, fake_gemini, fake_run, hook_payload
 
 HOOK = ".codex/hooks/bash-review.py"
+
+# The size caps live with the shared engine; read them from there so the tests
+# follow the constants instead of restating a number.
+sys.path.insert(0, str(REPO_ROOT / ".claude" / "hooks"))
+import _bash_review_common as _common  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _keep_chmod_inside_the_sandbox(request, monkeypatch):
+    """run_hook remaps open/makedirs/listdir/remove under tmp_path but not lstat/chmod,
+    so the hook's "tighten existing log dirs" step would chmod the REAL /tmp/*_hooks
+    tree of whoever runs the suite. Neutralise just that step for tests that go through
+    run_hook; ensure_private_dir's own tests (no run_hook) exercise the real thing."""
+    if "run_hook" in request.fixturenames:
+        monkeypatch.setattr(_common, "_tighten_dir", lambda path: None)
 
 
 def _run_raw(hook, raw, capsys, monkeypatch):
@@ -522,3 +539,165 @@ class TestAgentBlockDirective:
         assert res.exit_code == 0
         assert res.stderr == ""
         assert "do NOT retry" not in res.stderr
+
+
+class TestWrappedDenyExecutables:
+    """A3 parity: wrappers that exec their argument resolve to the wrapped tool,
+    so the exit-2 hard block applies exactly as it does for the bare form."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "noglob curl http://x",
+            "nocorrect sudo ls",
+            "builtin exec curl http://x",
+            "lockf /tmp/l curl http://x",
+            "sandbox-exec -n no-network curl http://x",
+            "xcrun curl http://x",
+            "FOO+=x curl http://x",
+            "function f { curl http://x; }; f",
+        ],
+    )
+    def test_wrapped_deny_listed_tool_is_blocked_without_llm(self, run_hook, command):
+        res = run_hook(HOOK, hook_payload(command))
+        assert res.exit_code == 2
+        assert "Blocked dangerous command" in res.stderr
+
+    def test_glob_executable_escalates_to_the_dual_review_gate(self, run_hook):
+        # Gemini=ALLOW + Codex=ASK が弁別子 (低リスク経路なら Codex を呼ばず exit 0)
+        res = run_hook(
+            HOOK,
+            hook_payload("/usr/bin/cur? http://x"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+        assert "High-risk" in res.stderr
+
+
+class TestInputLimit:
+    """A4 parity: over-cap input is not analysed; the Codex variant has no
+    `ask`, so the ask-equivalent is the exit-2 block (same convention as the
+    secret pre-scan)."""
+
+    @staticmethod
+    def _oversized():
+        frame = len(json.dumps({"command": ""}, ensure_ascii=False))
+        return "a" * (_common.MAX_INPUT_CHARS - frame + 1)
+
+    def test_oversized_command_blocks_without_calling_any_llm(self, run_hook):
+        res = run_hook(HOOK, hook_payload("echo " + self._oversized()))
+        assert res.exit_code == 2
+        assert res.stdout == ""
+        assert "too large" in res.stderr
+        assert "confirm manually" in res.stderr
+        assert "do NOT retry" in res.stderr
+
+    def test_oversized_deny_listed_command_is_blocked_as_ask_not_deny(self, run_hook):
+        res = run_hook(HOOK, hook_payload("curl http://x " + self._oversized()))
+        assert res.exit_code == 2
+        assert "too large" in res.stderr
+        assert "Blocked dangerous command" not in res.stderr
+        summary = (res.home / ".codex/logs/bash-review.log").read_text(encoding="utf-8")
+        assert "ASK" in summary
+        assert "DENY" not in summary
+
+    def test_too_many_substitutions_blocks(self, run_hook):
+        n = _common.MAX_SUBSTITUTION_OPENERS + 1
+        res = run_hook(HOOK, hook_payload("echo " + "$(true) " * n))
+        assert res.exit_code == 2
+        assert "substitution" in res.stderr
+
+    def test_limit_is_checked_before_any_expensive_analysis(
+        self, run_hook, monkeypatch
+    ):
+        def boom(*args, **kwargs):
+            raise AssertionError("analysis ran on an over-cap input")
+
+        for name in ("_split_commands", "scan_secrets", "build_review_prompt"):
+            monkeypatch.setattr(_common, name, boom)
+        res = run_hook(HOOK, hook_payload("echo " + self._oversized()))
+        assert res.exit_code == 2
+        assert "too large" in res.stderr
+        assert "hook error" not in res.stderr
+
+    def test_logs_omit_the_command(self, run_hook):
+        secret = "ghp_" + "z" * 36
+        res = run_hook(HOOK, hook_payload(f"echo {secret} " + self._oversized()))
+        assert res.exit_code == 2
+        summary = (res.home / ".codex/logs/bash-review.log").read_text(encoding="utf-8")
+        assert secret not in summary
+        detail_dir = res.fake_tmp / "codex_hooks/logs/PreToolUse/Bash/bash-review"
+        detail_text = next(detail_dir.iterdir()).read_text(encoding="utf-8")
+        assert secret not in detail_text
+        assert "ASK (input limit)" in detail_text
+
+
+class TestNewDenyAndHighRiskEntries:
+    """B11 / A1 parity: the engine is shared, so one representative per table
+    pins that the Codex entry point routes the new entries the same way."""
+
+    @pytest.mark.parametrize(
+        "command", ["scp a.txt host:/tmp/", "slogin host", "telnet host 25"]
+    )
+    def test_network_egress_tool_is_blocked_without_llm(self, run_hook, command):
+        res = run_hook(HOOK, hook_payload(command))
+        assert res.exit_code == 2
+        assert "Blocked dangerous command" in res.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "fish -c 'echo hi'",
+            "npm exec evil-pkg",
+            "git reset --har HEAD~1",
+            "osascript -e 'beep'",
+        ],
+    )
+    def test_new_high_risk_form_reaches_the_dual_review_gate(self, run_hook, command):
+        # Gemini=ALLOW + Codex=ASK が弁別子 (低リスク経路なら Codex を呼ばず exit 0)
+        res = run_hook(
+            HOOK,
+            hook_payload(command),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+        assert "High-risk" in res.stderr
+
+    def test_codex_config_read_is_not_safe_skipped(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("cat .codex/config.toml"),
+            urlopen=fake_gemini("ASK"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.exit_code == 2
+
+
+class TestSecretScanPrecisionInHook:
+    def test_credential_reference_in_code_is_not_a_secret(self, run_hook):
+        # コードへの言及 (参照) は外部レビューへ送ってよい: pre-scan で止めない
+        res = run_hook(
+            HOOK,
+            hook_payload("make check api_key=os.getenv('K')"),
+            urlopen=fake_gemini("ALLOW"),
+        )
+        assert res.exit_code == 0
+
+    def test_bare_registry_token_blocks_before_any_llm_call(self, run_hook):
+        token = "npm_" + "a" * 36
+        res = run_hook(HOOK, hook_payload(f"make deploy {token}"))
+        assert res.exit_code == 2
+        assert "credential" in res.stderr.lower()
+        assert token not in res.stderr
+
+
+class TestPrivateLogs:
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+    def test_detail_log_dir_and_file_are_owner_only(self, run_hook):
+        res = run_hook(HOOK, hook_payload("git branch"))
+        detail_dir = res.fake_tmp / "codex_hooks/logs/PreToolUse/Bash/bash-review"
+        assert (detail_dir.stat().st_mode & 0o777) == 0o700
+        (detail,) = list(detail_dir.iterdir())
+        assert (detail.stat().st_mode & 0o777) == 0o600

@@ -4,18 +4,21 @@
 scriptencoding utf-8
 
 "" Abbreviations (tolerate a stray Shift on :w/:q; short names for the fzf commands)
-cnoreabbrev W! w!
-cnoreabbrev Q! q!
-cnoreabbrev Qall! qall!
-cnoreabbrev Wq wq
-cnoreabbrev Wa wa
-cnoreabbrev wQ wq
-cnoreabbrev WQ wq
-cnoreabbrev W w
-cnoreabbrev Q q
-cnoreabbrev Qall qall
-cnoreabbrev f Files
-cnoreabbrev gf GFiles
+"" A plain cnoreabbrev also fires inside '/' searches and mid-command (`/f` searched for
+"" "Files", `:e f.txt` opened "Files.txt"), so each one expands only when it is the whole
+"" ':' command line. At expansion time getcmdline() already holds the typed lhs.
+function! s:CmdAbbrev(lhs, rhs) abort
+  return (getcmdtype() ==# ':' && getcmdline() ==# a:lhs) ? a:rhs : a:lhs
+endfunction
+for [s:lhs, s:rhs] in [
+      \ ['W!', 'w!'], ['Q!', 'q!'], ['Qall!', 'qall!'],
+      \ ['Wq', 'wq'], ['Wa', 'wa'], ['wQ', 'wq'], ['WQ', 'wq'],
+      \ ['W', 'w'], ['Q', 'q'], ['Qall', 'qall'],
+      \ ['f', 'Files'], ['gf', 'GFiles'],
+      \ ]
+  execute printf("cnoreabbrev <expr> %s <SID>CmdAbbrev('%s', '%s')", s:lhs, s:lhs, s:rhs)
+endfor
+unlet s:lhs s:rhs
 
 " vim-session (manual :SessionSave / :SessionOpen; no auto load/save)
 let g:session_directory = '~/.vim/session'

@@ -280,6 +280,44 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     call add(a:buffer, a:msg)
   endfunction
 
+  " ---- ジョブ完了ゲート ------------------------------------------------------
+  " exit_cb は「プロセスが終わった」ことしか意味しない。Vim は exit_cb の後でも
+  " out_cb / err_cb の行を配送しうるので、exit_cb から直に finish を予約すると、
+  " まだ届いていない応答の後半が切り捨てられる。しかも切れた応答は status が
+  " 'done' のまま `y` (選択範囲の置換) の対象になり、Ollama 経路では JSON が
+  " 途中で切れて壊れる。stderr も同様で、失敗理由の本文が欠ける。
+  "
+  " finish は 2 つの合図が揃ってから 1 回だけ予約する:
+  "   close_cb ... チャネルが閉じた = 出力を全部受け取り終えた
+  "   exit_cb  ... 終了ステータスが分かった
+  " 順序は保証されない (通常は exit → close だが job_stop 経由では逆になる) ので、
+  " どちらが先でも、後から来た方が finish を予約する。
+  "
+  " ゲートはジョブ 1 本につき 1 つの辞書。finish 本体 (s:AI_SingleFinish など) は
+  " 触らず、そのままタイマーから呼ぶので、シグネチャも中身も変わらない。
+  function! s:AI_NewGate() abort
+    return {'exited': 0, 'closed': 0, 'queued': 0, 'Finish': v:null}
+  endfunction
+
+  function! s:AI_GateSettle(gate) abort
+    if a:gate.exited && a:gate.closed && !a:gate.queued
+      let a:gate.queued = 1
+      call timer_start(0, a:gate.Finish)
+    endif
+  endfunction
+
+  " a:Finish は status まで束縛済みの partial で、timer を最後の引数に受ける。
+  function! s:AI_GateExit(gate, Finish) abort
+    let a:gate.exited = 1
+    let a:gate.Finish = a:Finish
+    call s:AI_GateSettle(a:gate)
+  endfunction
+
+  function! s:AI_GateClosed(gate, channel) abort
+    let a:gate.closed = 1
+    call s:AI_GateSettle(a:gate)
+  endfunction
+
   " Ollama 経路の失敗理由。トランスポートの失敗を先に見る。
   "
   " l:err (レスポンス本文のパースエラー) を先に見てはいけない: 接続できなければ
@@ -493,7 +531,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   endfunction
 
   function! s:AI_SingleExit(state, job, status) abort
-    call timer_start(0, function('s:AI_SingleFinish', [a:state, a:status]))
+    call s:AI_GateExit(a:state.gate, function('s:AI_SingleFinish', [a:state, a:status]))
   endfunction
 
   " Shared scaffolding for single-response tools (CLI or local Ollama): open the
@@ -526,7 +564,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ 'orig_buf': l:orig_buf, 'orig_win': l:orig_win,
           \ 'resp_buf': l:resp_buf, 'resp_win': l:resp_win,
           \ 'status': 'pending', 'output': [], 'errout': [],
-          \ 'closed': 0, 'tmpfile': a:tmpfile,
+          \ 'closed': 0, 'tmpfile': a:tmpfile, 'gate': s:AI_NewGate(),
           \ }
     call setbufvar(l:orig_buf, 'ai_state', l:state)
     call setbufvar(l:resp_buf, 'ai_state', l:state)
@@ -537,6 +575,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ 'out_mode': 'nl',
           \ 'err_cb': function('s:AI_JobCollect', [l:state.errout]),
           \ 'err_mode': 'nl',
+          \ 'close_cb': function('s:AI_GateClosed', [l:state.gate]),
           \ 'exit_cb': function(a:exit_cb, [l:state]),
           \ })
   endfunction
@@ -674,7 +713,8 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   endfunction
 
   function! s:AI_AllExit(state, idx, job, status) abort
-    call timer_start(0, function('s:AI_AllFinish', [a:state, a:idx, a:status]))
+    call s:AI_GateExit(a:state.gates[a:idx],
+          \ function('s:AI_AllFinish', [a:state, a:idx, a:status]))
   endfunction
 
   function! s:AI_RunAll(ctx, sys, tmpfile) abort
@@ -719,7 +759,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ 'changedtick': a:ctx.changedtick,
           \ 'orig_buf': l:orig_buf, 'orig_win': l:orig_win, 'resp_win': l:resp_win,
           \ 'bufs': l:bufs, 'status': l:status, 'output': l:output,
-          \ 'errout': l:errout, 'jobs': {},
+          \ 'errout': l:errout, 'jobs': {}, 'gates': {},
           \ 'active': 1, 'pending': len(l:tools), 'closed': 0, 'tmpfile': a:tmpfile,
           \ }
     call setbufvar(l:orig_buf, 'ai_state', l:state)
@@ -749,11 +789,13 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           call delete(a:tmpfile)
         endif
       else
+        let l:state.gates[l:i] = s:AI_NewGate()
         let l:state.jobs[l:i] = job_start(['sh', '-c', l:cmd], {
               \ 'out_cb': function('s:AI_JobCollect', [l:state.output[l:i]]),
               \ 'out_mode': 'nl',
               \ 'err_cb': function('s:AI_JobCollect', [l:state.errout[l:i]]),
               \ 'err_mode': 'nl',
+              \ 'close_cb': function('s:AI_GateClosed', [l:state.gates[l:i]]),
               \ 'exit_cb': function('s:AI_AllExit', [l:state, l:i]),
               \ })
       endif
@@ -822,7 +864,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
   endfunction
 
   function! s:AI_OllamaExit(state, job, status) abort
-    call timer_start(0, function('s:AI_OllamaFinish', [a:state, a:status]))
+    call s:AI_GateExit(a:state.gate, function('s:AI_OllamaFinish', [a:state, a:status]))
   endfunction
 
   function! s:AI_RunOllama(ctx, tmpfile) abort

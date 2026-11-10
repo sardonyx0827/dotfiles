@@ -25,9 +25,14 @@ CI（`.github/workflows/ci.yml`）は `pytest-cov` でブランチカバレッ�
 **90% を下回るとジョブが失敗**します（実測は約 97%、設定は `.coveragerc`）。
 集計値は低い個別ファイルを平均で覆い隠すため、CI はファイル単位の 80% 床も別途
 強制します。
+テストジョブはこのほかに、`python3 scripts/gen_codex_agents.py --check`（生成対象の
+`.codex/agents/*.toml` が `.claude/agents/*.md` から生成した内容と一致するか。手書きの
+`codex-delegator.toml` は有効な TOML であることだけを確認）と、
+`./install.sh --dry-run` のスモークテスト（`main()` 経由の配線を確認）も実行します。
 
 > **カバレッジが測るのは Python だけです。** フックの実体はシェルにもあり
-> （`lint.sh` / `auto-format.sh` / `stop-audit.sh` / `git-push-review.sh` と
+> （`lint.sh` / `auto-format.sh` / `format-then-lint.sh` / `stop-audit.sh` /
+> `git-push-review.sh` / `bash-review-launcher.sh` と
 > 共有ライブラリ `_hook_common.sh` / `_lint_common.sh` / `_format_common.sh`)、
 > coverage.py はシェルを計装できません。これらはサブプロセス経由のブラック
 > ボックステストで検証しており、上の数値には含まれません。

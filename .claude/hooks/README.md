@@ -16,7 +16,8 @@
   (no AI call), a static secret pre-send scan that refuses to forward commands
   carrying raw credentials to any LLM, a parallel Gemini+Codex AND-gate for
   high-risk commands, and a Gemini→Codex cascade for the low-risk majority.
-  Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`.
+  Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`
+  (directory 0700, files 0600).
   `settings.json` launches it through the launcher, not bare `python3`: a hook
   command that cannot start (no `python3`, missing file) or crashes with an
   unexpected exit code is treated by Claude Code as a _non-blocking_ error —
@@ -34,14 +35,39 @@
   The summary is taken from the repository the push will actually run in:
   `git -C <dir>` and a literal `cd <dir>` ahead of the push both retarget it.
   When that directory cannot be determined for certain (a variable, `cd -`,
-  `pushd`, a subshell, several `cd`s, a `cd` with options or extra operands,
-  a `..` component, a quoted `~`, a target that is not an existing
-  directory, any raw control character in the command, `--git-dir` /
+  `~user`, `pushd` / `popd`, a subshell, a heredoc (`<<`) or comment (`#`)
+  in a command that also has a `cd`, several `cd`s, a `cd` with options or
+  extra operands, a `..` component, a quoted `~`, a target that is not an
+  existing directory, a control character in the command other than tab /
+  newline (DEL included) or any control character in the `cd` target or the
+  `-C` value, `--git-dir` /
   `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` anywhere in it, or a plain
   relative `cd` while `CDPATH` is set in the hook's environment or in the
   command itself), the prompt
   carries a note instead of a summary — a summary of the wrong repository
-  is worse than none.
+  is worse than none. Only the push's own `-C` picks the repository; a `-C`
+  on another git call in the same command does not.
+  Ahead of the summary the prompt names the push target (remote and
+  refspec), and a `WARNING` line calls out `--force` / `-f` /
+  `--force-with-lease` / `--force-if-includes` / a `+` refspec / `--delete` /
+  `-d` / a `:dst` refspec / `--mirror` / `--all` / `--tags` / `--prune`. When
+  the refspec source is not the current branch, or `--all` and the like change
+  which refs are sent, a note says the commit list below may not be what is
+  actually pushed. When the arguments cannot be read reliably (inside `eval` /
+  `sh -c` / `watch` / `--exec`, a refspec with an expansion, an unknown option,
+  over 4000 characters, a control character) it does not guess and shows a
+  note instead. URL userinfo is masked.
+  On detection: a stray apostrophe inside a comment (word-initial `#`), a
+  heredoc body or `$'...'` can no longer open a false quote and hide a push on
+  a later line. A `<<` with no terminator line (an arithmetic shift such as
+  `$((1<<2))`) is not taken for a heredoc, and a heredoc body that is code
+  folds `\`-newline continuations as the shell does. A quoted word with no
+  whitespace (`git "push"`, `"git" push`) counts as one word, also after
+  `then` / `{` / `!` or behind a wrapper such as `timeout 5`, and a push inside
+  the string that `git submodule
+foreach`, `git rebase --exec` (`-x`) or `watch` runs is detected too
+  (`submodule foreach` runs in each submodule, so it shows a note instead of a
+  summary).
   This entry used to carry `if: Bash(git push*)`. That filter prefix-matches
   each sub-command, so it never fired for the very forms this script exists
   to catch — `git -C <dir> push`, `git --no-pager push`, `git -c k=v push`,
@@ -108,7 +134,9 @@ feeds both, and lets lint's exit code be the hook's.
   generation-only (commit message, buffer check, hints) and audit the user's
   own uncommitted work rather than anything the agent wrote, so a block there
   made the agent edit the working tree and return "removed the debug
-  statement" in place of the generated text.
+  statement" in place of the generated text. bash-review sets the same marker
+  on its own nested `codex exec` review call, so the Codex-side Stop hooks
+  skip that run too.
 
 ## Shared libraries (`_`-prefixed, not hooks themselves)
 
@@ -134,8 +162,10 @@ Claude and Codex differ in how they receive targets, report verdicts, and place
 hooks on events. See `.codex/hooks/README.md` for the full table and those
 differences.
 
-- **`_hook_common.sh`**: `hook_log` (timestamped, size-capped) and
-  `hook_notify` (terminal-notifier / osascript / notify-send).
+- **`_hook_common.sh`**: `hook_log` (timestamped, size-capped),
+  `hook_notify` (terminal-notifier / osascript / notify-send), and
+  `hook_find_nearest_bin` (nearest `node_modules/.bin` lookup used by lint and
+  format).
 - **`_lint_common.sh`**: `hook_lint_file` — the per-language lint matrix.
 - **`_format_common.sh`**: `hook_format_file` — the per-language formatter matrix.
 - **`_bash_review_common.py`**: bash-review's verdict logic and review calls.
@@ -143,9 +173,10 @@ differences.
 Contract for the shell ones: they define functions and nothing else. Sourcing
 must not print, `mkdir`, or touch `set`/`IFS`/`trap`/cwd — the Codex `lint.sh`
 sources them before `exec 1>/dev/null`, so any output at source time would land
-in the structured-output channel Codex parses and fail the hook. Names are
-namespaced `hook_`/`HOOK_` because bash is dynamically scoped and a collision
-with a caller's local fails silently.
+in the structured-output channel Codex parses and fail the hook. Function names
+are namespaced `hook_` because bash is dynamically scoped and a collision with a
+caller's local fails silently. Variables inside them are not prefixed
+(`FILE_PATH`, `EXTENSION`, …), so callers must not rely on names they share.
 
 ## bash-review — design rationale & threat model
 
@@ -167,20 +198,27 @@ Given that model, the flow is tuned by **how dangerous the command is**, keeping
 latency low for the common case:
 
 1. **Fast pre-block / safe-skip (no AI call).** Dangerous executables (`curl`,
-   `nc`/`netcat`/`ncat`, `dd`, `sudo`, …) are denied outright and obvious
+   `nc`/`netcat`/`ncat`, `scp`/`sftp`/`telnet`/`socat`/`ftp`/`slogin`, `dd`,
+   `sudo`, …) are denied outright and obvious
    read-only commands (`ls`, `cat`, `git status`, …) are allowed — both without
    any API/CLI round-trip.
 
    The two sides are not symmetric. Denial **resolves the executable** rather
    than matching a literal prefix, so `/usr/bin/curl`, `CURL`, `c"u"rl`,
-   `env curl` and `(curl …)` all resolve to `curl` and are denied. What it
-   cannot resolve — `$(which curl)`, `${CURL}`, `eval "…"`, `sh -c "…"` — is not
-   waved through either: those escalate to the high-risk gate below (two models
-   must agree, and the run still stops for confirmation).
+   `env curl`, `(curl …)`, a `noglob` / `nocorrect` / `builtin` / `lockf` /
+   `sandbox-exec` / `xcrun` prefix, a `FOO+=x` prefix and
+   `function f { curl …; }` all resolve to `curl` and are denied. What it
+   cannot resolve — `$(which curl)`, `${CURL}`, `eval "…"`, `sh -c "…"`, an
+   executable with an unquoted glob (`/usr/bin/cur?`; a heredoc body line
+   such as `**Why**:` in a commit message is data, not an executable) — is not
+   waved through either: those escalate to the high-risk gate below (step 3:
+   it runs only when both models return `ALLOW`; anything short of that stops
+   for confirmation or is denied).
 
    Safe-skip is the conservative side: it matches the raw command string against
-   an allowlist and never consults the resolver, so anything wrapped in grammar
-   simply fails to match and goes to review. A sensitive path (`.env`, `id_rsa`,
+   an allowlist, so anything wrapped in grammar simply fails to match and goes
+   to review. The resolver is consulted only by the exclusions below (grep / rg
+   / tmux / output-file flags), and only to send more commands to review. A sensitive path (`.env`, `id_rsa`,
    `.ssh`, …) forces review even when the prefix looks safe. So do the reads
    that reach a secret without naming it, since such a command names no file
    and the `permissions.deny` Read rules cannot catch it either:
@@ -193,16 +231,28 @@ latency low for the common case:
      recursive flag, a digit flag, or an operand that does not look like a
      regular file (`.`, `src`, `sub/`) sends grep to review; a pipe
      (`… | grep foo`) or `grep foo file.txt` stays fast.
-   - an rg that overrides its hidden/ignored-file skip: `--hidden`, `-u`,
-     `--no-ignore`, and also `-g` / `--glob` (unless an `!` exclusion) and
-     `-t` / `--type`, both of which read hidden files.
+   - an rg that overrides its hidden/ignored-file skip: `--hidden`, `-.`, `-u`,
+     `--unrestricted`, `--no-ignore*`, and also `-g` / `--glob` / `--iglob`
+     (unless an `!` exclusion) and `-t` / `--type`, both of which read hidden
+     files; or `-L` / `--follow`, which follows symlinks out of the tree.
+   - anything else that turns a "read-only" command into execution, a write or
+     an out-of-tree read: an absolute / `~` / `..` path, rg's
+     `--pre` / `--pre-glob` / `--hostname-bin` / `-z` / `-f`, a tmux `#(…)`
+     format or a `;`-chained second tmux command, and output-file flags
+     (`--output` / `--outfile`, `tree -o`).
 
 2. **Secret pre-send scan (no external call).** Before any command is handed to
    an LLM, a static scan (`scan_secrets`) checks the command _and_ the full
    `tool_input` for raw credential **values** — known-format tokens (GitHub /
-   AWS / Google / OpenAI / Slack / Stripe), PEM / OpenPGP private keys, JWTs,
-   `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs, and
-   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`).
+   AWS / Google / OpenAI / Slack (incl. app tokens and webhook URLs) / Stripe /
+   npm / GitLab / Hugging Face / SendGrid / PyPI / Docker / DigitalOcean),
+   PEM / OpenPGP private keys, JWTs,
+   `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs,
+   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`),
+   and a secret-named key followed by its value in known setter CLIs
+   (`aws configure set`, `vault kv put`, `gh secret set`, `heroku config:set`, …).
+   References to a credential in code (`os.getenv(…)`, `os.environ[…]`,
+   `self.token`) are not values and are not flagged.
    A hit fails closed to `ask` (Claude) / block (Codex) **without calling Gemini
    or Codex**, so a secret never leaves the machine for review; the
    reason / notification / logs carry only a generic category label, and the raw
@@ -216,7 +266,11 @@ latency low for the common case:
    not entropy or de-obfuscation.
 3. **High-risk commands → parallel two-model AND-gate.** Commands that are
    dangerous _depending on context_ (`rm -r`, package installs like
-   `pip install` / `npm i`, …; see `high_risk_label`) are reviewed by Gemini
+   `pip install` / `npm i`, other shells' `-c` (csh / tcsh / fish / ash / pwsh),
+   `osascript` / `bun` / `lua` inline eval, `deno eval`, remote runners
+   (`npm exec`, `bunx`, `pipx run`, `uv tool run`), abbreviated destructive git
+   options (`reset --har`, `clean --forc`, `push --forc`), …; see
+   `high_risk_label`) are reviewed by Gemini
    **and** Codex run _in parallel_, and their verdicts are combined as an
    AND-gate (`combine_high_risk_verdicts`): `allow` only when **both** return
    `ALLOW`, `deny` only when **both** return `DENY`, and everything else —
@@ -251,11 +305,22 @@ latency low for the common case:
    `bash-review-launcher.sh` turns a missing `python3`, a missing
    `bash-review.py`, or a crash (any exit other than 0/2) into an explicit
    `ask`, where the bare `python3 …/bash-review.py` wiring would have been
-   downgraded by Claude Code to a non-blocking error — i.e. fail-open. What
-   the launcher cannot cover is its own failure to start (a missing `bash`
-   itself); that residual case is bounded by `permissions.deny`, which mirrors
-   the hook's context-free hard-deny set — `sudo`/`su`/`doas`/`pkexec`,
-   `ssh`/`curl`/`wget`/`nc`, `dd`/`shred`/`mkfs` — so none of them run
+   downgraded by Claude Code to a non-blocking error — i.e. fail-open. The
+   review **never finishing** is covered too: the launcher's entry in
+   `settings.json` carries `"timeout": 180` and `"onFailure": "block"`
+   (Claude Code 2.1.295+), so a timeout — or the launcher itself failing to
+   start — blocks the command instead of letting it run. 180 s sits above the
+   review's own worst case (Gemini 30 s plus Codex 60 s). And input too large to
+   analyse in that budget never reaches the analysis: a `tool_input` over
+   32 KiB of JSON, or more than 32 command substitutions (`$(`, `<(`, `>(`, a
+   backtick pair), resolves to `ask` (Codex: block) before step 1, with no
+   external review and never `deny`. That bounds the quadratic cost of nested
+   `$(`. `git-push-review.sh` stays fail-open (no `onFailure`), backed by
+   `Bash(git push:*)` in `ask`.
+   Should the hook layer be disabled altogether, `permissions.deny` still
+   mirrors the hook's context-free hard-deny set — `sudo`/`su`/`doas`/`pkexec`,
+   `ssh`/`slogin`/`scp`/`sftp`/`telnet`/`socat`/`ftp`/`curl`/`wget`/`nc`/`netcat`/`ncat`,
+   `dd`/`shred`/`mkfs` — so none of them run
    unreviewed even with the hook down. The one residual: `permissions.deny`
    matches on word boundaries and cannot express the `mkfs.<fs>` family
    (`mkfs.ext4`, `mkfs.xfs`, …) in a single rule, so the common members are
@@ -279,12 +344,13 @@ they are inert, not an active allowlist, so don't read them as protection.
 - The **secret pre-send scan** (step 2) is deliberately narrow: it matches
   credential _values_ by known format and a few structural shapes, tuned for
   _accidental_ inclusion. It does not defeat deliberate obfuscation (base64,
-  quote-splitting, `$(…)`), does not catch very short opaque values (`< 8`
-  chars) or short-flag secrets (`-p<pw>`, which collide with `mkdir -p` etc.),
+  quote-splitting, `$(…)`), does not catch very short opaque values (under 8
+  chars for assignments and setter-CLI arguments, under 6 for `--password`-style
+  long flags) or short-flag secrets (`-p<pw>`, which collide with `mkdir -p` etc.),
   and leaves sensitive _paths_ to normal review. A miss falls through to the
   usual AI review, not to a silent send of an unreviewed secret; a false
   positive only costs an `ask`.
-- Safe-skipped `git` / `jq` / … assume a **trusted** repository. Config-driven
+- Safe-skipped `git status` / `git log` / `git diff` / … assume a **trusted** repository. Config-driven
   execution (`.git/config` `core.pager`, `[alias]`, `diff.external`) is out of
   scope — verifying it on every call would defeat the point of the skip. See the
   inline comments in `_bash_review_common.py`.

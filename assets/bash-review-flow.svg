@@ -8,7 +8,7 @@
 
   <!-- header -->
   <text x="42" y="70" font-size="32" font-weight="700" fill="#c4a7e7">bash‑review — 送信前スキャン + 多層セーフティゲート</text>
-  <text x="44" y="100" font-size="15" fill="#908caa">PreToolUse Bash フック · モデル合意でも高リスクは自動実行せず、誤ればフェイルセーフで ask</text>
+  <text x="44" y="100" font-size="15" fill="#908caa">PreToolUse Bash フック · 高リスクは両モデル ALLOW 一致時のみ自動実行、誤ればフェイルセーフで ask</text>
 
   <!-- outcome legend (top-right) -->
   <g class="mono" font-size="12">
@@ -42,7 +42,7 @@
   <rect x="40" y="274" width="6" height="84" rx="3" fill="#31748f"/>
   <text x="66" y="300" font-size="15" font-weight="700" fill="#e0def4">② セーフスキップ （レビュー省略）</text>
   <text x="66" y="324" font-size="12.5" fill="#908caa" class="mono">ls · cat · pwd · echo · git status/log/diff · grep · rg · head · tail · which …</text>
-  <text x="66" y="346" font-size="12" fill="#6e6a86" class="mono">除外: 機密パス(.env/.ssh/…) · ツリー外参照 · 危険 rg フラグ · 複雑シェル構文</text>
+  <text x="66" y="346" font-size="12" fill="#6e6a86" class="mono">除外: 機密パス(.env/.ssh/…) · ツリー外参照 · 引用符外グロブ · grep 再帰/dir · rg 隠し/危険フラグ · tmux #()/; · 出力先フラグ · 複雑構文</text>
   <text x="1034" y="322" font-size="14" fill="#31748f">→</text>
   <rect x="1058" y="304" width="96" height="26" rx="13" fill="none" stroke="#31748f"/>
   <text x="1106" y="321" font-size="12" text-anchor="middle" fill="#31748f" font-weight="700" class="mono">ALLOW</text>
@@ -53,7 +53,7 @@
   <rect x="40" y="380" width="1160" height="84" rx="12" fill="#1f1d2e" stroke="#403d52"/>
   <rect x="40" y="380" width="6" height="84" rx="3" fill="#9ccfd8"/>
   <text x="66" y="406" font-size="15" font-weight="700" fill="#e0def4">③ 秘密の送信前スキャン （LLM へ渡す前の静的ガード）</text>
-  <text x="66" y="430" font-size="12.5" fill="#908caa" class="mono">生の資格情報を検出 · 既知トークン · PEM 秘密鍵 · JWT · Authorization Bearer/Basic · user:pass@ · SECRET=値 · --password 値</text>
+  <text x="66" y="430" font-size="12.5" fill="#908caa" class="mono">生の資格情報 · 既知トークン · PEM/PGP 秘密鍵 · JWT · Auth Bearer/Basic · user:pass@ · SECRET=値 · --password 値 · 設定 CLI 秘密引数</text>
   <text x="66" y="452" font-size="12" fill="#6e6a86" class="mono">検出時は Gemini/Codex を呼ばず ask · 値はログにも残さず種別ラベルのみ · 機密パスは対象外 (通常レビューへ)</text>
   <text x="1034" y="417" font-size="14" fill="#f6c177">→</text>
   <rect x="1058" y="399" width="96" height="26" rx="13" fill="none" stroke="#f6c177"/>
@@ -65,9 +65,9 @@
   <rect x="40" y="486" width="1160" height="180" rx="12" fill="#1f1d2e" stroke="#403d52"/>
   <rect x="40" y="486" width="6" height="180" rx="3" fill="#f6c177"/>
   <text x="66" y="512" font-size="15" font-weight="700" fill="#e0def4">④ 高リスク — Gemini ∥ Codex 並列 AND ゲート</text>
-  <text x="66" y="536" font-size="12.5" fill="#908caa" class="mono">rm -r · git force push / reset --hard / clean -f · pkg install · npx/uvx · sh -c · eval · chmod -R · find -exec</text>
+  <text x="66" y="536" font-size="12.5" fill="#908caa" class="mono">rm -r · git push -f / reset --hard / clean -f · pkg install · npx/uvx · sh -c · eval · python -c · chmod -R · find -exec · docker 脱出 …</text>
   <rect x="66" y="552" width="1068" height="42" rx="10" fill="#26233a" stroke="#403d52"/>
-  <text x="86" y="578" font-size="12.5" fill="#e0def4" class="mono">Gemini (総合判定)　∥　Codex (敵対的レビュー)　— 並列実行、判定は自動許可には使わず人間判断用</text>
+  <text x="86" y="578" font-size="12.5" fill="#e0def4" class="mono">Gemini (総合判定)　∥　Codex (敵対的レビュー)　— 並列実行、両者 ALLOW 一致時のみ自動許可</text>
   <text x="66" y="628" font-size="13" class="mono"><tspan fill="#908caa">両者 ALLOW ⇒ </tspan><tspan fill="#31748f" font-weight="700">ALLOW</tspan><tspan fill="#6e6a86">　/　</tspan><tspan fill="#908caa">両者 DENY ⇒ </tspan><tspan fill="#eb6f92" font-weight="700">DENY</tspan><tspan fill="#6e6a86">　/　</tspan><tspan fill="#908caa">それ以外 (判定割れ/ASK/ERROR) ⇒ </tspan><tspan fill="#f6c177" font-weight="700">ASK</tspan></text>
   <text x="66" y="652" font-size="12" fill="#6e6a86" class="mono">片方だけ説得では通らない (OR ゲート化しない)。両判定を理由文に添えて ask へ</text>
 
@@ -94,7 +94,7 @@
   <!-- fail-safe band -->
   <rect x="40" y="952" width="1160" height="54" rx="12" fill="#1f1d2e" stroke="#403d52"/>
   <rect x="40" y="952" width="6" height="54" rx="3" fill="#908caa"/>
-  <text x="66" y="975" font-size="12.5" fill="#908caa" class="mono">FAIL‑SAFE · 判定を出す前の例外 (stdin 破損等) は必ず ask に倒す · API/CLI 不在も ask へフェイルクローズ</text>
-  <text x="66" y="995" font-size="12.5" fill="#6e6a86" class="mono">claude / codex 2 変種は _bash_review_common.py の実体 1 つを symlink で共有 (ドリフトは構造的に不可能)</text>
+  <text x="66" y="975" font-size="12.5" fill="#908caa" class="mono">FAIL‑SAFE · 判定前の例外 (stdin 破損等) は必ず ask · API/CLI が両方不在なら ask (低リスク層は片方不在なら残る側が判定)</text>
+  <text x="66" y="995" font-size="12.5" fill="#6e6a86" class="mono">claude / codex 2 変種は _bash_review_common.py の実体 1 つを共有 (codex 側は realpath で import · 複製もリンクも無し)</text>
 
 </svg>

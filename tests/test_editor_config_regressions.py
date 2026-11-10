@@ -4,12 +4,14 @@ luacheck reads names and scopes; it has no model of another plugin's argv gramma
 Nothing lints Vimscript -- `.vim/rc/` has no linter, so its checks live here. The bugs
 pinned here pass every other gate while being plainly wrong at runtime.
 
-The toggleterm and Copilot-guard checks are content assertions, not behavior tests:
-driving real toggleterm keymaps or a real `:saveas` would need a live Neovim/Vim session
-with plugins installed, which this suite deliberately does not build. The assertions are
-written against the specific malformed shapes so they stay meaningful rather than merely
-present. The 70-ai.vim port tests further down do drive a real Vim (no plugins needed)
-and skip when none is available.
+The toggleterm count-prefix and Copilot-guard checks are content assertions, not
+behavior tests: driving real toggleterm commands or a real `:saveas` would need a
+live Neovim/Vim session with plugins installed, which this suite deliberately does
+not build. The assertions are written against the specific malformed shapes so they
+stay meaningful rather than merely present. The toggleterm Esc-mapping, nvim-treesitter
+and command-line-window checks near the end do drive a real Neovim, against stand-ins
+for the plugin APIs they touch. The 70-ai.vim port tests further down do drive a real
+Vim (no plugins needed) and skip when none is available.
 """
 
 import json
@@ -959,6 +961,92 @@ emit({ cmd = cmd or {} })
     assert set(got["cmd"]) <= {"Trouble"}, got["cmd"]
 
 
+def test_emmylua_ls_serves_only_call_hierarchy(tmp_path):
+    """emmylua_ls runs beside lua_ls for one job: incoming calls.
+
+    lua_ls advertises no callHierarchyProvider, so Trouble's
+    `lsp_incoming_calls` is always empty in Lua; emmylua_ls implements
+    incomingCalls (its outgoingCalls is a stub). Everything else -- completion,
+    hover, definitions, formatting, semantic tokens, diagnostics -- stays with
+    lua_ls. If emmylua_ls kept its other capabilities, every hover, completion
+    item and diagnostic would arrive twice, so its on_init must drop them and
+    its pushed diagnostics must never reach vim.diagnostic.
+    """
+    got = _nvim_probe(
+        tmp_path,
+        """
+package.loaded["mason-lspconfig"] = { setup = function() end }
+local configs = {}
+vim.lsp.config = setmetatable({}, {
+  __call = function(_, name, cfg) configs[name] = cfg end,
+})
+require("setup.plugins.utilities.nvim-lspconfig")[2].config()
+local cfg = configs.emmylua_ls
+if not cfg then
+  emit({ found = false })
+  return
+end
+local client = {
+  server_capabilities = {
+    positionEncoding = "utf-16",
+    textDocumentSync = { openClose = true, change = 2 },
+    callHierarchyProvider = true,
+    completionProvider = { triggerCharacters = { "." } },
+    hoverProvider = true,
+    definitionProvider = true,
+    referencesProvider = true,
+    documentFormattingProvider = true,
+    semanticTokensProvider = { full = true },
+    inlayHintProvider = true,
+    codeLensProvider = {},
+    diagnosticProvider = {},
+    -- blink.cmp reads this straight off server_capabilities, not via supports_method.
+    signatureHelpProvider = { triggerCharacters = { "(" } },
+    workspace = { workspaceFolders = { supported = true } },
+    -- A key nothing here knows about: the strip must be an allowlist.
+    experimental = {},
+  },
+}
+cfg.on_init(client, {})
+local kept = vim.tbl_keys(client.server_capabilities)
+table.sort(kept)
+local publish = (cfg.handlers or {})["textDocument/publishDiagnostics"]
+if publish then
+  publish(nil, {
+    uri = vim.uri_from_fname("/tmp/emmylua_probe.lua"),
+    diagnostics = {
+      { range = { start = { line = 0, character = 0 }, ["end"] = { line = 0, character = 1 } },
+        message = "duplicate", severity = 2 },
+    },
+  }, { client_id = 1, method = "textDocument/publishDiagnostics" })
+end
+local settings = (cfg.settings or {}).emmylua or {}
+emit({
+  found = true,
+  kept = kept,
+  has_publish_handler = publish ~= nil,
+  diagnostics_after_publish = #vim.diagnostic.get(),
+  diagnostics_enabled = vim.tbl_get(settings, "diagnostics", "enable"),
+  codelens_enabled = vim.tbl_get(settings, "codeLens", "enable"),
+  hint_enabled = vim.tbl_get(settings, "hint", "enable"),
+})
+""",
+    )
+    assert got["found"], "nvim-lspconfig no longer configures emmylua_ls"
+    assert got["kept"] == [
+        "callHierarchyProvider",
+        "positionEncoding",
+        "textDocumentSync",
+    ], got["kept"]
+    assert got["has_publish_handler"], "emmylua_ls diagnostics reach vim.diagnostic"
+    assert got["diagnostics_after_publish"] == 0, got
+    # The server need not compute what the client throws away. codeLens and hint
+    # also override nvim-lspconfig's emmylua_ls default of enable = true.
+    assert got["diagnostics_enabled"] is False, got
+    assert got["codelens_enabled"] is False, got
+    assert got["hint_enabled"] is False, got
+
+
 def test_telescope_pickers_hold_only_option_tables(tmp_path):
     """Every `pickers` value is an option table for the picker it is keyed by.
 
@@ -1069,3 +1157,739 @@ def test_mapleader_is_assigned_once_before_lazy_setup():
     lazy_at = init_lua.find('require("setup.lazy")')
     remap_at = init_lua.find('require("setup.remap")')
     assert 0 <= lazy_at < remap_at, "setup/init.lua must load lazy.lua before remap.lua"
+
+
+# ---------------------------------------------------------------------------
+# B4: nvim_listen must not expose the msgpack-RPC socket to the network.
+# ---------------------------------------------------------------------------
+ZSHRC = REPO_ROOT / ".zshrc"
+
+
+def _zsh_alias(name: str) -> str:
+    prefix = f"alias {name}="
+    lines = [
+        line
+        for line in ZSHRC.read_text(encoding="utf-8").splitlines()
+        if line.startswith(prefix)
+    ]
+    assert len(lines) == 1, f"expected exactly one `{prefix}...` line: {lines}"
+    return lines[0]
+
+
+def test_nvim_listen_binds_to_loopback_only():
+    """`--listen 0.0.0.0:PORT` serves unauthenticated msgpack-RPC to the whole LAN.
+
+    Anyone who can reach the port can make the editor run arbitrary commands
+    (`nvim_command('!...')`, `jobstart`), so the alias must listen on loopback
+    only. Remote use goes through an SSH tunnel instead.
+    """
+    alias = _zsh_alias("nvim_listen")
+    assert "--listen" in alias, alias
+    # The literal is what the test forbids, not a bind.
+    any_interface = "0.0.0.0"  # nosec B104
+    assert any_interface not in alias, (
+        f"nvim_listen is reachable from the network: {alias}"
+    )
+    assert re.search(r"--listen\s+(127\.0\.0\.1|localhost):\d+", alias), alias
+
+
+def test_nvim_attach_targets_the_port_nvim_listen_serves():
+    listen = re.search(r":(\d+)", _zsh_alias("nvim_listen"))
+    attach = re.search(r"--server\s+\S+:(\d+)", _zsh_alias("nvim_attach"))
+    assert listen and attach
+    assert listen.group(1) == attach.group(1)
+
+
+def test_nvim_listen_comment_points_remote_use_at_an_ssh_tunnel():
+    lines = ZSHRC.read_text(encoding="utf-8").splitlines()
+    at = next(
+        n for n, line in enumerate(lines) if line.startswith("alias nvim_listen=")
+    )
+    nearby = "\n".join(lines[max(0, at - 4) : at]).lower()
+    assert "ssh" in nearby and "tunnel" in nearby, (
+        "say next to the alias why it is loopback-only and how to reach it remotely"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B6: `checktime` is E11 inside the command-line window.
+# ---------------------------------------------------------------------------
+def _real_vim_or_skip():
+    binary = _real_vim()
+    if binary is None:
+        pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+    return binary
+
+
+class TestVimChecktimeAndCmdwin:
+    """Opening `q:` / `q/` / `<C-f>` fires BufEnter, and `checktime` is not allowed there.
+
+    Every open of the command-line window therefore raised E11 (and set v:errmsg),
+    which Neovim also prints as an "Error in BufEnter Autocommands". The checktime
+    autocmd has to stay off while getcmdwintype() is non-empty.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        return _real_vim_or_skip()
+
+    def run(self, vim, tmp_path, body):
+        script = (
+            "set nocompatible\nlet g:R = []\n"
+            f"source {VIM_COMMANDS_RC}\n"
+            + body
+            + "\ncall writefile(g:R, $PROBE_OUT)\nqa!\n"
+        )
+        got = {}
+        for line in _run_vim_script(vim, script, extra_source=None).splitlines():
+            key, _, value = line.partition("=")
+            got[key] = value
+        return got
+
+    def test_opening_the_cmdwin_raises_no_e11(self, vim, tmp_path):
+        got = self.run(
+            vim,
+            tmp_path,
+            """
+let v:errmsg = ''
+autocmd CmdwinEnter * call add(g:R, 'TYPE=' . getcmdwintype())
+call feedkeys("q:\\<C-c>\\<C-c>", 'xt')
+call add(g:R, 'ERRMSG=' . v:errmsg)
+""",
+        )
+        assert got.get("TYPE") == ":", f"the command-line window never opened: {got}"
+        assert "E11" not in got["ERRMSG"], got["ERRMSG"]
+
+    def test_checktime_is_still_registered_for_all_three_events(self, vim, tmp_path):
+        """Positive control: the guard must not switch the autocmd off everywhere.
+
+        A reload-based control cannot work: both editors re-check the file on their
+        own when a buffer is re-entered, and an autocmd-driven `checktime` is deferred
+        until typed input in a script, so a changed file proves nothing either way.
+        """
+        got = self.run(
+            vim,
+            tmp_path,
+            """
+for s:ev in ['BufEnter', 'WinEnter', 'FocusGained']
+  call add(g:R, s:ev . '=' . substitute(execute('autocmd vimrc-checktime ' . s:ev),
+        \\ '\\_s\\+', ' ', 'g'))
+endfor
+""",
+        )
+        for event in ("BufEnter", "WinEnter", "FocusGained"):
+            assert "checktime" in got[event], got
+
+
+NVIM_INIT_LUA = REPO_ROOT / ".config/nvim/lua/setup/init.lua"
+
+
+def _nvim_headless(tmp_path, body: str) -> dict:
+    """Run `body` as the init of a real `nvim --headless` and return its JSON line.
+
+    Unlike `nvim -l` this pumps the event loop, which the command-line window needs.
+    The probe must call `emit(...)` and then `qa!` itself; a probe that never does
+    is a hang, killed by the timeout rather than reported as a pass.
+    """
+    if NVIM is None:
+        pytest.skip("nvim not installed")
+    probe = tmp_path / "headless_probe.lua"
+    probe.write_text(_PROBE_PRELUDE + body, encoding="utf-8")
+    proc = subprocess.run(
+        [NVIM, "--headless", "-u", str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+        },
+    )
+    out = [line for line in proc.stdout.splitlines() if line.startswith("{")]
+    assert out, (
+        f"probe printed no JSON (rc={proc.returncode}): {proc.stdout!r} {proc.stderr!r}"
+    )
+    return json.loads(out[-1])
+
+
+_STUB_SETUP_MODULES = """
+-- setup/init.lua pulls in the whole config; only its autocmds are under test.
+for _, name in ipairs({ "setup.lazy", "setup.set", "setup.remap",
+                        "setup.functions.file", "setup.functions.ai" }) do
+  package.loaded[name] = true
+end
+"""
+
+
+class TestNvimChecktimeAndCmdwin:
+    def test_opening_the_cmdwin_raises_no_e11(self, tmp_path):
+        got = _nvim_headless(
+            tmp_path,
+            _STUB_SETUP_MODULES
+            + f"""
+dofile({str(NVIM_INIT_LUA)!r})
+vim.v.errmsg = ""
+vim.api.nvim_create_autocmd("CmdwinEnter", {{ callback = function()
+  vim.schedule(function()
+    emit({{ type = vim.fn.getcmdwintype(), errmsg = vim.v.errmsg }})
+    vim.cmd("qa!")
+  end)
+end }})
+vim.api.nvim_feedkeys("q:", "nt", false)
+""",
+        )
+        assert got["type"] == ":", f"the command-line window never opened: {got}"
+        assert "E11" not in got["errmsg"], got["errmsg"]
+
+    def test_checktime_still_runs_on_all_three_events_outside_the_cmdwin(
+        self, tmp_path
+    ):
+        """Positive control: the guard must not switch the autocmd off everywhere.
+
+        Observed without relying on a reload: re-entering a buffer reloads a changed
+        file on its own, so a reload cannot tell the autocmd apart from no autocmd.
+        An autocmd is accepted either as a plain `:checktime` command or as a callback
+        that runs it (seen through a spy on `vim.cmd`).
+        """
+        got = _nvim_headless(
+            tmp_path,
+            _STUB_SETUP_MODULES
+            + f"""
+dofile({str(NVIM_INIT_LUA)!r})
+local seen = {{}}
+local function record(what) seen[#seen + 1] = what end
+vim.cmd = setmetatable({{}}, {{
+  __call = function(_, command) record(command) end,
+  __index = function(_, name) return function() record(name) end end,
+}})
+local function runs_checktime(event)
+  for _, au in ipairs(vim.api.nvim_get_autocmds({{ group = "setup", event = event }})) do
+    if au.command == "checktime" then return true end
+  end
+  seen = {{}}
+  vim.api.nvim_exec_autocmds(event, {{ group = "setup" }})
+  return vim.tbl_contains(seen, "checktime")
+end
+local per_event = {{}}
+for _, event in ipairs({{ "BufEnter", "WinEnter", "FocusGained" }}) do
+  per_event[event] = runs_checktime(event)
+end
+emit(per_event)
+os.exit(0)
+""",
+        )
+        assert got == {"BufEnter": True, "WinEnter": True, "FocusGained": True}, got
+
+
+# ---------------------------------------------------------------------------
+# B7: cnoreabbrev must only expand when it is the whole ':' command line.
+# ---------------------------------------------------------------------------
+VIM_PLUGINS_CONFIG_RC = REPO_ROOT / ".vim/rc/30-plugins-config.vim"
+
+# (typed keys, command line as it stands after the abbreviation had its chance).
+# Typed text ends in a space, which is what triggers expansion; the cmdline is read
+# back with <C-r>= and abandoned with <C-c>, so nothing is ever executed (`:wq`
+# would quit the probe).
+ABBREV_EXPANDS = [
+    (":W ", ":w "),
+    (":Q ", ":q "),
+    (":Wq ", ":wq "),
+    (":wQ ", ":wq "),
+    (":WQ ", ":wq "),
+    (":Wa ", ":wa "),
+    (":Qall ", ":qall "),
+    (":W! ", ":w! "),
+    (":Q! ", ":q! "),
+    (":Qall! ", ":qall! "),
+    (":f ", ":Files "),
+    (":gf ", ":GFiles "),
+]
+ABBREV_LEFT_ALONE = [
+    ("/f ", "/f "),
+    ("?f ", "?f "),
+    ("/W ", "/W "),
+    ("/gf ", "/gf "),
+    (":e f.txt ", ":e f.txt "),
+    (":e gf.c ", ":e gf.c "),
+    (":e W ", ":e W "),
+    (":s/a/Q/ ", ":s/a/Q/ "),
+    (":echo Wq ", ":echo Wq "),
+]
+
+
+class TestVimCmdlineAbbreviations:
+    """`cnoreabbrev f Files` fires wherever `f` is a word -- `/f` searched for "Files"
+    and `:e f.txt` opened `Files.txt`. Each one may expand only as the whole ':' line.
+    """
+
+    @pytest.fixture(scope="class")
+    def result(self):
+        vim = _real_vim_or_skip()
+        cases = [typed for typed, _ in ABBREV_EXPANDS + ABBREV_LEFT_ALONE]
+        script = f"""
+set nocompatible
+source {VIM_PLUGINS_CONFIG_RC}
+let g:R = []
+function! Cap() abort
+  call add(g:R, getcmdtype() . getcmdline())
+  return ''
+endfunction
+for s:keys in {_vim_list(cases)}
+  call feedkeys(s:keys . "\\<C-r>=Cap()\\<CR>\\<C-c>", 'xt')
+endfor
+call writefile(g:R, $PROBE_OUT)
+qa!
+"""
+        raw = _run_vim_script(vim, script, extra_source=None)
+        got = raw.splitlines()
+        assert len(got) == len(cases), f"probe lost cases: {raw!r}"
+        return dict(zip(cases, got, strict=True))
+
+    @pytest.mark.parametrize(("typed", "expected"), ABBREV_EXPANDS)
+    def test_still_expands_as_a_whole_ex_command(self, result, typed, expected):
+        assert result[typed] == expected
+
+    @pytest.mark.parametrize(("typed", "expected"), ABBREV_LEFT_ALONE)
+    def test_does_not_expand_in_searches_or_mid_command(self, result, typed, expected):
+        assert result[typed] == expected
+
+    def test_enter_alone_runs_the_fzf_command(self):
+        """The expansion also has to happen when <CR> is the trigger, not a space."""
+        vim = _real_vim_or_skip()
+        raw = _run_vim_script(
+            vim,
+            f"""
+set nocompatible
+source {VIM_PLUGINS_CONFIG_RC}
+command! Files call writefile(['Files'], $PROBE_OUT)
+call feedkeys(":f\\<CR>", 'xt')
+qa!
+""",
+            extra_source=None,
+        )
+        assert raw.strip() == "Files"
+
+
+# ---------------------------------------------------------------------------
+# B8: Esc must reach the CUI tools toggle_tool() opens.
+# ---------------------------------------------------------------------------
+class TestToggletermEscMapping:
+    PROBE = """
+-- Stand-in for toggleterm's Terminal: like the real one it fixes self.bufnr BEFORE
+-- it starts the job, so TermOpen fires for a buffer the spec already knows about.
+local function start_term(buf)
+  vim.api.nvim_buf_call(buf, function()
+    vim.fn.jobstart({ "sh", "-c", "true" }, { term = true })
+  end)
+end
+package.loaded["toggleterm"] = { setup = function() end }
+package.loaded["toggleterm.terminal"] = { Terminal = {
+  new = function(_, opts)
+    local term = { cmd = opts.cmd }
+    function term:toggle()
+      self.bufnr = vim.api.nvim_create_buf(false, true)
+      start_term(self.bufnr)
+    end
+    return term
+  end,
+} }
+
+local spec = require("setup.plugins.utilities.toggleterm")
+spec.config()
+
+local function esc_mapped(buf)
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, "t")) do
+    if map.lhs:lower() == "<esc>" then return true end
+  end
+  return false
+end
+
+local tools = {}
+for _, key in ipairs(spec.keys) do
+  if type(key[2]) == "function" then
+    key[2]()
+    table.insert(tools, key[1])
+  end
+end
+-- Buffers the tool handlers created, found by being terminals.
+local tool_bufs = {}
+for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+  if vim.bo[buf].buftype == "terminal" then table.insert(tool_bufs, buf) end
+end
+
+local shell = vim.api.nvim_create_buf(false, true)
+start_term(shell)
+
+local tool_mapped = {}
+for _, buf in ipairs(tool_bufs) do
+  if esc_mapped(buf) then table.insert(tool_mapped, buf) end
+end
+emit({ tools = tools, tool_terminals = #tool_bufs, tool_mapped = tool_mapped,
+       shell_mapped = esc_mapped(shell) })
+"""
+
+    @pytest.fixture(scope="class")
+    def probe(self, tmp_path_factory):
+        return _nvim_probe(tmp_path_factory.mktemp("toggleterm"), self.PROBE)
+
+    def test_the_probe_opened_the_tool_terminals(self, probe):
+        # Anchor: without it, "no tool terminal has the mapping" holds trivially.
+        assert len(probe["tools"]) >= 4, probe
+        assert probe["tool_terminals"] >= 3, probe
+
+    def test_tool_terminals_do_not_swallow_esc(self, probe):
+        assert probe["tool_mapped"] == [], (
+            "t-mode <Esc> is remapped in a claude/codex/gemini/lazydocker terminal, "
+            f"so the TUI never receives it: {probe}"
+        )
+
+    def test_an_ordinary_shell_terminal_keeps_the_mapping(self, probe):
+        assert probe["shell_mapped"] is True, probe
+
+
+# ---------------------------------------------------------------------------
+# B5: a job's exit is not the end of its output.
+# ---------------------------------------------------------------------------
+class TestVimJobFinalizesAfterAllOutput:
+    """Vim may still deliver out_cb / err_cb data after exit_cb has run.
+
+    The finish callbacks used to be scheduled straight from exit_cb, so a reply that
+    was still in flight when the process ended was cut short -- and then offered for
+    `y` (replace the selection) as if it were complete. The Ollama path got a JSON
+    document with its tail missing. The finish step may only run once exit_cb has
+    given the status AND the channel's close_cb has fired (all output delivered).
+
+    Driven through real jobs. A deterministic race needs no timing luck: the fake
+    tool prints, hands the rest of its output to a background child that sleeps, and
+    exits at once -- so exit_cb is guaranteed to run ~300 ms before that output
+    arrives. The new behaviour never depends on the timing; only the RED run does.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        return _real_vim_or_skip()
+
+    WAIT_PENDING = """
+let s:n = 0
+while s:n < 400 && {cond}
+  sleep 20m
+  let s:n += 1
+endwhile
+"""
+
+    def tool(self, tmp_path, name, body):
+        script = tmp_path / name
+        script.write_text(body, encoding="utf-8")
+        script.chmod(0o755)
+        return script
+
+    def payload(self, tmp_path):
+        payload = tmp_path / "payload"
+        payload.write_text("payload\n", encoding="utf-8")
+        return payload
+
+    def single(self, vim, tmp_path, body, *, exit_cb="s:AI_SingleExit", tool="claude"):
+        script = self.tool(tmp_path, "fake-tool.sh", body)
+        payload = self.payload(tmp_path)
+        wait = self.WAIT_PENDING.format(cond="s:st.status ==# 'pending'")
+        return _run_ai_scenario(
+            vim,
+            f"""
+call setline(1, {_vim_list(TARGET_LINES)})
+let s:ctx = {{'tool': '{tool}', 'selected': ['T2', 'T3'], 'ft': 'text',
+      \\ 'target_buf': bufnr('%'), 'start': 2, 'end': 3, 'changedtick': b:changedtick}}
+call s:AI_RunJob(s:ctx, '{payload}', 'sh {script}', '{exit_cb}')
+let s:st = b:ai_state
+{wait}
+call add(g:R, 'STATUS=' . s:st.status)
+call add(g:R, 'RESP=' . string(getbufline(s:st.resp_buf, 1, '$')))
+call add(g:R, 'TARGET_AFTER=' . string(getbufline(s:ctx.target_buf, 1, '$')))
+""",
+        )
+
+    def test_late_stdout_is_part_of_the_reply(self, vim, tmp_path):
+        got = self.single(
+            vim,
+            tmp_path,
+            "printf 'A\\n'\n(sleep 0.3; printf 'B\\nC\\n') &\nexit 0\n",
+        )
+        assert got["STATUS"] == "done", got
+        assert got["RESP"] == str(["A", "B", "C"]), (
+            f"the reply was finalized before all of it arrived: {got}"
+        )
+
+    def test_late_stderr_still_explains_a_failure(self, vim, tmp_path):
+        got = self.single(
+            vim,
+            tmp_path,
+            "(sleep 0.3; echo 'quota exceeded' >&2) &\nexit 3\n",
+        )
+        assert got["STATUS"] == "failed", got
+        assert "quota exceeded" in got["RESP"], got
+        assert "exit 3" in got["RESP"], got
+
+    def test_a_late_tail_does_not_break_the_ollama_json(self, vim, tmp_path):
+        got = self.single(
+            vim,
+            tmp_path,
+            "printf '%s\\n' '{\"response\": \"R1\\nR2\",'\n"
+            "(sleep 0.3; printf '%s\\n' ' \"done\": true}') &\nexit 0\n",
+            exit_cb="s:AI_OllamaExit",
+            tool="gemma",
+        )
+        assert got["STATUS"] == "done", got
+        assert got["RESP"] == str(["R1", "R2"]), got
+
+    def test_an_ordinary_fast_job_still_completes(self, vim, tmp_path):
+        """Regression guard: a gate that never opens passes every test above by
+        hanging, which the wait loop would report as a stuck 'pending'."""
+        got = self.single(vim, tmp_path, "printf 'A\\nB\\n'\n")
+        assert got["STATUS"] == "done", got
+        assert got["RESP"] == str(["A", "B"]), got
+
+    def test_cancelling_a_running_job_still_removes_the_tmpfile(self, vim, tmp_path):
+        """`q` while pending stops the job; waiting for the channel must not turn
+        that into a leaked selection on disk."""
+        script = self.tool(tmp_path, "slow.sh", "sleep 30\n")
+        payload = self.payload(tmp_path)
+        got = _run_ai_scenario(
+            vim,
+            f"""
+call setline(1, {_vim_list(TARGET_LINES)})
+let s:ctx = {{'tool': 'claude', 'selected': ['T2', 'T3'], 'ft': 'text',
+      \\ 'target_buf': bufnr('%'), 'start': 2, 'end': 3, 'changedtick': b:changedtick}}
+call s:AI_RunJob(s:ctx, '{payload}', 'sh {script}', 's:AI_SingleExit')
+let s:st = b:ai_state
+sleep 200m
+call s:AI_Close(s:st)
+let s:n = 0
+while s:n < 200 && filereadable('{payload}')
+  sleep 20m
+  let s:n += 1
+endwhile
+call add(g:R, 'TMPFILE_LEFT=' . filereadable('{payload}'))
+call add(g:R, 'TARGET_AFTER=' . string(getbufline(s:ctx.target_buf, 1, '$')))
+""",
+        )
+        assert got["TMPFILE_LEFT"] == "0", got
+        assert got["TARGET_AFTER"] == UNTOUCHED, got
+
+    def test_all_mode_finishes_every_tab_after_its_late_output(self, vim, tmp_path):
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        for name, tag in (("claude", "A"), ("codex", "B")):
+            tool = bindir / name
+            tool.write_text(
+                f"#!/bin/sh\nprintf '{tag}1\\n'\n(sleep 0.3; printf '{tag}2\\n') &\nexit 0\n",
+                encoding="utf-8",
+            )
+            tool.chmod(0o755)
+        payload = self.payload(tmp_path)
+        wait = self.WAIT_PENDING.format(
+            cond="(s:st.status[1] ==# 'pending' || s:st.status[2] ==# 'pending')"
+        )
+        got = _run_ai_scenario(
+            vim,
+            f"""
+let $PATH = '{bindir}:' . $PATH
+let s:ai_all_tools = ['claude', 'codex']
+call setline(1, {_vim_list(TARGET_LINES)})
+let s:ctx = {{'selected': ['T2', 'T3'], 'ft': 'text',
+      \\ 'target_buf': bufnr('%'), 'start': 2, 'end': 3, 'changedtick': b:changedtick}}
+call s:AI_RunAll(s:ctx, 'SYS', '{payload}')
+let s:st = b:ai_state
+{wait}
+call add(g:R, 'STATUS1=' . s:st.status[1])
+call add(g:R, 'STATUS2=' . s:st.status[2])
+call add(g:R, 'RESP1=' . string(getbufline(s:st.bufs[1], 1, '$')))
+call add(g:R, 'RESP2=' . string(getbufline(s:st.bufs[2], 1, '$')))
+call add(g:R, 'PENDING=' . s:st.pending)
+call add(g:R, 'TMPFILE_LEFT=' . filereadable('{payload}'))
+call add(g:R, 'TARGET_AFTER=' . string(getbufline(s:ctx.target_buf, 1, '$')))
+""",
+        )
+        assert (got["STATUS1"], got["STATUS2"]) == ("done", "done"), got
+        assert got["RESP1"] == str(["A1", "A2"]), got
+        assert got["RESP2"] == str(["B1", "B2"]), got
+        # Counted exactly once per job: a double decrement would free the shared
+        # tmpfile while the other job still reads it.
+        assert got["PENDING"] == "0", got
+        assert got["TMPFILE_LEFT"] == "0", got
+
+
+# ---------------------------------------------------------------------------
+# B1: nvim-treesitter on the `main` branch, without the get_node_text patch.
+# ---------------------------------------------------------------------------
+TREESITTER_SPEC = (
+    REPO_ROOT / ".config/nvim/lua/setup/plugins/visual/nvim-treesitter.lua"
+)
+LAZY_LOCK = REPO_ROOT / ".config/nvim/lazy-lock.json"
+# The frozen `master` pin this migration replaced (README: "Neovim 0.12 is not supported").
+OLD_MASTER_COMMIT = "cf12346a3414fa1b06af75c79faebe7f76df080a"
+
+
+def _lua_code(path) -> str:
+    """The file's text without whole-line `--` comments (the new comments quote the
+    old API as the thing not to write)."""
+    return "\n".join(
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("--")
+    )
+
+
+class TestTreesitterSpecIsOnMain:
+    def test_the_spec_names_the_main_branch(self):
+        assert re.search(r'branch\s*=\s*"main"', _lua_code(TREESITTER_SPEC))
+
+    def test_the_lockfile_pins_a_real_main_commit(self):
+        entry = json.loads(LAZY_LOCK.read_text(encoding="utf-8"))["nvim-treesitter"]
+        assert entry["branch"] == "main", entry
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["commit"]), entry
+        assert entry["commit"] != OLD_MASTER_COMMIT, entry
+
+    def test_no_master_branch_api_is_left(self):
+        """`nvim-treesitter.configs` and its modules do not exist on main."""
+        code = _lua_code(TREESITTER_SPEC)
+        for dead in (
+            "nvim-treesitter.configs",
+            "ensure_installed",
+            "auto_install",
+            "additional_vim_regex_highlighting",
+        ):
+            assert dead not in code, f"master-only `{dead}` is still configured"
+
+    def test_get_node_text_is_not_monkeypatched(self):
+        """The patch swallowed errors and returned "" -- which silently dropped
+        language injection (a ```lua fence in Markdown lost its highlighting)."""
+        assert not re.search(r"get_node_text\s*=", _lua_code(TREESITTER_SPEC))
+
+
+class TestTreesitterSpecBehaviour:
+    """The spec's `config`, run against a recording stand-in for the plugin API that
+    the main-branch README documents (`install`, plus `get_available`)."""
+
+    PROBE = """
+local calls = { start = {}, install = {} }
+local pending = {}
+local have_tools = true
+local available = { "foo", "bar", "ipkg", "lua" }
+local loadable = { lua = true }
+
+-- master-only module: stubbed so the pre-migration config can run to the end and
+-- fail on the assertions rather than on a missing module.
+local configs_called = false
+package.loaded["nvim-treesitter.configs"] = {
+  setup = function() configs_called = true end,
+}
+package.loaded["nvim-treesitter"] = {
+  setup = function() end,
+  get_available = function() return available end,
+  install = function(langs)
+    table.insert(calls.install, type(langs) == "table" and langs[1] or langs)
+    return { await = function(_, cb) table.insert(pending, cb) end }
+  end,
+}
+vim.fn.executable = function() return have_tools and 1 or 0 end
+vim.treesitter.language.get_lang = function(ft) return ft end
+vim.treesitter.language.add = function(lang) return loadable[lang] and true or nil end
+vim.treesitter.start = function(buf) table.insert(calls.start, buf) end
+
+local before = vim.treesitter.get_node_text
+require("setup.plugins.visual.nvim-treesitter").config()
+local node_text_untouched = rawequal(before, vim.treesitter.get_node_text)
+
+local function open(ft)
+  local buf = vim.api.nvim_create_buf(true, false)
+  vim.bo[buf].filetype = ft
+  return buf
+end
+local function started(buf) return vim.tbl_contains(calls.start, buf) end
+
+local lua_buf = open("lua")
+local installed_before_foo = #calls.install
+
+local foo = open("foo")
+local foo_started_before_install = started(foo)
+local installs_for_foo = #calls.install - installed_before_foo
+for _, cb in ipairs(pending) do cb(nil, true) end
+vim.wait(100)
+local foo_started_after_install = started(foo)
+
+local foo2 = open("foo")
+local installs_after_second_foo = #calls.install
+
+local ipkg = open("ipkg")
+local unknown = open("not_a_parser")
+have_tools = false
+local bar = open("bar")
+
+emit({
+  node_text_untouched = node_text_untouched,
+  configs_called = configs_called,
+  lua_started = started(lua_buf),
+  installed_for_loadable = installed_before_foo,
+  installs_for_foo = installs_for_foo,
+  foo_started_before_install = foo_started_before_install,
+  foo_started_after_install = foo_started_after_install,
+  installs_after_second_foo = installs_after_second_foo,
+  installs_total = calls.install,
+  ipkg_started = started(ipkg),
+  unknown_started = started(unknown),
+  bar_started = started(bar),
+}
+)
+"""
+
+    @pytest.fixture(scope="class")
+    def probe(self, tmp_path_factory):
+        return _nvim_probe(tmp_path_factory.mktemp("treesitter"), self.PROBE)
+
+    def test_config_leaves_get_node_text_alone(self, probe):
+        assert probe["node_text_untouched"] is True, probe
+
+    def test_config_does_not_use_the_master_configs_module(self, probe):
+        assert probe["configs_called"] is False, probe
+
+    def test_an_available_parser_starts_highlighting(self, probe):
+        assert probe["lua_started"] is True, probe
+        assert probe["installed_for_loadable"] == 0, "installed a parser that loads"
+
+    def test_a_missing_parser_is_installed_once_then_the_buffer_is_started(self, probe):
+        assert probe["installs_for_foo"] == 1, probe
+        assert probe["foo_started_before_install"] is False, probe
+        assert probe["foo_started_after_install"] is True, probe
+        assert probe["installs_after_second_foo"] == 1, (
+            "a second buffer of the same filetype re-triggered the install"
+        )
+
+    def test_ipkg_and_unknown_filetypes_are_never_installed(self, probe):
+        assert probe["installs_total"] == ["foo"], probe
+        assert probe["ipkg_started"] is False, probe
+        assert probe["unknown_started"] is False, probe
+
+    def test_nothing_is_installed_without_the_build_tools(self, probe):
+        # `bar` is available and missing, but the tree-sitter CLI stand-in says absent.
+        assert "bar" not in probe["installs_total"], probe
+        assert probe["bar_started"] is False, probe
+
+
+def test_treesitter_loads_eagerly_because_main_cannot_be_lazy_loaded(tmp_path):
+    got = _nvim_probe(
+        tmp_path,
+        """
+local spec = require("setup.plugins.visual.nvim-treesitter")
+emit({ lazy = spec.lazy, event = spec.event, cmd = spec.cmd, ft = spec.ft,
+       branch = spec.branch, build = spec.build })
+""",
+    )
+    assert got["lazy"] is False, got
+    assert got["branch"] == "main", got
+    # Parsers installed under an older plugin revision must be rebuilt on update.
+    assert got["build"] == ":TSUpdate", got
+    for trigger in ("event", "cmd", "ft"):
+        assert trigger not in got, f"lazy trigger `{trigger}` on an eager plugin: {got}"
