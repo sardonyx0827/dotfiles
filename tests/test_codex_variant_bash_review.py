@@ -95,6 +95,19 @@ class TestBlockingPaths:
         assert res.stdout == ""
         assert "curl" in res.stderr
 
+    def test_commit_message_line_starting_with_a_denied_name_does_not_block(
+        self, run_hook
+    ):
+        # Parity with the claude variant (TestDenyIgnoresInertText): the entry
+        # must pass the original command so heredoc / quoted message text is
+        # not hard-blocked.
+        command = (
+            "git commit -m \"$(cat <<'EOF'\nfix: x\n\nssh keys are rotated\nEOF\n)\""
+        )
+        res = run_hook(HOOK, hook_payload(command), urlopen=fake_gemini("ALLOW"))
+        assert "Blocked dangerous command" not in res.stderr
+        assert res.exit_code != 2
+
     def test_deny_hidden_after_newline_blocks(self, run_hook):
         # Parity with the claude variant: a denied command hidden past a
         # newline must block (exit 2), not reach single-model review.

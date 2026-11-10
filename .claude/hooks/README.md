@@ -215,6 +215,33 @@ latency low for the common case:
    it runs only when both models return `ALLOW`; anything short of that stops
    for confirmation or is denied).
 
+   Denial looks only at text the shell actually runs. Every sub-command is also
+   checked line by line (so `ls\nsudo …` is caught), and that line split used
+   to ignore quoting, so a commit-message line, heredoc body line or
+   multi-line quoted argument that merely began with `ssh` / `curl` / `sudo`
+   was hard-denied — including Claude Code's own
+   `git commit -m "$(cat <<'EOF' …)"`. Such a match is now dropped when (a) it
+   lies only in a heredoc body or a quoted span containing a newline, (b) no
+   `$(…)` / backtick in that text runs it, and (c) every command that does run
+   is on a small data-only allowlist (`git` commit/add/push/…, `gh pr|issue|release`,
+   `cat`, `echo`, `printf`, `cd`). It is an allowlist on purpose: the
+   forms that execute a string (`bash -c`, `eval`, `| sh`, `git rebase --exec`,
+   `git -c alias.x=!…`, `tmux send-keys`, `$SHELL -c`, …) cannot be enumerated.
+   A line is judged by its raw first word, never through wrapper stripping
+   (`watch echo "…"` runs its arguments through `sh -c`) and never past a
+   leading `VAR=value` (`GIT_EDITOR` / `GIT_SSH_COMMAND` run their value); a
+   path (`./cat`) is not the allowlisted command; git options that start a
+   program (`-c`, `--config-env`, `--receive-pack`, `--upload-pack`, `--exec`,
+   `--exec-path`, including the abbreviations git accepts) void the exemption,
+   as do `(` `)` `` ` `` `{` `}` (zsh glob qualifiers such as `*(e:…:)` run code)
+   and any `>` write — writing a file can plant code that git's hooks or a later
+   safe-skipped command runs, so `cat > f <<'EOF'` keeps the deny. Commands with
+   `((`, `$[` or a `<<` inside `${…}` are not parsed at all (an arithmetic or
+   expansion `1<<X` would otherwise be read as a heredoc that swallows the next
+   lines), nor is a `<<$'EOF'` delimiter.
+   A python heredoc whose body starts a line with a denied name (`su = 3`) is a
+   known remaining false positive.
+
    Safe-skip is the conservative side: it matches the raw command string against
    an allowlist, so anything wrapped in grammar simply fails to match and goes
    to review. The resolver is consulted only by the exclusions below (grep / rg

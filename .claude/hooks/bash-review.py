@@ -161,7 +161,9 @@ try:
     secret_found, secret_label = scan_secrets(command, tool_input)
 
     # --- 危険コマンドの即時拒否 (改行分割は find_deny_command が捌く) ---
-    matched, deny_name = find_deny_command(sub_commands)
+    # command も渡す: heredoc 本体や複数行のクォート文字列 (コミットメッセージ等) の
+    # 行が DENY 名で始まるだけでハード DENY しないため (find_deny_command 参照)。
+    matched, deny_name = find_deny_command(sub_commands, command)
     if matched:
         reason = f"Blocked dangerous command: '{deny_name}'"
         emit_decision("deny", reason)

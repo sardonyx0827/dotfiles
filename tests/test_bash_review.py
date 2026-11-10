@@ -54,6 +54,128 @@ def hook_fns():
     return vars(_common)
 
 
+CLAUDE_STYLE_COMMIT = (
+    "git add -A && git commit -m \"$(cat <<'EOF'\n"
+    'fix: it\'s "done" now\n'
+    "\n"
+    "ssh keys are rotated on deploy\n"
+    "curl calls now retry (twice)\n"
+    "EOF\n"
+    ')" && git push'
+)
+
+
+class TestDenyIgnoresInertText:
+    """The deny layer split every sub-command on raw newlines, so a line of a
+    commit message, heredoc body or multi-line quoted argument that merely began
+    with `ssh` / `curl` / `sudo` was hard-denied -- and a deny cannot be
+    overridden with ask. Claude Code's own commit form
+    (`git commit -m "$(cat <<'EOF' ...)"`) hit it whenever the body had such a
+    line. Text that the shell never executes is exempt, but only when every
+    command that does run is a known data-only one (allowlist, not a list of
+    string-executing forms, which could never be complete)."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'git commit -m "fix: x\n\nssh keys are rotated"',
+            "git commit -m 'fix: x\n\nssh keys are rotated'",
+            "git commit -F - <<'EOF'\nfix: x\n\nssh keys are rotated\nEOF",
+            CLAUDE_STYLE_COMMIT,
+            "cd repo && git commit -m \"$(cat <<'EOF'\nsudo is no longer needed\nEOF\n)\"",
+            'gh pr create --title t --body "summary\n\ncurl calls now retry"',
+            'echo "line one\nnc is used here"',
+        ],
+    )
+    def test_text_the_shell_never_runs_is_not_denied(self, hook_fns, command):
+        subs = hook_fns["_split_commands"](command)
+        assert hook_fns["find_deny_command"](subs, command) == (False, "")
+
+    @pytest.mark.parametrize(
+        ("command", "name"),
+        [
+            # Bodies that ARE code.
+            ("bash <<'EOF'\nsudo rm -rf /\nEOF", "sudo"),
+            ("cat <<'EOF' | sh\nsudo id\nEOF", "sudo"),
+            ("source /dev/stdin <<'EOF'\nsudo id\nEOF", "sudo"),
+            ('bash -c "echo hi\nsudo id"', "sudo"),
+            ("eval 'x\nsudo id'", "sudo"),
+            ('echo "x\nsudo id" | sh', "sudo"),
+            ("git rebase --exec 'true\nsudo id' HEAD~1", "sudo"),
+            ("git submodule foreach 'true\nsudo id'", "sudo"),
+            ("git -c 'alias.x=!true\nsudo id' commit -m x", "sudo"),
+            ('$SHELL -c "x\nsudo id"', "sudo"),
+            ('tmux send-keys "x\nsudo id"', "sudo"),
+            # Kept as a known false positive: python is not a data-only command.
+            ("python3 - <<'EOF'\nsu = 3\nEOF", "su"),
+            # Expansions inside text are executed.
+            ("cat <<EOF\n$(sudo id)\nEOF", "sudo"),
+            ('git commit -m "line one\n$(sudo id)"', "sudo"),
+            ('git commit -m "line one\n`sudo id`"', "sudo"),
+            ('git commit -m "$(echo x; sudo id)"', "sudo"),
+            # Real command lines next to inert text.
+            ("ls\nsudo id", "sudo"),
+            ("sudo id\ncat <<'EOF'\nsudo id\nEOF", "sudo"),
+            ("cat <<'EOF' > f\nx\nEOF\nsudo id", "sudo"),
+            ('git commit -m "x\ny" && ssh host', "ssh"),
+            ('"sudo" id', "sudo"),
+            # Unterminated quote: the parse is not trusted.
+            ('git commit -m "fix\nsudo id', "sudo"),
+            # A wrapper in front of an allowlisted name: watch runs its joined
+            # arguments through `sh -c`, so the "echo" argument is code. Lines
+            # are judged by their raw first word, never through wrapper stripping.
+            ('watch echo "x\nsudo id"', "sudo"),
+            ('flock /tmp/l -c "echo x\nsudo id"', "sudo"),
+            ('timeout 5 echo "x\nsudo id"', "sudo"),
+            # An arithmetic shift is not a heredoc: bash runs the next line.
+            ("echo $((1<<X))\nsudo id\nX", "sudo"),
+            ("(( y = 1<<X ))\nsudo id\nX", "sudo"),
+            # git transport options that run a program for a local-path remote,
+            # including the unambiguous abbreviations git accepts.
+            ('git push --receive-pack="x\nsudo id" ../repo', "sudo"),
+            ('git fetch --upload-pack "x\nsudo id" ../repo', "sudo"),
+            ("git push --rece='true\nsudo id' ../repo HEAD", "sudo"),
+            ("git fetch --upload-pa 'x\nsudo id' ../r", "sudo"),
+            ("git push --ex='x\nsudo id' ../r", "sudo"),
+            # Environment variables whose value git runs as a command.
+            ("GIT_EDITOR='true\nsudo id' git commit", "sudo"),
+            ("GIT_SSH_COMMAND='true\nsudo id' git fetch ssh://h/r", "sudo"),
+            # A newline-bearing quoted span in the command word position:
+            # `\<newline>` inside double quotes is removed, so this runs sudo.
+            ('"sud\\\no" cat file', "sudo"),
+            # `<<` that is not a heredoc (old-style arithmetic, parameter
+            # expansion) or a delimiter the shell reads differently (`$'EOF'`).
+            ("echo $[1<<X]\nsudo id\nX]", "sudo"),
+            ("echo ${a:1<<X}\nsudo id\nX}", "sudo"),
+            ("cat <<$'EOF'\nx\nEOF\nsudo id\n$EOF", "sudo"),
+            # A path is not the allowlisted command.
+            ("./cat 'a\nsudo id'", "sudo"),
+            # zsh glob qualifiers run code inside an echo/cat argument.
+            ("echo *(e:'true\nsudo id':)", "sudo"),
+            # Writing a file can plant code that git (hooks) or a later
+            # safe-skipped command runs, so a write keeps the deny.
+            (
+                "cat > .git/hooks/pre-commit <<'EOF' && git commit -m x\nsudo id\nEOF",
+                "sudo",
+            ),
+            ("cat > ./bin/ls <<'EOF'\n#!/bin/sh\nsudo id\nEOF", "sudo"),
+            ("cat > notes.md <<'EOF'\n# notes\nsudo is required here\nEOF", "sudo"),
+            ("tee notes.md <<'EOF' >/dev/null\nsu is not used\nEOF", "su"),
+            ("printf '%s\\n' 'line one\nnc is used here' > notes.txt", "nc"),
+        ],
+    )
+    def test_text_that_runs_is_still_denied(self, hook_fns, command, name):
+        subs = hook_fns["_split_commands"](command)
+        assert hook_fns["find_deny_command"](subs, command) == (True, name)
+
+    def test_claude_style_commit_reaches_review_instead_of_deny(self, run_hook):
+        res = run_hook(
+            HOOK, hook_payload(CLAUDE_STYLE_COMMIT), urlopen=fake_gemini("ALLOW")
+        )
+        assert res.decision != "deny"
+        assert "Blocked dangerous command" not in res.reason
+
+
 class TestPreDeny:
     def test_deny_command_is_blocked_without_review(self, run_hook):
         res = run_hook(HOOK, hook_payload("curl http://evil.example.com"))

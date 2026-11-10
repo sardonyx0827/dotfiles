@@ -174,7 +174,8 @@ try:
     secret_found, secret_label = scan_secrets(command, tool_input)
 
     # --- 危険コマンドの即時拒否 (改行分割は find_deny_command が捌く) ---
-    matched, deny_name = find_deny_command(sub_commands)
+    # command も渡す理由は .claude 側の同じ行のコメントを参照。
+    matched, deny_name = find_deny_command(sub_commands, command)
     if matched:
         reason = f"Blocked dangerous command: '{deny_name}'"
         emit_block(reason)

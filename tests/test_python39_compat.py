@@ -122,3 +122,16 @@ def test_bash_review_common_classifies_under_py39():
     r = _run39(["-c", driver, str(REPO_ROOT / ".claude/hooks")])
     assert (r.returncode, r.stdout.strip()) == (0, "False True"), r.stderr
 
+
+@needs_py39
+def test_inert_text_deny_exemption_runs_under_py39():
+    # The heredoc / quoted-text exemption (find_deny_command with the command)
+    # is its own code path; exercise it on 3.9 as well.
+    command = "git commit -m \"$(cat <<'EOF'\nfix: x\n\nssh keys are rotated\nEOF\n)\""
+    driver = (
+        "import sys; sys.path.insert(0, sys.argv[1]); import _bash_review_common as c; "
+        "cmd = sys.argv[2]; "
+        "print(c.find_deny_command(c._split_commands(cmd), cmd))"
+    )
+    r = _run39(["-c", driver, str(REPO_ROOT / ".claude/hooks"), command])
+    assert (r.returncode, r.stdout.strip()) == (0, "(False, '')"), r.stderr

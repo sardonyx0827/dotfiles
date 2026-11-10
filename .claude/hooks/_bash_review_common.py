@@ -1864,19 +1864,316 @@ def _is_deny_command(cmd: str) -> tuple[bool, str]:
     return False, ""
 
 
-def find_deny_command(sub_commands: list[str]) -> tuple[bool, str]:
-    """サブコマンド列から最初に一致した危険コマンドを返す (無ければ (False, ""))。
-
-    _split_commands は改行を区切りとして扱わない (シェルは扱う) ため、各サブ
-    コマンドをさらに行単位に分けて検査する。`ls\\nsudo rm -rf /` のように改行の
-    後ろへ隠した危険コマンドを取りこぼさない (high_risk_label と同じ改行対策)。
-    """
+def _find_deny_in_lines(sub_commands: list[str]) -> tuple[bool, str]:
     for sub_cmd in sub_commands:
         for line in sub_cmd.splitlines():
             matched, deny_name = _is_deny_command(line.strip())
             if matched:
                 return True, deny_name
     return False, ""
+
+
+def _scan_backtick(cmd: str, i: int) -> int:
+    """i (開きバッククォート) に対応する閉じの位置を返す。未閉鎖なら -1。"""
+    j = i + 1
+    while j < len(cmd) and cmd[j] != "`":
+        j += 2 if cmd[j] == "\\" else 1
+    return j if j < len(cmd) else -1
+
+
+# 改行を含むクォート区間の置き換え先。空白にすると、区間がコマンド語の位置に
+# あったとき次の語が先頭語に繰り上がる (`"sud\\<改行>o" cat f` が cat に見える)。
+# 許可リストに無い非空白の 1 語にして、その行を data-only と判定させない。
+_MULTILINE_SPAN = "0"
+# `${a:1<<X}` / `${a:-<<E}` のようにパラメータ展開の内側にある `<<` は heredoc では
+# ない。_live_scan はそれを heredoc と読んで後続のコマンド行を本体として捨てるので、
+# 含むものは解析しない ($[…] と ((…)) の算術も同じ理由: _live_texts)。
+_LT_LT_IN_PARAM = re.compile(r"\$\{[^}]*<<")
+
+
+def _live_scan(
+    cmd: str, i: int, extras: list[str], *, nested: bool
+) -> tuple[str | None, int]:
+    """シェルが実際にコマンドとして読む部分だけを残した綴りを返す。
+
+    捨てるのは (1) 改行を含むクォート区間 (1 語の引数であってコマンド行ではない。
+    改行を含まない区間は従来の綴りのまま残す)、(2) heredoc 本体、(3) コメント。
+    `$(...)` は heredoc を本体ごと読み飛ばしながら再帰で辿る (本体のアポストロフィで
+    括弧の対応を見失わないため)。ダブルクォート内の `$(...)` / バッククォートは
+    実行されるので、中身を extras に「もう 1 本の実行されるテキスト」として足す。
+    引用符なし区切りの heredoc 本体に `$(` / バッククォートがあれば本体も展開
+    (= 実行) されるので解析を諦める。未閉鎖のクォートや置換も同様に (None, …)
+    を返し、呼び出し側は除外せず DENY のままにする。nested=True は `$(` の内側で、
+    対応する `)` の位置で戻る。
+    """
+    out: list[str] = []
+    heredocs: list[tuple[str, bool, bool]] = []
+    depth = 0
+    at_word_start = True
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch == "\\":
+            out.append(cmd[i : i + 2])
+            i += 2
+            at_word_start = False
+            continue
+        if ch == "'" or cmd.startswith("$'", i):
+            ansi = ch == "$"
+            j = i + (2 if ansi else 1)
+            while j < n and cmd[j] != "'":
+                j += 2 if ansi and cmd[j] == "\\" else 1
+            if j >= n:
+                return None, n
+            span = cmd[i : j + 1]
+            out.append(_MULTILINE_SPAN if "\n" in span else span)
+            i = j + 1
+            at_word_start = False
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and cmd[j] != '"':
+                if cmd[j] == "\\":
+                    j += 2
+                elif cmd.startswith("$(", j) and not cmd.startswith("$((", j):
+                    inner, close = _live_scan(cmd, j + 2, extras, nested=True)
+                    if inner is None:
+                        return None, n
+                    extras.append(inner)
+                    j = close + 1
+                elif cmd[j] == "`":
+                    close = _scan_backtick(cmd, j)
+                    if close < 0:
+                        return None, n
+                    extras.append(cmd[j + 1 : close])
+                    j = close + 1
+                else:
+                    j += 1
+            if j >= n:
+                return None, n
+            span = cmd[i : j + 1]
+            out.append(_MULTILINE_SPAN if "\n" in span else span)
+            i = j + 1
+            at_word_start = False
+            continue
+        if cmd.startswith("$(", i) and not cmd.startswith("$((", i):
+            inner, close = _live_scan(cmd, i + 2, extras, nested=True)
+            if inner is None:
+                return None, n
+            out.append("$(" + inner + ")")
+            i = close + 1
+            at_word_start = False
+            continue
+        if ch == "`":
+            close = _scan_backtick(cmd, i)
+            if close < 0:
+                return None, n
+            out.append(cmd[i : close + 1])
+            i = close + 1
+            at_word_start = False
+            continue
+        if ch == "#" and at_word_start:
+            nl = cmd.find("\n", i)
+            i = n if nl < 0 else nl
+            continue
+        if cmd.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            at_word_start = False
+            continue
+        if cmd.startswith("<<", i):
+            delim, strip_tabs, end = _read_heredoc_delimiter(cmd, i + 2)
+            raw_delim = cmd[i + 2 : end].lstrip("-").lstrip(" \t")
+            if raw_delim.startswith("$"):
+                # `<<$'EOF'` / `<<$"EOF"`: the shell's delimiter is not the
+                # word _read_heredoc_delimiter returns, so the body end is unknown.
+                return None, n
+            if delim:
+                quoted = any(q in cmd[i + 2 : end] for q in "'\"\\")
+                heredocs.append((delim, strip_tabs, quoted))
+            out.append(cmd[i:end])
+            i = end
+            at_word_start = False
+            continue
+        if ch == "\n" and heredocs:
+            out.append(ch)
+            body_end = _skip_heredoc_bodies(
+                cmd, i + 1, [(d, tabs) for d, tabs, _ in heredocs]
+            )
+            body = cmd[i + 1 : body_end]
+            expands = any(not quoted for _, _, quoted in heredocs)
+            if expands and ("$(" in body or "`" in body):
+                return None, n
+            heredocs = []
+            i = body_end
+            at_word_start = True
+            continue
+        if nested and ch == "(":
+            depth += 1
+        elif nested and ch == ")":
+            if depth == 0:
+                return "".join(out), i
+            depth -= 1
+        out.append(ch)
+        at_word_start = ch in _WORD_BREAKS
+        i += 1
+    if nested:
+        return None, n
+    return "".join(out), n
+
+
+def _live_texts(command: str) -> list[str] | None:
+    """_live_scan の結果と、そこで見つかった実行されるテキスト群。解析不能なら None。
+
+    算術式 (`$((…))` / `((…))`) を含むものは解析しない: その中の `1<<X` は
+    シフトであって heredoc ではないのに、_live_scan は heredoc と読んで後続の
+    コマンド行を本体として捨ててしまう (`echo $((1<<X))` の次行の `sudo id` を
+    bash は実行する)。
+    """
+    if "((" in command or "$[" in command or _LT_LT_IN_PARAM.search(command):
+        return None
+    extras: list[str] = []
+    live, _ = _live_scan(command, 0, extras, nested=False)
+    if live is None:
+        return None
+    return [live, *extras]
+
+
+# DENY の除外を許す「データしか扱わない」コマンド。許可リストにするのは、文字列を
+# コードとして実行する形 (bash -c / eval / | sh / git rebase --exec / tmux send-keys
+# / $SHELL -c ...) の列挙は決して網羅できないから。ここに無いものが 1 つでも
+# 実行されるなら、heredoc 本体やクォート内の行も従来どおり DENY の対象に残す。
+# tee は入れない: ファイルへ書く行は data-only としない (_is_data_only_command)。
+_DATA_ONLY_EXECUTABLES = frozenset({"cat", "echo", "printf", "cd"})
+_DATA_ONLY_GIT_SUBCOMMANDS = frozenset(
+    {
+        "add",
+        "branch",
+        "checkout",
+        "commit",
+        "diff",
+        "fetch",
+        "log",
+        "merge",
+        "mv",
+        "notes",
+        "pull",
+        "push",
+        "reset",
+        "restore",
+        "rm",
+        "show",
+        "stash",
+        "status",
+        "switch",
+        "tag",
+    }
+)
+_DATA_ONLY_GH_SUBCOMMANDS = frozenset({"pr", "issue", "release"})
+# git の引数のうち、文字列をコマンドとして実行させうるもの。グローバルの -c /
+# --config-env は設定値 (alias.x=!cmd / core.pager 等) を介して、--receive-pack /
+# --upload-pack / --exec はローカルパスのリモートに対して指定プログラムを起動し、
+# --exec-path は git がサブコマンドを探す場所を差し替える。git は曖昧でない長
+# オプションの略記 (`--rece=` / `--upload-pa`) も受け付けるので、名前がこれらの
+# 接頭辞であるものも同じ扱いにする。あれば data-only とみなさない。
+_GIT_EXEC_LONG_FLAGS = (
+    "--config-env",
+    "--receive-pack",
+    "--upload-pack",
+    "--exec",
+    "--exec-path",
+)
+# 行に現れたら data-only とみなさない文字。`(` / `)` は zsh のグロブ修飾子
+# (`*(e:'…':)` はコードを実行する) / プロセス置換 `=(…)` / サブシェル、`` ` `` と
+# `{` / `}` は展開、`>` はリダイレクトによる書き込み。書き込みを外すのは、
+# `.git/hooks/*` や PATH 上のファイルへ書いた本体を、同じコマンドの git (フック)
+# や後のセーフスキップされたコマンドが実行しうるため。
+_NOT_DATA_ONLY_CHARS = frozenset("()`{}>")
+
+
+def _is_git_exec_flag(token: str) -> bool:
+    name = token.split("=", 1)[0]
+    if name == "-c":
+        return True
+    return len(name) > 2 and any(full.startswith(name) for full in _GIT_EXEC_LONG_FLAGS)
+
+
+def _is_data_only_command(line: str) -> bool:
+    """行が data-only 許可リストのコマンドか。
+
+    **生の先頭語**で判定し、何も読み飛ばさない:
+    - _split_prefix のようにラッパーを剥がさない。`watch echo "…"` は watch が引数を
+      `sh -c` で実行するのに、剥がすと echo に見えて許可リストを通ってしまう。
+    - 先頭の `VAR=value` も読み飛ばさない。`GIT_EDITOR` / `GIT_SSH_COMMAND` /
+      `GIT_EXTERNAL_DIFF` などは値を git がコマンドとして実行する。
+    - パス付きの語 (`./cat` / `/tmp/x/git`) は許可リストのコマンドではない。
+    `timeout` / `env` / 代入付きの行は除外の対象外になるが、それは安全側。
+    """
+    if any(ch in _NOT_DATA_ONLY_CHARS for ch in line):
+        return False
+    tokens = _tokenize(line)
+    if not tokens or "/" in tokens[0] or _ENV_ASSIGNMENT.match(tokens[0]):
+        return False
+    exe = tokens[0].casefold()
+    if exe in _DATA_ONLY_EXECUTABLES:
+        return True
+    args = tokens[1:]
+    if exe == "gh":
+        return bool(args) and args[0] in _DATA_ONLY_GH_SUBCOMMANDS
+    if exe != "git":
+        return False
+    if any(_is_git_exec_flag(t) for t in args):
+        return False
+    sub = _strip_global_flags("git", args)
+    return bool(sub) and sub[0] in _DATA_ONLY_GIT_SUBCOMMANDS
+
+
+def _deny_only_in_inert_text(command: str) -> bool:
+    """DENY に一致した行が、実行されないテキストの中にしか無いか。
+
+    本体をコードとして読ませる形 (stdin インタプリタ / プロセス置換) は対象外。
+    実行されるテキストだけを同じ _split_commands 経路で検査し直し、そこに DENY が
+    無く、かつ実行されるコマンドがすべて data-only の許可リストに入るときだけ True。
+    元の行と実行テキストの行を文字列で突き合わせはしない (`a; sudo b` のように
+    分割された断片は一致せず、本物のコマンドを除外してしまうため)。
+    """
+    if stdin_interpreter_label(command) or _PROCESS_SUBSTITUTION.search(command):
+        return False
+    texts = _live_texts(command)
+    if texts is None:
+        return False
+    for text in texts:
+        subs = _split_commands(text)
+        if _find_deny_in_lines(subs)[0]:
+            return False
+        for part in subs:
+            for line in part.splitlines():
+                line = line.strip()
+                if line and not _is_data_only_command(line):
+                    return False
+    return True
+
+
+def find_deny_command(
+    sub_commands: list[str], command: str | None = None
+) -> tuple[bool, str]:
+    """サブコマンド列から最初に一致した危険コマンドを返す (無ければ (False, ""))。
+
+    _split_commands は改行を区切りとして扱わない (シェルは扱う) ため、各サブ
+    コマンドをさらに行単位に分けて検査する。`ls\\nsudo rm -rf /` のように改行の
+    後ろへ隠した危険コマンドを取りこぼさない (high_risk_label と同じ改行対策)。
+
+    ただし行単位の分割はクォートも heredoc も見ないので、コミットメッセージや
+    heredoc 本体の 1 行が `ssh …` / `curl …` で始まるだけでハード DENY になる
+    (層 1 の deny は ask で覆せない)。Claude Code 自身のコミット形
+    (`git commit -m "$(cat <<'EOF' …)"`) で日常的に起きていた。command (元の
+    コマンド) を渡すと、一致がシェルの実行しないテキストの中だけにあり、実行される
+    のが data-only のコマンドだけなら除外する (_deny_only_in_inert_text)。
+    """
+    matched, deny_name = _find_deny_in_lines(sub_commands)
+    if matched and command is not None and _deny_only_in_inert_text(command):
+        return False, ""
+    return matched, deny_name
 
 
 # -------------------------------------------------------------------
