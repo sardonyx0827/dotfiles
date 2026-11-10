@@ -8,7 +8,7 @@ Role separation (single source of truth):
 Generated bitmap images (photos, illustrations, hero/OG images, banners, mockups, textures,
 sprites) are produced by delegating to **OpenAI Codex's built-in `image_gen` tool** via the
 `codex exec` CLI on the Bash tool. The built-in path needs **no `OPENAI_API_KEY`**. Claude acts as art
-director (writes the spec); Codex generates and places the files.
+director (writes the spec and places the files); Codex generates them into a scratch directory.
 
 ## Triggers
 

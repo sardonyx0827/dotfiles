@@ -27,6 +27,7 @@ Follow the **invocation contract in the codex-consultation skill** (`~/.claude/s
 1. Write the request to a new prompt file in the scratchpad with the Write tool.
 2. Run `python3 ~/.claude/hooks/../../scripts/secret_scan.py < <prompt-file> && EDITOR_AI_ONESHOT=1 codex exec -s read-only …` as that skill spells it out, with absolute paths written literally. Run it in the **foreground** with the Bash tool's `timeout: 600000`, not in the background: as a subagent you have no tool to wait for a background task, and you would end your turn before the answer exists. If it times out, report that to the caller so the main session can rerun the same command in the background.
 3. Read the answer file it names with `-o`. Follow up on the same thread with `codex exec resume <thread-id>`, never `--last`.
+4. End your report with the thread id and the events-file path, so the caller can continue the same thread later (the debugging-protocol skill resumes it when a strategy fails).
 
 Tool limits:
 

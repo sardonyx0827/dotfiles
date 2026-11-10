@@ -57,7 +57,7 @@ scratchpad; Claude verifies the files and copies them into the destination itsel
 
 3. When the task notification arrives, check the exit status and Read `<answer-file>` (Codex's
    report of the saved paths), verify the files (After Codex returns, below), then copy them into
-   the project destination with `cp` — never overwriting an existing file.
+   the project destination with `cp -n` (plain `cp` overwrites; `-n` never does).
 
 Why an empty scratch directory rather than `-C <project-root>`:
 
@@ -124,7 +124,8 @@ Requirements:
 ## After Codex returns
 
 1. Verify each reported path exists and matches the requested filename/size (Read or `ls`).
-2. Copy the files from the scratch directory into the project destination (`cp`, no overwrite).
+2. Copy the files from the scratch directory into the project destination with `cp -n`; if a name
+   is taken, copy to a versioned sibling (`hero-v2.png`) instead.
 3. Wire the assets into the site/app (HTML/JSX references, `next/image`, OG meta tags, etc.).
 4. If an asset missed the spec (wrong size, off-brand, leaked text), re-issue a single targeted
    `codex exec` run with a one-line correction rather than regenerating the whole batch.
