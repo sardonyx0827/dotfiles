@@ -2165,9 +2165,13 @@ def _deny_only_in_inert_text(command: str) -> bool:
 # 危険フラグの列挙 (denylist) は綴りの抜け (`-pevil`、`-c=k=v`、TOML エスケープ、
 # `CODEX_HOME=`、`mcp_servers.*` / `notify` 等の設定キー) を塞ぎきれなかった。フラグは
 # `codex` の後ろのどこにでも置けるので、permissions.ask の前方一致でも表せない。
-# Claude Code のセッション用スクラッチパッドの置き場所 (前方一致の比較にだけ使い、
-# ここに一時ファイルは作らない)。
-_CODEX_SCRATCH_PREFIXES = ("/private/tmp/claude-", "/tmp/claude-")  # nosec B108
+# Claude Code のセッション用スクラッチパッドの置き場所 (`/tmp/claude-<uid>/…`)。realpath
+# した `-C` の照合にだけ使い、ここに一時ファイルは作らない。`<uid>/` まで要求するのは、
+# `/tmp/claude-evil` のような同じ接頭辞の別ディレクトリを通さないため。
+_CODEX_SCRATCH_DIR = re.compile(r"^(?:/private)?/tmp/claude-\d+/")  # nosec B108
+# シェルが展開して別の語にするブレース (`{x,-s}` → `x -s`、`{1..2}`)。hook はその結果を
+# 見られないので、`$` / バッククォートと同じく評価できない引数として扱う。
+_BRACE_EXPANSION = re.compile(r"\{[^{}]*(?:,|\.\.)[^{}]*\}")
 _CODEX_VALUE_FLAGS = {
     "-s": "sandbox",
     "--sandbox": "sandbox",
@@ -2214,7 +2218,58 @@ def _codex_config_value(raw: str) -> str | None:
         value = tomllib.loads(f"v = {raw}")["v"]
     except (tomllib.TOMLDecodeError, KeyError):
         return None if "\\" in raw else raw.strip().strip("'\"")
+    except (ValueError, RecursionError):
+        # 深い入れ子 (`[[[…`) や桁数の多すぎる整数。解読不能 = 許可リスト外。
+        return None
     return value if isinstance(value, str) else None
+
+
+def _mask_quoted_spans(text: str) -> str | None:
+    """クォート区間 ('…' / "…" / $'…') を `0` に置き換えた綴り。未閉鎖なら None。
+
+    秘密スキャンが実際に実行される位置にあるかを文字列照合で確かめるため。クォートの
+    中に書かれた `secret_scan.py < /p &&` (echo の引数など) を本物と取り違えない。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if ch == "'" or text.startswith("$'", i) or ch == '"':
+            ansi = ch == "$"
+            quote = "'" if ansi else ch
+            j = i + (2 if ansi else 1)
+            while j < n and text[j] != quote:
+                j += 2 if text[j] == "\\" and (ansi or quote == '"') else 1
+            if j >= n:
+                return None
+            out.append("0")
+            i = j + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _prompt_file_scanned_first(command: str, stdin_file: str) -> bool:
+    """コマンドが `secret_scan.py < FILE && [VAR=v ...] codex` の連鎖を含むか。
+
+    スキャンはコマンド位置 (先頭か `;` `&` `|` `(` の直後) で実行され、`&&` で直接
+    codex に繋がっていなければならない: 後ろにある、`||` を挟む、`;` で区切る、
+    クォートの中に書かれている、のいずれもスキャンを送信の条件にしない。
+    """
+    masked = _mask_quoted_spans(command)
+    if masked is None:
+        return False
+    chain = (
+        r"(?:^|[;&|(])\s*(?:python3?\s+)?\S*secret_scan\.py\s*<\s*"
+        + re.escape(stdin_file)
+        + r"\s*&&\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\S*codex\b"
+    )
+    return re.search(chain, masked, re.M) is not None
 
 
 def _codex_line_reason(line: str, command: str) -> str:
@@ -2236,7 +2291,7 @@ def _codex_line_reason(line: str, command: str) -> str:
     while i < len(args):
         tok = args[i]
         i += 1
-        if "$" in tok or "`" in tok:
+        if "$" in tok or "`" in tok or _BRACE_EXPANSION.search(tok):
             return "a codex argument with an expansion this hook cannot evaluate"
         redirect = _SHELL_REDIRECT.match(tok)
         if redirect:
@@ -2244,6 +2299,8 @@ def _codex_line_reason(line: str, command: str) -> str:
             if not dup and not target:
                 target = args[i] if i < len(args) else ""
                 i += 1
+            if "$" in target or "`" in target or _BRACE_EXPANSION.search(target):
+                return "a codex redirect with an expansion this hook cannot evaluate"
             if op == "<":
                 stdin_file = target
             elif op in ("<<", "<<<"):
@@ -2266,7 +2323,7 @@ def _codex_line_reason(line: str, command: str) -> str:
         if not eq:
             value = args[i] if i < len(args) else ""
             i += 1
-        if "$" in value or "`" in value:
+        if "$" in value or "`" in value or _BRACE_EXPANSION.search(value):
             return "a codex argument with an expansion this hook cannot evaluate"
         kind = _CODEX_VALUE_FLAGS[name]
         if kind == "sandbox":
@@ -2289,7 +2346,7 @@ def _codex_line_reason(line: str, command: str) -> str:
     if positionals and positionals[0] not in ("exec", "e"):
         return f"codex subcommand '{positionals[0]}' is outside the allowlist"
     if sandbox == "workspace-write" and not (
-        cd and os.path.normpath(cd).startswith(_CODEX_SCRATCH_PREFIXES)
+        cd and _CODEX_SCRATCH_DIR.match(os.path.realpath(cd))
     ):
         return "codex workspace-write outside a session scratchpad"
     if not positionals:
@@ -2299,16 +2356,13 @@ def _codex_line_reason(line: str, command: str) -> str:
         prompt_args = prompt_args[2:]
     if not prompt_args or "-" in prompt_args:  # the prompt arrives on stdin
         if stdin_file is not None:
-            scanned = re.search(
-                r"secret_scan\.py\s*<\s*['\"]?"
-                + re.escape(stdin_file)
-                + r"['\"]?\s*&&",
-                command,
-            )
-            if not scanned:
+            if not _prompt_file_scanned_first(command, stdin_file):
                 return "codex prompt file was not secret-scanned first in this command"
         elif not stdin_inline:
             return "codex reads a prompt from a pipe that was not secret-scanned"
+        elif "$" in command or "`" in command:
+            # here-string / heredoc の本文は展開される: `<<< "$(cat f)"` は f を送る
+            return "codex reads a heredoc / here-string that expands a command"
     return ""
 
 

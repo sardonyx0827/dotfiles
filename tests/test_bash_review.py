@@ -265,6 +265,21 @@ class TestCodexRiskyFlagsAsk:
             "codex login",
             "env FOO=1 codex exec --yolo x",
             "cd repo && codex exec -s danger-full-access x",
+            # brace expansion manufactures flags the hook never sees as such
+            "codex exec -s read-only -m {x,-s} danger-full-access hi",
+            "codex exec -s read-only {--dangerously-bypass-approvals-and-sandbox,--json} hi",
+            "codex exec -s read-only -m {1..2} hi",
+            # a here-string / heredoc whose expansion reads an unscanned file
+            'codex exec -s read-only - <<< "$(cat prompt.md)"',
+            "codex exec -s read-only - <<EOF\n$(cat prompt.md)\nEOF",
+            # the scan must run first, chained with && straight into codex
+            "codex exec -s read-only - < /p && python3 secret_scan.py < /p && true",
+            "echo 'secret_scan.py < /p &&'; codex exec -s read-only - < /p",
+            "python3 secret_scan.py < /p && true || codex exec -s read-only - < /p",
+            "python3 secret_scan.py < /p; codex exec -s read-only - < /p",
+            # a scratchpad-looking prefix that is not a scratchpad directory
+            "codex exec -s workspace-write -C /tmp/claude-evil/x hi",
+            "codex exec -s workspace-write -C /private/tmp/claude-501x/y hi",
         ],
     )
     def test_codex_outside_the_allowlist_forces_ask(self, hook_fns, command):
@@ -277,6 +292,7 @@ class TestCodexRiskyFlagsAsk:
             # An inline prompt is in the command text, where bash-review's own
             # secret scan sees it.
             "codex exec -s read-only -C /r --json -o /o 'review this design'",
+            "codex exec -s read-only - <<< 'review this design'",
             "codex --version",
             "codex features list",
             # Not a codex invocation.
@@ -288,6 +304,17 @@ class TestCodexRiskyFlagsAsk:
     )
     def test_documented_codex_shapes_are_not_forced(self, hook_fns, command):
         assert self._reason(hook_fns, command) == ""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "[" * 20000,  # RecursionError inside tomllib
+            "1" * 20000,  # ValueError: integer string too long
+        ],
+    )
+    def test_undecodable_config_value_asks_instead_of_raising(self, hook_fns, value):
+        command = f"codex exec -c model_reasoning_effort={value} x"
+        assert self._reason(hook_fns, command)
 
     def test_skills_document_both_codex_exec_shapes(self):
         lines = _documented_codex_exec_lines()

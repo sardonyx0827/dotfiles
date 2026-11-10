@@ -257,15 +257,19 @@ latency low for the common case:
    **allowlist** of the shapes the codex-consultation / codex-image-gen skills
    use, and anything outside it is an `ask` (Codex variant: block) before any
    model is consulted (`codex_flag_ask_reason`): `-s read-only`, or
-   `-s workspace-write` only with a `-C` inside the session scratchpad;
+   `-s workspace-write` only with a `-C` that resolves (realpath) inside a
+   session scratchpad, `/tmp/claude-<uid>/…`;
    `-c sandbox_mode=read-only` / `-c model_reasoning_effort=…` only (values
    decoded as TOML, so escapes do not hide `danger-full-access`); the flags
    `-C -o -m -i --json --ephemeral --skip-git-repo-check`; subcommands
    `exec` / `exec resume` / `features list`; no environment assignment but
-   `EDITOR_AI_ONESHOT` (so not `CODEX_HOME=`); no expansion in an argument; and a
-   prompt read from a file on stdin only when the same command first ran
-   `secret_scan.py` on that same file — a prompt written with the Write tool is
-   otherwise never scanned. Glued short options (`-pevil`, `-cKEY=V`, `-c=K=V`)
+   `EDITOR_AI_ONESHOT` (so not `CODEX_HOME=`); no expansion (`$`, backtick, or a
+   brace such as `{x,-s}` that the shell turns into extra words) in an argument
+   or redirect target; a heredoc / here-string prompt only when nothing in the
+   command expands; and a prompt read from a file on stdin only when the command
+   runs `secret_scan.py < <that file>` at a command position, chained with `&&`
+   straight into this `codex` (not after it, not across `||` or `;`, not inside
+   quotes) — a prompt written with the Write tool is otherwise never scanned. Glued short options (`-pevil`, `-cKEY=V`, `-c=K=V`)
    are normalised first. Like denial, lines inside heredoc bodies and multi-line
    quoted strings are not read, so a commit message that mentions a flag does
    not trip it. Claude reaches Codex through `codex exec` on the Bash tool since
