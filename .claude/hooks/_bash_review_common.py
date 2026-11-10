@@ -1600,7 +1600,9 @@ _OUTPUT_FILE_LONG_FLAGS = frozenset({"--output", "--outfile"})
 # 短フラグ側はコマンド個別にする。`-o` は grep では only-matching、ls では
 # 長形式一覧であり、一律に弾くと日常的なコマンドをレビュー送りにしてレイテンシ
 # だけ悪化する。出力先を意味すると確認できたものだけ列挙する。
-_OUTPUT_FILE_SHORT_FLAGS = {"tree": "o"}
+# tree の `-R` は各サブディレクトリで tree を `-o 00Tree.html` 付きで再実行する
+# ため、コマンド中に `-o` が無くても書き込む (既存ファイルも上書き。実バイナリで確認)。
+_OUTPUT_FILE_SHORT_FLAGS = {"tree": "oR"}
 
 
 def _has_output_file_flag(cmd: str) -> bool:

@@ -2561,6 +2561,12 @@ class TestCommandHelpers:
             ("tree -o out.txt", False),
             ("tree -no out.txt", False),
             ("tree --outfile out.txt", False),
+            # `-R` re-runs tree in every subdirectory with `-o 00Tree.html`
+            # added, so it writes (and overwrites) a file per directory with no
+            # `-o` anywhere in the command -- verified against the real binary.
+            ("tree -R -L 2", False),
+            ("tree -aR", False),
+            ("tree -R -H . -T title -L 2", False),
             # No false positives: `-o` means something harmless for these two,
             # and demoting them would cost latency on very common commands.
             ("grep -o pattern file.txt", True),

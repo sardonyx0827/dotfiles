@@ -239,7 +239,8 @@ latency low for the common case:
      an out-of-tree read: an absolute / `~` / `..` path, rg's
      `--pre` / `--pre-glob` / `--hostname-bin` / `-z` / `-f`, a tmux `#(…)`
      format or a `;`-chained second tmux command, and output-file flags
-     (`--output` / `--outfile`, `tree -o`).
+     (`--output` / `--outfile`, `tree -o`, and `tree -R`, which re-runs tree in
+     every subdirectory with `-o 00Tree.html`).
 
 2. **Secret pre-send scan (no external call).** Before any command is handed to
    an LLM, a static scan (`scan_secrets`) checks the command _and_ the full
