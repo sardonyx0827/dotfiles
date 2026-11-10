@@ -181,7 +181,7 @@ apply_patch verification failed: Failed to find expected lines in <file>
 ## 重要: hooks.json を変更したら再承認が必要
 
 Codex にはフックの信頼ゲートがあり、**`hooks.json` を変更すると、対話セッションで
-承認するまで全フックが黙って無効になる**。ヘッドレス実行(`codex exec` / MCP 経由)
+承認するまで全フックが黙って無効になる**。ヘッドレス実行(`codex exec`)
 では警告も出ず、ただフックが動かなくなる。
 
 変更後は一度 `codex` を対話起動し、`Review hooks` → `Trust all and continue` で

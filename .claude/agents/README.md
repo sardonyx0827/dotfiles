@@ -62,9 +62,9 @@ Located in `~/.claude/agents/`:
 
 ### Delegation
 
-| Agent           | Model  | Purpose                      | When to Use                                           |
-| --------------- | ------ | ---------------------------- | ----------------------------------------------------- |
-| codex-delegator | sonnet | Route decisions to Codex MCP | Spec discussion, fix strategy, complex tech decisions |
+| Agent           | Model  | Purpose                                   | When to Use                                           |
+| --------------- | ------ | ----------------------------------------- | ----------------------------------------------------- |
+| codex-delegator | sonnet | Route decisions to Codex via `codex exec` | Spec discussion, fix strategy, complex tech decisions |
 
 ### Chores (docs/requests)
 

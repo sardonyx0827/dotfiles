@@ -250,7 +250,7 @@ would have done wastes budget and latency.
 2. Still failing at `high` or above → move up one tier, back at your starting
    effort.
 3. A Sonnet SubAgent fails twice across both axes → escalate to Opus, or
-   consult Codex MCP per the `codex-consultation` skill.
+   consult Codex via the `codex-consultation` skill.
 
 ---
 
