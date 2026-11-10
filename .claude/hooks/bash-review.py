@@ -26,6 +26,7 @@ from _bash_review_common import (
     _split_commands,
     build_review_prompt,
     classify_high_risk,
+    codex_flag_ask_reason,
     combine_high_risk_verdicts,
     ensure_private_dir,
     find_deny_command,
@@ -170,6 +171,16 @@ try:
         write_detail_log({"Result": "DENY (pre-blocked)"}, redact_input=secret_found)
         log_summary("DENY", "pre", reason, redact_command=secret_found)
         notify("Bash Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
+        sys.exit(0)
+
+    # --- codex のサンドボックス / 承認を外すフラグは静的に ask ---
+    # モデルの判定で覆らないよう LLM 呼び出しより前に決める (codex_flag_ask_reason)。
+    codex_reason = codex_flag_ask_reason(sub_commands, command)
+    if codex_reason:
+        emit_decision("ask", codex_reason)
+        write_detail_log({"Result": "ASK (codex flag)"}, redact_input=secret_found)
+        log_summary("ASK", "pre", codex_reason, redact_command=secret_found)
+        notify("Bash Review - 確認が必要", "codex の権限を広げるフラグを検出", 8)
         sys.exit(0)
 
     # --- 安全コマンドのスキップ ---

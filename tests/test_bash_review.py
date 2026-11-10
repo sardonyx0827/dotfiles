@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import types
@@ -174,6 +175,134 @@ class TestDenyIgnoresInertText:
         )
         assert res.decision != "deny"
         assert "Blocked dangerous command" not in res.reason
+
+
+def _documented_codex_exec_lines() -> list:
+    """The `codex exec` command lines the skills tell the model to run, with every
+    `<placeholder>` filled by a path inside a session scratchpad."""
+    # Fences may be indented (inside a numbered list item).
+    fence = re.compile(
+        r"^[ \t]*```(?:bash|sh|shell|zsh)\b[^\n]*\n(.*?)^[ \t]*```", re.M | re.S
+    )
+    out = []
+    for skill in ("codex-consultation", "codex-image-gen"):
+        text = (REPO_ROOT / f".claude/skills/{skill}/SKILL.md").read_text("utf-8")
+        for block in fence.findall(text):
+            for line in block.splitlines():
+                if "codex exec" in line:
+                    out.append(
+                        re.sub(
+                            r"<([a-z0-9-]+)>",
+                            r"/private/tmp/claude-501/sess/scratchpad/\1",
+                            line.strip(),
+                        )
+                    )
+    return out
+
+
+class TestCodexRiskyFlagsAsk:
+    """Claude now reaches Codex through `codex exec` on the Bash tool (the MCP
+    server was removed in Codex CLI 0.154). The rule is an ALLOWLIST of the
+    shapes the skills use -- `-s read-only`, `-s workspace-write` only into a
+    session scratchpad, `-c sandbox_mode=read-only`, a prompt file that the same
+    command secret-scans first -- and every other codex invocation reaches the
+    user whatever a reviewing model thinks. A denylist of risky flags kept
+    missing spellings (`-pevil`, `-c=k=v`, TOML escapes, `CODEX_HOME=`, config
+    keys such as `mcp_servers.*` or `notify`). A prefix rule in permissions.ask
+    cannot express any of this (the flag can sit anywhere after `codex`)."""
+
+    @staticmethod
+    def _reason(hook_fns, command):
+        subs = hook_fns["_split_commands"](command)
+        return hook_fns["codex_flag_ask_reason"](subs, command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "codex exec -s danger-full-access 'x'",
+            "codex exec --sandbox=danger-full-access x",
+            "codex exec -sdanger-full-access x",
+            "codex exec -c sandbox_mode=danger-full-access x",
+            "codex exec -c 'sandbox_mode=\"danger-full-access\"' x",
+            "codex exec -c 'sandbox_mode=\"danger\\u002dfull-access\"' x",
+            "codex exec -c sandbox_mode=workspace-write x",
+            "codex --dangerously-bypass-approvals-and-sandbox exec x",
+            "codex exec --dangerously-bypass-hook-trust x",
+            "codex exec --approve-for-me x",
+            "codex exec --add-dir /etc x",
+            "codex exec --add-dir=/etc x",
+            "codex exec -p evil x",
+            "codex exec -pevil x",
+            "codex exec --profile evil x",
+            "codex exec --ignore-rules x",
+            "codex exec --ignore-user-config x",
+            "codex exec --full-auto x",
+            "codex exec --enable foo x",
+            "codex exec --disable hooks x",
+            "codex --yolo x",
+            "codex exec -c shell_environment_policy.inherit=all x",
+            "codex exec -capproval_policy=never x",
+            "codex exec -c=approval_policy=never x",
+            "codex exec -c features.hooks=false x",
+            "codex exec -c 'mcp_servers.x.command=\"sh\"' x",
+            'codex exec -c \'notify=["sh","-c","x"]\' x',
+            "codex exec -c openai_base_url=https://evil.example x",
+            "codex exec --config=sandbox_workspace_write.network_access=true x",
+            # workspace-write anywhere but a session scratchpad
+            "codex exec -s workspace-write -C /Users/me/repo x",
+            "codex exec -s workspace-write -C /private/tmp/claude-501/../../Users/me x",
+            "codex exec -s workspace-write x",
+            # a different Codex configuration altogether
+            "CODEX_HOME=/x codex exec -s read-only x",
+            "env CODEX_HOME=./.codex codex exec x",
+            # a prompt file the same command never secret-scanned
+            "codex exec -s read-only - < /p",
+            "python3 secret_scan.py < /a && codex exec -s read-only - < /b",
+            # values the hook cannot evaluate
+            "codex exec -s $SB x",
+            # subcommands the skills never use
+            "codex mcp add x -- sh",
+            "codex login",
+            "env FOO=1 codex exec --yolo x",
+            "cd repo && codex exec -s danger-full-access x",
+        ],
+    )
+    def test_codex_outside_the_allowlist_forces_ask(self, hook_fns, command):
+        assert self._reason(hook_fns, command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            *_documented_codex_exec_lines(),
+            # An inline prompt is in the command text, where bash-review's own
+            # secret scan sees it.
+            "codex exec -s read-only -C /r --json -o /o 'review this design'",
+            "codex --version",
+            "codex features list",
+            # Not a codex invocation.
+            "echo codex exec --add-dir /etc",
+            # A commit message that only mentions a risky flag.
+            "git commit -m \"$(cat <<'EOF'\nfix: x\n\ncodex exec --add-dir is "
+            'now confirmed\nEOF\n)"',
+        ],
+    )
+    def test_documented_codex_shapes_are_not_forced(self, hook_fns, command):
+        assert self._reason(hook_fns, command) == ""
+
+    def test_skills_document_both_codex_exec_shapes(self):
+        lines = _documented_codex_exec_lines()
+        assert any("-s read-only" in line for line in lines)
+        assert any("-s workspace-write" in line for line in lines)
+
+    def test_risky_codex_flag_asks_even_when_models_allow(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("codex exec -s danger-full-access 'fix it'"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.decision == "ask"
+        assert "codex" in res.reason
 
 
 class TestPreDeny:

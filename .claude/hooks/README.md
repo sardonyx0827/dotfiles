@@ -253,6 +253,27 @@ latency low for the common case:
    A python heredoc whose body starts a line with a denied name (`su = 3`) is a
    known remaining false positive.
 
+   Right after denial, every `codex` invocation is checked against an
+   **allowlist** of the shapes the codex-consultation / codex-image-gen skills
+   use, and anything outside it is an `ask` (Codex variant: block) before any
+   model is consulted (`codex_flag_ask_reason`): `-s read-only`, or
+   `-s workspace-write` only with a `-C` inside the session scratchpad;
+   `-c sandbox_mode=read-only` / `-c model_reasoning_effort=…` only (values
+   decoded as TOML, so escapes do not hide `danger-full-access`); the flags
+   `-C -o -m -i --json --ephemeral --skip-git-repo-check`; subcommands
+   `exec` / `exec resume` / `features list`; no environment assignment but
+   `EDITOR_AI_ONESHOT` (so not `CODEX_HOME=`); no expansion in an argument; and a
+   prompt read from a file on stdin only when the same command first ran
+   `secret_scan.py` on that same file — a prompt written with the Write tool is
+   otherwise never scanned. Glued short options (`-pevil`, `-cKEY=V`, `-c=K=V`)
+   are normalised first. Like denial, lines inside heredoc bodies and multi-line
+   quoted strings are not read, so a commit message that mentions a flag does
+   not trip it. Claude reaches Codex through `codex exec` on the Bash tool since
+   Codex CLI 0.154 removed its MCP-server mode; a denylist of risky flags kept
+   missing spellings, which is why this is an allowlist. Prefix rules in
+   `permissions.ask` back up the common risky spellings for when the hook is
+   down; they cannot see a flag placed later in the command.
+
    Safe-skip is the conservative side: it matches the raw command string against
    an allowlist, so anything wrapped in grammar simply fails to match and goes
    to review. The resolver is consulted only by the exclusions below (grep / rg

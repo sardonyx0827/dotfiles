@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 
+import pytest
 import tomllib
 from conftest import REPO_ROOT
 
@@ -518,6 +519,29 @@ def test_git_push_asks_at_the_permission_layer_too():
         "permissions.ask must keep a git push entry so the gate survives a "
         f"hook failure; current ask rules: {ask}"
     )
+
+
+CODEX_ASK_BACKSTOP = [
+    "Bash(codex --dangerously-bypass-approvals-and-sandbox:*)",
+    "Bash(codex --yolo:*)",
+    "Bash(codex exec --dangerously-bypass-approvals-and-sandbox:*)",
+    "Bash(codex exec -s danger-full-access:*)",
+    "Bash(codex exec --sandbox danger-full-access:*)",
+]
+
+
+@pytest.mark.parametrize("rule", CODEX_ASK_BACKSTOP)
+def test_risky_codex_invocations_ask_at_the_permission_layer_too(rule):
+    """Same two-layer shape as the git push gate above.
+
+    bash-review forces an ask for any sandbox- or approval-widening codex flag
+    wherever it sits (`codex_flag_ask_reason`), but only while the hook is
+    healthy. These prefix rules cover the common spellings even when it is not.
+    They cannot cover a flag placed later in the command, which is why the hook
+    rule exists at all.
+    """
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    assert rule in settings["permissions"].get("ask", [])
 
 
 def test_mod_and_settings_edits_ask_the_user():

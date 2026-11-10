@@ -2154,6 +2154,188 @@ def _deny_only_in_inert_text(command: str) -> bool:
     return True
 
 
+# Claude は Codex を `codex exec` (Bash) で呼ぶ (Codex CLI 0.154 が MCP サーバー
+# モードを削除したため)。codex の呼び出しは **許可リスト**で判定し、外れたものは審査
+# モデルの判定に関わらず利用者の確認を経る (codex_flag_ask_reason)。許すのは
+# codex-consultation / codex-image-gen スキルが使う形だけ:
+#   - `-s read-only`、または `-C` がセッションのスクラッチパッド内の `-s workspace-write`
+#   - `-c sandbox_mode=read-only` / `-c model_reasoning_effort=…` (値は TOML として解読)
+#   - プロンプトファイルを stdin で渡すなら、同じコマンドで先に secret_scan.py に通す
+#   - 前置の代入は EDITOR_AI_ONESHOT だけ、サブコマンドは exec (resume) / features list
+# 危険フラグの列挙 (denylist) は綴りの抜け (`-pevil`、`-c=k=v`、TOML エスケープ、
+# `CODEX_HOME=`、`mcp_servers.*` / `notify` 等の設定キー) を塞ぎきれなかった。フラグは
+# `codex` の後ろのどこにでも置けるので、permissions.ask の前方一致でも表せない。
+# Claude Code のセッション用スクラッチパッドの置き場所 (前方一致の比較にだけ使い、
+# ここに一時ファイルは作らない)。
+_CODEX_SCRATCH_PREFIXES = ("/private/tmp/claude-", "/tmp/claude-")  # nosec B108
+_CODEX_VALUE_FLAGS = {
+    "-s": "sandbox",
+    "--sandbox": "sandbox",
+    "-C": "cd",
+    "--cd": "cd",
+    "-c": "config",
+    "--config": "config",
+    "-o": "other",
+    "--output-last-message": "other",
+    "-m": "other",
+    "--model": "other",
+    "-i": "other",
+    "--image": "other",
+    "--color": "other",
+    "--output-schema": "other",
+}
+_CODEX_BARE_FLAGS = frozenset(
+    {
+        "--skip-git-repo-check",
+        "--json",
+        "--ephemeral",
+        "--version",
+        "-V",
+        "--help",
+        "-h",
+    }
+)
+_CODEX_ENV_OK = frozenset({"EDITOR_AI_ONESHOT"})
+_SHELL_REDIRECT = re.compile(r"^(?:\d+|&)?(<<<|<<|<|>>|>)(&\d+|&-)?(.*)$")
+
+
+def _codex_config_value(raw: str) -> str | None:
+    """`-c key=VALUE` の VALUE を Codex と同じく TOML として解読する。
+
+    `"danger\\u002dfull-access"` のようなエスケープも解読した値で照合するため。
+    TOML として読めない裸の語 (`read-only`) は Codex も文字列として扱うのでそのまま。
+    tomllib (3.11+) が無い Python 3.9 では、エスケープを含む値を解読不能 (None) とする。
+    """
+    try:
+        import tomllib
+    except ImportError:  # Python < 3.11
+        return None if "\\" in raw else raw.strip().strip("'\"")
+    try:
+        value = tomllib.loads(f"v = {raw}")["v"]
+    except (tomllib.TOMLDecodeError, KeyError):
+        return None if "\\" in raw else raw.strip().strip("'\"")
+    return value if isinstance(value, str) else None
+
+
+def _codex_line_reason(line: str, command: str) -> str:
+    tokens = _tokenize(line)
+    at = next(
+        (i for i, t in enumerate(tokens) if t.rsplit("/", 1)[-1].casefold() == "codex"),
+        None,
+    )
+    if at is None:
+        return "a codex invocation this hook cannot read"
+    for tok in tokens[:at]:
+        if _ENV_ASSIGNMENT.match(tok) and tok.split("=", 1)[0] not in _CODEX_ENV_OK:
+            return f"codex run with '{tok.split('=', 1)[0]}' set"
+    args = tokens[at + 1 :]
+    positionals: list[str] = []
+    sandbox = cd = stdin_file = None
+    stdin_inline = False
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        i += 1
+        if "$" in tok or "`" in tok:
+            return "a codex argument with an expansion this hook cannot evaluate"
+        redirect = _SHELL_REDIRECT.match(tok)
+        if redirect:
+            op, dup, target = redirect.groups()
+            if not dup and not target:
+                target = args[i] if i < len(args) else ""
+                i += 1
+            if op == "<":
+                stdin_file = target
+            elif op in ("<<", "<<<"):
+                stdin_inline = True
+            continue
+        if tok == "--":
+            positionals += args[i:]
+            break
+        if tok == "-" or not tok.startswith("-"):
+            positionals.append(tok)
+            continue
+        name, eq, value = tok.partition("=")
+        if name in _CODEX_BARE_FLAGS and not eq:
+            continue
+        if not name.startswith("--"):  # short option, value may be glued (`-pevil`)
+            name, value = tok[:2], tok[2:].removeprefix("=")
+            eq = "=" if value else ""
+        if name not in _CODEX_VALUE_FLAGS:
+            return f"codex flag '{name}' is outside the allowlist"
+        if not eq:
+            value = args[i] if i < len(args) else ""
+            i += 1
+        if "$" in value or "`" in value:
+            return "a codex argument with an expansion this hook cannot evaluate"
+        kind = _CODEX_VALUE_FLAGS[name]
+        if kind == "sandbox":
+            if value not in ("read-only", "workspace-write"):
+                return f"codex sandbox '{value}'"
+            sandbox = value
+        elif kind == "cd":
+            cd = value
+        elif kind == "config":
+            key, sep, raw = value.partition("=")
+            key = key.strip().strip("'\"")
+            decoded = _codex_config_value(raw) if sep else None
+            if not (
+                (key == "sandbox_mode" and decoded == "read-only")
+                or (key == "model_reasoning_effort" and decoded is not None)
+            ):
+                return f"codex config '{key}' is outside the allowlist"
+    if positionals and positionals[0] == "features":
+        return "" if positionals[1:] in ([], ["list"]) else "codex features change"
+    if positionals and positionals[0] not in ("exec", "e"):
+        return f"codex subcommand '{positionals[0]}' is outside the allowlist"
+    if sandbox == "workspace-write" and not (
+        cd and os.path.normpath(cd).startswith(_CODEX_SCRATCH_PREFIXES)
+    ):
+        return "codex workspace-write outside a session scratchpad"
+    if not positionals:
+        return ""
+    prompt_args = positionals[1:]
+    if prompt_args[:1] == ["resume"]:
+        prompt_args = prompt_args[2:]
+    if not prompt_args or "-" in prompt_args:  # the prompt arrives on stdin
+        if stdin_file is not None:
+            scanned = re.search(
+                r"secret_scan\.py\s*<\s*['\"]?"
+                + re.escape(stdin_file)
+                + r"['\"]?\s*&&",
+                command,
+            )
+            if not scanned:
+                return "codex prompt file was not secret-scanned first in this command"
+        elif not stdin_inline:
+            return "codex reads a prompt from a pipe that was not secret-scanned"
+    return ""
+
+
+def codex_flag_ask_reason(sub_commands: list[str], command: str | None = None) -> str:
+    """codex の呼び出しが許可リスト外なら理由を返す (無ければ "")。
+
+    command (元のコマンド) を渡すと、DENY 層と同じく heredoc 本体や複数行のクォート
+    文字列の中の行は見ない (コミットメッセージが `codex … --add-dir` に触れるだけで
+    止まらないように)。解析できない形は従来どおり全サブコマンドを見る。
+    """
+    texts = _live_texts(command) if command is not None else None
+    subs = (
+        sub_commands
+        if texts is None
+        else [part for text in texts for part in _split_commands(text)]
+    )
+    for sub_cmd in subs:
+        for raw in sub_cmd.splitlines():
+            line = raw.strip()
+            if _resolve_executable(line) != "codex":
+                continue
+            reason = _codex_line_reason(line, command or line)
+            if reason:
+                return f"{reason} — confirm manually"
+    return ""
+
+
 def find_deny_command(
     sub_commands: list[str], command: str | None = None
 ) -> tuple[bool, str]:
