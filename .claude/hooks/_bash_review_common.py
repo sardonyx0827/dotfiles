@@ -2730,7 +2730,10 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
         "secret assignment",
         re.compile(
             r"(?i)(?:password|passwd|passphrase|secret|token|credential"
-            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
+            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret"
+            # ハイフン区切りの `secret-key` / `private-key` は下の [A-Za-z0-9_] が
+            # `-` で止まるため、語として足さないと `--secret-key=V` が素通りする。
+            r"|private[_-]?key|secret[_-]?key)"
             # 末尾の識別子は 64 文字までに有界化する。無制限 (`*`) だと、区切りなしの
             # `token` 連打が各出現で連打の末尾まで貪欲に食い、`[=:]` に届かず巻き戻す
             # ことを出現ごとに繰り返して入力長の二次になる (100 KB で分単位)。
@@ -2749,11 +2752,21 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     # キーワード集合は上の "secret assignment" と対称に保つ (passphrase / credential
     # も含める): --passphrase / --credential は gpg / openssl / バックアップ系 CLI で
     # 生の資格情報を渡す実在フラグで、片方の表にだけあると素通りする。
+    #
+    # キーワードの前には、どの資格情報かを名指す接頭語 (`--access-token` /
+    # `--github-token` / `--aws-secret-access-key`) を許す。実在のフラグはこちらが
+    # 多数派で、`--` 直後だけを見ていたため値が生のまま Gemini と detail log へ
+    # 流れていた。接頭語は語 8 個までに有界化する (区切り [-_] で語が決まるので
+    # 巻き戻しは線形)。`--no-password <arg>` は否定の真偽フラグなので除く。
+    # キーワードの直後に `\s+` を要求する点は変えない: `--token-file path` /
+    # `--private-key-file path` のようなパスを取るフラグは拾わない。
     (
         "secret flag",
         re.compile(
-            r"(?i)--(?:password|passwd|passphrase|token|secret|credential"
-            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
+            r"(?i)--(?!no[-_])(?:[A-Za-z0-9]+[-_]){0,8}"
+            r"(?:password|passwd|passphrase|token|secret|credential"
+            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret"
+            r"|private[_-]?key|secret[_-]?key)"
             r"\s+(?![-$])\S{6,}"
         ),
     ),

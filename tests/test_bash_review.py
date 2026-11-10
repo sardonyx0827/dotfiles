@@ -4464,6 +4464,62 @@ class TestBareTokenFormats:
         found, got = hook_fns["scan_secrets"](command, {"command": command})
         assert (found, got) == (True, label), f"missed {command!r}"
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # The keyword was only recognised directly after `--`, so any flag
+            # that names WHICH token it is (the common case) sent the raw value
+            # to Gemini and the unmasked detail log.
+            "node app.js --access-token Zq83kd0Lm2PvX7aB",
+            "tool --github-token Zq83kd0Lm2PvX7aB",
+            "npm publish --npm-token Zq83kd0Lm2PvX7aB",
+            "cli --api-token Zq83kd0Lm2PvX7aB",
+            "cli --bearer-token Zq83kd0Lm2PvX7aB",
+            "aws-cli --secret-access-key Zq83kd0Lm2PvX7aB",
+            "minio --secret-key Zq83kd0Lm2PvX7aB",
+            "deploy --private-key Zq83kd0Lm2PvX7aB",
+            "deploy --aws-secret-access-key Zq83kd0Lm2PvX7aB",
+            # `=` spellings whose keyword is hyphenated (the assignment rule's
+            # suffix class stops at `-`).
+            "minio --secret-key=Zq83kd0Lm2PvX7aB",
+            "deploy --private-key=Zq83kd0Lm2PvX7aB",
+        ],
+    )
+    def test_prefixed_long_flag_value_is_detected(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is True, f"missed {command!r}"
+        assert "Zq83kd0Lm2PvX7aB" not in label
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # A negated boolean flag is followed by an ordinary argument.
+            "tool --no-password origin-main",
+            # File-valued flags name a path, not the secret itself.
+            "tool --token-file ./config/token.txt",
+            "tool --password-file /tmp/pass.txt",
+            "ssh-tool --private-key-file ./keys/deploy.pem",
+            "tool --private-key-path=./keys/deploy.pem",
+        ],
+    )
+    def test_file_valued_and_negated_flags_are_not_flagged(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (False, ""), f"false positive on {command!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "export TOKEN_PATH=./keys/deploy.pem",
+            # New with `private[_-]?key` in the assignment table: a path-valued
+            # *_PATH variable is flagged too, the same trade-off TOKEN_PATH
+            # already makes (a false positive only costs an ask).
+            "export PRIVATE_KEY_PATH=./keys/deploy.pem",
+        ],
+    )
+    def test_path_valued_credential_variables_are_flagged(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (True, "secret assignment")
+
     @pytest.mark.parametrize("token", NEAR_MISS_TOKENS)
     def test_near_miss_is_not_flagged(self, hook_fns, token):
         command = f"echo {token}"
@@ -4490,6 +4546,27 @@ class TestSecretScanIsLinear:
         import time
 
         command = unit * (100_000 // len(unit))
+        started = time.perf_counter()
+        found, _ = hook_fns["scan_secrets"](command, {"command": command})
+        elapsed = time.perf_counter() - started
+        assert found is False
+        assert elapsed < 2.0, f"{unit!r} x N took {elapsed:.1f}s (quadratic?)"
+
+    @pytest.mark.parametrize(
+        "unit",
+        [
+            "--" + "a-" * 12,  # more prefix words than the {0,8} bound allows
+            "--" + "a" * 200,  # one long word that never reaches a separator
+            "--access-tok",  # a prefix whose keyword never completes
+        ],
+    )
+    def test_repeated_long_flag_prefix_is_fast(self, hook_fns, unit):
+        # "secret flag" accepts prefix words before the keyword
+        # (`--access-token`); the bounded, separator-delimited group must stay
+        # linear when a 100 KB command is nothing but near-miss flags.
+        import time
+
+        command = (unit + " ") * (100_000 // (len(unit) + 1))
         started = time.perf_counter()
         found, _ = hook_fns["scan_secrets"](command, {"command": command})
         elapsed = time.perf_counter() - started

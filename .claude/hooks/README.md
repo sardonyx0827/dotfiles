@@ -249,7 +249,11 @@ latency low for the common case:
    npm / GitLab / Hugging Face / SendGrid / PyPI / Docker / DigitalOcean),
    PEM / OpenPGP private keys, JWTs,
    `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs,
-   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`),
+   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`,
+   also with a prefix that names the credential: `--access-token …`,
+   `--github-token …`, `--aws-secret-access-key …`, `--private-key …`; path-valued
+   `--token-file` / `--password-file` and the negated `--no-password` are not
+   values),
    and a secret-named key followed by its value in known setter CLIs
    (`aws configure set`, `vault kv put`, `gh secret set`, `heroku config:set`, …).
    References to a credential in code (`os.getenv(…)`, `os.environ[…]`,
