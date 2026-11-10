@@ -634,6 +634,49 @@ DETECTION_CASES = [
     ('git rebase --exec "make test" HEAD~1', False),
     ('git rebase main && echo "git push"', False),
     ('watch "ls -la"', False),
+    # --- A backslash-escaped space inside a global option's value: the value
+    # unit matched `[^[:space:]]+`, so `\ ` ended it early and `b` was read as
+    # the subcommand. These start with `git -C`, so `ask: Bash(git push:*)` does
+    # not catch them either, while `allow: Bash(git:*)` does.
+    ("git -C /tmp/a\\ b push", True),
+    ("git -C ~/My\\ Project push origin main", True),
+    ("git -c user.name=My\\ Name push", True),
+    ("git --git-dir=/x\\ y/.git push", True),
+    ("git --work-tree /x\\ y push", True),
+    # ...while an escaped BACKSLASH before the space is a literal `\` that ends
+    # the value (regressed when `\ ` started to be kept).
+    ("git -C /tmp/x\\\\ push", True),
+    ("git -c core.x=a\\\\ push", True),
+    ("git --git-dir=/g\\\\ --work-tree=/w\\\\ push", True),
+    # A string-executing form whose single argument has an escaped space or tab:
+    # the inner shell splits `git\ push` into `git push`.
+    ("eval git\\ push", True),
+    ("sh -c git\\ push", True),
+    ("bash -c git\\ push", True),
+    ("watch git\\ push", True),
+    ("eval git\\\tpush", True),
+    # --- Shell options before `-c`, or `c` not last in its cluster: only
+    # dash-words were allowed between the shell and a cluster ending in `c`.
+    ("bash -euo pipefail -c 'git push'", True),
+    ("bash -o pipefail -c 'git push'", True),
+    ("bash -O extglob -c 'git push'", True),
+    ("bash +e -c 'git push'", True),
+    ("bash -cl 'git push'", True),
+    ("sh -ce 'git push origin main'", True),
+    # --- A line continuation inside the executed string: the inner shell folds
+    # `\<newline>` away, so the copy must delete it rather than leave a split.
+    ("bash -c 'git\\\n push'", True),
+    ("eval 'git\\\n push'", True),
+    # --- Code fed to a shell on stdin, and shells reached by other names.
+    ('echo "git push" | sh', True),
+    ("printf 'git push\\n' | bash", True),
+    ("bash <<< 'git push'", True),
+    ("$SHELL -c 'git push'", True),
+    ("fish -c 'git push'", True),
+    # ...while a shell merely named in a message, or run on a script, stays quiet.
+    ('git commit -m "fix bash completion for git push"', False),
+    ('bash scripts/test.sh && git commit -m "no git push yet"', False),
+    ('echo "git push" > notes.txt', False),
 ]
 
 VARIANTS = [("claude", CLAUDE_HOOK), ("codex", CODEX_HOOK)]
@@ -744,6 +787,54 @@ def test_dash_c_summary_survives_a_quoted_path(shell_env, tmp_path, variant, hoo
     reason = _summary_text(res, variant)
     assert "branch: feature-target" in reason, reason
     assert "target repo commit" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_dash_c_with_an_escaped_space_summarises_that_repo(
+    shell_env, tmp_path, git_repo, variant, hook
+):
+    """`git -C /a\\ b push` is the same repository as `git -C "/a b" push`.
+
+    The hook runs in git_repo (branch main, "initial commit"), so a summary that
+    fell back to the hook's cwd would show that repository instead.
+    """
+    base = tmp_path / "has space"
+    base.mkdir()
+    target = make_target_repo(base)
+    escaped = str(target).replace(" ", "\\ ")
+    res = shell_env.run(hook, stdin=payload(f"git -C {escaped} push"), cwd=git_repo)
+    _assert_push_detected(res, variant, escaped)
+    reason = _summary_text(res, variant)
+    assert "initial commit" not in reason, reason
+    assert "target repo commit" in reason or "could not be determined" in reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "timeout 5 git -C {t} push",
+        "env X=1 git -C {t} push",
+        "nice git -C {t} push",
+        "bash -c 'git -C {t} push'",
+        "git push --dry-run && git -C {t} push",
+    ],
+)
+def test_dash_c_the_hook_cannot_tie_to_the_push_never_summarises_the_cwd(
+    shell_env, tmp_path, git_repo, variant, hook, template
+):
+    """A `-C` behind a wrapper or inside a string was not read, and the summary
+    silently described the hook's cwd (git_repo) -- the README's "a summary of
+    the wrong repository is worse than none". Either the target's summary or the
+    "could not be determined" note is acceptable; the cwd's commits are not."""
+    target = make_target_repo(tmp_path)
+    command = template.format(t=target)
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_detected(res, variant, command)
+    reason = _summary_text(res, variant)
+    assert "initial commit" not in reason, reason
+    # ...and the prompt says so, rather than carrying an empty summary.
+    assert "could not be determined" in reason or "target repo commit" in reason
 
 
 @pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])

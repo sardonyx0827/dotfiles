@@ -67,7 +67,18 @@
   the string that `git submodule
 foreach`, `git rebase --exec` (`-x`) or `watch` runs is detected too
   (`submodule foreach` runs in each submodule, so it shows a note instead of a
-  summary).
+  summary). The same holds for a string a shell runs however it is invoked:
+  options before `-c` (`bash -euo pipefail -c`, `-o pipefail`, `-O extglob`,
+  `+e`), `c` inside a cluster (`-cl`, `-ce`), code piped or here-stringed into
+  a shell (`… | sh`, `bash <<< '…'`), `$SHELL -c`, `fish` / `csh` / `tcsh` /
+  `ash` / `mksh`, and a `\`-newline continuation inside that string. A global
+  option value with a backslash-escaped space (`git -C ~/My\ Project push`,
+  `git -c user.name=My\ Name push`) no longer ends the value early and hides
+  the push. When the command carries a `-C` the hook cannot tie to the push
+  (the push sits behind a wrapper such as `timeout 5` / `env X=1` / `nice`, or
+  inside a `bash -c` string), or two pushes name different `-C` directories,
+  the prompt shows the "target repository could not be determined" note rather
+  than a summary of the hook's own cwd.
   This entry used to carry `if: Bash(git push*)`. That filter prefix-matches
   each sub-command, so it never fired for the very forms this script exists
   to catch — `git -C <dir> push`, `git --no-pager push`, `git -c k=v push`,
