@@ -2587,40 +2587,56 @@ _CREDENTIAL_REFERENCE = (
     r"(?=[\s;,)\]}\"'`\\]|$)"
 )
 
+# 既知形式トークンの「開始境界」。`\b` は使わない: `\b` は `_` と英数字を同じ語の
+# 文字として扱うので、エスケープ `\n` / `\t` の `n` / `t` の直後 (`printf 'a\nghp_…'`、
+# `gh api` / `jq -c` が出す JSON 文字列中の改行) や `_` の直後 (`X=abc_ghp_…`) に
+# 密着したトークンで境界が成立せず、生のまま Gemini / Codex へ送られていた。
+# 直前が英数字でなければ境界とし (`_` は境界側)、英数字でもそれがバックスラッシュ
+# エスケープの一部なら境界とする。直前が素の英数字のもの (`mynpm_…`) は従来どおり
+# 拾わない。share 用 dossier の伏字 (dossier_redact.py) もこの表を流用する。
+# エスケープは `\n` 等の 1 文字形に加え、同じ改行の 16 進 / Unicode / 8 進表記
+# (`\x0a` / `\u000a` / `\012`) も境界とする (どれも末尾が英数字で `\b` が立たない)。
+_TOKEN_START = (
+    r"(?:(?<![A-Za-z0-9])|(?<=\\[nrtfv])|(?<=\\x[0-9A-Fa-f]{2})"
+    r"|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\[0-7]{3}))"
+)
+
 _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
-    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("GitHub PAT", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
-    ("AWS access key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
-    ("Google OAuth token", re.compile(r"\bya29\.[0-9A-Za-z_\-]{20,}")),
-    ("OpenAI key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
+    ("GitHub token", re.compile(_TOKEN_START + r"gh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("GitHub PAT", re.compile(_TOKEN_START + r"github_pat_[A-Za-z0-9_]{20,}\b")),
+    ("AWS access key", re.compile(_TOKEN_START + r"(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("Google API key", re.compile(_TOKEN_START + r"AIza[0-9A-Za-z_\-]{35}\b")),
+    ("Google OAuth token", re.compile(_TOKEN_START + r"ya29\.[0-9A-Za-z_\-]{20,}")),
+    ("OpenAI key", re.compile(_TOKEN_START + r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
     # xapp- は Slack のアプリレベルトークン (Socket Mode)。
     (
         "Slack token",
-        re.compile(r"\b(?:xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,})"),
+        re.compile(
+            _TOKEN_START + r"(?:xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,})"
+        ),
     ),
-    ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
+    ("Stripe key", re.compile(_TOKEN_START + r"[rs]k_live_[0-9A-Za-z]{16,}\b")),
     # 以下は接頭辞だけで高精度に判定できる既知形式 (キーワード付き代入の助けが無い
     # 裸の値でも拾う)。長さは各サービスの発行形式に合わせ、near-miss は拾わない。
-    ("npm token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
-    ("GitLab token", re.compile(r"\bglpat-[0-9A-Za-z_\-]{20,}")),
-    ("Hugging Face token", re.compile(r"\bhf_[A-Za-z0-9]{34,}")),
+    ("npm token", re.compile(_TOKEN_START + r"npm_[A-Za-z0-9]{36}\b")),
+    ("GitLab token", re.compile(_TOKEN_START + r"glpat-[0-9A-Za-z_\-]{20,}")),
+    ("Hugging Face token", re.compile(_TOKEN_START + r"hf_[A-Za-z0-9]{34,}")),
     (
         "SendGrid key",
-        re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}"),
+        re.compile(_TOKEN_START + r"SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}"),
     ),
     # PyPI のトークンは macaroon で、`AgEI` は pypi.org (`AgEN` は test.pypi.org) を指す
     # 固定の先頭。
-    ("PyPI token", re.compile(r"\bpypi-AgE[IN][A-Za-z0-9_\-]{16,}")),
+    ("PyPI token", re.compile(_TOKEN_START + r"pypi-AgE[IN][A-Za-z0-9_\-]{16,}")),
     (
         "Slack webhook URL",
         re.compile(
             r"hooks\.slack\.com/services/T[A-Z0-9]{6,}/B[A-Z0-9]{6,}/[A-Za-z0-9]{12,}"
         ),
     ),
-    ("Docker PAT", re.compile(r"\bdckr_pat_[A-Za-z0-9_\-]{20,}")),
+    ("Docker PAT", re.compile(_TOKEN_START + r"dckr_pat_[A-Za-z0-9_\-]{20,}")),
     # DigitalOcean: dop (PAT) / doo (OAuth) / dor (refresh) はいずれも v1_ + 64 桁 hex。
-    ("DigitalOcean token", re.compile(r"\bdo[opr]_v1_[a-f0-9]{64}\b")),
+    ("DigitalOcean token", re.compile(_TOKEN_START + r"do[opr]_v1_[a-f0-9]{64}\b")),
     # OpenPGP の armor は `PRIVATE KEY BLOCK-----` で終わる (gpg
     # --export-secret-keys --armor の出力)。`KEY-----` 直結だけだと
     # PEM 形式 (OPENSSH / RSA / EC / ENCRYPTED) しか拾えず、PGP 秘密鍵は素通り
@@ -2635,7 +2651,10 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
         # ヘッダ部は有界にする (JWT のヘッダは数百文字)。無制限だと `eyJ-eyJ-...` の
         # ように `eyJ` が連続する入力で、各出現が入力末尾まで走ってから失敗し二次になる
         # (100 KB で約 2 秒)。ペイロード以降は `.` で区切られるので有界化しない。
-        re.compile(r"\beyJ[A-Za-z0-9_\-]{1,2048}\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+        re.compile(
+            _TOKEN_START
+            + r"eyJ[A-Za-z0-9_\-]{1,2048}\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"
+        ),
     ),
     # Bearer / Basic は Authorization ヘッダ文脈に限定する。単に "Bearer" /
     # "Basic" という英単語 (コミットメッセージ等) での誤検知を避けるため。

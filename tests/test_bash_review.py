@@ -4427,6 +4427,43 @@ class TestBareTokenFormats:
         assert (found, got) == (True, label), f"{label!r} not detected"
         assert token not in got
 
+    @pytest.mark.parametrize(
+        ("label", "token"),
+        [
+            *FAKE_BARE_TOKENS.items(),
+            ("GitHub token", FAKE_GH_TOKEN),
+            ("AWS access key", FAKE_AWS_KEY),
+            ("Google API key", FAKE_GOOGLE_KEY),
+            ("OpenAI key", FAKE_OPENAI_KEY),
+            ("Slack token", FAKE_SLACK_TOKEN),
+            ("JWT", FAKE_JWT),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "template",
+        [
+            # A literal `\n` / `\t` escape in front of the token: printf / echo -e
+            # arguments, and every newline inside a JSON string (`gh api`,
+            # `jq -c` output pasted into a command). `\b` sees `n` + token as one
+            # word and finds no boundary, so the token went to Gemini / Codex.
+            "printf 'line\\n{token}\\n'",
+            "echo -e 'a\\t{token}'",
+            # Hex, unicode and octal spellings of the same newline.
+            "printf 'a\\x0a{token}'",
+            "printf 'a\\u000a{token}'",
+            "printf 'a\\012{token}'",
+            '{{"body":"see\\n{token}"}}',
+            # Glued behind an underscore (a shell variable built by concatenation).
+            "export X=abc_{token}",
+        ],
+    )
+    def test_token_after_escape_or_underscore_is_detected(
+        self, hook_fns, label, token, template
+    ):
+        command = template.format(token=token)
+        found, got = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, got) == (True, label), f"missed {command!r}"
+
     @pytest.mark.parametrize("token", NEAR_MISS_TOKENS)
     def test_near_miss_is_not_flagged(self, hook_fns, token):
         command = f"echo {token}"

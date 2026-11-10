@@ -254,6 +254,12 @@ latency low for the common case:
    (`aws configure set`, `vault kv put`, `gh secret set`, `heroku config:set`, …).
    References to a credential in code (`os.getenv(…)`, `os.environ[…]`,
    `self.token`) are not values and are not flagged.
+   A known-format token counts even when it is glued to a `\n` / `\t` escape
+   (`printf 'a\nghp_…'`, the escaped newlines of a JSON string, and the
+   `\x0a` / `\u000a` / `\012` spellings) or to an
+   underscore (`X=abc_ghp_…`): the start boundary is "no letter or digit
+   before it, or one that belongs to such an escape", not `\b`, which saw
+   `nghp_…` as one word. The session-dossier share redaction reuses this table.
    A hit fails closed to `ask` (Claude) / block (Codex) **without calling Gemini
    or Codex**, so a secret never leaves the machine for review; the
    reason / notification / logs carry only a generic category label, and the raw
