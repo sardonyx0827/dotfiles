@@ -68,7 +68,9 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 `GEMINI_API_KEY` が無い場合は **CLI へ暗黙にフォールバックせず**、変数名を明示したエラーをレポートに出します
 （GUI 起動でシェルの環境を引き継いでいない Neovim がまさにこれに当たるため、原因が読めることを優先します）。
 なお `generationConfig` は送りません — `maxOutputTokens` は上の打ち切りを自作することになり、
-`thinkingLevel: "minimal"` は既定モデル以外では HTTP 400 になることを実測で確認しています。
+`thinkingLevel: "minimal"` は既定モデル以外では HTTP 400 になることを実測で確認しています
+（bash-review フックも同じ理由で、`thinkingLevel` を既定モデルにだけ送り、フォールバック先の
+`gemini-flash-latest` や上書きした `$GEMINI_MODEL` には送りません）。
 
 ### カーソル文脈ヒント (`<leader>qh` / `<leader>qg`)
 

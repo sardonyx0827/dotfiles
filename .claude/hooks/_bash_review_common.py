@@ -2859,17 +2859,31 @@ def build_review_prompt(tool_name: str, tool_input) -> str:
     )
 
 
+# 両入口 ($GEMINI_MODEL / $GEMINI_FLASH_MODEL 未設定時) の既定モデル。入口ごとに
+# 文字列を書くと、下の「既定モデルにだけ thinkingLevel を送る」判定と食い違う。
+DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
+DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-flash-latest"
+
+
 def _build_gemini_payload(target_model: str, prompt: str) -> tuple[str, bytes]:
+    """generateContent の URL と本体を返す。
+
+    `thinkingLevel: "minimal"` (と短い出力上限) は既定モデルにだけ送る。実測で
+    受け付けたのは gemini-flash-lite-latest だけで、フォールバック先の
+    gemini-flash-latest や gemini-pro-latest / gemini-2.5-flash-lite は HTTP 400
+    ("Thinking level ... is not supported") を返す (scripts/gemini_api.py の
+    build_request の記録)。全モデルへ送っていたため、フォールバックは毎回 400 で
+    失敗し (一次の障害は常に Codex 行き)、$GEMINI_MODEL を上書きすると一次まで
+    壊れていた。それ以外のモデルには temperature だけを送り、出力上限も付けない:
+    思考を抑えないモデルでは思考トークンが上限を食い、判定本文が空で返りうる。
+    """
     target_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
+    config: dict = {"temperature": 0.0}
+    if target_model == DEFAULT_GEMINI_MODEL:
+        config["maxOutputTokens"] = 256
+        config["thinkingConfig"] = {"thinkingLevel": "minimal"}
     data = json.dumps(
-        {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": 256,
-                "temperature": 0.0,
-                "thinkingConfig": {"thinkingLevel": "minimal"},
-            },
-        }
+        {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": config}
     ).encode("utf-8")
     return target_url, data
 

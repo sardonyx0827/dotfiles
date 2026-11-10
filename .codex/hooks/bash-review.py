@@ -33,6 +33,8 @@ sys.path.insert(
     ),
 )
 from _bash_review_common import (
+    DEFAULT_GEMINI_FALLBACK_MODEL,
+    DEFAULT_GEMINI_MODEL,
     _can_skip_review,
     _sanitize_notify,
     _split_commands,
@@ -57,8 +59,10 @@ from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
 api_key = os.environ.get("GEMINI_API_KEY", "")
-gemini_model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
-gemini_fallback_model = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-latest")
+gemini_model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+gemini_fallback_model = os.environ.get(
+    "GEMINI_FLASH_MODEL", DEFAULT_GEMINI_FALLBACK_MODEL
+)
 
 
 # 判定確定後にログ/通知が例外を投げても、下の except の fail-safe

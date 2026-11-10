@@ -247,6 +247,52 @@ class TestGeminiStage:
         assert "fallback-model" in calls[1].full_url
 
 
+class TestGeminiPayload:
+    """`thinkingLevel: "minimal"` was measured to be accepted only by the default
+    model (gemini-flash-lite-latest); gemini-flash-latest -- the fallback -- and
+    the other ids tried answer HTTP 400 "Thinking level ... is not supported"
+    (scripts/gemini_api.py records the measurement). Sending it to every model
+    made the fallback fail on every call, so a primary outage always fell
+    through to Codex, and any $GEMINI_MODEL override broke the primary too."""
+
+    @staticmethod
+    def _config(hook_fns, model):
+        _url, data = hook_fns["_build_gemini_payload"](model, "prompt")
+        return json.loads(data)["generationConfig"]
+
+    def test_default_model_keeps_the_measured_low_latency_config(self, hook_fns):
+        config = self._config(hook_fns, hook_fns["DEFAULT_GEMINI_MODEL"])
+        assert config["thinkingConfig"] == {"thinkingLevel": "minimal"}
+        assert config["temperature"] == 0.0
+
+    @pytest.mark.parametrize(
+        "model", ["gemini-flash-latest", "gemini-pro-latest", "primary-model"]
+    )
+    def test_other_models_get_no_thinking_level(self, hook_fns, model):
+        config = self._config(hook_fns, model)
+        assert "thinkingConfig" not in config
+        # Without the thinking cap a thinking model may spend output tokens on
+        # thoughts, so no hand-picked ceiling either (a short verdict stops early).
+        assert "maxOutputTokens" not in config
+        assert config["temperature"] == 0.0
+
+    def test_default_ids_match_the_shared_constants(self, run_hook, hook_fns):
+        calls = []
+        res = run_hook(
+            HOOK,
+            hook_payload("make build"),
+            urlopen=fake_gemini(URLError("primary down"), "ALLOW", calls=calls),
+            env={"GEMINI_MODEL": None, "GEMINI_FLASH_MODEL": None},
+        )
+        assert res.decision == "allow"
+        assert hook_fns["DEFAULT_GEMINI_MODEL"] in calls[0].full_url
+        assert hook_fns["DEFAULT_GEMINI_FALLBACK_MODEL"] in calls[1].full_url
+        first = json.loads(calls[0].data)["generationConfig"]
+        fallback = json.loads(calls[1].data)["generationConfig"]
+        assert "thinkingConfig" in first
+        assert "thinkingConfig" not in fallback
+
+
 class TestCodexStage:
     def test_gemini_ask_codex_allow_asks(self, run_hook):
         # Gemini ASK ("confirmation needed") is escalated to Codex, but a lone
