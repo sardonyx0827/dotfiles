@@ -17,7 +17,11 @@
   carrying raw credentials to any LLM, a parallel Gemini+Codex AND-gate for
   high-risk commands, and a Gemini→Codex cascade for the low-risk majority.
   Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`
-  (directory 0700, files 0600).
+  (directory 0700, files 0600). The summary log holds one decision per
+  physical line: a newline in the command or the reason is written as `⏎`,
+  and a `|` in the reason as `/`, so a multi-line command cannot plant a
+  line that reads as a second decision (the `bash-review-log` mod applies the
+  same `⏎` when it matches a summary line to its detail log).
   `settings.json` launches it through the launcher, not bare `python3`: a hook
   command that cannot start (no `python3`, missing file) or crashes with an
   unexpected exit code is treated by Claude Code as a _non-blocking_ error —
@@ -57,6 +61,20 @@
   `sh -c` / `watch` / `--exec`, a refspec with an expansion, an unknown option,
   over 4000 characters, a control character) it does not guess and shows a
   note instead. URL userinfo is masked.
+  A push that is not spelled `git … push` is confirmed too, with a note in
+  place of the summary (the summary describes "the current branch to its
+  upstream", which is not what these send): `git subtree push`, the transport
+  `git push` itself runs (`git send-pack`, `git http-push`), and an alias —
+  `git -c alias.p=push p`, or `git config alias.ps push`, the one moment the
+  hook can see a later `git ps`. Alias values are not interpreted: `-c alias.`
+  or `config … alias.` in the command as the shell reads it (quoted text such
+  as a commit message does not count; a backslash spelling such as
+  `git conf\ig` does), with the letters `push` anywhere in the command, is
+  enough — so `alias.lg 'log --grep=push'` asks as well.
+  Past the 4000-character cap the quote scan is replaced by an
+  over-approximation; it also drops backslashes and folds `\`-newline, so
+  `git pu\sh` or a continuation between `git` and `push` behind a long heredoc
+  is still seen.
   On detection: a stray apostrophe inside a comment (word-initial `#`), a
   heredoc body or `$'...'` can no longer open a false quote and hide a push on
   a later line. A `<<` with no terminator line (an arithmetic shift such as
@@ -139,6 +157,10 @@ feeds both, and lets lint's exit code be the hook's.
   and blocks once with the findings so Claude removes them. Before the
   first commit (no `HEAD` yet) it scans the staged files instead of the
   diff against `HEAD`.
+  The report is bounded — 5 matches per file, 200 bytes per matched line
+  (cut on a character boundary), 20 files and a count of the rest — because a
+  single minified line used to stall the hook for minutes under macOS's
+  bash 3.2, and past about 1 MB made it print nothing and let Stop through.
   `stop_hook_active` guards against infinite loops.
   Skipped entirely when `EDITOR_AI_ONESHOT` is set — the marker the vim /
   nvim AI features put on their `claude -p` and `codex exec` calls. Those are
@@ -272,7 +294,29 @@ latency low for the common case:
    quotes) — a prompt written with the Write tool is otherwise never scanned. Glued short options (`-pevil`, `-cKEY=V`, `-c=K=V`)
    are normalised first. Like denial, lines inside heredoc bodies and multi-line
    quoted strings are not read, so a commit message that mentions a flag does
-   not trip it. Claude reaches Codex through `codex exec` on the Bash tool since
+   not trip it. Three things hold wherever they appear in the invocation:
+   the stdin rules apply even when a prompt is also given on argv
+   (`codex exec 'review' < prompt.md`, `cat prompt.md | codex exec 'review'`),
+   and each is applied on its own — every `< FILE` must have been scanned
+   (`/dev/null` included: the hook cannot tell a real redirect from a quoted
+   argument that looks like one), a heredoc is checked whatever else is
+   redirected, a redirect on another descriptor (`3< file`) is an input file
+   but does not make stdin "redirected", and stdin taken from a descriptor
+   (`0<&3`, `0>&3`) asks because its source cannot be traced; a `--` ends flag
+   parsing but not the expansion and redirect
+   checks (`codex exec -- "$(cat f)"` asks); and the environment may not be
+   changed by another command in the same line either — `export` / `declare` /
+   `typeset` assigning anything but `EDITOR_AI_ONESHOT` (also behind `command`
+   / `builtin`), a bare `NAME=value` command, `set -a`, or `eval` / `source` /
+   `.`, whose effect the hook cannot read (`export CODEX_HOME=/x; codex exec
+…`). Printing forms such as `declare -p PATH` do not count. That last check
+   does not follow order or subshells, so an `export` after the `codex` call
+   asks too.
+   The reason names a flag, subcommand, config key or variable only when it
+   is a plain word (letters, `_`, `.`, `-`); any other token is withheld, and
+   when the secret scan found a credential in the command the whole reason is
+   one fixed sentence — a reason is shown in the prompt and written to the
+   summary log, which the command-field redaction does not cover. Claude reaches Codex through `codex exec` on the Bash tool since
    Codex CLI 0.154 removed its MCP-server mode; a denylist of risky flags kept
    missing spellings, which is why this is an allowlist. Prefix rules in
    `permissions.ask` back up the common risky spellings for when the hook is
@@ -293,7 +337,9 @@ latency low for the common case:
      operand even without `-r`, and treats `-3` as "recurse 3 levels". So a
      recursive flag, a digit flag, or an operand that does not look like a
      regular file (`.`, `src`, `sub/`) sends grep to review; a pipe
-     (`… | grep foo`) or `grep foo file.txt` stays fast.
+     (`… | grep foo`) or `grep foo file.txt` stays fast. Operands after `--`
+     are read the same way (`grep -- PAT src` is reviewed): `--` ends the
+     options, not the operands.
    - an rg that overrides its hidden/ignored-file skip: `--hidden`, `-.`, `-u`,
      `--unrestricted`, `--no-ignore*`, and also `-g` / `--glob` / `--iglob`
      (unless an `!` exclusion) and `-t` / `--type`, both of which read hidden
@@ -319,6 +365,11 @@ latency low for the common case:
    values),
    and a secret-named key followed by its value in known setter CLIs
    (`aws configure set`, `vault kv put`, `gh secret set`, `heroku config:set`, …).
+   `gh secret set` takes its value through `--body` / `-b`, so a literal of 8
+   characters or more there counts whatever the secret is called (`--body
+"$VAR"` is a reference, not a value; the floor is the one the other setter
+   CLIs use, and keeps a placeholder such as `--body VALUE` in prose from
+   stopping a commit message).
    References to a credential in code (`os.getenv(…)`, `os.environ[…]`,
    `self.token`) are not values and are not flagged.
    A known-format token counts even when it is glued to a `\n` / `\t` escape
@@ -373,9 +424,32 @@ latency low for the common case:
      left, so its approval carries (graceful degradation, no added friction).
    - Codex `DENY` → `deny`; Codex `ASK` → `ask`; Codex `ERROR` → fall back to
      Gemini's verdict (`deny` if Gemini said `DENY`, otherwise `ask`).
+
+   How a reviewer's answer becomes a verdict (`_parse_verdict`): a line that
+   starts with `DENY` or `ASK` counts, and `DENY` beats `ASK` beats `ALLOW`.
+   `ALLOW` counts only when it stands alone on its line (closing quotes or
+   markdown and one full stop may follow) — `ALLOW is not appropriate here: …`
+   used to be read as an approval. No verdict line means `ask`.
+   What Gemini's `ERROR` covers is deliberately narrow, because a lone Codex
+   `ALLOW` resolves it: the key is missing or cannot be sent as a header
+   value, or the call failed in transport (connection, TLS, an HTTP error
+   status, a read cut short, a body that is not JSON) on both the primary and
+   the fallback model. An
+   answer that arrived but carries no usable verdict is an `ASK` instead, with
+   the cause in the reason: a content-filter block
+   (`promptFeedback.blockReason`, or any `finishReason` other than `STOP`), an
+   answer cut at the output limit, a body that is not UTF-8, an empty body, or
+   one with a part that is not text (the readable parts are not picked out of
+   it). Whoever writes the command can trip a filter, so treating that as "no
+   opinion" would leave only Codex to convince. All text parts of the answer
+   are read, not just the first.
+
 5. **Fail toward the human.** Malformed stdin, an unavailable Codex, or any
    exception raised before a decision is emitted resolves to `ask` / `deny`,
-   never a silent allow. This includes the review **never starting**:
+   never a silent allow. The reason then gives the exception's type and the
+   hook line it came from, never its message: a message can quote anything
+   (`http.client` quotes the header value it rejected, i.e. the API key).
+   This includes the review **never starting**:
    `bash-review-launcher.sh` turns a missing `python3`, a missing
    `bash-review.py`, or a crash (any exit other than 0/2) into an explicit
    `ask`, where the bare `python3 …/bash-review.py` wiring would have been

@@ -51,6 +51,10 @@ Matcher: `Bash`(実行順)
    引数を信頼できる形で読めないとき(eval / `sh -c` / `watch` / `--exec` の中、
    展開を含む refspec、未知のオプション、4000 文字超、制御文字)は推測せず注記に
    する。URL の userinfo は伏せる。
+   `git … push` の語順を取らない push (`git subtree push`、`git send-pack` /
+   `git http-push`、alias 経由の `git -c alias.p=push p` / `git config alias.ps push`)
+   も、要約の代わりに注記を付けてブロックする。4000 文字超の経路でもバックスラッシュと
+   行継続を畳むので、`git pu\sh` は隠れない(詳細は `.claude/hooks/README.md`)。
    検知は、コメント(語頭の `#`)・ヒアドキュメント本文・`$'...'` の中の偶発的な
    アポストロフィが偽のクォートを開いて後続行の push を隠すことがない。終端行の
    無い `<<`(算術シフトの `$((1<<2))` 等)はヒアドキュメントとみなさず、コードで
@@ -83,6 +87,8 @@ Matcher: `Write|Edit|MultiEdit`
 2. **stop-audit** (`hooks/stop-audit.sh`):
    デバッグ文(`console.log` / `debugger` / `breakpoint()` 等)の残留を監査し、
    見つかれば exit 2 でブロックする。`stop_hook_active` で無限ループを防ぐ。
+   報告は量を限る(1 ファイル 5 件、一致行は 200 バイトまで、20 ファイルと残りの件数)。
+   巨大な 1 行でフックが分単位で止まるのを防ぐため。
    最初のコミット前(`HEAD` がまだ無い)は、`HEAD` との差分の代わりに
    ステージ済みのファイルを監査する。
    `EDITOR_AI_ONESHOT` が立っていれば監査そのものを飛ばす — vim / nvim の AI
