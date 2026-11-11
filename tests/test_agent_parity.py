@@ -203,10 +203,28 @@ def test_agent_catalog_model_column_matches_frontmatter():
 
 
 def _tools(stem: str) -> list:
+    """Read the `tools:` key, whichever way the agent spells it.
+
+    Two spellings are in use: a plain comma list (`tools: Bash, Read`) and the
+    YAML flow array Prettier wraps onto several lines (`tools:` alone, then an
+    indented `[ "Read", ... ]`). `frontmatter_value` only understands the first
+    and returns '' for the second, so a `.split(",")` over it gave `['']` for 13
+    of the 14 agents and every membership test over it was vacuous.
+    """
     fm, _ = split_frontmatter(
         (CLAUDE_AGENTS_DIR / f"{stem}.md").read_text(encoding="utf-8"), stem
     )
-    return [t.strip() for t in frontmatter_value(fm, "tools", stem).split(",")]
+    for idx, line in enumerate(fm):
+        if not line.startswith("tools:"):
+            continue
+        parts = [line[len("tools:") :]]
+        for cont in fm[idx + 1 :]:
+            if cont.strip() and not cont.startswith((" ", "\t")):
+                break  # next top-level key
+            parts.append(cont)
+        names = (t.strip().strip("\"'") for t in re.split(r"[,\[\]]", " ".join(parts)))
+        return [t for t in names if t]
+    raise AssertionError(f"{stem}: frontmatter has no `tools`")
 
 
 def test_no_agent_lists_a_removed_codex_mcp_tool():
@@ -225,3 +243,50 @@ def test_codex_delegator_can_run_codex_exec():
     tools = _tools("codex-delegator")
     assert "Bash" in tools  # `codex exec` is a CLI now
     assert "Write" in tools  # the prompt file the secret scan reads
+
+
+def test_tools_parser_reads_every_agent():
+    # Positive anchors for `_tools`: a parser that returns [''] makes every
+    # membership test above and below pass or fail for the wrong reason.
+    for path in sorted(CLAUDE_AGENTS_DIR.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        tools = _tools(path.stem)
+        assert tools and all(re.fullmatch(r"[A-Za-z][\w]*", t) for t in tools), (
+            f"{path.stem}: `tools:` did not parse into plain tool names: {tools}"
+        )
+    assert "Read" in _tools("planner")  # multi-line YAML array
+    assert "Bash" in _tools("codex-delegator")  # plain comma list
+
+
+# --- The Codex mirror drops `tools:`, so a restriction has to live in the body ---
+# gen_codex_agents.py carries over name / description / body only. An agent that is
+# read-only purely because its Claude `tools:` list has no Write / Edit would be
+# unrestricted under Codex unless its body says so.
+READ_ONLY_MARKER = "Read-only agent"
+
+
+def _read_only_agents() -> list:
+    return [
+        path.stem
+        for path in sorted(CLAUDE_AGENTS_DIR.glob("*.md"))
+        if path.name != "README.md" and not {"Write", "Edit"} & set(_tools(path.stem))
+    ]
+
+
+def test_agents_without_write_or_edit_state_it_in_their_body():
+    read_only = _read_only_agents()
+    # Anchor: these four are read-only today. If the parser regresses to an empty
+    # list, every agent looks read-only and this fails instead of flagging all 14.
+    assert {"planner", "architect", "code-reviewer", "go-reviewer"} <= set(read_only)
+    for stem in read_only:
+        if stem in HAND_MAINTAINED:
+            continue
+        _, body = split_frontmatter(
+            (CLAUDE_AGENTS_DIR / f"{stem}.md").read_text(encoding="utf-8"), stem
+        )
+        assert READ_ONLY_MARKER in body, f"{stem}: body lacks {READ_ONLY_MARKER!r}"
+        # What reaches Codex is the generated body: prove it survives generation.
+        assert READ_ONLY_MARKER in _codex_agent_data(stem)["developer_instructions"], (
+            f"{stem}: the read-only statement did not reach the Codex copy"
+        )

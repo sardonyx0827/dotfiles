@@ -1,6 +1,6 @@
 ---
 name: security-review
-description: Use this skill when adding authentication, handling user input, working with secrets, creating API endpoints, or implementing payment/sensitive features. Provides comprehensive security checklist and patterns.
+description: Use this skill when adding authentication, handling user input, working with secrets, creating API endpoints, implementing payment/sensitive features, or changing agent-harness configuration (permission rules, hooks, mods/plugins). Provides comprehensive security checklist and patterns.
 ---
 
 # Security Review Skill
@@ -16,6 +16,7 @@ This skill ensures all code follows security best practices and identifies poten
 - Implementing payment features
 - Storing or transmitting sensitive data
 - Integrating third-party APIs
+- Changing agent-harness configuration (permission rules, hooks, mods / plugins, agent instruction files)
 
 ## Security Checklist
 
@@ -544,6 +545,56 @@ await db.transaction(async (trx) => {
 - [ ] Row locks (`FOR UPDATE`) on read-modify-write paths
 - [ ] No floating-point arithmetic for money
 - [ ] Idempotency keys on state-changing endpoints
+
+### 14. Agent-Harness Configuration
+
+Applies to whatever steers or gates an AI coding agent: permission rules (Claude `settings.json`,
+Codex `config.toml`), hook scripts and the settings that wire them (`settings.json` `hooks`, Codex
+`hooks.json`), mods / plugins and the directories that load them, and the instruction files agents
+read (`CLAUDE.md`, `AGENTS.md`, rules, skills, agent definitions). One question runs through all of
+it: does the change let something run, be read, or leave the machine with less review than before?
+
+#### ❌ NEVER Do This
+
+- Add an allow rule, a safe-skip entry or an allowlist shape without naming what it now lets through
+  unreviewed; a prefix rule (`Bash(cmd:*)`) covers every argument that follows the prefix
+- Rely on a deny rule for more than it matches: a `Read(...)` deny does not stop a shell `cat`, and a
+  `Bash(cmd:*)` deny does not see `sh -c '...'`, a subshell, an absolute path or another spelling
+- Let a gate hook fail open: a missing interpreter, a crash, a timeout, or an exception raised before
+  a verdict must still end in ask / block, never in a silent allow
+- Let a secret VALUE reach a reason string, notification, log line, or a prompt sent to an external
+  model; a category label is enough
+- Hand text from another project, a log or a tool result to the model unsanitized through a mod
+- Count a hook `if` filter or an `ask` prefix rule as the only layer (both are best-effort prefix
+  matches), or an inert setting (`sandbox.*` keys while the sandbox is disabled) as protection
+
+#### ✅ ALWAYS Do This
+
+- Read the diff as "what can now happen with less review", and state that in one sentence per change
+- Check the wiring, not only the script: the matcher still covers every tool the gate guards, the
+  launcher (not a bare interpreter) is what is wired, `onFailure: "block"` and a timeout above the
+  review's own worst case are still set
+- Keep the Claude and Codex variants of a gate equivalent in required behavior; they may differ in
+  vocabulary (ask on one side, block on the other) and wiring, never in what is refused
+- Pin the new behavior in tests: the wiring, the mirrored allow / deny sets, one case per widened or
+  narrowed shape
+
+#### Verification Steps
+
+- [ ] New allow rule, safe-skip entry or allowlist shape: what runs unreviewed now, including wrapped
+      and glob-expanded spellings
+- [ ] Matchers and `if` filters still cover every tool and command form the gate was written for
+- [ ] Every pre-verdict failure path (launcher, `onFailure`, timeout, oversized input, exception)
+      resolves to ask / block
+- [ ] Secret scan runs before any external call, and a hit leaves only a category label in the reason,
+      notification and logs
+- [ ] Deny rules are not the only barrier for something they cannot express (other tools, wrappers)
+- [ ] Newly loaded mod or plugin dir (`CLAUDE_CODE_PLUGIN_DIRS`, `enabledPlugins`, marketplace
+      entries): what it can execute, which files and logs it reads or writes, and whether another
+      project or tool output can reach the model or a browser through it
+- [ ] Instruction files: no second copy of a rule states a narrower condition than its source of
+      truth, none tells an agent to skip a gate, and the copies read by each runtime still agree
+- [ ] Tests fail if the change is reverted
 
 ## Security Scanning Commands
 

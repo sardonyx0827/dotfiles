@@ -310,8 +310,8 @@ Watch Mode に従い、独立チケットを並列実行する場合に限って
 案内していますが、これはコマンドが起動するものではなくユーザー向けの提案です。上の表には含めていません。
 
 `/verify` も `/requests-watch` と同じく、他の行と性質が違います。既定の動作は `verification-loop` スキルを自分で実行する
-ことで、エージェントは起動しません。`security-reviewer` を呼ぶのは、変更が認証・ユーザー入力・
-シークレット・決済のいずれかに触れる場合だけです（`.claude/commands/verify.md` 参照）。
+ことで、エージェントは起動しません。`security-reviewer` を呼ぶかどうかは、`rules/security.md` の
+トリガ表で決まります（`.claude/commands/verify.md` 参照。条件はここにも書き写しません）。
 `/db-review` → `database-reviewer` のような無条件の薄いラッパーとして読まないでください。
 
 モデルと effort はエージェント定義の frontmatter で決まります。`effort` を書いていない
@@ -357,6 +357,16 @@ flowchart LR
   エスカレーション層が Codex 側に対応物を持たないため）。`--check` は本文を再生成せず
   「存在し、有効な TOML であること」だけを確かめ、`description` が `.md` と一致していることは
   `tests/test_agent_parity.py` が固定します。`.claude/` 側が唯一の上流です。
+- **エージェントで写るものと捨てるもの**: 生成物に写るのは `name` / `description` / 本文だけで、
+  frontmatter の `tools` / `model` / `effort` / `color` は捨てます（`model` を落とすのは意図どおりです）。
+  結果として、**制限は本文に書かないと Codex 側へ届きません**。`planner` `architect` `code-reviewer`
+  `go-reviewer` は Claude 側では `tools` に Write / Edit が無いことでファイルを書くツールを持ちませんが
+  （`code-reviewer` と `go-reviewer` は Bash を持つので、そこは本文の「読み取りと既存テスト・リンターの
+  実行に限る」という文言だけが縛ります）、
+  それだけでは Codex の同名エージェントは何も制限されないので、本文にも `Read-only agent` と明記してあり、
+  `tests/test_agent_parity.py` が「Write / Edit を持たないエージェントは本文（と生成された `.toml`）に
+  この一文を持つ」ことを固定します。同じ理由で、Codex のサブエージェントは Claude 側の `effort` 固定に
+  関係なく、`.codex/config.toml.template` の `model_reasoning_effort` で動きます。
 - **フック**: 実体もリンクも置かず、`.codex/hooks/*` が自身の**物理パス**
   （`realpath(__file__)` / `cd -P`）から `../../.claude/hooks` を解決して共有ライブラリを
   読み込みます。シンボリックリンクを避けているのは `core.symlinks=false` の

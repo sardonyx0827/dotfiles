@@ -147,8 +147,9 @@ Pre-commit gate (at minimum):
 When implementing authentication, user input handling, secrets, API endpoints, payments, or file uploads,
 verify against the full checklist and vulnerability patterns by following the **security-review** skill.
 Before a commit or PR that touches those areas, or the secrets / permission / hook config guarding them,
-run the **security-reviewer** agent. Run it too after dependency updates or a known CVE, a security-tool
-alert, a user-reported concern, a production incident, or before a major release.
+or a mod / plugin and the setting that loads it, run the **security-reviewer** agent. Run it too after
+dependency updates or a known CVE, a security-tool alert, a user-reported concern, a production incident,
+or before a major release.
 
 If a security issue is found:
 

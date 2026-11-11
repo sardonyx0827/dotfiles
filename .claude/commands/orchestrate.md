@@ -188,5 +188,5 @@ $ARGUMENTS:
 
 1. **Start with planner** for complex features
 2. **Always include code-reviewer** before merge
-3. **security-reviewer closes every feature workflow** — add it to bugfix/refactor/custom runs too when they touch auth, user input, secrets, payments, or PII
+3. **security-reviewer closes every feature workflow** — add it to bugfix/refactor/custom runs too when the change matches a trigger in the Triggers table of `rules/security.md` (that table is the single source; it also covers permission / hook / mod configuration and dependency updates)
 4. **Keep handoffs concise** - focus on what next agent needs
