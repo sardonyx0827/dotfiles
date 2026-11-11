@@ -44,34 +44,46 @@ fi
 
 # 作業ツリーの変更ファイル + 未追跡ファイル(両者は排他なので重複しない)。
 # -z とプロセス置換が必須な理由は .claude/hooks/stop-audit.sh を参照。
+# 報告は量を限る (一致行は 1 行 200 バイト、ファイルは max_files 件まで) うえで、最初
+# から実改行で組む。理由は .claude/hooks/stop-audit.sh を参照 (巨大な 1 行で Stop が
+# 分単位で止まり、検出行に書かれた `\n` まで改行に変えていた)。
+max_files=20
+partial_utf8_tail=$'s/([\xC2-\xDF]|[\xE0-\xEF][\x80-\xBF]?|[\xF0-\xF4][\x80-\xBF]{0,2})$//'
+cut_hit() { LC_ALL=C cut -c1-200 | LC_ALL=C sed -E "$partial_utf8_tail"; }
+nl=$'\n'
 findings=""
+found=0
 while IFS= read -r -d '' f; do
   path="$repo_root/$f"
   [ -f "$path" ] || continue
   case "$f" in
   *.js | *.jsx | *.ts | *.tsx)
     # console.log / debugger の境界条件の理由は .claude/hooks/stop-audit.sh を参照。
-    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5)
+    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *.py)
-    hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5)
+    hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *)
     hits=""
     ;;
   esac
-  [ -n "$hits" ] && findings="${findings}${f}:\n${hits}\n"
+  if [ -n "$hits" ]; then
+    found=$((found + 1))
+    [ "$found" -le "$max_files" ] && findings="${findings}${f}:${nl}${hits}${nl}"
+  fi
 done < <(
   "${diff_cmd[@]}" 2>/dev/null
   git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
 )
 
-[ -z "$findings" ] && exit 0
+[ "$found" -eq 0 ] && exit 0
 
+if [ "$found" -gt "$max_files" ]; then
+  findings="${findings}(and $((found - max_files)) more files with debug statements)${nl}"
+fi
 # Codex の Stop フックでは exit 2 + stderr でブロックし、内容をエージェントに伝える。
-# `%b` ではなく `\n` だけを実改行へ戻す: `%b` は `\c` を「以降の出力を打ち切る」と
-# 解釈するので、検出行に `\c` (正規表現 `/\c/`、Windows パス `"C:\components"` 等)
-# があると、それ以降のファイルが報告から丸ごと消える(.claude/hooks/stop-audit.sh も同じ)。
-reason="Debug statements remain in modified files. Remove console.log / debugger / breakpoint() before finishing:\n${findings}"
-printf '%s' "${reason//\\n/$'\n'}" >&2
+# 検出行はエスケープ解釈を挟まずそのまま出す (`printf %b` は検出行の `\c` で以降の
+# 出力を打ち切る。.claude/hooks/stop-audit.sh も同じ)。
+printf '%s' "Debug statements remain in modified files. Remove console.log / debugger / breakpoint() before finishing:${nl}${findings}" >&2
 exit 2

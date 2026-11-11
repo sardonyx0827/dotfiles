@@ -1,6 +1,7 @@
 """Tests for stop-audit.sh (debug-statement audit on Stop)."""
 
 import json
+import time
 
 import pytest
 from conftest import REPO_ROOT
@@ -386,3 +387,74 @@ def test_staged_and_untracked_both_reported_on_unborn_branch(
         assert res.returncode == 2
         assert "staged.js" in res.stderr
         assert "untracked.js" in res.stderr
+
+
+def _block_text(res, variant):
+    """The text a blocked Stop hands back (claude: JSON reason, codex: stderr)."""
+    if variant == "claude":
+        assert res.returncode == 0, res.stderr
+        result = json.loads(res.stdout)
+        assert result["decision"] == "block"
+        return result["reason"]
+    assert res.returncode == 2, res.stdout
+    return res.stderr
+
+
+# --- the report is bounded, so a huge match can neither stall the hook nor slip past it ---
+# The matched lines used to be quoted whole. One minified line of a few hundred KB made
+# the `\n` substitution run for minutes under macOS's bash 3.2 (quadratic in a UTF-8
+# locale), and past ~1 MB `jq --arg` failed with E2BIG, so the audit printed nothing
+# and Stop went through.
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_a_very_long_matching_line_is_quoted_only_in_part(
+    shell_env, git_repo, variant, hook
+):
+    line = 'console.log("x");' + "y" * 300_000
+    (git_repo / "bundle.min.js").write_text(line + "\n", encoding="utf-8")
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    elapsed = time.monotonic() - started
+    text = _block_text(res, variant)
+    assert "bundle.min.js" in text
+    assert "console.log" in text
+    assert len(text) < 2_000, len(text)
+    assert elapsed < 10, f"took {elapsed:.1f}s"
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_a_multibyte_line_is_cut_without_losing_the_finding(
+    shell_env, git_repo, variant, hook
+):
+    line = "console.log('" + "あ" * 500 + "')"
+    (git_repo / "ja.ts").write_text(line + "\n", encoding="utf-8")
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    text = _block_text(res, variant)
+    assert "ja.ts" in text
+    assert "console.log" in text
+    assert len(text) < 1_000, len(text)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_only_the_first_files_are_listed_and_the_rest_are_counted(
+    shell_env, git_repo, variant, hook
+):
+    for i in range(25):
+        (git_repo / f"f{i:02d}.ts").write_text("console.log(1)\n", encoding="utf-8")
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    text = _block_text(res, variant)
+    assert "f00.ts" in text
+    assert "f19.ts" in text
+    assert "f20.ts" not in text
+    assert "5 more file" in text
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_a_literal_backslash_n_in_a_hit_stays_as_written(
+    shell_env, git_repo, variant, hook
+):
+    # The report is assembled with real newlines; a `\n` typed in the source is
+    # two characters of that line, not a line break of the report.
+    (git_repo / "a.ts").write_text('console.log("one\\ntwo")\n', encoding="utf-8")
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    text = _block_text(res, variant)
+    assert 'console.log("one\\ntwo")' in text

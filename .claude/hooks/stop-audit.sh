@@ -68,7 +68,28 @@ fi
 # NUL 区切りの一覧はコマンド置換では受け取れない(bash が NUL を捨てる)ため、
 # プロセス置換でループへ直接流し込む。パイプにすると findings がサブシェルに
 # 閉じ込められて失われるので使えない。
+#
+# 報告は量を限る: 一致行は 1 行 200 バイトまで (cut_hit)、ファイルは max_files 件まで。
+# 一致行を丸ごと引用していた頃は、minify 済み JS の 1 行 (数百 KB) が理由文に入り、
+# 改行の後処理が macOS の bash 3.2 では文字列長の 2 乗時間になって Stop が分単位で
+# 止まった。1 MB を超えると `jq --arg` が E2BIG で失敗し、何も出力せず exit 0 —
+# つまり監査が黙って素通りした。何が残っているかを伝えるのに行の全文は要らない。
+# cut を C ロケールで走らせるのは、BSD cut が不正なバイト列で入力を捨てるため。
+# バイトで切ると多バイト文字の途中で切れうるので、行末に残った不完全な UTF-8 列
+# (先行バイトだけ / 続きバイトが足りない並び) を sed で落とす。残すと報告が不正な
+# UTF-8 になり、読む側 (Codex は stderr をそのまま読む) で復号に失敗する。完結した
+# 文字で終わる行には一致しない。整えるのは切り口だけで、元のファイルが不正な
+# バイトを含む場合はそのまま出る (こちらは jq が U+FFFD に直す。Codex 側は生のまま)。
+# 行頭から切るので、長い 1 行では一致箇所が 200 バイトより後ろにあると抜粋に
+# 現れない。その場合もファイル名と行番号は出る。
+max_files=20
+partial_utf8_tail=$'s/([\xC2-\xDF]|[\xE0-\xEF][\x80-\xBF]?|[\xF0-\xF4][\x80-\xBF]{0,2})$//'
+cut_hit() { LC_ALL=C cut -c1-200 | LC_ALL=C sed -E "$partial_utf8_tail"; }
+# 報告は最初から実改行で組む。`\n` の 2 文字で繋いで最後に置換する形は、検出行に
+# 書かれていた `\n` (文字列リテラルの中など) まで改行に変えてしまう。
+nl=$'\n'
 findings=""
+found=0
 while IFS= read -r -d '' f; do
   path="$repo_root/$f"
   [ -f "$path" ] || continue
@@ -85,28 +106,32 @@ while IFS= read -r -d '' f; do
     # トークンが続く形が実際に最も多く、`(;|$)` だとそれらを取りこぼす。
     # 融合判定の文字クラスに `_` と `$` を足すのは、JS の識別子文字だから
     # (`debugger_x` / `$debugger` は別の識別子であってデバッグ文ではない)。
-    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5)
+    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *.py)
-    hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5)
+    hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *)
     hits=""
     ;;
   esac
-  [ -n "$hits" ] && findings="${findings}${f}:\n${hits}\n"
+  if [ -n "$hits" ]; then
+    found=$((found + 1))
+    [ "$found" -le "$max_files" ] && findings="${findings}${f}:${nl}${hits}${nl}"
+  fi
 done < <(
   "${diff_cmd[@]}" 2>/dev/null
   git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
 )
 
-[ -z "$findings" ] && exit 0
+[ "$found" -eq 0 ] && exit 0
 
-reason="Debug statements remain in modified files. Remove console.log / debugger / breakpoint() before finishing:\n${findings}"
-# `%b` ではなく `\n` だけを実改行へ戻す。`%b` は `\c` を「以降の出力を打ち切る」と
-# 解釈するので、検出行に `\c` (正規表現 `/\c/`、Windows パス `"C:\components"` 等)
-# があると、それ以降に見つけたファイルが reason から丸ごと消える。
-# $( ) で包むのは末尾改行を落とすため (findings は必ず `\n` で終わる)。外すと
-# reason の末尾に空行が 1 つ増えるので、整理のつもりで外さないこと。
-jq -cn --arg reason "$(printf '%s' "${reason//\\n/$'\n'}")" '{decision: "block", reason: $reason}'
+if [ "$found" -gt "$max_files" ]; then
+  findings="${findings}(and $((found - max_files)) more files with debug statements)${nl}"
+fi
+# 検出行はそのまま渡す (`printf %b` のようなエスケープ解釈を挟まない: `\c` は
+# 「以降の出力を打ち切る」で、検出行に `\c` があると後続のファイルが消える)。
+# 末尾の改行は落とす (findings は必ず改行で終わる。残すと reason の末尾に空行が増える)。
+reason="Debug statements remain in modified files. Remove console.log / debugger / breakpoint() before finishing:${nl}${findings%"$nl"}"
+jq -cn --arg reason "$reason" '{decision: "block", reason: $reason}'
 exit 0
