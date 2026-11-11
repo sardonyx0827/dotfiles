@@ -28,6 +28,7 @@ from _bash_review_common import (
     classify_high_risk,
     codex_flag_ask_reason,
     combine_high_risk_verdicts,
+    describe_exception,
     ensure_private_dir,
     find_deny_command,
     format_dual_verdict_reason,
@@ -45,7 +46,9 @@ from _bash_review_common import (  # noqa: E402
 from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E402
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
-api_key = os.environ.get("GEMINI_API_KEY", "")
+# 鍵は前後の空白を落とす: CRLF で保存した秘密ファイルから読むと末尾に \r が付き、
+# ヘッダ値として拒まれる (途中に残る制御文字は run_gemini_review が送らずに弾く)。
+api_key = os.environ.get("GEMINI_API_KEY", "").strip()
 gemini_model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 gemini_fallback_model = os.environ.get(
     "GEMINI_FLASH_MODEL", DEFAULT_GEMINI_FALLBACK_MODEL
@@ -175,7 +178,8 @@ try:
 
     # --- codex のサンドボックス / 承認を外すフラグは静的に ask ---
     # モデルの判定で覆らないよう LLM 呼び出しより前に決める (codex_flag_ask_reason)。
-    codex_reason = codex_flag_ask_reason(sub_commands, command)
+    # 秘密を検出済みなら理由文を固定文にする (理由文は redact_command の対象外)。
+    codex_reason = codex_flag_ask_reason(sub_commands, command, redact=secret_found)
     if codex_reason:
         emit_decision("ask", codex_reason)
         write_detail_log({"Result": "ASK (codex flag)"}, redact_input=secret_found)
@@ -402,6 +406,7 @@ try:
 except Exception as exc:  # noqa: BLE001  Bash ゲートは何があっても ask に倒す
     # 判定を出す前の例外だけ ask に倒す。判定を出した後 (ログ/通知) の例外で
     # deny/allow を ask に格下げしたり、JSON を二重に出力したりしない。
+    # 理由には例外の型と場所だけを出す (文面は出さない: describe_exception)。
     if not decision_emitted:
-        emit_decision("ask", f"bash-review hook error: {exc}")
+        emit_decision("ask", f"bash-review hook error: {describe_exception(exc)}")
     sys.exit(0)

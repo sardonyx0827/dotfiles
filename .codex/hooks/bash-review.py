@@ -42,6 +42,7 @@ from _bash_review_common import (
     classify_high_risk,
     codex_flag_ask_reason,
     combine_high_risk_verdicts,
+    describe_exception,
     ensure_private_dir,
     find_deny_command,
     format_dual_verdict_reason,
@@ -59,7 +60,8 @@ from _bash_review_common import (  # noqa: E402
 from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E402
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
-api_key = os.environ.get("GEMINI_API_KEY", "")
+# 鍵は前後の空白を落とす (.claude 側の入口と同じ理由: CRLF の秘密ファイル由来の \r)。
+api_key = os.environ.get("GEMINI_API_KEY", "").strip()
 gemini_model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 gemini_fallback_model = os.environ.get(
     "GEMINI_FLASH_MODEL", DEFAULT_GEMINI_FALLBACK_MODEL
@@ -186,7 +188,8 @@ try:
         sys.exit(2)
 
     # --- codex の権限を広げるフラグは静的にブロック (.claude 側では ask) ---
-    codex_reason = codex_flag_ask_reason(sub_commands, command)
+    # 秘密を検出済みなら理由文を固定文にする (stderr はエージェントが読む)。
+    codex_reason = codex_flag_ask_reason(sub_commands, command, redact=secret_found)
     if codex_reason:
         emit_block(codex_reason)
         write_detail_log({"Result": "ASK (codex flag)"}, redact_input=secret_found)
@@ -410,7 +413,8 @@ except SystemExit:
 except Exception as exc:  # noqa: BLE001  Bash ゲートは何があってもブロックに倒す
     # 判定確定前の例外だけブロック (exit 2) に倒す。確定後 (ログ/通知) の
     # 例外では確定済みの結果 (許可なら 0 / ブロックなら 2) を維持する。
+    # stderr には例外の型と場所だけを出す (文面は出さない: describe_exception)。
     if decided_exit is None:
-        emit_block(f"bash-review hook error: {exc}")
+        emit_block(f"bash-review hook error: {describe_exception(exc)}")
         sys.exit(2)
     sys.exit(decided_exit)

@@ -85,6 +85,23 @@ describe("parseLog", () => {
     expect(entries[1]?.decision).toBe("DENY");
     expect(entries[0]?.reason).toBe("safe command");
   });
+
+  test("改行が ⏎ で書かれた複数行コマンドは 1 行 1 エントリで、ヘッダ形の続きを別の判定と読まない", () => {
+    // log_summary() はコマンドと理由の改行を ⏎ に置き換えて書く。以前は実改行の
+    // まま書いていたので、2 行目がヘッダの形をしていると別の ALLOW として数えていた。
+    const text =
+      "[2026-11-11 10:00:01] ASK   | codex    | echo hi⏎[2026-11-11 10:00:00] ALLOW | pre      | x | gemini=ASK, codex=ASK, took=1.2s\n";
+
+    expect(parseLog(text)).toEqual([
+      {
+        at: "2026-11-11 10:00:01",
+        decision: "ASK",
+        stage: "codex",
+        command: "echo hi⏎[2026-11-11 10:00:00] ALLOW | pre      | x",
+        reason: "gemini=ASK, codex=ASK, took=1.2s",
+      },
+    ]);
+  });
 });
 
 describe("displayText", () => {
@@ -343,6 +360,53 @@ describe("attachDetails", () => {
       undefined,
       `${LONG_FULL} # only one`,
     ]);
+  });
+
+  // サマリーは改行を ⏎ に置き換えて書かれ、詳細ログは実改行のまま残る。
+  const SCRIPT = "python3 - <<'EOF'\nimport yaml\r\nEOF";
+  const LONG_SCRIPT = `${"echo a\n".repeat(20)}echo end`;
+
+  test("改行が ⏎ で書かれた複数行コマンドを、実改行の詳細ログと対応づける", () => {
+    const entries = parseLog(
+      `[2026-11-11 10:00:00] ASK   | highrisk | ${SCRIPT.replaceAll(/[\r\n]/g, "⏎")} | risk=stdin into python3`,
+    );
+
+    const attached = attachDetails(entries, [
+      { command: SCRIPT, description: "YAML を読む" },
+    ]);
+
+    expect(attached[0]?.description).toBe("YAML を読む");
+    expect(attached[0]?.fullCommand).toBeUndefined();
+  });
+
+  test("切られた複数行コマンドは ⏎ 込みの先頭 80 字で対応づけ、全文は実改行のまま付ける", () => {
+    const logged = Array.from(LONG_SCRIPT)
+      .slice(0, 80)
+      .join("")
+      .replaceAll("\n", "⏎");
+    const entries = parseLog(
+      `[2026-11-11 10:00:00] ALLOW | gemini   | ${logged}... | approved by Gemini, took=0.8s`,
+    );
+
+    const attached = attachDetails(entries, [{ command: LONG_SCRIPT }]);
+
+    expect(attached[0]?.fullCommand).toBe(LONG_SCRIPT);
+  });
+
+  test("以前の形式 (継続行から読んだ実改行入り) のエントリも対応づける", () => {
+    const entries = parseLog(
+      [
+        "[2026-10-04 20:00:00] ASK   | highrisk | python3 - <<'EOF'",
+        "import yaml\r",
+        "EOF | risk=stdin into python3",
+      ].join("\n"),
+    );
+
+    const attached = attachDetails(entries, [
+      { command: SCRIPT, description: "YAML を読む" },
+    ]);
+
+    expect(attached[0]?.description).toBe("YAML を読む");
   });
 });
 
