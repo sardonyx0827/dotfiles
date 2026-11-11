@@ -2622,3 +2622,128 @@ def test_dash_c_on_the_segment_that_carries_the_pushing_string_still_selects_the
     cmd = template.format(B=other)
     reason = _push_reason(shell_env, hook, variant, cmd, git_repo)
     assert "branch: feature-target" in reason, reason
+
+
+# --- pushes that are not spelled `git … push` ------------------------------------
+# `git subtree push`, the plumbing `git push` itself runs (send-pack / http-push) and
+# an alias all push without that word order. permissions.ask only matches a `git push`
+# prefix and `Bash(git:*)` is allowed, so this hook is the one place that asks.
+INDIRECT_PUSHES = [
+    "git subtree push --prefix=docs origin gh-pages",
+    "git subtree -P docs push origin gh-pages",
+    "git -C /tmp subtree push --prefix=a origin main",
+    "git add -A && git subtree push --prefix=a origin main",
+    "git send-pack origin main",
+    "git --no-pager send-pack origin main",
+    "git http-push https://example.com/r.git main",
+    "git -c alias.p=push p origin main",
+    "git -c 'alias.p=push --force' p",
+    "git config alias.ps push",
+    "git config --global alias.ps 'push --force-with-lease'",
+]
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("command", INDIRECT_PUSHES)
+def test_a_push_under_another_name_is_confirmed(
+    shell_env, git_repo, variant, hook, command
+):
+    reason = _push_reason(shell_env, hook, variant, command, git_repo)
+    # The usual commit summary would describe a push this command does not make.
+    assert "target repository could not be determined" in reason, reason
+    assert "branch:" not in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git subtree add --prefix=docs origin main",
+        "git subtree split --prefix=push-notes",
+        "git log --grep send-pack",
+        "git log --oneline -- send-pack.c",
+        "git config alias.st status",
+        "git config --get alias.ps",
+        "echo 'git send-pack origin main'",
+        "git commit -m 'explain git subtree push'",
+    ],
+)
+def test_a_lookalike_of_an_indirect_push_is_not_confirmed(
+    shell_env, git_repo, variant, hook, command
+):
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    assert res.returncode == 0, command
+    assert res.stdout == "", command
+
+
+# --- the over-4000-character fallback keeps what the quote scan would have resolved ---
+# Past the cap the hook stops running its quote state machine and only drops quote
+# characters. A backslash the state machine would have removed (`pu\sh`) and a line
+# continuation (`git -C /x \<newline> push`) then hid a real push behind any long
+# command, typically a heredoc or a commit message.
+_LONG_PREFIX = 'echo "' + "x" * 4200 + '"; '
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "git pu\\sh origin main",
+        "git -C /tmp \\\n  push origin main",
+        "git \\\n push",
+        "gi\\t push origin main",
+    ],
+)
+def test_a_backslash_does_not_hide_a_push_past_the_length_cap(
+    shell_env, git_repo, variant, hook, tail
+):
+    command = _LONG_PREFIX + tail
+    assert len(command) > 4000
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_detected(res, variant, tail)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("tail", ["git status", "git stash push", "echo pu\\sh"])
+def test_a_long_command_without_a_push_still_passes(
+    shell_env, git_repo, variant, hook, tail
+):
+    res = shell_env.run(hook, stdin=payload(_LONG_PREFIX + tail), cwd=git_repo)
+    assert res.returncode == 0, tail
+    assert res.stdout == "", tail
+
+
+# --- an alias is read from the command the shell runs, not from quoted text ------
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git conf\\ig alias.p push",
+        "git -c al\\ias.p=push p",
+        "git -\\c alias.p=push p",
+        'git "config" alias.p push',
+    ],
+)
+def test_a_backslash_or_quote_does_not_hide_an_alias(
+    shell_env, git_repo, variant, hook, command
+):
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_detected(res, variant, command)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit -m "doc: git config alias.ps push example"',
+        "git commit -m 'explain git -c alias.p=push p'",
+        'echo "git config alias.ps push"',
+        "printf '%s\\n' 'git -c alias.p=push p'",
+    ],
+)
+def test_an_alias_only_mentioned_in_quoted_text_is_not_confirmed(
+    shell_env, git_repo, variant, hook, command
+):
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    assert res.returncode == 0, command
+    assert res.stdout == "", command

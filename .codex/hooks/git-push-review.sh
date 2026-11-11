@@ -49,7 +49,9 @@ cmd=$(echo "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 # grep は -i で引く。case-insensitive な FS では `GIT Push` も git を走らせるので、
 # 下の検知が -i である以上ここだけ大小を区別すると、打ち切りガードの方が厳しく
 # なって検知に到達できない。上の過剰近似の議論は大小を問わず成り立つ。
-if ! printf '%s' "$cmd" | tr -d '\\"'"'"'\n' | grep -qi push; then
+# `send-pack` も通す語に加える: `git send-pack` は `git push` が内部で走らせる転送
+# そのもので、`push` の 4 文字を含まずに push する (`http-push` は `push` を含む)。
+if ! printf '%s' "$cmd" | tr -d '\\"'"'"'\n' | grep -qiE 'push|send-pack'; then
   exit 0
 fi
 
@@ -542,7 +544,13 @@ case "$cmd_norm" in
   if [ "${#cmd_norm}" -le 4000 ]; then
     cmd_for_match=$(strip_quoted_ranges "$cmd_norm")
   else
-    cmd_for_match=$(printf '%s' "$cmd_norm" | tr -d "\"'")
+    # クォート文字を落とすだけでは、状態機械なら解いていたバックスラッシュが残る
+    # (`git pu\sh`、行継続で割った `git -C /x \<改行> push`)。行継続を削除し、残りの
+    # バックスラッシュも落としたコピーを足す (.claude 側の同じ箇所を参照)。畳み込みは
+    # -r を付けない read に任せる (`\<改行>` を繋ぎ、他の `\` を落とす。線形)。
+    # shellcheck disable=SC2162  # read に `\` を解釈させるのが目的なので -r は付けない
+    cmd_for_match="$(printf '%s' "$cmd_norm" | tr -d "\"'")
+$(printf '%s\n' "$cmd_norm" | while IFS= read line || [ -n "$line" ]; do printf '%s\n' "$line"; done | tr -d "\"'")"
   fi
   ;;
 *) cmd_for_match="$cmd_norm" ;;
@@ -634,8 +642,37 @@ push_exp_re="${push_head}(${git_opt_unit})*${git_exp_unit}(${git_opt_unit})*${pu
 # (`git "${OPT}" <dir> push` の検知漏れ、`echo "git $x push"` の過検知を許容)
 # は .claude 側の同じ箇所を参照。
 cmd_quotes_stripped=$(printf '%s' "$cmd_norm" | tr -d "\"'")
+# `git … push` の語順を取らない push: `git send-pack` / `git http-push` (push が内部で
+# 走らせる転送)、`git subtree push`、alias (`git -c alias.p=push p` / 以後の `git ps` を
+# push にする `git config alias.ps push`)。詳しい理由は .claude 側の同じ箇所を参照。
+# 通常の要約が当てはまらないので、理由を indirect_push に持ち、下で要約の代わりに出す。
+# shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル
+pack_tail='[[:space:]]+(send-pack|http-push)([[:space:];&|)<>`\\]|$)'
+# shellcheck disable=SC2016  # 同上
+subtree_tail='[[:space:]]+subtree([[:space:]]+[^[:space:];&|)]+)*'"$push_tail"
+# shellcheck disable=SC2016  # 同上
+alias_re="${push_head}"'[[:space:]]([^;&|]*[[:space:]])?(-c[[:space:]]+alias\.|config[[:space:]]([^;&|]*[[:space:]])?alias\.)'
+# alias はシェルが読む綴り (cmd_for_match) で探す。クォートした `-c 'alias.p=…'` の値だけ、
+# 実行される `git … -c` があることを確かめたうえでクォート文字を落とした綴りに探す。
+# shellcheck disable=SC2016  # 同上
+dash_c_re="${push_head}"'[[:space:]]([^;&|]*[[:space:]])?-c([[:space:]]|$)'
+# shellcheck disable=SC2016  # 同上
+alias_c_re="${push_head}"'[[:space:]]([^;&|]*[[:space:]])?-c[[:space:]]+alias\.'
+indirect_push=""
 if ! echo "$cmd_for_match" | grep -qiE "${push_head}(${git_opt_unit})*${push_tail}"; then
-  printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$push_exp_re" || exit 0
+  if printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$push_exp_re"; then
+    :
+  elif echo "$cmd_for_match" | grep -qiE "${push_head}(${git_opt_unit})*${pack_tail}"; then
+    indirect_push="the command runs git send-pack / http-push, the transport git push itself uses"
+  elif echo "$cmd_for_match" | grep -qiE "${push_head}(${git_opt_unit})*${subtree_tail}"; then
+    indirect_push="the push goes through git subtree, which sends a split of the history rather than the current branch"
+  elif echo "$cmd_for_match" | grep -qiE "$alias_re" ||
+    { echo "$cmd_for_match" | grep -qiE "$dash_c_re" &&
+      printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$alias_c_re"; }; then
+    indirect_push="the command defines or uses a git alias together with the word push, so a push may run under another name"
+  else
+    exit 0
+  fi
 fi
 
 # git_c_dir_from_words: `-C <dir>` を語単位で解決する設計根拠は
@@ -1750,6 +1787,11 @@ fi
 if [ -z "$unresolved_why" ] &&
   printf '%s\n' "$cmd_quotes_stripped" | grep -qiE 'submodule[[:space:]]+foreach'; then
   unresolved_why="the push runs inside git submodule foreach, i.e. in each submodule rather than in this repository"
+fi
+
+# 別名・subtree・send-pack 経由の push (上の indirect_push)。
+if [ -z "$unresolved_why" ] && [ -n "$indirect_push" ]; then
+  unresolved_why="$indirect_push"
 fi
 
 if [ -z "$unresolved_why" ] && [ "${#git_c_opt[@]}" -gt 0 ] && [ ! -d "${git_c_opt[1]}" ]; then

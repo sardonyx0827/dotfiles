@@ -60,7 +60,11 @@ cmd=$(echo "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 # 取りこぼしを作る。空白を含まないクォート区間は中身を残す (`git "pu""sh"` は
 # push) ため、`git pus"XX"h` は `git pusXXh` になり、ガードと状態機械のどちらでも
 # push ではない (実際のシェルの結果とも一致する)。
-if ! printf '%s' "$cmd" | tr -d '\\"'"'"'\n' | grep -qi push; then
+#
+# `send-pack` も同じ議論で通す語に加える: `git send-pack` は `git push` が内部で
+# 走らせる転送そのもので、`push` の 4 文字を含まずに push する (`http-push` は
+# `push` を含むので元の条件で通る)。
+if ! printf '%s' "$cmd" | tr -d '\\"'"'"'\n' | grep -qiE 'push|send-pack'; then
   exit 0
 fi
 
@@ -589,7 +593,19 @@ case "$cmd_norm" in
   if [ "${#cmd_norm}" -le 4000 ]; then
     cmd_for_match=$(strip_quoted_ranges "$cmd_norm")
   else
-    cmd_for_match=$(printf '%s' "$cmd_norm" | tr -d "\"'")
+    # クォート文字を落とすだけでは、状態機械なら解いていたバックスラッシュが残る:
+    # `git pu\sh` (bash は push と読む) も、行継続で割った `git -C /x \<改行> push` も
+    # 照合を外れ、長いコマンドの後ろに置くだけで確認なしに通っていた。行継続を
+    # 削除し (bash と同じ: `\<改行>` は跡を残さず消える)、残りのバックスラッシュも
+    # 落としたコピーを足す。足すだけなので、これも厳しくなる方向の近似。
+    #
+    # その畳み込みは `read` に任せる: -r を付けない read は `\<改行>` を行継続として
+    # 繋ぎ、それ以外の `\` を落とす — 欲しい変換そのもので、入力長に線形。
+    # `${cmd_norm//\\$'\n'/}` は bash 3.2 だと一致数に対して超線形で、行継続の多い
+    # 長いコマンドでこのフックの待ち時間を倍にしていた (時間切れは push の素通り)。
+    # shellcheck disable=SC2162  # read に `\` を解釈させるのが目的なので -r は付けない
+    cmd_for_match="$(printf '%s' "$cmd_norm" | tr -d "\"'")
+$(printf '%s\n' "$cmd_norm" | while IFS= read line || [ -n "$line" ]; do printf '%s\n' "$line"; done | tr -d "\"'")"
   fi
   ;;
 *) cmd_for_match="$cmd_norm" ;;
@@ -711,8 +727,49 @@ push_exp_re="${push_head}(${git_opt_unit})*${git_exp_unit}(${git_opt_unit})*${pu
 # まで確認に倒れる過検知は安全側として許容する。展開を含まない引用テキスト
 # (`git commit -m "... git push ..."`) はこの追加照合に掛からず、静かなまま。
 cmd_quotes_stripped=$(printf '%s' "$cmd_norm" | tr -d "\"'")
+# `git … push` の語順を取らない push。permissions.ask は `git push` の前方一致で、
+# `Bash(git:*)` は allow なので、ここで拾わなければ確認なしで走る。
+#   - `git send-pack` / `git http-push`: `git push` が内部で走らせる転送そのもの。
+#   - `git subtree push`: push はサブコマンドの 2 語目 (`subtree -P <dir> push` の
+#     ように間へオプションが入る)。同じセグメント内の語だけを挟んで許す。
+#   - alias: `git -c alias.p=push p` は別名で push する。`git config alias.ps push` は
+#     以後の `git ps` を push にする (後の呼び出しはこのフックから見えないので、
+#     定義する時点が確認できる唯一の機会)。値の中身は解釈しない: git の後ろに
+#     `-c alias.` か `config … alias.` があり、コマンドのどこかに push の 4 文字が
+#     あれば確認へ倒す (`alias.lg 'log --grep=push'` も確認になるが、過検知は安全側)。
+#     照合はシェルが読む綴り (cmd_for_match: クォート区間を除き、`\` を解いたもの) に
+#     掛ける。クォート文字だけ落とした綴りに掛けると、コミットメッセージが alias に
+#     触れるだけで確認になり、逆に `git conf\ig alias.p push` は素通りする。
+#     クォートした値 (`-c 'alias.p=push --force'`) は cmd_for_match から消えるので、
+#     「実行される `git … -c` がある」ことを cmd_for_match で確かめたうえで、クォート
+#     文字を落とした綴りに `-c alias.` を探す。
+# どれも「このリポジトリの現在ブランチを upstream へ」という通常の要約が当てはまら
+# ないので、理由を indirect_push に持ち、下で要約の代わりに出す。
+# shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル
+pack_tail='[[:space:]]+(send-pack|http-push)([[:space:];&|)<>`\\]|$)'
+# shellcheck disable=SC2016  # 同上
+subtree_tail='[[:space:]]+subtree([[:space:]]+[^[:space:];&|)]+)*'"$push_tail"
+# shellcheck disable=SC2016  # 同上
+alias_re="${push_head}"'[[:space:]]([^;&|]*[[:space:]])?(-c[[:space:]]+alias\.|config[[:space:]]([^;&|]*[[:space:]])?alias\.)'
+# shellcheck disable=SC2016  # 同上
+dash_c_re="${push_head}"'[[:space:]]([^;&|]*[[:space:]])?-c([[:space:]]|$)'
+# shellcheck disable=SC2016  # 同上
+alias_c_re="${push_head}"'[[:space:]]([^;&|]*[[:space:]])?-c[[:space:]]+alias\.'
+indirect_push=""
 if ! echo "$cmd_for_match" | grep -qiE "${push_head}(${git_opt_unit})*${push_tail}"; then
-  printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$push_exp_re" || exit 0
+  if printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$push_exp_re"; then
+    :
+  elif echo "$cmd_for_match" | grep -qiE "${push_head}(${git_opt_unit})*${pack_tail}"; then
+    indirect_push="the command runs git send-pack / http-push, the transport git push itself uses"
+  elif echo "$cmd_for_match" | grep -qiE "${push_head}(${git_opt_unit})*${subtree_tail}"; then
+    indirect_push="the push goes through git subtree, which sends a split of the history rather than the current branch"
+  elif echo "$cmd_for_match" | grep -qiE "$alias_re" ||
+    { echo "$cmd_for_match" | grep -qiE "$dash_c_re" &&
+      printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$alias_c_re"; }; then
+    indirect_push="the command defines or uses a git alias together with the word push, so a push may run under another name"
+  else
+    exit 0
+  fi
 fi
 
 # `git … -C <dir>` の <dir> を、クォート解釈済みの語単位で探す。
@@ -1997,6 +2054,12 @@ fi
 if [ -z "$unresolved_why" ] &&
   printf '%s\n' "$cmd_quotes_stripped" | grep -qiE 'submodule[[:space:]]+foreach'; then
   unresolved_why="the push runs inside git submodule foreach, i.e. in each submodule rather than in this repository"
+fi
+
+# 別名・subtree・send-pack 経由の push (上の indirect_push)。要約が語る「現在
+# ブランチの未 push コミット」は、このコマンドが送るものと一致しない。
+if [ -z "$unresolved_why" ] && [ -n "$indirect_push" ]; then
+  unresolved_why="$indirect_push"
 fi
 
 if [ -z "$unresolved_why" ] && [ "${#git_c_opt[@]}" -gt 0 ] && [ ! -d "${git_c_opt[1]}" ]; then
