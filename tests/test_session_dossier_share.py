@@ -7,6 +7,7 @@ them, then check that none survives anywhere in the output, including after
 undoing HTML escaping.
 """
 
+import base64
 import html
 import json
 import re
@@ -801,3 +802,321 @@ class TestPreCommitFollowUps:
         session = load(b.write(tmp_path))
         scope = dossier_scope.select_scope(session)
         assert render_dossier._edited_paths(session, scope) == [str(git_repo / "a.md")]
+
+
+# --------------------------------------------------------------------------
+# Audited gaps: pretty-printed name/value pairs, and key names the keyword
+# table did not know (pass / pw / *_KEY families / signature / session ids)
+# --------------------------------------------------------------------------
+FAKE_SECRET = "hunter2hunter2"
+FAKE_HEX = "deadbeef" * 8
+FAKE_B64 = base64.b64encode(b"fake-signature-bytes").decode()
+
+NAME_VALUE_SHAPES = [
+    pytest.param(
+        {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "app",
+                        "env": [{"name": "DB_PASSWORD", "value": FAKE_SECRET}],
+                    }
+                ]
+            }
+        },
+        id="kubernetes-env",
+    ),
+    pytest.param(
+        {
+            "containerDefinitions": [
+                {
+                    "name": "web",
+                    "environment": [{"name": "API_TOKEN", "value": FAKE_SECRET}],
+                    "secrets": [{"name": "OTHER", "valueFrom": "arn:aws:x:y:z:w"}],
+                }
+            ]
+        },
+        id="ecs-task-definition",
+    ),
+    pytest.param(
+        {
+            "total_count": 1,
+            "variables": [
+                {
+                    "name": "DEPLOY_KEY",
+                    "value": FAKE_SECRET,
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ],
+        },
+        id="github-actions-variables",
+    ),
+]
+
+
+def nested(value, depth):
+    for _ in range(depth):
+        value = {"item": [value]}
+    return value
+
+
+def env_pair(name):
+    return {"env": [{"name": name, "value": FAKE_SECRET}]}
+
+
+class TestPrettyPrintedNameValuePairs:
+    def test_the_audited_reproduction(self):
+        dump = json.dumps(env_pair("DB_PASSWORD"), indent=2)
+        assert FAKE_SECRET not in redactor().scrub(dump)
+
+    @pytest.mark.parametrize("indent", [2, 4, "\t"])
+    @pytest.mark.parametrize("depth", [0, 1, 5, 30, 100])
+    def test_value_is_redacted_at_any_depth_and_indent(self, indent, depth):
+        dump = json.dumps(nested(env_pair("DB_PASSWORD"), depth), indent=indent)
+        out = redactor().scrub(dump)
+        assert FAKE_SECRET not in out
+        assert '"name": "DB_PASSWORD"' in out
+        assert "[REDACTED]" in out
+
+    @pytest.mark.parametrize("shape", NAME_VALUE_SHAPES)
+    def test_typical_api_shapes_are_redacted(self, shape):
+        out = redactor().scrub(json.dumps(shape, indent=2))
+        assert FAKE_SECRET not in out
+        assert "[REDACTED]" in out
+
+    @pytest.mark.parametrize(
+        "name", ["DB_PASS", "SMTP_PW", "REQUEST_SIG", "JSESSIONID"]
+    )
+    def test_short_secret_names_in_pairs_are_redacted(self, name):
+        out = redactor().scrub(json.dumps(env_pair(name), indent=2))
+        assert FAKE_SECRET not in out
+
+    @pytest.mark.parametrize(
+        "name", ["LOG_LEVEL", "PASSENGER_COUNT", "DESIGN_MODE", "BYPASS_CACHE"]
+    )
+    def test_ordinary_names_keep_their_values(self, name):
+        dump = json.dumps(env_pair(name), indent=2)
+        assert redactor().scrub(dump) == dump
+
+    def test_an_indent_far_deeper_than_any_page_dump_is_still_redacted(self):
+        # json.dumps stops at ~1200 nested levels (2400 spaces at indent=2).
+        gap = " " * 6000
+        text = '{"name": "DB_PASSWORD",\n' + gap + '"value": "hunter2hunter2"}'
+        assert FAKE_SECRET not in redactor().scrub(text)
+
+    def test_long_whitespace_runs_after_a_name_scrub_in_linear_time(self):
+        text = ('{"name": "API_TOKEN",' + " " * 8000) * 60
+        start = time.perf_counter()
+        redactor().scrub(text)
+        assert time.perf_counter() - start < 2.0
+
+    @pytest.mark.parametrize(
+        "where",
+        [
+            "tool_use_input",
+            "tool_result_dict",
+            "tool_result_text",
+            "tool_result_blocks",
+        ],
+    )
+    def test_share_page_never_shows_the_value(self, tmp_path, where):
+        payload = nested(env_pair("DB_PASSWORD"), 3)
+        b = SessionBuilder()
+        b.prompt("show the deployment")
+        if where == "tool_use_input":
+            b.tool_use("Kubectl", payload, "t1")
+            b.tool_result("t1", "ok")
+        else:
+            b.tool_use("Kubectl", {"verb": "get"}, "t1")
+            dump = json.dumps(payload, indent=2)
+            content = {
+                "tool_result_dict": payload,
+                "tool_result_text": dump,
+                "tool_result_blocks": [{"type": "text", "text": dump}],
+            }[where]
+            b.tool_result("t1", content)
+        page = render(b.write(tmp_path), redactor()).html
+        assert "DB_PASSWORD" in page
+        assert FAKE_SECRET not in page
+        assert FAKE_SECRET not in html.unescape(page)
+        assert "[REDACTED]" in page
+
+
+class TestKeywordTable:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (f"DB_PASS={FAKE_SECRET}", "DB_PASS=[REDACTED]"),
+            (f"export SMTP_PASS={FAKE_SECRET}", "export SMTP_PASS=[REDACTED]"),
+            (f"REDIS_PASS: {FAKE_SECRET}", "REDIS_PASS: [REDACTED]"),
+            (f"pass={FAKE_SECRET}", "pass=[REDACTED]"),
+            (f"pw={FAKE_SECRET}", "pw=[REDACTED]"),
+            # a value that merely contains "[" is still a value
+            ("SMTP_PW=hunter2[hunter2", "SMTP_PW=[REDACTED]"),
+            ("DB_PASS: hunter2[hunter2", "DB_PASS: [REDACTED]"),
+            (f"--pw={FAKE_SECRET}", "--pw=[REDACTED]"),
+            (f"ENCRYPTION_KEY={FAKE_HEX}", "ENCRYPTION_KEY=[REDACTED]"),
+            (f"MASTER_KEY={FAKE_SECRET}", "MASTER_KEY=[REDACTED]"),
+            (f"SIGNING_KEY={FAKE_SECRET}", "SIGNING_KEY=[REDACTED]"),
+            (f"JWT_KEY={FAKE_SECRET}", "JWT_KEY=[REDACTED]"),
+            (f"HMAC_KEY={FAKE_SECRET}", "HMAC_KEY=[REDACTED]"),
+            (f"hmac-key: {FAKE_SECRET}", "hmac-key: [REDACTED]"),
+            (f"AUTH_KEY={FAKE_SECRET}", "AUTH_KEY=[REDACTED]"),
+            (
+                f"AccountName=acct;AccountKey={FAKE_B64};EndpointSuffix=x",
+                "AccountName=acct;AccountKey=[REDACTED];EndpointSuffix=x",
+            ),
+            (
+                f"https://b.example.test/o?X-Amz-Signature={FAKE_HEX}&X-Amz-Expires=300",
+                "https://b.example.test/o?X-Amz-Signature=[REDACTED]&X-Amz-Expires=300",
+            ),
+            (
+                f"X-Goog-Signature: {FAKE_HEX}",
+                "X-Goog-Signature: [REDACTED]",
+            ),
+            (f"?sv=2024&sig={FAKE_B64}&se=x", "?sv=2024&sig=[REDACTED]&se=x"),
+            (f"Signature={FAKE_HEX}", "Signature=[REDACTED]"),
+            (f"sessionid={FAKE_SECRET}", "sessionid=[REDACTED]"),
+            ("sessionid=abc123def456", "sessionid=[REDACTED]"),
+            ("pw=hunter2x", "pw=[REDACTED]"),
+            ("sig=abcdefgh", "sig=[REDACTED]"),
+            # a number is a secret from six digits on, a count below
+            ("pw=123456", "pw=[REDACTED]"),
+            # digits or dots make it a value, not an identifier
+            ("pass=my_password1", "pass=[REDACTED]"),
+            ("pw=p4ss.w0rd.2024", "pw=[REDACTED]"),
+            # a quoted value is a literal, whatever it looks like
+            ('pass="signature_bytes"', 'pass="[REDACTED]"'),
+            (
+                f"ENCRYPTION_KEY_BASE64={FAKE_SECRET}",
+                "ENCRYPTION_KEY_BASE64=[REDACTED]",
+            ),
+            # cookie names and headers in the unquoted colon form
+            (f"PHPSESSID: {FAKE_SECRET}", "PHPSESSID: [REDACTED]"),
+            (f"JSESSIONID: {FAKE_SECRET}", "JSESSIONID: [REDACTED]"),
+            (f"SESSION_ID: {FAKE_SECRET}", "SESSION_ID: [REDACTED]"),
+            ("X-Session-Id: abc123def456", "X-Session-Id: [REDACTED]"),
+            ("x-session-id: abc123def456", "x-session-id: [REDACTED]"),
+            # a spaced "=" is a value only when the value is quoted
+            (f'pw = "{FAKE_SECRET}"', 'pw = "[REDACTED]"'),
+            (f"pass = '{FAKE_SECRET}'", "pass = '[REDACTED]'"),
+            (f'session_id = "{FAKE_SECRET}"', 'session_id = "[REDACTED]"'),
+            (f'"session_id": "{FAKE_SECRET}"', '"session_id": "[REDACTED]"'),
+            (f"session_id: '{FAKE_SECRET}'", "session_id: '[REDACTED]'"),
+            (f"JSESSIONID={FAKE_SECRET}", "JSESSIONID=[REDACTED]"),
+            (f"PHPSESSID={FAKE_SECRET}", "PHPSESSID=[REDACTED]"),
+            (f'{{"pass": "{FAKE_SECRET}"}}', '{"pass": "[REDACTED]"}'),
+            (
+                f"auth: {{ user: 'a', pass: '{FAKE_SECRET}' }}",
+                "auth: { user: 'a', pass: '[REDACTED]' }",
+            ),
+            (f'"signature": "{FAKE_B64}"', '"signature": "[REDACTED]"'),
+            (
+                f'{{\\"pass\\": \\"{FAKE_SECRET}\\"}}',
+                '{\\"pass\\": \\"[REDACTED]\\"}',
+            ),
+        ],
+    )
+    def test_missing_names_are_redacted_and_the_key_stays(self, text, expected):
+        assert redactor().scrub(text) == expected
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # `pass` / `pw` / `sig` / `session` as plain words
+            "tests pass = 12",
+            "all tests pass=12 and lint passes",
+            "passed=True",
+            "bypass=enabled_flag",
+            "compass=north-east",
+            "pass=True",
+            "pass=None",
+            "pass: true",
+            "--- PASS: TestRedactionPolicy (0.00s)",
+            "Signature: Sent from my phone",
+            "signal=SIGTERM",
+            "design=darkmode",
+            "sig_algorithm=HS256",
+            "sig=None",
+            "session = requests.Session()",
+            "session=requests.Session()",
+            "client = Client(session=session)",
+            "sessionless=enabled",
+            "session id: abc123def456",
+            "self.session_id = new_session_id",
+            "session_id=None",
+            "session_id: Optional[str] = None",
+            "user_session_id: UUID",
+            # a *_KEY name that continues is another thing
+            "encryption_key_path=/etc/app/enc.key",
+            "account_key_prefix=acct_",
+            "jwt_key_file=/srv/app/jwt.pem",
+            "signing_key_size=4096",
+            "hmac_key_algo=sha256",
+            "master_key_len=32bytes",
+            "auth_key_name=primary_one",
+            "sessionid_prefix=abcdefgh",
+            # a count, a type, an identifier or a call is not a value
+            "pass=1200",
+            "all tests pass = failures_total",
+            "smtp_pass: bytes",
+            "verify(sig=signature_bytes)",
+            "session_id=request.session_id)",
+            "sig=sig_bytes",
+            "pw=getpass.getpass()",
+            "pw=get_pw()",
+            "SESSION_ID: Optional[str] = None",
+            "JSESSIONID: bytes",
+            # a type annotation is not a value
+            "smtp_pass: Optional[str] = None",
+            "db_pw: Dict[str, str]",
+            # ordinary *_key identifiers: a bare `_key` suffix must not match
+            "primary_key=True",
+            "primary_key = Column(Integer)",
+            "foreign_key=user_identifier",
+            "sort_key=created_at_stamp",
+            "partition_key: tenant_identifier",
+            "monkey=banana_split",
+            # counts stay
+            "tokens: 4096",
+            "signatures=1234 passes=5678",
+        ],
+    )
+    def test_ordinary_text_is_left_alone(self, text):
+        assert redactor().scrub(text) == text
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            f"ENCRYPTION_KEY={FAKE_SECRET}",
+            f"MYSQL_PWD={FAKE_SECRET}",
+            f"DB_PASS={FAKE_SECRET}",
+            f"sessionid={FAKE_SECRET}",
+            f'pw = "{FAKE_SECRET}"',
+            "X-Session-Id: abc123def456",
+        ],
+    )
+    def test_scrubbing_again_does_not_grow_the_marker(self, text):
+        # The renderer scrubs a JSON value up to three times (leaf, dump, page).
+        once = redactor().scrub(text)
+        assert redactor().scrub(once) == once
+
+    def test_share_page_redacts_short_names_in_a_bash_command(self, tmp_path):
+        command = (
+            f"export SMTP_PASS={FAKE_SECRET} ENCRYPTION_KEY={FAKE_HEX} "
+            f"&& curl 'https://b.example.test/o?X-Amz-Signature={FAKE_HEX}'"
+        )
+        b = SessionBuilder()
+        b.prompt("deploy")
+        b.bash("t1", command, "done")
+        page = render(b.write(tmp_path), redactor()).html
+        for secret in (FAKE_SECRET, FAKE_HEX):
+            assert secret not in html.unescape(page)
+        assert "SMTP_PASS=[REDACTED]" in page
+        assert "[REDACTED]]" not in page
+
+    def test_a_long_run_of_short_keywords_scrubs_in_linear_time(self):
+        text = "pass:" * 40_000 + " sig=" * 20_000 + "-pw" * 40_000
+        start = time.perf_counter()
+        redactor().scrub(text)
+        assert time.perf_counter() - start < 2.0
