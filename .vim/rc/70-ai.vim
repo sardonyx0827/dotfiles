@@ -1,14 +1,23 @@
 "*****************************************************************************
-"" [AI safety] Path-based guard for GitHub Copilot completion
+"" [AI safety] Sensitive-path guard (Copilot completion + AI send confirm)
 "*****************************************************************************
-" copilot.vim (loaded in 00-plugins.vim) streams buffer context to GitHub for
-" inline suggestions, and -- unlike the custom AI feature below -- there is NO
-" content-level pre-send scan for secrets. Mirror the nvim copilot.lua guard:
-" refuse to enable Copilot in buffers whose *path* is obviously sensitive
-" (dotenv, private keys, cloud-credential dirs, ...). This does not catch a
-" secret pasted into an ordinary file -- an accepted limitation, same as nvim.
+" One list of obviously sensitive *paths* (dotenv, private keys, cloud-credential
+" dirs, ...), used two ways -- both mirror the nvim side, whose list lives in
+" .config/nvim/lua/setup/functions/ai/sensitive.lua and must stay identical in
+" content to this one (a test compares them entry by entry):
+"
+"   1. copilot.vim (loaded in 00-plugins.vim) streams buffer context to GitHub
+"      for inline suggestions, and -- unlike the custom AI feature below -- there
+"      is NO content-level pre-send scan for secrets. So Copilot is switched off
+"      in buffers whose path is sensitive (s:AI_CopilotGuard). This does not
+"      catch a secret pasted into an ordinary file -- an accepted limitation,
+"      same as nvim.
+"   2. The select-and-replace feature below sends the selection to an external
+"      model. Its credential scan only sees VALUES, and a `.env` of `DB_HOST=...`
+"      lines holds none, so s:AI_Submit also asks for confirmation (default No)
+"      when the buffer's path is sensitive. See s:AI_ConfirmSend.
 if !has('nvim')
-  let s:copilot_sensitive_paths = [
+  let s:ai_sensitive_paths = [
         \ '\.env$', '\.env\.', '\.envrc$',
         \ 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa',
         \ '\.pem$', '\.key$', '\.p12$', '\.pfx$', '\.jks$', '\.keystore$', '\.ppk$',
@@ -20,20 +29,38 @@ if !has('nvim')
         \ 'credentials', 'secrets\?', 'password',
         \ ]
 
+  " Whether `path` matches the list. Case-insensitive (the list is lower-case and
+  " the path is lowered first), like the nvim side, and a plain substring-style
+  " match: deliberately coarse, so the cost of a false positive is one confirm
+  " that defaults to No, never a block.
+  "
+  " A relative path is judged as if it began with `/`: the directory entries
+  " ('/\.kube/', ...) need that slash, and a name with none before its first
+  " component (`.kube/config`) would otherwise match none of them. Mirrors
+  " is_sensitive_path in ai/sensitive.lua.
+  function! s:AI_IsSensitivePath(path) abort
+    if type(a:path) != v:t_string || a:path ==# ''
+      return 0
+    endif
+    let l:name = tolower(a:path)
+    if l:name[0] !=# '/'
+      let l:name = '/' . l:name
+    endif
+    for l:pat in s:ai_sensitive_paths
+      if l:name =~# l:pat
+        return 1
+      endif
+    endfor
+    return 0
+  endfunction
+
   " Disable Copilot for the current buffer when its path looks sensitive.
   " b:copilot_enabled = v:false is copilot.vim's per-buffer off switch, checked
   " lazily before each suggestion, so setting it any time before insert is enough.
   function! s:AI_CopilotGuard() abort
-    let l:name = tolower(expand('%:p'))
-    if l:name ==# ''
-      return
+    if s:AI_IsSensitivePath(expand('%:p'))
+      let b:copilot_enabled = v:false
     endif
-    for l:pat in s:copilot_sensitive_paths
-      if l:name =~# l:pat
-        let b:copilot_enabled = v:false
-        return
-      endif
-    endfor
   endfunction
 
   augroup AICopilotSensitiveGuard
@@ -130,24 +157,67 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
     return ['unavailable', '']
   endfunction
 
-  " Gate before sending. Returns 1 to proceed, 0 to abort. confirm()'s default is
-  " No, so Enter/Esc aborts the send.
-  function! s:AI_ConfirmSend(text) abort
+  " The sensitive entries of `paths`, in order, each once.
+  function! s:AI_SensitivePaths(paths) abort
+    let l:hits = []
+    for l:p in a:paths
+      if index(l:hits, l:p) < 0 && s:AI_IsSensitivePath(l:p)
+        call add(l:hits, l:p)
+      endif
+    endfor
+    return l:hits
+  endfunction
+
+  " How many sensitive paths the dialog names before folding the rest into a
+  " count. Mirrors MAX_PATHS_SHOWN in ai/backend.lua.
+  let s:ai_max_paths_shown = 5
+
+  " Gate before sending: credential VALUES in `text` (the shared scanner) and
+  " sensitive source PATHS (`paths`, the files the text was read from), answered
+  " by ONE confirm() that defaults to No, so Enter/Esc aborts the send. Returns
+  " [1, ''] to proceed, [0, <why>] to abort. Mirrors confirm_send in
+  " ai/backend.lua, where the reasoning is written out; the path half exists
+  " because value scanning cannot see a `.env` of plain `DB_HOST=...` lines.
+  " The path check needs neither python nor the scanner, so it still asks when
+  " the scan is unavailable.
+  function! s:AI_ConfirmSend(text, paths) abort
     let [l:status, l:label] = s:AI_ScanPayload(a:text)
+    let l:hits = s:AI_SensitivePaths(a:paths)
+    let l:lines = []
     if l:status ==# 'secret'
-      let l:choice = confirm(
-            \ printf("Possible credential (%s) detected in the AI payload.\n"
-            \        . "Send it to the AI tool anyway?", l:label),
-            \ "&No\n&Yes", 1, 'Warning')
-      return l:choice == 2
-    elseif l:status ==# 'unavailable'
+      call add(l:lines, printf(
+            \ 'Possible credential (%s) detected in the AI payload.', l:label))
+    endif
+    if !empty(l:hits)
+      call add(l:lines, 'Sensitive file path detected in the AI payload:')
+      for l:p in l:hits[: s:ai_max_paths_shown - 1]
+        call add(l:lines, '  ' . l:p)
+      endfor
+      if len(l:hits) > s:ai_max_paths_shown
+        call add(l:lines, printf('  ... and %d more',
+              \ len(l:hits) - s:ai_max_paths_shown))
+      endif
+    endif
+    if l:status ==# 'unavailable'
       echohl WarningMsg
       echom 'secret-scan unavailable (python3 / secret_scan.py); '
             \ . 'sending AI payload without a credential check.'
       echohl None
-      return 1
     endif
-    return 1
+    if empty(l:lines)
+      return [1, '']
+    endif
+    call add(l:lines, 'Send it to the AI tool anyway?')
+    let l:choice = confirm(join(l:lines, "\n"), "&No\n&Yes", 1, 'Warning')
+    if l:choice == 2
+      return [1, '']
+    endif
+    if l:status ==# 'secret' && !empty(l:hits)
+      return [0, 'credential and sensitive file path detected in payload']
+    elseif l:status ==# 'secret'
+      return [0, 'credential detected in payload']
+    endif
+    return [0, 'sensitive file path in payload']
   endfunction
 
   function! s:AI_TrimOutput(list) abort
@@ -816,6 +886,23 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ . shellescape(a:tmpfile)
   endfunction
 
+  " Split an Ollama `response` into lines: drop the leading blank lines and the
+  " trailing whitespace, and nothing else. Mirrors parse_ollama in
+  " ai/prompt.lua, where the reasoning is written out.
+  "
+  " Not trim(): it also strips the LEADING whitespace of the first non-blank
+  " line, so an indented snippet came back one line shifted left of the rest
+  " (the CLI path keeps it). `^[[:space:]]*\n` removes the whitespace-only lead
+  " lines up to and including the last newline of that prefix, which leaves the
+  " first real line's indentation alone; the second substitute is the trailing
+  " side. [[:space:]] rather than \s because \s does not match a newline, and
+  " rather than \_s so CR is in the set, as it is for Lua's %s.
+  function! s:AI_OllamaLines(response) abort
+    let l:text = substitute(a:response, '^[[:space:]]*\n', '', '')
+    let l:text = substitute(l:text, '[[:space:]]\+$', '', '')
+    return split(l:text, "\n", 1)
+  endfunction
+
   function! s:AI_OllamaFinish(state, status, timer) abort
     let l:s = a:state
     " Remove the tmpfile even if the diff tab was already closed; see
@@ -833,7 +920,7 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
         let l:decoded = json_decode(l:raw)
         if type(l:decoded) == v:t_dict
           if has_key(l:decoded, 'response') && type(l:decoded.response) == v:t_string
-            let l:result = s:AI_StripCodeFences(split(trim(l:decoded.response), "\n", 1))
+            let l:result = s:AI_StripCodeFences(s:AI_OllamaLines(l:decoded.response))
           endif
           if has_key(l:decoded, 'error')
             let l:err = string(l:decoded.error)
@@ -920,15 +1007,25 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
           \ . "Do NOT include explanations, preambles, or trailing commentary. "
           \ . "Preserve the original indentation style of the input.\n\n"
           \ . "## User Request\n%s", l:ctx.lang, l:prompt)
-    " Pre-send credential gate: scan the selection + the user's instruction.
-    " Skipped for Ollama, which hits the local HTTP API (localhost) and never
-    " leaves the machine -- the external-send gate does not apply there.
+    " Pre-send gate: scan the selection + the user's instruction for credential
+    " values, and check the path the selection came from. Skipped for Ollama,
+    " which hits the local HTTP API (localhost) and never leaves the machine --
+    " the external-send gate does not apply there.
+    "
+    " The path is the one s:AI_Start recorded in the context, alongside the
+    " selection it belongs to -- not '%' (by now the current buffer is the prompt
+    " window, which has no name) and not bufname(l:ctx.target_buf) read just now:
+    " the text was captured when the prompt opened, and a target that was wiped
+    " or renamed since would send it with an empty or a different path.
     if !has_key(s:ai_ollama_models, l:ctx.tool)
-          \ && !s:AI_ConfirmSend(join(l:ctx.selected, "\n") . "\n" . l:prompt)
-      echohl WarningMsg
-      echom 'AI request cancelled (credential detected in payload).'
-      echohl None
-      return
+      let [l:proceed, l:why] = s:AI_ConfirmSend(
+            \ join(l:ctx.selected, "\n") . "\n" . l:prompt, l:ctx.source_paths)
+      if !l:proceed
+        echohl WarningMsg
+        echom printf('AI request cancelled (%s).', l:why)
+        echohl None
+        return
+      endif
     endif
     " Ollama tools hit the local HTTP API; the body is JSON, not the raw text.
     if has_key(s:ai_ollama_models, l:ctx.tool)
@@ -974,10 +1071,15 @@ if !has('nvim') && has('job') && has('channel') && has('timers')
       let l:tool = 'claude'
     endif
     let l:ft = &filetype
+    " The file the selection is read from, as an absolute path, captured here
+    " with the text (see s:AI_Submit). An unnamed buffer names no source -- and
+    " fnamemodify('', ':p') would answer with the cwd, which is not one.
+    let l:name = bufname('%')
     let l:ctx = {
           \ 'tool': l:tool, 'target_buf': bufnr('%'),
           \ 'start': l:start, 'end': l:end,
           \ 'selected': getline(l:start, l:end),
+          \ 'source_paths': l:name ==# '' ? [] : [fnamemodify(l:name, ':p')],
           \ 'ft': l:ft, 'lang': l:ft !=# '' ? l:ft : 'plain text',
           \ 'changedtick': getbufvar(bufnr('%'), 'changedtick'),
           \ }

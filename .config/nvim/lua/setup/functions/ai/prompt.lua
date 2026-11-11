@@ -345,9 +345,19 @@ function M.parse_ollama(raw)
     return nil, "invalid JSON response"
   end
   if type(decoded.response) == "string" then
-    local trimmed = vim.trim(decoded.response)
-    if trimmed ~= "" then
-      return vim.split(trimmed, "\n", { plain = true }), nil
+    -- Not vim.trim: that strips the LEADING whitespace of the first non-blank
+    -- line too, so a snippet whose first line is indented came back one line
+    -- shifted left of the rest (clean_cli_lines, the CLI path, keeps it). What
+    -- Ollama pads is blank lines, so drop the leading blank ones -- whitespace
+    -- -only lines included, up to and including the last newline of that
+    -- prefix, which leaves the first real line's indentation alone -- and
+    -- trailing whitespace. A whitespace-only response has no newline-terminated
+    -- prefix to drop, so the second step empties it and it still falls through
+    -- to the error field below.
+    local text = decoded.response:gsub("^%s*\n", "")
+    text = text:gsub("%s+$", "")
+    if text ~= "" then
+      return vim.split(text, "\n", { plain = true }), nil
     end
   end
   if decoded.error then
@@ -390,7 +400,8 @@ function M.parse_edits(raw)
 end
 
 --- Apply structured edits (from M.parse_edits) to `lines`, returning a brand-new
---- line array. Edits are validated and sorted by start; an edit is SKIPPED
+--- line array. Edits are range-checked for the sort, sorted by start, then
+--- validated against the buffer; an edit is SKIPPED
 --- (never misapplied) when it is malformed, out of range, overlaps an
 --- already-applied edit, its `original` does not match the buffer, or its
 --- `fixed` carries a line the editor cannot write. Because the result is built
@@ -401,17 +412,36 @@ end
 --- @param edits table[] normalised edits { start, stop, original, fixed }
 --- @return string[] patched, integer applied, table[] skipped (each { edit, reason })
 function M.apply_edits(lines, edits)
-  local sorted = {}
-  for i = 1, #edits do
-    sorted[i] = edits[i]
-  end
-  table.sort(sorted, function(a, b)
-    return (a.start or 0) < (b.start or 0)
-  end)
-
   local function is_int(n)
     return type(n) == "number" and n == math.floor(n)
   end
+
+  -- Validate the sort key BEFORE sorting. `edits` is model output: `start` can
+  -- be a string, a JSON null (vim.NIL, a userdata), a table or absent, and a
+  -- comparator that meets one of those against a number THROWS ("attempt to
+  -- compare number with userdata") -- from inside the vim.schedule that calls
+  -- this, where nothing reports it and the fix tab stays on "waiting for
+  -- response". So an edit whose range is not a pair of integers is routed to
+  -- `skipped` here, up front, and only edits the comparator can order are
+  -- sorted. The rest of the validation stays in the loop below, where it needs
+  -- the buffer and the cursor.
+  --
+  -- These come first in `skipped`, in input order. An absent `start` used to be
+  -- sorted as 0, i.e. first, so that is the order callers already saw.
+  local sorted, skipped = {}, {}
+  for i = 1, #edits do
+    local e = edits[i]
+    if type(e) ~= "table" then
+      skipped[#skipped + 1] = { edit = e, reason = "malformed edit" }
+    elseif not (is_int(e.start) and is_int(e.stop)) then
+      skipped[#skipped + 1] = { edit = e, reason = "non-integer range" }
+    else
+      sorted[#sorted + 1] = e
+    end
+  end
+  table.sort(sorted, function(a, b)
+    return a.start < b.start
+  end)
 
   --- Reject a `fixed` array holding anything nvim_buf_set_lines will not take.
   ---
@@ -440,13 +470,11 @@ function M.apply_edits(lines, edits)
     return nil
   end
 
-  local out, skipped, applied = {}, {}, 0
+  local out, applied = {}, 0
   local cursor = 1 -- next original line to copy through unchanged
   for _, e in ipairs(sorted) do
     local reason
-    if not (is_int(e.start) and is_int(e.stop)) then
-      reason = "non-integer range"
-    elseif e.start < 1 or e.stop < e.start or e.stop > #lines then
+    if e.start < 1 or e.stop < e.start or e.stop > #lines then
       reason = "range out of bounds"
     elseif type(e.original) ~= "table" or type(e.fixed) ~= "table" then
       reason = "missing original/fixed"

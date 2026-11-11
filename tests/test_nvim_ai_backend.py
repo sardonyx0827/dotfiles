@@ -1306,3 +1306,856 @@ class TestWhitespaceOnlyReplies:
         res = json.loads([ln for ln in out.splitlines() if ln.startswith("{")][-1])
         assert res["ok"] is True, res
         assert res["lines"] == ["hello"]
+
+
+# --------------------------------------------------------------------------
+# The sensitive-PATH guard.
+#
+# The credential gate above looks at VALUES. A `.env` full of `DB_HOST=...`
+# lines holds nothing credential-shaped, so it sailed through to an external
+# model; the path list that already kept Copilot COMPLETION out of such files
+# was applied nowhere else. These tests pin the shared list, the confirm dialog
+# in the one choke point every send passes, and the commit-diff path
+# derivation. See `confirm_send` in backend.lua.
+# --------------------------------------------------------------------------
+
+SENSITIVE_MODULE = "setup.functions.ai.sensitive"
+
+# (path, sensitive?). Absolute, like the buffer names the callers pass and like
+# the `bufname` copilot.lua's should_attach receives. The same table drives the
+# Vim port's check, so the two lists cannot be given different expectations.
+PATH_CASES = [
+    pytest.param("/work/app/.env", True, id="dotenv"),
+    pytest.param("/work/app/.env.production", True, id="dotenv-suffixed"),
+    pytest.param("/work/app/.envrc", True, id="envrc"),
+    pytest.param("/home/u/.ssh/config", True, id="ssh-dir"),
+    pytest.param("/home/u/keys/id_ed25519", True, id="ssh-key-basename"),
+    pytest.param("/work/certs/server.PEM", True, id="pem-case-insensitive"),
+    pytest.param("/work/infra/prod.tfvars", True, id="tfvars"),
+    pytest.param("/work/infra/terraform.tfstate.backup", True, id="tfstate"),
+    pytest.param("/home/u/.kube/config", True, id="kube-dir"),
+    pytest.param("/work/ops/kubeconfig", True, id="kubeconfig"),
+    pytest.param("/home/u/.docker/config.json", True, id="docker-config-json"),
+    pytest.param("/work/app/docker/compose.json", False, id="docker-other-json"),
+    pytest.param("/work/gcp/my-service-account.json", True, id="service-account"),
+    pytest.param("/work/gcp/Credentials.json", True, id="credentials-word"),
+    pytest.param("/work/app/db_password.txt", True, id="password-word"),
+    pytest.param("/work/app/main.lua", False, id="ordinary-source"),
+    pytest.param("/work/app/README.md", False, id="ordinary-doc"),
+    pytest.param("/work/app/environment.py", False, id="env-prefix-is-not-dotenv"),
+    pytest.param("/work/app/envoy.yaml", False, id="envoy-is-not-dotenv"),
+    pytest.param("", False, id="empty-path-no-name-buffer"),
+    # Repo-relative names, as a diff or a relative buffer name gives them: the
+    # directory entries need a leading `/`, which a root-level `.kube/config`
+    # does not have. A relative name is judged as if it began with one.
+    pytest.param(".kube/config", True, id="relative-kube-dir"),
+    pytest.param(".ssh/config", True, id="relative-ssh-dir"),
+    pytest.param(".aws/config", True, id="relative-aws-dir"),
+    pytest.param(".gnupg/pubring.kbx", True, id="relative-gnupg-dir"),
+    pytest.param(".azure/azureProfile.json", True, id="relative-azure-dir"),
+    pytest.param("gcloud/x.json", True, id="relative-gcloud-dir"),
+    pytest.param("docs/kube-notes.md", False, id="relative-kube-in-a-word"),
+    pytest.param("docs/gcloud-notes.md", False, id="relative-gcloud-in-a-word"),
+    pytest.param("docs/ssh-notes.md", False, id="relative-ssh-in-a-word"),
+]
+
+
+class TestSensitivePathList:
+    """The one shared definition of "a path that must not go out unasked"."""
+
+    @pytest.mark.parametrize(("path", "expected"), PATH_CASES)
+    def test_is_sensitive_path(self, tmp_path, path, expected):
+        got = backend_call(
+            "is_sensitive_path",
+            path,
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+            module=SENSITIVE_MODULE,
+        ).only
+        assert got is expected
+
+    def test_a_missing_path_is_not_sensitive_and_does_not_throw(self, tmp_path):
+        got = backend_call(
+            "is_sensitive_path",
+            None,
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+            module=SENSITIVE_MODULE,
+        ).only
+        assert got is False
+
+    def test_sensitive_paths_keeps_only_the_sensitive_ones_once_each(self, tmp_path):
+        got = backend_call(
+            "sensitive_paths",
+            ["/a/main.lua", "/a/.env", "/a/.env", "", "/a/kubeconfig"],
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+            module=SENSITIVE_MODULE,
+        ).only
+        assert got == ["/a/.env", "/a/kubeconfig"]
+
+    def attach_decisions(self, tmp_path, spec_path):
+        """Run copilot.lua's real `config` against a stand-in `copilot` module.
+
+        The spec is loaded from `spec_path` so the same probe can be pointed at a
+        pre-refactor copy: a characterization test is only worth anything if the
+        old code gives the same answers.
+        """
+        probe = f"""
+        local captured
+        package.loaded["copilot"] = {{ setup = function(opts) captured = opts end }}
+        package.loaded["copilot.command"] = {{ toggle = function() end }}
+        local spec = dofile("{spec_path}")
+        spec.config()
+        local function decide(name, opts)
+          local buf = vim.api.nvim_create_buf(opts.listed, false)
+          if opts.buftype then vim.bo[buf].buftype = opts.buftype end
+          return captured.should_attach(buf, name)
+        end
+        local out = {{
+          sensitive = decide("/work/app/.env", {{ listed = true }}),
+          kube = decide("/home/u/.kube/config", {{ listed = true }}),
+          ordinary = decide("/work/app/main.lua", {{ listed = true }}),
+          unnamed = decide(nil, {{ listed = true }}),
+          unlisted = decide("/work/app/main.lua", {{ listed = false }}),
+          special = decide("/work/app/main.lua", {{ listed = true, buftype = "nofile" }}),
+        }}
+        io.stdout:write(vim.json.encode(out))
+        """
+        return json.loads(_lua_probe(tmp_path, probe))
+
+    EXPECTED_ATTACH = {
+        "sensitive": False,
+        "kube": False,
+        "ordinary": True,
+        "unnamed": True,
+        "unlisted": False,
+        "special": False,
+    }
+
+    def test_copilot_attach_decisions_are_unchanged(self, tmp_path):
+        spec = REPO_ROOT / ".config/nvim/lua/setup/plugins/ai/copilot.lua"
+        assert self.attach_decisions(tmp_path, spec) == self.EXPECTED_ATTACH
+
+    def test_copilot_attach_uses_the_shared_list_and_keeps_none_of_its_own(self):
+        """copilot.lua must not grow a second copy of the list.
+
+        Its attach behaviour is unchanged (same patterns, same call), so the
+        test is about where the list lives: two copies is how the gate and the
+        completion guard would drift apart.
+        """
+        src = (REPO_ROOT / ".config/nvim/lua/setup/plugins/ai/copilot.lua").read_text(
+            encoding="utf-8"
+        )
+        assert 'require("setup.functions.ai.sensitive")' in src
+        assert "SENSITIVE_PATH" not in src
+        assert "should_attach" in src
+
+    def test_the_vim_list_has_the_same_content_as_the_lua_list(self, tmp_path):
+        lua = json.loads(
+            _lua_probe(
+                tmp_path,
+                f'io.stdout:write(vim.json.encode(require("{SENSITIVE_MODULE}").PATTERNS))',
+            )
+        )
+        assert len(lua) > 20, "the Lua list is suspiciously short"
+        assert [_lua_pattern_as_vim(p) for p in lua] == _vim_sensitive_list()
+
+    def test_vim_agrees_with_lua_on_every_sample_path(self, tmp_path):
+        from test_editor_config_regressions import _real_vim, _run_vim_script
+
+        vim = _real_vim()
+        if vim is None:
+            pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+        source = (REPO_ROOT / ".vim/rc/70-ai.vim").read_text(encoding="utf-8")
+        paths = [case.values[0] for case in PATH_CASES]
+        script = (
+            f"let s:paths = json_decode('{json.dumps(paths)}')\n"
+            "call writefile([json_encode(map(copy(s:paths),"
+            " {_, p -> s:AI_IsSensitivePath(p) ? v:true : v:false}))], $PROBE_OUT)\n"
+            "qa!\n"
+        )
+        out = _run_vim_script(vim, script, extra_source=source).strip()
+        assert out, "the Vim probe wrote nothing: is s:AI_IsSensitivePath defined?"
+        assert json.loads(out) == [case.values[1] for case in PATH_CASES]
+
+
+def _lua_pattern_as_vim(pat):
+    """Translate one pattern of the shared list into the Vim regex form.
+
+    Only the constructs the list uses are known: anything else raises, so a
+    pattern that needs a smarter translation fails here instead of comparing
+    unequal for a reason nobody can read.
+    """
+    out, i = [], 0
+    while i < len(pat):
+        c = pat[i]
+        if c == "%":
+            nxt = pat[i + 1]
+            assert nxt in ".-", f"unhandled Lua escape %{nxt} in {pat!r}"
+            out.append("\\." if nxt == "." else "-")
+            i += 2
+            continue
+        out.append("\\?" if c == "?" else c)
+        i += 1
+    return "".join(out)
+
+
+def _vim_sensitive_list():
+    """The single-quoted entries of 70-ai.vim's sensitive-path list, in order."""
+    import re
+
+    src = (REPO_ROOT / ".vim/rc/70-ai.vim").read_text(encoding="utf-8")
+    start = src.index("let s:ai_sensitive_paths = [")
+    block = src[start : src.index("\\ ]", start)]
+    return re.findall(r"'((?:[^']|'')*)'", block)
+
+
+class TestDiffPaths:
+    """File names of the diff that is actually sent, read from the diff itself.
+
+    Deriving them from the text (rather than from a second `git` call) means the
+    check cannot disagree with the payload about which files are in it.
+    """
+
+    def paths(self, tmp_path, diff):
+        return backend_call(
+            "diff_paths",
+            diff,
+            binroot=make_bin(tmp_path, "bin"),
+            tmp_path=tmp_path,
+            module=SENSITIVE_MODULE,
+        ).only
+
+    def test_a_modified_file(self, tmp_path):
+        diff = (
+            "diff --git a/.env b/.env\nindex 1..2 100644\n--- a/.env\n+++ b/.env\n"
+            "@@ -1 +1,2 @@\n DB_HOST=db\n+DB_PORT=5432\n"
+        )
+        assert self.paths(tmp_path, diff) == [".env"]
+
+    def test_several_files_in_order_once_each(self, tmp_path):
+        diff = (
+            "diff --git a/src/a.lua b/src/a.lua\n--- a/src/a.lua\n+++ b/src/a.lua\n"
+            "@@ -1 +1 @@\n-x\n+y\n"
+            "diff --git a/kubeconfig b/kubeconfig\n--- a/kubeconfig\n+++ b/kubeconfig\n"
+            "@@ -1 +1 @@\n-x\n+y\n"
+        )
+        assert self.paths(tmp_path, diff) == ["src/a.lua", "kubeconfig"]
+
+    def test_a_new_file(self, tmp_path):
+        diff = (
+            "diff --git a/deploy/prod.tfvars b/deploy/prod.tfvars\nnew file mode 100644\n"
+            "--- /dev/null\n+++ b/deploy/prod.tfvars\n@@ -0,0 +1 @@\n+region = 1\n"
+        )
+        assert self.paths(tmp_path, diff) == ["deploy/prod.tfvars"]
+
+    def test_a_deleted_file_is_still_a_source_of_content(self, tmp_path):
+        diff = (
+            "diff --git a/old/.env b/old/.env\ndeleted file mode 100644\n"
+            "--- a/old/.env\n+++ /dev/null\n@@ -1 +0,0 @@\n-A=1\n"
+        )
+        assert self.paths(tmp_path, diff) == ["old/.env"]
+
+    def test_a_pure_rename_names_both_ends(self, tmp_path):
+        diff = (
+            "diff --git a/plain.txt b/prod.tfvars\nsimilarity index 100%\n"
+            "rename from plain.txt\nrename to prod.tfvars\n"
+        )
+        got = self.paths(tmp_path, diff)
+        assert "plain.txt" in got and "prod.tfvars" in got
+
+    def test_a_binary_file_has_no_content_headers_but_is_still_named(self, tmp_path):
+        diff = "diff --git a/keys/server.pem b/keys/server.pem\nBinary files differ\n"
+        assert self.paths(tmp_path, diff) == ["keys/server.pem"]
+
+    def test_a_mode_only_change_is_still_named(self, tmp_path):
+        diff = "diff --git a/id_rsa b/id_rsa\nold mode 100644\nnew mode 100600\n"
+        assert self.paths(tmp_path, diff) == ["id_rsa"]
+
+    def test_a_name_with_a_space_keeps_the_space(self, tmp_path):
+        diff = (
+            "diff --git a/my notes/.env b/my notes/.env\n"
+            "--- a/my notes/.env\t\n+++ b/my notes/.env\t\n@@ -1 +1 @@\n-a\n+b\n"
+        )
+        assert self.paths(tmp_path, diff) == ["my notes/.env"]
+
+    def test_a_quoted_name_is_unquoted(self, tmp_path):
+        diff = (
+            'diff --git "a/caf\\303\\251/.env" "b/caf\\303\\251/.env"\n'
+            '--- "a/caf\\303\\251/.env"\n+++ "b/caf\\303\\251/.env"\n'
+            "@@ -1 +1 @@\n-a\n+b\n"
+        )
+        got = self.paths(tmp_path, diff)
+        assert len(got) == 1 and got[0].endswith("/.env") and '"' not in got[0]
+
+    def test_hunk_lines_that_look_like_headers_are_not_file_names(self, tmp_path):
+        """`-- credentials` removed from a Lua file renders as `--- credentials`.
+
+        Only the header block (between `diff --git` and the first `@@`) names
+        files. Reading body lines as names would raise a dialog for a diff that
+        touches nothing sensitive.
+        """
+        diff = (
+            "diff --git a/x.lua b/x.lua\n--- a/x.lua\n+++ b/x.lua\n@@ -1,2 +1,2 @@\n"
+            "--- credentials\n+++ password\n context\n"
+        )
+        assert self.paths(tmp_path, diff) == ["x.lua"]
+
+    def test_a_repo_root_name_keeps_the_leading_directory(self, tmp_path):
+        """`a/.kube/config` loses `a/` and nothing else: the dir stays in the name."""
+        diff = (
+            "diff --git a/.kube/config b/.kube/config\n--- a/.kube/config\n"
+            "+++ b/.kube/config\n@@ -1 +1 @@\n-a\n+b\n"
+        )
+        assert self.paths(tmp_path, diff) == [".kube/config"]
+
+    COLOURED = (
+        "\x1b[1mdiff --git a/.env b/.env\x1b[m\n"
+        "\x1b[1mindex 1..2 100644\x1b[m\n"
+        "\x1b[1m--- a/.env\x1b[m\n\x1b[1m+++ b/.env\x1b[m\n"
+        "\x1b[36m@@ -1 +1,2 @@\x1b[m\n DB_HOST=db\n\x1b[32m+\x1b[mDB_PORT=5432\n"
+    )
+
+    def test_ansi_escapes_around_the_headers_do_not_hide_the_names(self, tmp_path):
+        """`color.ui=always` wraps every header in SGR codes; `^diff` must still match."""
+        assert self.paths(tmp_path, self.COLOURED) == [".env"]
+
+    def test_a_coloured_hunk_header_still_ends_the_header_block(self, tmp_path):
+        diff = (
+            "\x1b[1mdiff --git a/x.lua b/x.lua\x1b[m\n\x1b[1m--- a/x.lua\x1b[m\n"
+            "\x1b[1m+++ b/x.lua\x1b[m\n\x1b[36m@@ -1 +1 @@\x1b[m\n"
+            "\x1b[31m--- credentials\x1b[m\n\x1b[32m+++ password\x1b[m\n"
+        )
+        assert self.paths(tmp_path, diff) == ["x.lua"]
+
+    @pytest.mark.parametrize("flag", ["--cc", "--combined"])
+    def test_a_merge_conflict_header_names_its_one_path(self, tmp_path, flag):
+        diff = (
+            f"diff {flag} kubeconfig\nindex 1,2..3\n--- a/kubeconfig\n"
+            "+++ b/kubeconfig\n@@@ -1,1 -1,1 +1,5 @@@\n++<<<<<<< HEAD\n"
+        )
+        assert self.paths(tmp_path, diff) == ["kubeconfig"]
+
+    def test_a_merge_conflict_header_keeps_a_path_that_starts_with_a_slash_letter(
+        self, tmp_path
+    ):
+        """No `a/` `b/` prefix exists in a combined header, so none is stripped."""
+        diff = "diff --cc b/.ssh/id_rsa\nindex 1,2..3\n@@@ -1 -1 +1 @@@\n"
+        assert self.paths(tmp_path, diff) == ["b/.ssh/id_rsa"]
+
+    def test_a_quoted_merge_conflict_header_is_unquoted(self, tmp_path):
+        diff = 'diff --cc "caf\\303\\251/.env"\nindex 1,2..3\n@@@ -1 -1 +1 @@@\n'
+        got = self.paths(tmp_path, diff)
+        assert len(got) == 1 and got[0].endswith("/.env") and '"' not in got[0]
+
+    def test_no_diff_and_non_diff_text_name_nothing(self, tmp_path):
+        assert self.paths(tmp_path, "") == []
+        assert self.paths(tmp_path, "fatal: not a git repository\n") == []
+
+
+GATE_PREAMBLE = """
+package.path = "{repo}/.config/nvim/lua/?.lua;"
+  .. "{repo}/.config/nvim/lua/?/init.lua;" .. package.path
+
+-- confirm() stand-in. A real one returns the default button when the user just
+-- presses Enter, which is what a missing answer models: the dialog defaults to No.
+local answers = vim.json.decode('{answers}')
+local confirms = {{}}
+vim.fn.confirm = function(msg, choices, default, kind)
+  confirms[#confirms + 1] = {{ msg = msg, choices = choices, default = default, kind = kind }}
+  local a = answers[#confirms]
+  if a == nil then return default end
+  return a
+end
+
+-- Nothing may actually be spawned: a started job IS the send.
+local jobs = {{}}
+vim.fn.jobstart = function(cmd, _opts)
+  jobs[#jobs + 1] = cmd
+  return 100 + #jobs
+end
+
+local backend = require("setup.functions.ai.backend")
+local function emit(v) io.stdout:write(vim.json.encode(v), "\\n") end
+"""
+
+
+def gate_probe(tmp_path, body, *, answers=(), tools=("python3",)):
+    """Run `body` (Lua) against the real backend with confirm() and jobstart() stubbed.
+
+    The scanner is the real one: `XDG_CONFIG_HOME` points at this repo's nvim
+    config the way ~/.config/nvim does, so scan_payload finds
+    scripts/secret_scan.py. Pass `tools` without python3 for the
+    scanner-unavailable case. Returns the JSON object the body emitted.
+    """
+    binroot = make_bin(tmp_path, "gatebin", tools)
+    xdg = make_xdg(tmp_path, REPO_ROOT / ".config/nvim")
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    script = tmp_path / "gate_probe.lua"
+    script.write_text(
+        GATE_PREAMBLE.format(repo=REPO_ROOT, answers=json.dumps(list(answers))) + body,
+        encoding="utf-8",
+    )
+    proc = subprocess.run(  # noqa: S603
+        [NVIM, "-l", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={
+            "PATH": str(binroot),
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(xdg),
+            "XDG_DATA_HOME": str(home / "data"),
+            "XDG_STATE_HOME": str(home / "state"),
+            "XDG_CACHE_HOME": str(home / "cache"),
+        },
+    )
+    assert proc.returncode == 0, proc.stderr
+    replies = [ln for ln in proc.stdout.splitlines() if ln.startswith("{")]
+    assert replies, (
+        f"probe emitted nothing\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    return json.loads(replies[-1])
+
+
+def _listify(value):
+    """An empty Lua table crosses vim.json as `{}`; the Python side wants `[]`."""
+    return [] if value == {} else value
+
+
+SENSITIVE_PATH = "/work/app/.env"
+SENSITIVE_REFUSAL = "sensitive file path in payload; not sent to AI"
+
+# `all` mode in the editor: one request per tool, same payload, same tick.
+ALL_TOOLS = '{"claude", "codex", "gemini", "copilot"}'
+
+# Shared Lua: a spec factory and a recorder that collects done() callbacks.
+GATE_HELPERS = """
+local function spec(tool, paths)
+  return {
+    tool = tool,
+    prompt = "INSTR",
+    -- Not credential-shaped: the whole point is what value scanning cannot see.
+    input = "DB_HOST=db.internal\\nDB_PORT=5432",
+    source_paths = paths,
+  }
+end
+local reported = {}
+local function done(ok, lines, err, tool)
+  reported[#reported + 1] = { ok = ok, err = err or vim.NIL, tool = tool or vim.NIL }
+end
+local function result(extra)
+  local out = { confirms = confirms, jobs = jobs, reported = reported }
+  for k, v in pairs(extra or {}) do out[k] = v end
+  emit(out)
+end
+"""
+
+
+class TestSensitivePathGateInRun:
+    """backend.run: a payload read from a sensitive path asks first, default No."""
+
+    def run(self, tmp_path, body, **kw):
+        res = gate_probe(tmp_path, GATE_HELPERS + body, **kw)
+        for key in ("confirms", "jobs", "reported"):
+            res[key] = _listify(res[key])
+        return res
+
+    def test_a_sensitive_path_raises_a_dialog_that_defaults_to_no(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f'backend.run(spec("claude", {{"{SENSITIVE_PATH}"}}), done); result()',
+        )
+        assert len(res["confirms"]) == 1
+        dialog = res["confirms"][0]
+        assert dialog["choices"] == "&No\n&Yes"
+        assert dialog["default"] == 1, "Enter / Esc must abort the send"
+        assert dialog["kind"] == "Warning"
+        assert SENSITIVE_PATH in dialog["msg"]
+
+    def test_no_sends_nothing_and_says_why(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f'backend.run(spec("claude", {{"{SENSITIVE_PATH}"}}), done); result()',
+            answers=[1],
+        )
+        assert res["jobs"] == [], "a refused request started a process"
+        assert res["reported"] == [
+            {"ok": False, "err": SENSITIVE_REFUSAL, "tool": None}
+        ]
+
+    def test_yes_sends(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f'backend.run(spec("claude", {{"{SENSITIVE_PATH}"}}), done); result()',
+            answers=[2],
+        )
+        assert len(res["confirms"]) == 1
+        assert len(res["jobs"]) == 1
+        assert res["reported"] == [], "an approved request must not be refused"
+
+    def test_an_ordinary_path_asks_nothing(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            'backend.run(spec("claude", {"/work/app/main.lua"}), done); result()',
+        )
+        assert res["confirms"] == []
+        assert len(res["jobs"]) == 1
+
+    def test_a_caller_that_names_no_source_is_not_asked(self, tmp_path):
+        """Not every request has a file behind it (a bare spec, a scratch buffer)."""
+        res = self.run(tmp_path, 'backend.run(spec("claude", nil), done); result()')
+        assert res["confirms"] == []
+        assert len(res["jobs"]) == 1
+
+    def test_the_path_gate_covers_the_gemini_api_transport_too(self, tmp_path):
+        """Same trap as the credential gate: `kind ~= "cli"` would exempt gemini."""
+        res = self.run(
+            tmp_path,
+            f'backend.run(spec("gemini", {{"{SENSITIVE_PATH}"}}), done); result()',
+        )
+        assert len(res["confirms"]) == 1
+        assert res["jobs"] == []
+
+    def test_local_ollama_is_exempt(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f'backend.run(spec("gemma", {{"{SENSITIVE_PATH}"}}), done); result()',
+        )
+        assert res["confirms"] == [], "nothing leaves the machine, so nothing to ask"
+        assert len(res["jobs"]) == 1
+
+    def test_all_mode_asks_once_and_no_cancels_every_tool(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f"""
+            for _, t in ipairs({ALL_TOOLS}) do
+              backend.run(spec(t, {{"{SENSITIVE_PATH}"}}), done)
+            end
+            result()
+            """,
+            answers=[1],
+        )
+        assert len(res["confirms"]) == 1, "one dialog per request, not per tool"
+        assert res["jobs"] == []
+        assert [r["err"] for r in res["reported"]] == [SENSITIVE_REFUSAL] * 4
+
+    def test_all_mode_yes_starts_every_tool_after_one_dialog(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f"""
+            for _, t in ipairs({ALL_TOOLS}) do
+              backend.run(spec(t, {{"{SENSITIVE_PATH}"}}), done)
+            end
+            result()
+            """,
+            answers=[2],
+        )
+        assert len(res["confirms"]) == 1
+        assert len(res["jobs"]) == 4
+        assert res["reported"] == []
+
+    def test_an_approval_does_not_outlive_the_tick(self, tmp_path):
+        """The same-tick dedupe must not turn into a standing permission."""
+        res = self.run(
+            tmp_path,
+            f"""
+            backend.run(spec("claude", {{"{SENSITIVE_PATH}"}}), done)
+            vim.wait(50)
+            backend.run(spec("claude", {{"{SENSITIVE_PATH}"}}), done)
+            result()
+            """,
+            answers=[2, 2],
+        )
+        assert len(res["confirms"]) == 2
+
+    def test_a_cached_clean_decision_does_not_wave_a_sensitive_path_through(
+        self, tmp_path
+    ):
+        """The dedupe key must include the paths, not only the payload text.
+
+        Same text, same tick: an ordinary file asked first caches "fine". Keyed
+        on the text alone, a `.env` carrying the same bytes asked next would
+        read that entry and go out without a dialog.
+        """
+        res = self.run(
+            tmp_path,
+            f"""
+            backend.run(spec("claude", {{"/work/app/main.lua"}}), done)
+            backend.run(spec("claude", {{"{SENSITIVE_PATH}"}}), done)
+            result()
+            """,
+        )
+        assert len(res["confirms"]) == 1
+        assert len(res["jobs"]) == 1, "only the ordinary file's request went out"
+        assert [r["err"] for r in res["reported"]] == [SENSITIVE_REFUSAL]
+
+    def test_a_credential_and_a_sensitive_path_share_one_dialog(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f"""
+            local s = spec("claude", {{"{SENSITIVE_PATH}"}})
+            s.input = "aws_key = {FAKE_AWS_KEY}"
+            backend.run(s, done)
+            result()
+            """,
+        )
+        assert len(res["confirms"]) == 1
+        msg = res["confirms"][0]["msg"]
+        assert "Possible credential" in msg and SENSITIVE_PATH in msg
+        assert res["jobs"] == []
+        assert "credential" in res["reported"][0]["err"]
+        assert "sensitive file path" in res["reported"][0]["err"]
+
+    def test_the_credential_only_dialog_is_unchanged(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f"""
+            local s = spec("claude", {{"/work/app/main.lua"}})
+            s.input = "aws_key = {FAKE_AWS_KEY}"
+            backend.run(s, done)
+            result()
+            """,
+        )
+        assert len(res["confirms"]) == 1
+        assert res["confirms"][0]["msg"].endswith(
+            "detected in the AI payload.\nSend it to the AI tool anyway?"
+        )
+        assert res["reported"][0]["err"] == (
+            "credential detected in payload; not sent to AI"
+        )
+
+    def test_the_path_dialog_does_not_depend_on_the_scanner(self, tmp_path):
+        """No python3 means no value scan (fail open); the path check is local."""
+        res = self.run(
+            tmp_path,
+            f'backend.run(spec("claude", {{"{SENSITIVE_PATH}"}}), done); result()',
+            tools=(),
+        )
+        assert len(res["confirms"]) == 1
+        assert res["jobs"] == []
+
+
+class TestSensitivePathGateInFallback:
+    """run_with_fallback gates once up front; an attempt must not re-ask or bypass."""
+
+    # The lead tool refuses the oversized payload synchronously, so the chain
+    # advances to the second within the same call (`nvim -l` runs no event loop).
+    CHAIN = f"""
+        local big = spec("copilot", {{"{SENSITIVE_PATH}"}})
+        big.input = string.rep("x", 256 * 1024 + 1)
+        big.model = "gpt"
+        local nxt = spec("claude", {{"{SENSITIVE_PATH}"}})
+        nxt.input = big.input
+        local handle = backend.run_with_fallback({{ big, nxt }}, done)
+        result({{ handle = handle == nil and "nil" or "handle" }})
+    """
+
+    def run(self, tmp_path, body, **kw):
+        res = gate_probe(tmp_path, GATE_HELPERS + body, **kw)
+        for key in ("confirms", "jobs", "reported"):
+            res[key] = _listify(res[key])
+        return res
+
+    def test_the_fallback_attempt_is_asked_once_not_twice(self, tmp_path):
+        res = self.run(tmp_path, self.CHAIN, answers=[2])
+        assert len(res["confirms"]) == 1, "the fallback attempt re-prompted"
+        assert len(res["jobs"]) == 1, "the chain never reached its second tool"
+        assert "claude" in res["jobs"][0][-1], res["jobs"]
+
+    def test_no_stops_the_whole_chain(self, tmp_path):
+        res = self.run(tmp_path, self.CHAIN, answers=[1])
+        assert len(res["confirms"]) == 1
+        assert res["jobs"] == [], "a No was bypassed by the fallback attempt"
+        assert res["handle"] == "nil"
+        assert [r["err"] for r in res["reported"]] == [SENSITIVE_REFUSAL]
+
+    def test_an_all_ollama_chain_is_exempt_like_run(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            f"""
+            backend.run_with_fallback({{ spec("gemma", {{"{SENSITIVE_PATH}"}}) }}, done)
+            result()
+            """,
+        )
+        assert res["confirms"] == []
+        assert len(res["jobs"]) == 1
+
+    def test_an_ordinary_path_asks_nothing(self, tmp_path):
+        res = self.run(
+            tmp_path,
+            """
+            backend.run_with_fallback({ spec("claude", {"/work/app/main.lua"}) }, done)
+            result()
+            """,
+        )
+        assert res["confirms"] == []
+        assert len(res["jobs"]) == 1
+
+
+class TestVimSensitivePathGate:
+    """classic Vim's select-and-replace asks before sending a sensitive file.
+
+    The Vim port of the gate: `s:AI_Submit` checks the TARGET buffer's path
+    against `s:ai_sensitive_paths`, one confirm that defaults to No, local Ollama
+    exempt. Driven through a real Vim (the rc prepended to a probe, as the other
+    70-ai.vim port tests do). confirm() cannot be shadowed in Vim, but under
+    `-es` it answers with the default button without blocking -- which is
+    exactly the property under test: left alone, the dialog means No. The
+    job-starting functions are redefined in the probe (same script scope) so
+    nothing is ever spawned and "was anything sent" is a plain list.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        from test_editor_config_regressions import _real_vim
+
+        binary = _real_vim()
+        if binary is None:
+            pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+        return binary
+
+    def probe(self, vim, script):
+        from test_editor_config_regressions import _run_vim_script
+
+        source = (REPO_ROOT / ".vim/rc/70-ai.vim").read_text(encoding="utf-8")
+        out = _run_vim_script(vim, script, extra_source=source).strip()
+        assert out, (
+            "the Vim probe wrote nothing (a function missing, or a script error)"
+        )
+        return json.loads(out)
+
+    def confirm_send(self, vim, paths):
+        return self.probe(
+            vim,
+            f"let s:r = s:AI_ConfirmSend('DB_HOST=db', json_decode('{json.dumps(paths)}'))\n"
+            "call writefile([json_encode(s:r)], $PROBE_OUT)\nqa!\n",
+        )
+
+    def submit(self, vim, tool, target_name, between=""):
+        """Open the prompt with s:AI_Start, optionally disturb the target, submit.
+
+        Goes through the real s:AI_Start so the context carries whatever it
+        captures at prompt-open time. `between` is Vim script run after that and
+        before the submit (`s:target` is the target buffer's number): it models
+        the user wiping or renaming the buffer while the prompt window is open.
+        """
+        name = f"file {target_name}" if target_name else ""
+        res = self.probe(
+            vim,
+            f"""
+let s:log = []
+function! s:AI_RunSingle(ctx, sys, tmpfile) abort
+  call add(s:log, 'single')
+endfunction
+function! s:AI_RunAll(ctx, sys, tmpfile) abort
+  call add(s:log, 'all')
+endfunction
+function! s:AI_RunOllama(ctx, tmpfile) abort
+  call add(s:log, 'ollama')
+endfunction
+enew
+{name}
+call setline(1, ['DB_HOST=db'])
+let s:target = bufnr('%')
+call setpos("'<", [s:target, 1, 1, 0])
+call setpos("'>", [s:target, 1, 1, 0])
+let s:err = ''
+try
+  call s:AI_Start('{tool}')
+  call setline(1, 'rewrite it')
+  {between}
+  call s:AI_Submit()
+catch
+  let s:err = v:exception . ' @ ' . v:throwpoint
+endtry
+call writefile([json_encode({{'log': s:log, 'err': s:err,
+      \\ 'messages': execute('messages')}})], $PROBE_OUT)
+qa!
+""",
+        )
+        # A throw inside s:AI_Submit would leave `log` empty -- which reads as
+        # "nothing was sent" and would make every refusal test pass vacuously.
+        assert res["err"] == "", res["err"]
+        return res
+
+    def test_a_sensitive_path_is_refused_by_the_default_answer(self, vim):
+        assert self.confirm_send(vim, ["/work/app/.env"]) == [
+            0,
+            "sensitive file path in payload",
+        ]
+
+    def test_an_ordinary_path_and_no_path_go_through(self, vim):
+        assert self.confirm_send(vim, ["/work/app/main.lua"]) == [1, ""]
+        assert self.confirm_send(vim, []) == [1, ""]
+
+    def test_submit_sends_nothing_from_a_sensitive_buffer(self, vim):
+        res = self.submit(vim, "claude", "/work/app/.env")
+        assert res["log"] == [], "the selection was sent without an answer"
+        assert "cancelled (sensitive file path in payload)" in res["messages"]
+
+    def test_submit_checks_the_target_buffer_not_the_prompt_window(self, vim):
+        """The current buffer at submit time is the unnamed prompt, never the source."""
+        res = self.submit(vim, "claude", "/work/app/prod.tfvars")
+        assert res["log"] == []
+
+    def test_submit_sends_from_an_ordinary_buffer_without_asking(self, vim):
+        res = self.submit(vim, "claude", "/work/app/main.lua")
+        assert res["log"] == ["single"]
+
+    def test_an_unnamed_target_buffer_names_no_source(self, vim):
+        """fnamemodify('', ':p') is the cwd; it must not be mistaken for a path."""
+        res = self.submit(vim, "claude", "")
+        assert res["log"] == ["single"]
+
+    def test_all_mode_is_refused_as_a_whole(self, vim):
+        res = self.submit(vim, "all", "/work/app/.env")
+        assert res["log"] == []
+
+    def test_all_mode_from_an_ordinary_buffer_still_runs(self, vim):
+        res = self.submit(vim, "all", "/work/app/main.lua")
+        assert res["log"] == ["all"]
+
+    def test_local_ollama_is_exempt(self, vim):
+        res = self.submit(vim, "gemma", "/work/app/.env")
+        assert res["log"] == ["ollama"]
+
+    def test_a_relative_buffer_name_is_judged_by_its_absolute_path(self, vim):
+        """`:file .kube/config` (relative) must not slip past the `/.kube/` entry."""
+        res = self.submit(vim, "claude", ".kube/config")
+        assert res["log"] == []
+
+    # The selection text is captured when the prompt opens; the path has to be
+    # captured then too. Read at submit time, a wiped or renamed target would send
+    # the text with an empty or different path and no dialog.
+
+    def test_a_target_wiped_while_the_prompt_is_open_is_still_asked_about(self, vim):
+        res = self.submit(
+            vim, "claude", "/work/app/.env", between="execute 'bwipeout! ' . s:target"
+        )
+        assert res["log"] == [], "the text of a wiped .env went out with no path"
+        assert "cancelled (sensitive file path in payload)" in res["messages"]
+
+    def test_a_target_renamed_while_the_prompt_is_open_is_still_asked_about(self, vim):
+        res = self.submit(
+            vim,
+            "claude",
+            "/work/app/.env",
+            between=(
+                "call win_execute(bufwinid(s:target), 'silent file /work/app/plain.txt')"
+            ),
+        )
+        assert res["log"] == [], "the text of a .env went out under a different name"
+
+    def test_a_target_wiped_while_the_prompt_is_open_does_not_throw_when_ordinary(
+        self, vim
+    ):
+        res = self.submit(
+            vim,
+            "claude",
+            "/work/app/main.lua",
+            between="execute 'bwipeout! ' . s:target",
+        )
+        assert res["log"] == ["single"]
