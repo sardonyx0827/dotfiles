@@ -38,9 +38,21 @@ ctx_pct_raw=$(echo "$input" | jq -r '.context_window.used_percentage // "null"')
 model_raw=$(echo "$input" | jq -r '.model.display_name // ""')
 
 # --- ディレクトリ表示 (~/... 短縮) ---
-short_dir="${cwd/#$HOME/\~}"
-dir_display=$(echo "$short_dir" | awk -F'/' '{
-    if (NF > 3) printf "~/../%s/%s", $(NF-1), $NF
+# ~ に畳むのは HOME 自身か、`/` を挟んだ HOME 配下だけ。`${cwd/#$HOME/\~}` は使わない:
+# bash 3.2 (macOS の /bin/bash) は置換の右辺のバックスラッシュをそのまま出力して
+# `\~/projects` になり、前方一致だけなので `$HOME` と同じ綴りで始まる隣のディレクトリ
+# (`/Users/alice1`) まで `~1` に化ける。
+short_dir="$cwd"
+if [ -n "${HOME:-}" ]; then
+  case "$cwd" in
+  "$HOME") short_dir='~' ;;
+  "$HOME"/*) short_dir="~${cwd#"$HOME"}" ;;
+  esac
+fi
+# 深いパスは末尾 2 階層だけ残す。先頭の ~ は HOME 配下のときだけ付ける
+# (それ以外は根からの `/../c/d`)。
+dir_display=$(printf '%s\n' "$short_dir" | awk -F'/' '{
+    if (NF > 3) printf "%s/../%s/%s", ($1 == "~" ? "~" : ""), $(NF-1), $NF
     else        print $0
 }')
 
@@ -59,10 +71,18 @@ if [ "$ctx_pct_raw" != "null" ] && [ -n "$ctx_pct_raw" ]; then
 fi
 
 # --- モデル名の短縮 ---
-model_display=$(echo "$model_raw" |
-  sed 's/claude-//I' |
-  sed 's/-/ /g' |
-  awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2)); print}')
+# 整形するのはモデル ID の形 (`claude-opus-4-7`: 空白も大文字も無い) だけ。表示名
+# (`Opus 4.7 (1M context)`) は既に人が読む形なので、そのまま出す。語頭を大文字・
+# 残りを小文字にする整形を表示名にも掛けると `(1m Context)` になる。
+case "$model_raw" in
+*[[:space:]]* | *[[:upper:]]*) model_display="$model_raw" ;;
+*)
+  model_display=$(echo "$model_raw" |
+    sed 's/claude-//I' |
+    sed 's/-/ /g' |
+    awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2)); print}')
+  ;;
+esac
 [ -z "$model_display" ] && model_display="--"
 
 # --- Git 情報 ---
