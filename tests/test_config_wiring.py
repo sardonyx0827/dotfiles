@@ -421,16 +421,16 @@ def _edit_ask_paths() -> list[str]:
 # Bash can write anything Edit can, so a path that permissions.ask guards against
 # Edit must also be recognised by bash-review's harness-write check -- otherwise
 # `sed -i` / `>` / `tee` reach the same file through the single-model fast path.
-# The relation is ⊇: the Bash side also guards the global CLAUDE.md.
+# The global CLAUDE.md is on both sides (Edit ask above, Bash ask in the hook).
 def test_bash_review_protects_every_edit_ask_path():
     paths = _edit_ask_paths()
     assert paths, "no Edit(...) rules found in permissions.ask"
+    assert ".claude/CLAUDE.md" in paths
     missing = [p for p in paths if not _bash_review._is_harness_target(p)]
     assert not missing, (
         "bash-review's harness-write check does not recognise these Edit-ask "
         f"paths: {missing}"
     )
-    assert _bash_review._is_harness_target(".claude/CLAUDE.md")
 
 
 # `mkfs` is special-cased in the hook (_is_deny_command): it denies bare `mkfs`
@@ -620,6 +620,15 @@ def test_hook_and_gate_config_edits_ask_the_user():
     ask = settings["permissions"].get("ask", [])
     missing = [rule for rule in GATE_FILE_ASKS if rule not in ask]
     assert not missing, f"permissions.ask is missing {missing}"
+
+
+# The global instruction file is read into every session, so a prompt-injected
+# session that rewrites it persists its instructions into all later sessions. Ask
+# before the Edit tool changes it, as bash-review already does for Bash writes.
+def test_global_instruction_file_edits_ask_the_user():
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    ask = settings["permissions"].get("ask", [])
+    assert "Edit(//**/.claude/CLAUDE.md)" in ask, f"current: {ask}"
 
 
 # Serena's tools that write the working tree, run a shell, or create files.

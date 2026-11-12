@@ -330,9 +330,9 @@ latency low for the common case:
    (`harness_write_ask_reason`), so a single Gemini `ALLOW` cannot let a command
    rewrite the gate that reviews it. The protected set mirrors the `Edit(…)`
    rules in `permissions.ask` — `.claude/settings.json`,
-   `.claude/settings.local.json`, `.claude/hooks/`, `.claude/mods/`,
-   `.codex/hooks/`, `~/.codex/` — plus the global `.claude/CLAUDE.md`, and the
-   bare `.claude` / `.codex` directory as a destination;
+   `.claude/settings.local.json`, `.claude/CLAUDE.md`, `.claude/hooks/`,
+   `.claude/mods/`, `.codex/hooks/`, `~/.codex/` — plus the bare `.claude` /
+   `.codex` directory as a destination;
    `tests/test_config_wiring.py` fails if an `Edit` ask path is not covered. It
    recognises write _forms_, not mentions, because reads of these paths
    (`sed -n`, `git diff`, `cat | jq`) were about a quarter of all logged commands:

@@ -227,6 +227,7 @@
       "Edit(//**/.claude/mods/**)",
       "Edit(//**/.claude/settings.json)",
       "Edit(//**/.claude/settings.local.json)",
+      "Edit(//**/.claude/CLAUDE.md)",
       "Edit(//**/.claude/hooks/**)",
       "Edit(//**/.codex/hooks/**)",
       "Edit(~/.codex/**)",
@@ -340,5 +341,6 @@
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
   "voiceEnabled": false,
-  "inputNeededNotifEnabled": true
+  "inputNeededNotifEnabled": true,
+  "preferredNotifChannel": "terminal_bell"
 }
