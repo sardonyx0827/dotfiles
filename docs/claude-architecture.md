@@ -197,9 +197,12 @@ mod のコードと、mod を読み込む `settings.json` を Claude が書き�
 `Edit(//**/.claude/mods/**)` と `Edit(//**/.claude/settings.json)` を置いています。同じ理由で、セッションが実行できるものを
 決める他のファイル、つまり `Edit(//**/.claude/settings.local.json)`・`Edit(//**/.claude/hooks/**)`・
 `Edit(//**/.codex/hooks/**)`・`Edit(~/.codex/**)`（Codex の `hooks.json` と `config.toml`）も ask に置いています。
-毎セッション読み込まれるグローバルな指示ファイル `Edit(//**/.claude/CLAUDE.md)` も ask です。プロンプトインジェクションを
-受けたセッションがここを書き換えると、以後のすべてのセッションへ指示が持ち越されるためです（Bash からの書き込みは
-`bash-review` が同じく ask にします）。このルールは他の Edit ask と同じ形ですが、実機での確認はまだです。
+毎セッション読み込まれる指示ファイル、つまり `Edit(//**/.claude/CLAUDE.md)`・`Edit(//**/.claude/rules/**)`
+（CLAUDE.md が `@` で読み込む）・`Edit(//**/.codex/AGENTS.md)`・`Edit(//**/.gemini/GEMINI.md)` も ask です。
+プロンプトインジェクションを受けたセッションがここを書き換えると、以後のすべてのセッションへ指示が持ち越されるためです
+（Bash からの書き込みは `bash-review` が同じく ask にします）。skills・agents・commands は使うときにだけ読み込まれ、
+編集の頻度もずっと高いので、編集のたびの確認で中身を見ずに承認する癖がつかないよう、意図して対象から外しています。
+これらのルールは他の Edit ask と同じ形ですが、実機での確認はまだです。
 `~/.codex/config.toml` は資格情報を含みうるため、さらに Read / Edit とも deny にしています（deny は ask より優先）。`.claude/` は保護パスですが、
 auto モードでは保護パスへの書き込みを classifier が判断するので、明示の ask ルールで利用者に確認させます。
 書き込みのたびに確認が出ることは実機で確かめています。ダイアログに `.claude` フォルダの編集をセッション単位で許可する

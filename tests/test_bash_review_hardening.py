@@ -768,10 +768,11 @@ def test_the_verdict_parser_is_linear_in_leading_padding(line):
 
 # ---------------------------------------------------------------------------
 # Bash writes to the harness's own configuration (settings / hooks / mods / the
-# global CLAUDE.md / the Codex hooks and home config) are asked deterministically,
-# before any model is consulted. A single Gemini ALLOW must not be enough to let a
-# command rewrite the gate that reviews it. Reads of the same paths stay on their
-# usual path: the check recognises write FORMS, not mentions.
+# Codex hooks and home config / the instruction files read into every session:
+# CLAUDE.md and its rules, Codex AGENTS.md, Gemini GEMINI.md) are asked
+# deterministically, before any model is consulted. A single Gemini ALLOW must not
+# be enough to let a command rewrite the gate that reviews it. Reads of the same
+# paths stay on their usual path: the check recognises write FORMS, not mentions.
 # ---------------------------------------------------------------------------
 
 HARNESS_REDIRECT_CASES = [
@@ -794,6 +795,18 @@ HARNESS_REDIRECT_CASES = [
     "echo x > $D/settings.json",
     "cat > .claude/hooks/n.py <<'EOF'\nprint(1)\nEOF",
     "cat x > \\\n  .claude/settings.json",  # line continuation between `>` and target
+    # instruction files read into every session (Claude rules, Codex, Gemini)
+    "echo x >> .claude/rules/security.md",
+    "echo x > ~/.claude/rules/new.md",
+    "echo x > .codex/AGENTS.md",
+    "echo x >> ~/.gemini/GEMINI.md",
+    "echo x > .claude/rules/*.md",
+    # expansions that can land on one: these go through the dynamic check, not the
+    # literal path pattern, so each pins one name in it
+    "echo x > ~/.cl*/rules/x",
+    "echo x > ~/.co*/AGENTS.md",
+    "echo x > ~/.gem*/GEMINI.md",
+    "rm ~/.gemini/*",
     "echo 'x > .claude/settings.json",  # unparsable: conservative fallback
 ]
 
@@ -824,6 +837,10 @@ HARNESS_WRITER_CASES = [
     "gsed --in-place s/a/b/ .codex/hooks/x",
     "perl -pi -e 's/a/b/' .claude/hooks/x.py",
     "env FOO=1 timeout 5 rm .claude/hooks/x",
+    "sed -i 's/a/b/' .claude/rules/git-workflow.md",
+    "rm .claude/rules/security.md",
+    "cp /tmp/x .codex/AGENTS.md",
+    "cp /tmp/GEMINI.md ~/.gemini/",
     "dd if=/dev/zero of=.claude/settings.json",
 ]
 
@@ -907,6 +924,17 @@ HARNESS_NOT_A_WRITE_CASES = [
     "echo x > .claude/hooks-old/x",
     "echo x > .claude/settings.json.bak",
     "echo x > .codex/config.toml",
+    "echo x > .claude/rules-old/x.md",
+    "echo x > .codex/AGENTS.md.bak",
+    "echo x > .gemini/GEMINI.md.bak",
+    "rm src/rules/*.ts",
+    "echo x > $D/AGENTS.md",  # a variable-held AGENTS.md is usually a project's own
+    "echo x > .codex/agents/planner.toml",
+    "echo x > AGENTS.md",  # a project's own AGENTS.md at the repo root
+    "echo x > GEMINI.md",
+    "echo x > docs/rules/x.md",
+    "sed -n 1,5p .claude/rules/security.md",
+    "cat .codex/AGENTS.md | wc -l",
     "{ ls; }",
     "echo {a,b}",
     "ls # > .claude/settings.json",

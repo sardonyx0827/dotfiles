@@ -330,9 +330,13 @@ latency low for the common case:
    (`harness_write_ask_reason`), so a single Gemini `ALLOW` cannot let a command
    rewrite the gate that reviews it. The protected set mirrors the `Edit(…)`
    rules in `permissions.ask` — `.claude/settings.json`,
-   `.claude/settings.local.json`, `.claude/CLAUDE.md`, `.claude/hooks/`,
-   `.claude/mods/`, `.codex/hooks/`, `~/.codex/` — plus the bare `.claude` /
-   `.codex` directory as a destination;
+   `.claude/settings.local.json`, `.claude/hooks/`, `.claude/mods/`,
+   `.codex/hooks/`, `~/.codex/`, and the instruction files read into every
+   session (`.claude/CLAUDE.md`, `.claude/rules/`, `.codex/AGENTS.md`,
+   `.gemini/GEMINI.md`) — plus the bare `.claude` / `.codex` / `.gemini`
+   directory as a destination. Skills, agents and commands are deliberately left
+   out: they load only when used and are edited far more often, so a prompt on
+   every edit would train approving without reading;
    `tests/test_config_wiring.py` fails if an `Edit` ask path is not covered. It
    recognises write _forms_, not mentions, because reads of these paths
    (`sed -n`, `git diff`, `cat | jq`) were about a quarter of all logged commands:

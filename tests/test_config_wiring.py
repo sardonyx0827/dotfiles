@@ -622,13 +622,25 @@ def test_hook_and_gate_config_edits_ask_the_user():
     assert not missing, f"permissions.ask is missing {missing}"
 
 
-# The global instruction file is read into every session, so a prompt-injected
-# session that rewrites it persists its instructions into all later sessions. Ask
-# before the Edit tool changes it, as bash-review already does for Bash writes.
+# Instruction files read into every session: the global CLAUDE.md and the rules it
+# imports with `@`, and the Codex / Gemini equivalents. A prompt-injected session
+# that rewrites one persists its instructions into all later sessions, so ask
+# before the Edit tool changes them, as bash-review does for Bash writes. Skills,
+# agents and commands are deliberately not here: they are loaded on use and are
+# edited far more often (see hooks/README.md).
+INSTRUCTION_FILE_ASKS = [
+    "Edit(//**/.claude/CLAUDE.md)",
+    "Edit(//**/.claude/rules/**)",
+    "Edit(//**/.codex/AGENTS.md)",
+    "Edit(//**/.gemini/GEMINI.md)",
+]
+
+
 def test_global_instruction_file_edits_ask_the_user():
     settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
     ask = settings["permissions"].get("ask", [])
-    assert "Edit(//**/.claude/CLAUDE.md)" in ask, f"current: {ask}"
+    missing = [rule for rule in INSTRUCTION_FILE_ASKS if rule not in ask]
+    assert not missing, f"permissions.ask is missing {missing}"
 
 
 # Serena's tools that write the working tree, run a shell, or create files.

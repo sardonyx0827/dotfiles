@@ -3185,27 +3185,36 @@ def classify_high_risk(sub_commands: list[str], command: str) -> str:
 
 
 # --- ハーネス自身の設定への Bash 書き込み (決定論的 ask) --------------------------
-# permissions.ask は Edit ツールによる settings / hooks / mods / codex の書き換えを毎回
-# 確認させるが、Bash から同じファイルへ書く形 (`>` / `tee` / `sed -i` / `python -c`) は
-# DENY・高リスクのどちらにも当たらず、Gemini 単独 ALLOW の経路で自動許可されうる。ゲート
-# 自身を書き換えるコマンドはモデルに委ねず人間へ回す。照合するのは書き込みの「形」で
-# あって言及ではない: 読み取り (`sed -n` / `git diff`) は日常的に保護パスへ触れる
-# (実測で判定の約 4 分の 1)。網羅はしない。既知の穴は hooks/README.md に列挙してある。
-# tests/test_config_wiring.py が「Edit の ask 対象 ⊆ ここの保護対象」を pin している。
+# permissions.ask は Edit ツールによる settings / hooks / mods / codex と、毎セッション
+# 読み込まれる指示ファイル (CLAUDE.md と rules / Codex の AGENTS.md / Gemini の GEMINI.md)
+# の書き換えを毎回確認させるが、Bash から同じファイルへ書く形 (`>` / `tee` / `sed -i` /
+# `python -c`) は DENY・高リスクのどちらにも当たらず、Gemini 単独 ALLOW の経路で自動許可
+# されうる。ゲート自身や指示を書き換えるコマンドはモデルに委ねず人間へ回す。照合するのは
+# 書き込みの「形」であって言及ではない: 読み取り (`sed -n` / `git diff`) は日常的に保護
+# パスへ触れる (実測で判定の約 4 分の 1)。網羅はしない。既知の穴は hooks/README.md に
+# 列挙してある。tests/test_config_wiring.py が「Edit の ask 対象 ⊆ ここの保護対象」を
+# pin している。
 _HARNESS_PATH = re.compile(
-    r"(?<![\w.-])\.claude/(?:settings(?:\.local)?\.json|CLAUDE\.md|hooks|mods)(?![\w.-])"
-    r"|(?<![\w.-])\.codex/hooks(?![\w.-])"
+    r"(?<![\w.-])\.claude/(?:settings(?:\.local)?\.json|CLAUDE\.md|hooks|mods|rules)"
+    r"(?![\w.-])"
+    r"|(?<![\w.-])\.codex/(?:hooks|AGENTS\.md)(?![\w.-])"
+    r"|(?<![\w.-])\.gemini/GEMINI\.md(?![\w.-])"
     r"|(?:~|\$HOME|\$\{HOME\})/\.codex(?![\w.-])",
     re.IGNORECASE,
 )
-# 書き込み先そのものとしての `.claude` / `.codex` ディレクトリ (`cp x ~/.claude/`)。
-_HARNESS_DIR = re.compile(r"(?:.*/)?\.(?:claude|codex)/?", re.IGNORECASE)
+# 書き込み先そのものとしての `.claude` / `.codex` / `.gemini` ディレクトリ
+# (`cp x ~/.claude/` は settings.json や CLAUDE.md を上書きしうる)。
+_HARNESS_DIR = re.compile(r"(?:.*/)?\.(?:claude|codex|gemini)/?", re.IGNORECASE)
 # 書き込み先が展開 (glob / ブレース / 変数) を含むときは、展開の結果が保護対象になり
 # うるなら保護対象とみなす (_dynamic_harness_hint)。
 _DYNAMIC_WORD = re.compile(r"[*?\[{$`]")
 _GLOB_OR_BRACE = re.compile(r"[*?\[{]")
 _HARNESS_LEAF_FILES = frozenset({"settings.json", "settings.local.json", "claude.md"})
-_HARNESS_DIR_NAMES = frozenset({".claude", ".codex"})
+_HARNESS_DIR_NAMES = frozenset({".claude", ".codex", ".gemini"})
+# 単独では他のプロジェクトにもよくある名前 (React の hooks/、リポジトリ直下の AGENTS.md)
+# なので、親が `.claude` / `.codex` / `.gemini` か glob・ブレースを含むときだけ保護対象に
+# 数える名前 (_dynamic_harness_hint)。
+_HARNESS_CHILD_NAMES = frozenset({"hooks", "mods", "rules", "agents.md", "gemini.md"})
 # 書き込み系のリダイレクト演算子 (`>` `>>` `>|` `&>` `&>>` `>&`)。記号だけのトークンの末尾で判定する。
 _WRITE_REDIRECT = re.compile(r"(?:>|>\||>&)$")
 _SHELL_PUNCTUATION = frozenset("();<>|&")
@@ -3244,11 +3253,14 @@ def _is_harness_target(token: str) -> bool:
 def _dynamic_harness_hint(token: str) -> bool:
     """展開を含む書き込み先が、展開の結果として保護対象になりうるか。
 
-    - `.claude` / `.codex` の直下が展開を含むか、そこで終わる (`.claude/sett*` /
-      `.claude/{hooks,x}/a` / `$HOME/.claude`)
+    - `.claude` / `.codex` / `.gemini` の直下が展開を含むか、そこで終わる
+      (`.claude/sett*` / `.claude/{hooks,x}/a` / `$HOME/.claude`)
     - 保護対象の末端ファイル名が見える (`~/.cl*/settings.json` / `$D/settings.json`)
-    - `hooks` / `mods` の親が `.claude` / `.codex` か glob・ブレースを含む (`~/.cl*/hooks/x`)。
-      `src/hooks/*.ts` (React の hooks) のように親が固定名なら外す
+    - _HARNESS_CHILD_NAMES (`hooks` / `mods` / `rules` / `AGENTS.md` / `GEMINI.md`) の親が
+      `.claude` / `.codex` / `.gemini` か glob・ブレースを含む (`~/.cl*/hooks/x` /
+      `~/.co*/AGENTS.md`)。`src/hooks/*.ts` (React の hooks) や `$D/AGENTS.md` のように親が
+      固定名・変数なら外す。親と名前の組までは見ないので `.gemini/rules/*.md` も数える
+      (過剰側に倒れるだけ)
 
     正規表現 1 本にすると、展開文字の位置を探す後戻りが長いトークンで 2 乗になるので、
     部品ごとに見る。
@@ -3262,7 +3274,7 @@ def _dynamic_harness_hint(token: str) -> bool:
             following = parts[i + 1] if i + 1 < len(parts) else ""
             if not following or _DYNAMIC_WORD.search(following):
                 return True
-        if name in ("hooks", "mods") and i > 0:
+        if name in _HARNESS_CHILD_NAMES and i > 0:
             parent = parts[i - 1]
             if parent.casefold() in _HARNESS_DIR_NAMES or _GLOB_OR_BRACE.search(parent):
                 return True
@@ -3379,7 +3391,7 @@ def _harness_reason(form: str) -> str:
     # (同じ行の資格情報が紛れ込まないよう、固定の語彙だけで組む)。
     return (
         f"Bash {form} writes to the agent harness configuration "
-        "(settings / hooks / mods / CLAUDE.md / codex) — confirm manually"
+        "(settings / hooks / mods / instruction files / codex) — confirm manually"
     )
 
 
