@@ -478,6 +478,30 @@ _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
 _GLOB_IN_EXECUTABLE = re.compile(r"[*?]|\[[^\]]*\]")
 _HAS_ALNUM = re.compile(r"[A-Za-z0-9]")
 
+# シェルが展開して別の語にするブレース (`{x,-s}` → `x -s`、`{1..2}`)。hook はその結果を
+# 見られないので、`$` / バッククォートと同じく評価できない語として扱う。codex の引数照合
+# (_codex_line_reason) と、実行体位置の判定 (_split_prefix: `{curl,x}` / `c{u,}rl` は
+# 実行前に `curl x` / `curl crl` へ書き換わる) の両方で使う。
+#
+# 「内側に波括弧を持たない `{…}` の塊」を拾ってから中身に `,` / `..` があるかを見る。
+# 1 本の正規表現 (`\{[^{}]*(?:,|\.\.)[^{}]*\}`) にすると、閉じていない `{a,a,a,…` で
+# `,` の位置ごとに後戻りして長さの 2 乗の時間が掛かる (3 万字で約 1 秒、hook は 1 行を
+# 何度も判定するので数秒)。塊の照合は `}` が無ければその開始位置で 1 回走査して終わる。
+_BRACE_GROUP = re.compile(r"\{[^{}]*\}")
+
+
+def _has_brace_expansion(text: str) -> bool:
+    """text にシェルが展開するブレース (`{a,b}` / `{1..3}`) が含まれるか。"""
+    return any(
+        "," in group or ".." in group
+        for group in (m.group() for m in _BRACE_GROUP.finditer(text))
+    )
+
+
+# トークン中の最初のリダイレクト記号。ここより後ろはリダイレクトの行き先なので、
+# 実行体位置のブレース判定から外す (_split_prefix の注記参照)。
+_REDIRECT_CHAR = re.compile(r"[<>]")
+
 # 実行体の位置に現れる「静的に中身を確定できない」トークン。$VAR / ${VAR} /
 # $(...) / `...` は展開結果が空になり得て、その場合シェルはそのトークンごと
 # 消して次のトークンを実行する (`$(true) sudo rm -rf /` は実際には
@@ -638,8 +662,9 @@ _REDIRECT_GLUED = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))\S")
 #     切り出しの枝が塊を `ls` へ切り詰めて読み直すため。
 #   * `watch '(sudo)'` → `sudo` に解決される (文法記号の剥がし)。この形は
 #     たまたま実挙動と一致する: `sh -c "(sudo)"` は本当に sudo を走らせる。
-#   * `watch '{sudo,rm,-rf,/}'` → ブレース展開。`{` の剥がしで
-#     `sudo,rm,-rf,/` になり、どの層にも一致しない。
+#
+# (`watch '{sudo,rm,-rf,/}'` もかつてここに並んでいたが、実行体位置のブレース展開を
+# _split_prefix が判定不能に倒すようになったので塞がった。)
 #
 # これらの枝はフェイルクローズではなく「切り詰めて読み直す」設計で、それ自体は
 # 裸のコマンド (`ls>out`) に対して正しい。塊と区別するには文字クラスを `<>(){},`
@@ -700,6 +725,8 @@ def _split_prefix(
     - 実行体位置の glob 文字 (_GLOB_IN_EXECUTABLE)。glob_unresolvable=False で外す
       (heredoc 本文の行頭語のように、実行体ではないと分かっている行のため)。ただし
       `/` を含む glob (`/usr/b*/env`) は外さない
+    - 実行体位置のブレース展開 (_has_brace_expansion): `{curl,x}` / `c{u,}rl`。
+      glob_unresolvable=False で外す
 
     全トークンが剥がし対象だった場合は空リストを返す (None とは別物で、
     こちらは「実行体が無い」= 判定対象なしを意味する)。
@@ -750,6 +777,18 @@ def _split_prefix(
         if _UNRESOLVABLE_EXPANSION.search(tok):
             # 展開トークンが実行体の位置にある: 空展開なら次のトークンが実行体に
             # なるため、このトークンを実行体と決め打ちできない (上の定義参照)。
+            return None
+        # 実行体位置のブレース展開 (_has_brace_expansion)。文法 `{` の剥がしより先に見る:
+        # 剥がすと `{curl,x}` が `curl,x}` という未知の実行体に化け、DENY と高リスクの
+        # 両層を外れて単独モデルの経路へ落ちる。glob と同じく heredoc 本文の行
+        # (glob_unresolvable=False) では外す。グループの `{` 単独や代入値は一致しない。
+        # 見るのは最初の `<` / `>` より前だけ: その後ろはリダイレクトの行き先で、
+        # 実行体は下のリダイレクト剥がしの後に確定できる。トークン全体を見ると
+        # `>{1..1} sudo id` / `sudo>{1..1} id` が「確定できない」に倒れ、即拒否から
+        # 二モデル AND ゲート (両方 ALLOW なら実行) へ格下げされる。
+        if glob_unresolvable and _has_brace_expansion(
+            _REDIRECT_CHAR.split(tok, maxsplit=1)[0]
+        ):
             return None
         # シェル文法は実行体ではない。剥がして次を見る (上の定義参照)。
         # 大小は畳む: `THEN`/`DO` は文法としては効かないが、畳んでも実行体を
@@ -2190,9 +2229,6 @@ def _deny_only_in_inert_text(command: str) -> bool:
 # した `-C` の照合にだけ使い、ここに一時ファイルは作らない。`<uid>/` まで要求するのは、
 # `/tmp/claude-evil` のような同じ接頭辞の別ディレクトリを通さないため。
 _CODEX_SCRATCH_DIR = re.compile(r"^(?:/private)?/tmp/claude-\d+/")  # nosec B108
-# シェルが展開して別の語にするブレース (`{x,-s}` → `x -s`、`{1..2}`)。hook はその結果を
-# 見られないので、`$` / バッククォートと同じく評価できない引数として扱う。
-_BRACE_EXPANSION = re.compile(r"\{[^{}]*(?:,|\.\.)[^{}]*\}")
 _CODEX_VALUE_FLAGS = {
     "-s": "sandbox",
     "--sandbox": "sandbox",
@@ -2414,7 +2450,7 @@ def _codex_line_reason(line: str, command: str, *, piped: bool = False) -> str:
     while i < len(args):
         tok = args[i]
         i += 1
-        if "$" in tok or "`" in tok or _BRACE_EXPANSION.search(tok):
+        if "$" in tok or "`" in tok or _has_brace_expansion(tok):
             return "a codex argument with an expansion this hook cannot evaluate"
         redirect = _SHELL_REDIRECT.match(tok)
         if redirect:
@@ -2422,7 +2458,7 @@ def _codex_line_reason(line: str, command: str, *, piped: bool = False) -> str:
             if not dup and not target:
                 target = args[i] if i < len(args) else ""
                 i += 1
-            if "$" in target or "`" in target or _BRACE_EXPANSION.search(target):
+            if "$" in target or "`" in target or _has_brace_expansion(target):
                 return "a codex redirect with an expansion this hook cannot evaluate"
             fd = tok[: len(tok) - len(tok.lstrip("0123456789"))]
             on_stdin = fd in ("", "0")
@@ -2457,7 +2493,7 @@ def _codex_line_reason(line: str, command: str, *, piped: bool = False) -> str:
         if not eq:
             value = args[i] if i < len(args) else ""
             i += 1
-        if "$" in value or "`" in value or _BRACE_EXPANSION.search(value):
+        if "$" in value or "`" in value or _has_brace_expansion(value):
             return "a codex argument with an expansion this hook cannot evaluate"
         kind = _CODEX_VALUE_FLAGS[name]
         if kind == "sandbox":
@@ -3014,9 +3050,14 @@ def high_risk_label(sub_commands: list[str], command: str | None = None) -> str:
                 relaxed = _high_risk_label(line, glob_unresolvable=False)
                 if relaxed != label:
                     if inert is None:
+                        # 算術式 (`$((1<<2))`) の `<<` は本文の走査が heredoc と読み、
+                        # 区切り語だけの行を終端と見なすので「本文」を偽装できる。
+                        # その形は _live_texts が解析を諦める (None) ので、そのときは
+                        # 緩和しない。
                         inert = (
                             set()
                             if _heredoc_may_run_as_code(sub_commands, command)
+                            or _live_texts(command) is None
                             else _heredoc_body_lines(command)
                         )
                     if line in inert:

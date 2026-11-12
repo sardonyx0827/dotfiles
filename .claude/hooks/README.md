@@ -242,9 +242,12 @@ latency low for the common case:
    `sandbox-exec` / `xcrun` prefix, a `FOO+=x` prefix and
    `function f { curl …; }` all resolve to `curl` and are denied. What it
    cannot resolve — `$(which curl)`, `${CURL}`, `eval "…"`, `sh -c "…"`, an
-   executable with an unquoted glob (`/usr/bin/cur?`; a heredoc body line
-   such as `**Why**:` in a commit message is data, not an executable) — is not
-   waved through either: those escalate to the high-risk gate below (step 3:
+   executable with an unquoted glob (`/usr/bin/cur?`) or a brace expansion
+   (`{curl,x}`, `c{u,}rl`, which the shell rewrites into `curl x` / `curl crl`
+   before running it; a heredoc body line such as `**Why**:` or compact JSON in
+   a commit message is data, not an executable, unless the command contains a
+   form the parser gives up on, such as `$((1<<2))`, which could fake a body) —
+   is not waved through either: those escalate to the high-risk gate below (step 3:
    it runs only when both models return `ALLOW`; anything short of that stops
    for confirmation or is denied).
 
