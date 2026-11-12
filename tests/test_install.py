@@ -2455,6 +2455,20 @@ class TestRegisterClaudeMcpServers:
         python3_path = str(shell_env.stub_bin / "python3")
         assert f"-- {python3_path} " in gemini_calls[0]
 
+    def test_codex_is_not_registered_as_an_mcp_server(self, shell_env):
+        # Codex CLI 0.154 removed its MCP-server mode: the registration only
+        # produced a server that fails with CONNECTION_CLOSED on every start.
+        # Codex is reached through `codex exec` (codex-consultation skill).
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        shell_env.stub("python3")
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        add_calls = [c for c in shell_env.calls if c.startswith("claude mcp add")]
+        assert add_calls, "the other servers must still be registered"
+        assert not [c for c in add_calls if " codex " in f"{c} "], add_calls
+
 
 class TestOptionalInstallerFailures:
     """A transient brew/network/apt failure in one optional installer must

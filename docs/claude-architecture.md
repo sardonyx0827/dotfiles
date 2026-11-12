@@ -36,7 +36,7 @@
 
 - `==>` **ハーネスがイベントで実行する**（Claude の判断を経由しない）
 - `-.->` **Claude が文章として読む**（`@` インポート / 参照）
-- `-->` **委譲・起動する**（Agent ツール / スラッシュコマンド）
+- `-->` **委譲・起動する**（Agent ツール / スラッシュコマンド / Bash からの `codex exec`）
 - `--o` **MCP ツールを呼ぶ**
 
 この凡例が適用されるのはこの全体マップです。以降の図で**ラベル付きの矢印**が出てきた場合は、
@@ -63,7 +63,8 @@ flowchart TB
         AGENT["agents/*.md<br/>14 サブエージェント"]
     end
 
-    MCP["MCP サーバー<br/>gemini-consultant・Codex・serena ほか"]
+    MCP["MCP サーバー<br/>gemini-consultant・serena ほか"]
+    CODEX["codex exec CLI<br/>Codex"]
 
     U --> CMD
     U -.-> CM
@@ -75,6 +76,9 @@ flowchart TB
     SKILL --> AGENT
     SKILL --o MCP
     AGENT --o MCP
+    SKILL --> CODEX
+    AGENT --> CODEX
+    HOOK --> CODEX
     TOOL ==> SET
     SET ==> HOOK
 
@@ -114,28 +118,31 @@ flowchart TB
 `_bash_review_common.py`）はフックではなく**共有ライブラリ**で、Claude 側と Codex 側の
 唯一の実体です。設計根拠は [`.claude/hooks/README.md`](../.claude/hooks/README.md) にあります。
 
-### フックの外部呼び出しは MCP を通らない
+### Codex はフックもスキルも `codex exec` で呼ぶ
 
-ここは混同しやすいので明示します。**同じベンダーに届くのに経路が別です。**
+Codex は MCP サーバーではなく CLI として呼びます（Codex の MCP サーバーモードは CLI 0.154 で削除されました）。
+フックとスキルは同じ `codex exec` に届きますが、**呼ぶ主体と秘密スキャンの掛け方が違います。**
 
 ```mermaid
 flowchart LR
     HOOK["hooks/bash-review.py"]
     SKILL["skills/codex-consultation<br/>skills/debugging-protocol"]
     GAPI["Gemini REST API<br/>GEMINI_API_KEY"]
-    CXCLI["codex exec CLI<br/>--sandbox read-only"]
+    CXCLI["codex exec CLI"]
     GMCP["mcp__gemini-consultant__*"]
-    CXMCP["mcp__codex__codex"]
 
     HOOK -->|"HTTPS 直呼び"| GAPI
-    HOOK -->|"subprocess"| CXCLI
+    HOOK -->|"subprocess<br/>--sandbox read-only"| CXCLI
+    SKILL -->|"Bash (バックグラウンド)<br/>-s read-only"| CXCLI
     SKILL --o GMCP
-    SKILL --o CXMCP
 ```
 
-フックは Claude のセッションの外側で動くため、MCP ツールを使えません。
-Gemini は REST API を直接叩き、Codex は `codex exec` を read-only サンドボックスで
-subprocess 起動します。一方スキル側からの第二意見は MCP ツール経由です。
+- **フック**は Claude のセッションの外側で動くため、MCP ツールを使えません。Gemini は REST API を直接叩き、
+  Codex は `codex exec --sandbox read-only` を subprocess 起動します。秘密スキャンは、レビュー対象の
+  コマンド自体に対して行います。
+- **スキル**は Bash ツールから `codex exec` を起動します。プロンプトを Write ツールでファイルに書き、
+  `scripts/secret_scan.py` でそのファイルをスキャンしてから `codex exec` に渡し、回答ファイルを読みます。
+  同じスレッドで続けて質問するときは `codex exec resume <thread-id>` を使います。
 
 bash-review の判定フロー自体（静的 DENY → 秘密スキャン → 高リスク並列 AND ゲート →
 低リスクのカスケード）は [`docs/ai-integration.md` §2](ai-integration.md) に図があります。
@@ -235,13 +242,13 @@ flowchart LR
 
     subgraph IMG["画像生成"]
         R2["rules/image-generation.md<br/>トリガ表"] -.-> K2["skills/codex-image-gen<br/>ワークフロー・保存規約"]
-        K2 --o M2["mcp__codex__codex<br/>image_gen"]
+        K2 --> M2["codex exec<br/>image_gen"]
     end
 
     subgraph CX["第二意見・デバッグ"]
-        K3["skills/codex-consultation<br/>skills/debugging-protocol"] --o M3["mcp__codex__codex"]
+        K3["skills/codex-consultation<br/>skills/debugging-protocol"] --> M3["codex exec"]
         K3 -.->|"もう一つの入口"| A3["agents/codex-delegator"]
-        A3 --o M3
+        A3 --> M3
     end
 ```
 
@@ -249,12 +256,14 @@ flowchart LR
   `rules/security.md` のトリガ表がスキルとエージェントを*それぞれ独立に*指しており、
   `security-review` スキル自身は `security-reviewer` エージェントに一切言及しません
   （チェックリストと、レビュー手順・報告形式が別々の正であるという分離がそのまま出ています）。
-- **画像生成**はエージェントを持たず、スキルから直接 Codex MCP に降ります。
+- **画像生成**はエージェントを持たず、スキルから直接 `codex exec`（`-s workspace-write --ephemeral`）に降ります。
+  Codex が書けるのは空のスクラッチ用ディレクトリだけで、検証したファイルを Claude がプロジェクトへコピーします。
 - **第二意見**もスキル → エージェントの直列ではありません。`codex-consultation` /
-  `debugging-protocol` は、MCP ツール（`mcp__codex__codex`）を直接呼ぶ入口と `codex-delegator`
+  `debugging-protocol` は、`codex exec` を Bash から直接呼ぶ入口と `codex-delegator`
   エージェント経由の入口を並べており、どちらかが主経路とは決めていません。`debugging-protocol` は
-  エージェントを先に挙げて MCP 直呼びを括弧書きの代替とし、`codex-consultation` は `sandbox` / `model` を
-  細かく指定したいときや `codex-reply` で会話を続けたいときに直接呼ぶ、と使い分けを書いています。
+  エージェントを先に挙げて `codex exec` 直呼びを括弧書きの代替とし、`codex-consultation` は回答を自分の
+  コンテキストで受け取りたいときや `codex exec resume` で同じスレッドを続けたいときに直接呼ぶ、と使い分けを
+  書いています（サンドボックスは固定で、広げると bash-review の許可リストを外れて確認になります）。
 - **`rules/git-workflow.md` にはスキルもエージェントもありません。** ルール本文の大半
   （コミットメッセージ規約・commit / PR の手順・PR 品質基準）は Claude 自身が従う指示のままで、
   フック化されているのは push 前の確認ゲートだけです（`git-push-review.sh`）。

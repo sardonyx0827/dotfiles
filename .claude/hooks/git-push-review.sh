@@ -243,10 +243,24 @@ strip_quoted_ranges() {
         # 前後の行を1つの論理行に結合する (`git \` + 改行 + `push` は
         # 実行時 `git push` になる)。それ以外の `\X` は X をエスケープされた
         # リテラルとして残す (`\"` / `\$` 等) ので、次の1文字だけを素通しする。
-        if [ "${str:i+1:1}" != $'\n' ]; then
+        # ただしエスケープされた空白 (`\ ` / `\<タブ>`) はバックスラッシュごと残す:
+        # 落とすと語の区切りに化け、`git -C /tmp/a\ b push` の値が `/tmp/a` で切れて
+        # `b` をサブコマンドと読み、push を見失う。残しても $cmd の部分列のまま
+        # (上の打ち切りの前提を崩さない)。値の語は git_opt_word が `\.` ごと読む。
+        # `\\` (エスケープされたバックスラッシュ) も 2 文字のまま残す: 1 文字に畳むと
+        # 直後の空白と合わせて `\ ` に見え、`git -C /tmp/x\\ push` の値が push まで
+        # 伸びてしまう。
+        case "${str:i+1:1}" in
+        $'\n') ;;
+        ' ' | $'\t' | "\\")
+          out+="${str:i:2}"
+          ws=0
+          ;;
+        *)
           out+="${str:i+1:1}"
           ws=0
-        fi
+          ;;
+        esac
         i=$((i + 2))
         ;;
       "'")
@@ -600,8 +614,20 @@ esac
 # 大文字小文字を区別せず `BASH -c "git push"` が本当に bash を走らせるから。
 # bash 自身の `-c` は大小を区別する (`-C` は別物) ので -i は過検知側に振れるが、
 # 上記のとおり push 確認は余分に ask へ倒れる方が安全側。
+#
+# シェルと `-c` の間には任意の語を許し、`c` は束の途中にあってもよい。値を取る
+# オプション (`bash -euo pipefail -c` / `-O extglob` / `--rcfile X`)、`+e`、
+# `-cl` / `-ce` はどれも文字列を実行する。`-` 始まりの語だけを許して束の末尾の
+# `c` を要求していたため、エージェントが常用する `bash -euo pipefail -c '…'` が
+# 素通りしていた。シェル名の語の後ろに `c` を含む束が来れば足すので過検知に
+# 振れるが、上記のとおり安全側。
+# stdin からコードを読ませる形 (`… | sh` / `bash <<< '…'`) と `$SHELL` も同じ扱い。
 # shellcheck disable=SC2016  # 正規表現中の $ とバッククォートはリテラル
-executes_string_arg='(^|[;&|[:space:](`/])(eval|watch|(bash|sh|zsh|dash|ksh)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[A-Za-z]*c)([[:space:]]|$)'
+string_shells='(bash|sh|zsh|dash|ksh|fish|csh|tcsh|ash|mksh)'
+# shellcheck disable=SC2016  # 同上
+executes_string_arg='(^|[;&|[:space:](`/])(eval|watch|'"$string_shells"'([[:space:]]+[^[:space:]]+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*)([[:space:]]|$)'
+# shellcheck disable=SC2016  # 同上
+executes_string_stdin='\|[[:space:]]*([^[:space:]|]*/)?'"$string_shells"'([[:space:]]|$)|(^|[;&|[:space:](`/])'"$string_shells"'([[:space:]]+[^[:space:]]+)*[[:space:]]*<<<|\$\{?SHELL\}?([^A-Za-z0-9_]|$)'
 # `git submodule foreach '<cmd>'` と `git rebase --exec '<cmd>'` (`-x`) も文字列を
 # シェルで実行する。`watch '<cmd>'` は上の executes_string_arg 側。`-x` / `--exec` は
 # rebase に紐付ける (素の `-x` は `set -x` / `ls -x` にも現れる)。一致しても足すのは
@@ -612,14 +638,27 @@ executes_string_git='(^|[;&|[:space:](`/])(submodule[[:space:]]+foreach|rebase[[
 # コピーで調べる。足すコピーは 2 本: クォート文字を削除したもの (`"gi""t push"`
 # 形が繋がる) と、空白に置き換えたもの (`--exec='git push'` の `git` が `=` に
 # 密着せず語頭に立つ)。どちらも `$'` / `$"` の `$` を先に落とす (`eval $'git push'`)。
+#
+# 実行される文字列の中の行継続は、内側のシェルが `\<改行>` ごと消して語を繋ぐ
+# (`bash -c 'git\<改行> push'` は git push)。シングルクォートの中では外側の
+# シェルが畳まないので、cmd_norm のままのコピーでは `git` と `push` が別の行に
+# 割れて照合できない。行継続を「削除」したコピーも足す (空白への置換では
+# `pu\<改行>sh` が `pu sh` に割れる)。削除だけなので $cmd の部分列の性質は保つ。
 cmd_joined="${cmd_norm//\\$'\n'/ }"
 if printf '%s' "$cmd_joined" | grep -qiE "$executes_string_arg" ||
+  printf '%s' "$cmd_joined" | grep -qiE "$executes_string_stdin" ||
   printf '%s' "$cmd_joined" | grep -qiE "$executes_string_git"; then
-  cmd_unquoted="${cmd_norm//\$\'/}"
-  cmd_unquoted="${cmd_unquoted//\$\"/}"
-  cmd_for_match="${cmd_for_match}
+  # エスケープされた空白 / タブを素の区切りにしたコピーも足す: strip_quoted_ranges
+  # は `\ ` を残すが、`eval git\ push` / `sh -c git\ push` の 1 語の引数は内側の
+  # シェルが `git push` に割る。
+  for cmd_src in "$cmd_norm" "${cmd_norm//\\$'\n'/}" "${cmd_norm//\\ / }" \
+    "${cmd_norm//\\$'\t'/$'\t'}"; do
+    cmd_unquoted="${cmd_src//\$\'/}"
+    cmd_unquoted="${cmd_unquoted//\$\"/}"
+    cmd_for_match="${cmd_for_match}
 $(printf '%s' "$cmd_unquoted" | tr -d "\"'")
 $(printf '%s' "$cmd_unquoted" | tr "\"'" '  ')"
+  done
 fi
 
 # コマンド文字列のどこかに git ... push が含まれるか(チェーン・サブシェル・
@@ -648,14 +687,21 @@ fi
 # 次の語を値として読み飛ばす。それ以外のフラグ (--no-pager 等) の次の語は
 # サブコマンドなので読み飛ばさない (`git --no-pager log --grep push` の `push` は
 # log の引数であって push ではない)。展開を含む語は何にでもなりうるので従来どおり。
+# オプションとその値の語は `\` + 任意の 1 文字を語の一部として読む (git_opt_word)。
+# `[^[:space:]]+` だと `-C /tmp/a\ b` の値が `\` で切れ、`b` をサブコマンドと
+# 読んで push を見失う (`git -C` で始まるので ask: Bash(git push:*) にも掛からない)。
+git_opt_word='([^[:space:]\\]|\\.)+'
 # shellcheck disable=SC2016  # 正規表現中の $ とバッククォートはリテラル(展開させない)
-git_opt_unit='[[:space:]]+((-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source)[[:space:]]+[^[:space:]]+|-[^[:space:]]+|[^[:space:]]*[$`][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)'
+git_opt_unit='[[:space:]]+((-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source)[[:space:]]+'"$git_opt_word"'|-'"$git_opt_word"'|[^[:space:]]*[$`][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)'
 # shellcheck disable=SC2016  # 同上
 git_exp_unit='[[:space:]]+[^[:space:]]*[$`][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?'
 # shellcheck disable=SC2016  # 同上
 push_head='(^|[;&|[:space:](`/])git'
 # shellcheck disable=SC2016  # 同上
-push_tail='[[:space:]]+push([[:space:];&|)<>`]|$)'
+# `\` も終端に含める: インタプリタ経路のコピーには `printf 'git push\n' | bash` の
+# `\n` が残り、`push` の直後が `\` になる。主の照合対象 (strip_quoted_ranges の出力)
+# ではクォート外の `\n` は `n` になるので、ここが効くのはコピーだけ。
+push_tail='[[:space:]]+push([[:space:];&|)<>`\\]|$)'
 push_exp_re="${push_head}(${git_opt_unit})*${git_exp_unit}(${git_opt_unit})*${push_tail}"
 # cmd_for_match はクォート区間の中身ごと消しているので、`git "${OPT}" <dir>
 # push` (OPT=-C なら本物の push) は `git  <dir> push` になり、<dir> がフラグでも
@@ -899,6 +945,9 @@ git_c_dir_from_words() {
           if [ "$push_found" -eq 0 ]; then
             push_found=1
             push_hit=$c_val
+          elif [ "$c_val" != "$push_hit" ]; then
+            # 2 つ目の push が別の -C を持つ: 要約は 1 つ目の宛先しか表せない
+            gp_push_multi_dir=1
           fi
         fi
       fi
@@ -972,6 +1021,7 @@ git_c_dir_from_words() {
   # -C だけを使う (`git -C <B> rebase --exec 'git push'`)。-C が別のセグメントに
   # しか無ければ要約先を決められない (gp_c_foreign=1)。
   gp_c_foreign=0
+  gp_push_found=$push_found
   if [ "$push_found" -eq 1 ]; then
     gp_c_dir=$push_hit
   elif [ -n "$str_hit" ]; then
@@ -1888,6 +1938,8 @@ fi
 gp_ran=0
 gp_c_dir=""
 gp_c_foreign=0
+gp_push_found=0
+gp_push_multi_dir=0
 gp_push_args=()
 if [ "$ctrl_count" = "0" ] && [ "${#cmd_norm}" -le 4000 ]; then
   git_c_dir_from_words "$cmd_norm"
@@ -1920,9 +1972,18 @@ else
   esac
 fi
 
+# push セグメントを語単位で見つけられなかった (push がラッパー `timeout 5 git …` /
+# `env X=1 git …` / `nice git …` の後ろや、`bash -c '…'` の文字列の中にある) のに
+# コマンドに -C があるなら、その -C が push の宛先である可能性を否定できない。
+# 読み飛ばしてフックの cwd を要約すると、別リポジトリの要約を黙って出すことになる。
 if [ "$use_legacy_c_lookup" -eq 1 ] && [ "$gp_ran" -eq 1 ]; then
   if [ "$gp_c_foreign" -eq 1 ]; then
     unresolved_why="a -C on another git call in the command could not be tied to the push (the push is inside a string or wrapper this hook cannot follow)"
+  elif [ "$gp_push_found" -eq 0 ] && [ -z "$gp_c_dir" ] &&
+    printf '%s\n' "$cmd_quotes_stripped" | grep -qE '(^|[[:space:]])-C([[:space:]]|$)'; then
+    unresolved_why="the command has a -C this hook could not tie to the push (it sits behind a wrapper or inside a string this hook does not follow)"
+  elif [ "$gp_push_multi_dir" -eq 1 ]; then
+    unresolved_why="the command runs more than one push with different -C directories"
   else
     case "$gp_c_dir" in
     *[[:cntrl:]]*) unresolved_why="the -C directory contains control characters" ;;

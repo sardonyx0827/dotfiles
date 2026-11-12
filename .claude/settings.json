@@ -219,6 +219,11 @@
     ],
     "ask": [
       "Bash(git push:*)",
+      "Bash(codex --dangerously-bypass-approvals-and-sandbox:*)",
+      "Bash(codex --yolo:*)",
+      "Bash(codex exec --dangerously-bypass-approvals-and-sandbox:*)",
+      "Bash(codex exec -s danger-full-access:*)",
+      "Bash(codex exec --sandbox danger-full-access:*)",
       "Edit(//**/.claude/mods/**)",
       "Edit(//**/.claude/settings.json)",
       "Edit(//**/.claude/settings.local.json)",

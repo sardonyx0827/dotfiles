@@ -270,6 +270,22 @@ class TestRedactor:
         assert r.replaced["username"] == 1
         assert r.replaced["tmp_dir"] == 1
 
+    @pytest.mark.parametrize(
+        "template",
+        [
+            # JSON-escaped newline / tab in front of the token: how `gh api` and
+            # `jq -c` print multi-line text, so it lands in Bash results as-is.
+            '{{"body":"see\\n{token}"}}',
+            "x\\t{token}",
+            "x_{token}",
+        ],
+    )
+    def test_token_after_escape_or_underscore_is_redacted(self, template):
+        token = fake_github_token()
+        out = redactor().scrub(template.format(token=token))
+        assert token not in out
+        assert dossier_redact.REDACTED in out
+
     def test_short_usernames_are_left_alone(self):
         r = dossier_redact.Redactor(home="/home/me", authors=[])
         assert r.scrub("me and some mentions") == "me and some mentions"

@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import types
@@ -52,6 +53,283 @@ def _run_raw(hook, raw, capsys, monkeypatch):
 def hook_fns():
     """Expose the shared module's pure functions by name for unit tests."""
     return vars(_common)
+
+
+CLAUDE_STYLE_COMMIT = (
+    "git add -A && git commit -m \"$(cat <<'EOF'\n"
+    'fix: it\'s "done" now\n'
+    "\n"
+    "ssh keys are rotated on deploy\n"
+    "curl calls now retry (twice)\n"
+    "EOF\n"
+    ')" && git push'
+)
+
+
+class TestDenyIgnoresInertText:
+    """The deny layer split every sub-command on raw newlines, so a line of a
+    commit message, heredoc body or multi-line quoted argument that merely began
+    with `ssh` / `curl` / `sudo` was hard-denied -- and a deny cannot be
+    overridden with ask. Claude Code's own commit form
+    (`git commit -m "$(cat <<'EOF' ...)"`) hit it whenever the body had such a
+    line. Text that the shell never executes is exempt, but only when every
+    command that does run is a known data-only one (allowlist, not a list of
+    string-executing forms, which could never be complete)."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'git commit -m "fix: x\n\nssh keys are rotated"',
+            "git commit -m 'fix: x\n\nssh keys are rotated'",
+            "git commit -F - <<'EOF'\nfix: x\n\nssh keys are rotated\nEOF",
+            CLAUDE_STYLE_COMMIT,
+            "cd repo && git commit -m \"$(cat <<'EOF'\nsudo is no longer needed\nEOF\n)\"",
+            'gh pr create --title t --body "summary\n\ncurl calls now retry"',
+            'echo "line one\nnc is used here"',
+        ],
+    )
+    def test_text_the_shell_never_runs_is_not_denied(self, hook_fns, command):
+        subs = hook_fns["_split_commands"](command)
+        assert hook_fns["find_deny_command"](subs, command) == (False, "")
+
+    @pytest.mark.parametrize(
+        ("command", "name"),
+        [
+            # Bodies that ARE code.
+            ("bash <<'EOF'\nsudo rm -rf /\nEOF", "sudo"),
+            ("cat <<'EOF' | sh\nsudo id\nEOF", "sudo"),
+            ("source /dev/stdin <<'EOF'\nsudo id\nEOF", "sudo"),
+            ('bash -c "echo hi\nsudo id"', "sudo"),
+            ("eval 'x\nsudo id'", "sudo"),
+            ('echo "x\nsudo id" | sh', "sudo"),
+            ("git rebase --exec 'true\nsudo id' HEAD~1", "sudo"),
+            ("git submodule foreach 'true\nsudo id'", "sudo"),
+            ("git -c 'alias.x=!true\nsudo id' commit -m x", "sudo"),
+            ('$SHELL -c "x\nsudo id"', "sudo"),
+            ('tmux send-keys "x\nsudo id"', "sudo"),
+            # Kept as a known false positive: python is not a data-only command.
+            ("python3 - <<'EOF'\nsu = 3\nEOF", "su"),
+            # Expansions inside text are executed.
+            ("cat <<EOF\n$(sudo id)\nEOF", "sudo"),
+            ('git commit -m "line one\n$(sudo id)"', "sudo"),
+            ('git commit -m "line one\n`sudo id`"', "sudo"),
+            ('git commit -m "$(echo x; sudo id)"', "sudo"),
+            # Real command lines next to inert text.
+            ("ls\nsudo id", "sudo"),
+            ("sudo id\ncat <<'EOF'\nsudo id\nEOF", "sudo"),
+            ("cat <<'EOF' > f\nx\nEOF\nsudo id", "sudo"),
+            ('git commit -m "x\ny" && ssh host', "ssh"),
+            ('"sudo" id', "sudo"),
+            # Unterminated quote: the parse is not trusted.
+            ('git commit -m "fix\nsudo id', "sudo"),
+            # A wrapper in front of an allowlisted name: watch runs its joined
+            # arguments through `sh -c`, so the "echo" argument is code. Lines
+            # are judged by their raw first word, never through wrapper stripping.
+            ('watch echo "x\nsudo id"', "sudo"),
+            ('flock /tmp/l -c "echo x\nsudo id"', "sudo"),
+            ('timeout 5 echo "x\nsudo id"', "sudo"),
+            # An arithmetic shift is not a heredoc: bash runs the next line.
+            ("echo $((1<<X))\nsudo id\nX", "sudo"),
+            ("(( y = 1<<X ))\nsudo id\nX", "sudo"),
+            # git transport options that run a program for a local-path remote,
+            # including the unambiguous abbreviations git accepts.
+            ('git push --receive-pack="x\nsudo id" ../repo', "sudo"),
+            ('git fetch --upload-pack "x\nsudo id" ../repo', "sudo"),
+            ("git push --rece='true\nsudo id' ../repo HEAD", "sudo"),
+            ("git fetch --upload-pa 'x\nsudo id' ../r", "sudo"),
+            ("git push --ex='x\nsudo id' ../r", "sudo"),
+            # Environment variables whose value git runs as a command.
+            ("GIT_EDITOR='true\nsudo id' git commit", "sudo"),
+            ("GIT_SSH_COMMAND='true\nsudo id' git fetch ssh://h/r", "sudo"),
+            # A newline-bearing quoted span in the command word position:
+            # `\<newline>` inside double quotes is removed, so this runs sudo.
+            ('"sud\\\no" cat file', "sudo"),
+            # `<<` that is not a heredoc (old-style arithmetic, parameter
+            # expansion) or a delimiter the shell reads differently (`$'EOF'`).
+            ("echo $[1<<X]\nsudo id\nX]", "sudo"),
+            ("echo ${a:1<<X}\nsudo id\nX}", "sudo"),
+            ("cat <<$'EOF'\nx\nEOF\nsudo id\n$EOF", "sudo"),
+            # A path is not the allowlisted command.
+            ("./cat 'a\nsudo id'", "sudo"),
+            # zsh glob qualifiers run code inside an echo/cat argument.
+            ("echo *(e:'true\nsudo id':)", "sudo"),
+            # Writing a file can plant code that git (hooks) or a later
+            # safe-skipped command runs, so a write keeps the deny.
+            (
+                "cat > .git/hooks/pre-commit <<'EOF' && git commit -m x\nsudo id\nEOF",
+                "sudo",
+            ),
+            ("cat > ./bin/ls <<'EOF'\n#!/bin/sh\nsudo id\nEOF", "sudo"),
+            ("cat > notes.md <<'EOF'\n# notes\nsudo is required here\nEOF", "sudo"),
+            ("tee notes.md <<'EOF' >/dev/null\nsu is not used\nEOF", "su"),
+            ("printf '%s\\n' 'line one\nnc is used here' > notes.txt", "nc"),
+        ],
+    )
+    def test_text_that_runs_is_still_denied(self, hook_fns, command, name):
+        subs = hook_fns["_split_commands"](command)
+        assert hook_fns["find_deny_command"](subs, command) == (True, name)
+
+    def test_claude_style_commit_reaches_review_instead_of_deny(self, run_hook):
+        res = run_hook(
+            HOOK, hook_payload(CLAUDE_STYLE_COMMIT), urlopen=fake_gemini("ALLOW")
+        )
+        assert res.decision != "deny"
+        assert "Blocked dangerous command" not in res.reason
+
+
+def _documented_codex_exec_lines() -> list:
+    """The `codex exec` command lines the skills tell the model to run, with every
+    `<placeholder>` filled by a path inside a session scratchpad."""
+    # Fences may be indented (inside a numbered list item).
+    fence = re.compile(
+        r"^[ \t]*```(?:bash|sh|shell|zsh)\b[^\n]*\n(.*?)^[ \t]*```", re.M | re.S
+    )
+    out = []
+    for skill in ("codex-consultation", "codex-image-gen"):
+        text = (REPO_ROOT / f".claude/skills/{skill}/SKILL.md").read_text("utf-8")
+        for block in fence.findall(text):
+            for line in block.splitlines():
+                if "codex exec" in line:
+                    out.append(
+                        re.sub(
+                            r"<([a-z0-9-]+)>",
+                            r"/private/tmp/claude-501/sess/scratchpad/\1",
+                            line.strip(),
+                        )
+                    )
+    return out
+
+
+class TestCodexRiskyFlagsAsk:
+    """Claude now reaches Codex through `codex exec` on the Bash tool (the MCP
+    server was removed in Codex CLI 0.154). The rule is an ALLOWLIST of the
+    shapes the skills use -- `-s read-only`, `-s workspace-write` only into a
+    session scratchpad, `-c sandbox_mode=read-only`, a prompt file that the same
+    command secret-scans first -- and every other codex invocation reaches the
+    user whatever a reviewing model thinks. A denylist of risky flags kept
+    missing spellings (`-pevil`, `-c=k=v`, TOML escapes, `CODEX_HOME=`, config
+    keys such as `mcp_servers.*` or `notify`). A prefix rule in permissions.ask
+    cannot express any of this (the flag can sit anywhere after `codex`)."""
+
+    @staticmethod
+    def _reason(hook_fns, command):
+        subs = hook_fns["_split_commands"](command)
+        return hook_fns["codex_flag_ask_reason"](subs, command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "codex exec -s danger-full-access 'x'",
+            "codex exec --sandbox=danger-full-access x",
+            "codex exec -sdanger-full-access x",
+            "codex exec -c sandbox_mode=danger-full-access x",
+            "codex exec -c 'sandbox_mode=\"danger-full-access\"' x",
+            "codex exec -c 'sandbox_mode=\"danger\\u002dfull-access\"' x",
+            "codex exec -c sandbox_mode=workspace-write x",
+            "codex --dangerously-bypass-approvals-and-sandbox exec x",
+            "codex exec --dangerously-bypass-hook-trust x",
+            "codex exec --approve-for-me x",
+            "codex exec --add-dir /etc x",
+            "codex exec --add-dir=/etc x",
+            "codex exec -p evil x",
+            "codex exec -pevil x",
+            "codex exec --profile evil x",
+            "codex exec --ignore-rules x",
+            "codex exec --ignore-user-config x",
+            "codex exec --full-auto x",
+            "codex exec --enable foo x",
+            "codex exec --disable hooks x",
+            "codex --yolo x",
+            "codex exec -c shell_environment_policy.inherit=all x",
+            "codex exec -capproval_policy=never x",
+            "codex exec -c=approval_policy=never x",
+            "codex exec -c features.hooks=false x",
+            "codex exec -c 'mcp_servers.x.command=\"sh\"' x",
+            'codex exec -c \'notify=["sh","-c","x"]\' x',
+            "codex exec -c openai_base_url=https://evil.example x",
+            "codex exec --config=sandbox_workspace_write.network_access=true x",
+            # workspace-write anywhere but a session scratchpad
+            "codex exec -s workspace-write -C /Users/me/repo x",
+            "codex exec -s workspace-write -C /private/tmp/claude-501/../../Users/me x",
+            "codex exec -s workspace-write x",
+            # a different Codex configuration altogether
+            "CODEX_HOME=/x codex exec -s read-only x",
+            "env CODEX_HOME=./.codex codex exec x",
+            # a prompt file the same command never secret-scanned
+            "codex exec -s read-only - < /p",
+            "python3 secret_scan.py < /a && codex exec -s read-only - < /b",
+            # values the hook cannot evaluate
+            "codex exec -s $SB x",
+            # subcommands the skills never use
+            "codex mcp add x -- sh",
+            "codex login",
+            "env FOO=1 codex exec --yolo x",
+            "cd repo && codex exec -s danger-full-access x",
+            # brace expansion manufactures flags the hook never sees as such
+            "codex exec -s read-only -m {x,-s} danger-full-access hi",
+            "codex exec -s read-only {--dangerously-bypass-approvals-and-sandbox,--json} hi",
+            "codex exec -s read-only -m {1..2} hi",
+            # a here-string / heredoc whose expansion reads an unscanned file
+            'codex exec -s read-only - <<< "$(cat prompt.md)"',
+            "codex exec -s read-only - <<EOF\n$(cat prompt.md)\nEOF",
+            # the scan must run first, chained with && straight into codex
+            "codex exec -s read-only - < /p && python3 secret_scan.py < /p && true",
+            "echo 'secret_scan.py < /p &&'; codex exec -s read-only - < /p",
+            "python3 secret_scan.py < /p && true || codex exec -s read-only - < /p",
+            "python3 secret_scan.py < /p; codex exec -s read-only - < /p",
+            # a scratchpad-looking prefix that is not a scratchpad directory
+            "codex exec -s workspace-write -C /tmp/claude-evil/x hi",
+            "codex exec -s workspace-write -C /private/tmp/claude-501x/y hi",
+        ],
+    )
+    def test_codex_outside_the_allowlist_forces_ask(self, hook_fns, command):
+        assert self._reason(hook_fns, command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            *_documented_codex_exec_lines(),
+            # An inline prompt is in the command text, where bash-review's own
+            # secret scan sees it.
+            "codex exec -s read-only -C /r --json -o /o 'review this design'",
+            "codex exec -s read-only - <<< 'review this design'",
+            "codex --version",
+            "codex features list",
+            # Not a codex invocation.
+            "echo codex exec --add-dir /etc",
+            # A commit message that only mentions a risky flag.
+            "git commit -m \"$(cat <<'EOF'\nfix: x\n\ncodex exec --add-dir is "
+            'now confirmed\nEOF\n)"',
+        ],
+    )
+    def test_documented_codex_shapes_are_not_forced(self, hook_fns, command):
+        assert self._reason(hook_fns, command) == ""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "[" * 20000,  # RecursionError inside tomllib
+            "1" * 20000,  # ValueError: integer string too long
+        ],
+    )
+    def test_undecodable_config_value_asks_instead_of_raising(self, hook_fns, value):
+        command = f"codex exec -c model_reasoning_effort={value} x"
+        assert self._reason(hook_fns, command)
+
+    def test_skills_document_both_codex_exec_shapes(self):
+        lines = _documented_codex_exec_lines()
+        assert any("-s read-only" in line for line in lines)
+        assert any("-s workspace-write" in line for line in lines)
+
+    def test_risky_codex_flag_asks_even_when_models_allow(self, run_hook):
+        res = run_hook(
+            HOOK,
+            hook_payload("codex exec -s danger-full-access 'fix it'"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.decision == "ask"
+        assert "codex" in res.reason
 
 
 class TestPreDeny:
@@ -245,6 +523,52 @@ class TestGeminiStage:
         assert len(calls) == 2
         assert "primary-model" in calls[0].full_url
         assert "fallback-model" in calls[1].full_url
+
+
+class TestGeminiPayload:
+    """`thinkingLevel: "minimal"` was measured to be accepted only by the default
+    model (gemini-flash-lite-latest); gemini-flash-latest -- the fallback -- and
+    the other ids tried answer HTTP 400 "Thinking level ... is not supported"
+    (scripts/gemini_api.py records the measurement). Sending it to every model
+    made the fallback fail on every call, so a primary outage always fell
+    through to Codex, and any $GEMINI_MODEL override broke the primary too."""
+
+    @staticmethod
+    def _config(hook_fns, model):
+        _url, data = hook_fns["_build_gemini_payload"](model, "prompt")
+        return json.loads(data)["generationConfig"]
+
+    def test_default_model_keeps_the_measured_low_latency_config(self, hook_fns):
+        config = self._config(hook_fns, hook_fns["DEFAULT_GEMINI_MODEL"])
+        assert config["thinkingConfig"] == {"thinkingLevel": "minimal"}
+        assert config["temperature"] == 0.0
+
+    @pytest.mark.parametrize(
+        "model", ["gemini-flash-latest", "gemini-pro-latest", "primary-model"]
+    )
+    def test_other_models_get_no_thinking_level(self, hook_fns, model):
+        config = self._config(hook_fns, model)
+        assert "thinkingConfig" not in config
+        # Without the thinking cap a thinking model may spend output tokens on
+        # thoughts, so no hand-picked ceiling either (a short verdict stops early).
+        assert "maxOutputTokens" not in config
+        assert config["temperature"] == 0.0
+
+    def test_default_ids_match_the_shared_constants(self, run_hook, hook_fns):
+        calls = []
+        res = run_hook(
+            HOOK,
+            hook_payload("make build"),
+            urlopen=fake_gemini(URLError("primary down"), "ALLOW", calls=calls),
+            env={"GEMINI_MODEL": None, "GEMINI_FLASH_MODEL": None},
+        )
+        assert res.decision == "allow"
+        assert hook_fns["DEFAULT_GEMINI_MODEL"] in calls[0].full_url
+        assert hook_fns["DEFAULT_GEMINI_FALLBACK_MODEL"] in calls[1].full_url
+        first = json.loads(calls[0].data)["generationConfig"]
+        fallback = json.loads(calls[1].data)["generationConfig"]
+        assert "thinkingConfig" in first
+        assert "thinkingConfig" not in fallback
 
 
 class TestCodexStage:
@@ -2561,6 +2885,12 @@ class TestCommandHelpers:
             ("tree -o out.txt", False),
             ("tree -no out.txt", False),
             ("tree --outfile out.txt", False),
+            # `-R` re-runs tree in every subdirectory with `-o 00Tree.html`
+            # added, so it writes (and overwrites) a file per directory with no
+            # `-o` anywhere in the command -- verified against the real binary.
+            ("tree -R -L 2", False),
+            ("tree -aR", False),
+            ("tree -R -H . -T title -L 2", False),
             # No false positives: `-o` means something harmless for these two,
             # and demoting them would cost latency on very common commands.
             ("grep -o pattern file.txt", True),
@@ -4421,6 +4751,99 @@ class TestBareTokenFormats:
         assert (found, got) == (True, label), f"{label!r} not detected"
         assert token not in got
 
+    @pytest.mark.parametrize(
+        ("label", "token"),
+        [
+            *FAKE_BARE_TOKENS.items(),
+            ("GitHub token", FAKE_GH_TOKEN),
+            ("AWS access key", FAKE_AWS_KEY),
+            ("Google API key", FAKE_GOOGLE_KEY),
+            ("OpenAI key", FAKE_OPENAI_KEY),
+            ("Slack token", FAKE_SLACK_TOKEN),
+            ("JWT", FAKE_JWT),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "template",
+        [
+            # A literal `\n` / `\t` escape in front of the token: printf / echo -e
+            # arguments, and every newline inside a JSON string (`gh api`,
+            # `jq -c` output pasted into a command). `\b` sees `n` + token as one
+            # word and finds no boundary, so the token went to Gemini / Codex.
+            "printf 'line\\n{token}\\n'",
+            "echo -e 'a\\t{token}'",
+            # Hex, unicode and octal spellings of the same newline.
+            "printf 'a\\x0a{token}'",
+            "printf 'a\\u000a{token}'",
+            "printf 'a\\012{token}'",
+            '{{"body":"see\\n{token}"}}',
+            # Glued behind an underscore (a shell variable built by concatenation).
+            "export X=abc_{token}",
+        ],
+    )
+    def test_token_after_escape_or_underscore_is_detected(
+        self, hook_fns, label, token, template
+    ):
+        command = template.format(token=token)
+        found, got = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, got) == (True, label), f"missed {command!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # The keyword was only recognised directly after `--`, so any flag
+            # that names WHICH token it is (the common case) sent the raw value
+            # to Gemini and the unmasked detail log.
+            "node app.js --access-token Zq83kd0Lm2PvX7aB",
+            "tool --github-token Zq83kd0Lm2PvX7aB",
+            "npm publish --npm-token Zq83kd0Lm2PvX7aB",
+            "cli --api-token Zq83kd0Lm2PvX7aB",
+            "cli --bearer-token Zq83kd0Lm2PvX7aB",
+            "aws-cli --secret-access-key Zq83kd0Lm2PvX7aB",
+            "minio --secret-key Zq83kd0Lm2PvX7aB",
+            "deploy --private-key Zq83kd0Lm2PvX7aB",
+            "deploy --aws-secret-access-key Zq83kd0Lm2PvX7aB",
+            # `=` spellings whose keyword is hyphenated (the assignment rule's
+            # suffix class stops at `-`).
+            "minio --secret-key=Zq83kd0Lm2PvX7aB",
+            "deploy --private-key=Zq83kd0Lm2PvX7aB",
+        ],
+    )
+    def test_prefixed_long_flag_value_is_detected(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is True, f"missed {command!r}"
+        assert "Zq83kd0Lm2PvX7aB" not in label
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # A negated boolean flag is followed by an ordinary argument.
+            "tool --no-password origin-main",
+            # File-valued flags name a path, not the secret itself.
+            "tool --token-file ./config/token.txt",
+            "tool --password-file /tmp/pass.txt",
+            "ssh-tool --private-key-file ./keys/deploy.pem",
+            "tool --private-key-path=./keys/deploy.pem",
+        ],
+    )
+    def test_file_valued_and_negated_flags_are_not_flagged(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (False, ""), f"false positive on {command!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "export TOKEN_PATH=./keys/deploy.pem",
+            # New with `private[_-]?key` in the assignment table: a path-valued
+            # *_PATH variable is flagged too, the same trade-off TOKEN_PATH
+            # already makes (a false positive only costs an ask).
+            "export PRIVATE_KEY_PATH=./keys/deploy.pem",
+        ],
+    )
+    def test_path_valued_credential_variables_are_flagged(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (True, "secret assignment")
+
     @pytest.mark.parametrize("token", NEAR_MISS_TOKENS)
     def test_near_miss_is_not_flagged(self, hook_fns, token):
         command = f"echo {token}"
@@ -4447,6 +4870,27 @@ class TestSecretScanIsLinear:
         import time
 
         command = unit * (100_000 // len(unit))
+        started = time.perf_counter()
+        found, _ = hook_fns["scan_secrets"](command, {"command": command})
+        elapsed = time.perf_counter() - started
+        assert found is False
+        assert elapsed < 2.0, f"{unit!r} x N took {elapsed:.1f}s (quadratic?)"
+
+    @pytest.mark.parametrize(
+        "unit",
+        [
+            "--" + "a-" * 12,  # more prefix words than the {0,8} bound allows
+            "--" + "a" * 200,  # one long word that never reaches a separator
+            "--access-tok",  # a prefix whose keyword never completes
+        ],
+    )
+    def test_repeated_long_flag_prefix_is_fast(self, hook_fns, unit):
+        # "secret flag" accepts prefix words before the keyword
+        # (`--access-token`); the bounded, separator-delimited group must stay
+        # linear when a 100 KB command is nothing but near-miss flags.
+        import time
+
+        command = (unit + " ") * (100_000 // (len(unit) + 1))
         started = time.perf_counter()
         found, _ = hook_fns["scan_secrets"](command, {"command": command})
         elapsed = time.perf_counter() - started

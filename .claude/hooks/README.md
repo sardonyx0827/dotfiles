@@ -67,7 +67,18 @@
   the string that `git submodule
 foreach`, `git rebase --exec` (`-x`) or `watch` runs is detected too
   (`submodule foreach` runs in each submodule, so it shows a note instead of a
-  summary).
+  summary). The same holds for a string a shell runs however it is invoked:
+  options before `-c` (`bash -euo pipefail -c`, `-o pipefail`, `-O extglob`,
+  `+e`), `c` inside a cluster (`-cl`, `-ce`), code piped or here-stringed into
+  a shell (`… | sh`, `bash <<< '…'`), `$SHELL -c`, `fish` / `csh` / `tcsh` /
+  `ash` / `mksh`, and a `\`-newline continuation inside that string. A global
+  option value with a backslash-escaped space (`git -C ~/My\ Project push`,
+  `git -c user.name=My\ Name push`) no longer ends the value early and hides
+  the push. When the command carries a `-C` the hook cannot tie to the push
+  (the push sits behind a wrapper such as `timeout 5` / `env X=1` / `nice`, or
+  inside a `bash -c` string), or two pushes name different `-C` directories,
+  the prompt shows the "target repository could not be determined" note rather
+  than a summary of the hook's own cwd.
   This entry used to carry `if: Bash(git push*)`. That filter prefix-matches
   each sub-command, so it never fired for the very forms this script exists
   to catch — `git -C <dir> push`, `git --no-pager push`, `git -c k=v push`,
@@ -215,6 +226,58 @@ latency low for the common case:
    it runs only when both models return `ALLOW`; anything short of that stops
    for confirmation or is denied).
 
+   Denial looks only at text the shell actually runs. Every sub-command is also
+   checked line by line (so `ls\nsudo …` is caught), and that line split used
+   to ignore quoting, so a commit-message line, heredoc body line or
+   multi-line quoted argument that merely began with `ssh` / `curl` / `sudo`
+   was hard-denied — including Claude Code's own
+   `git commit -m "$(cat <<'EOF' …)"`. Such a match is now dropped when (a) it
+   lies only in a heredoc body or a quoted span containing a newline, (b) no
+   `$(…)` / backtick in that text runs it, and (c) every command that does run
+   is on a small data-only allowlist (`git` commit/add/push/…, `gh pr|issue|release`,
+   `cat`, `echo`, `printf`, `cd`). It is an allowlist on purpose: the
+   forms that execute a string (`bash -c`, `eval`, `| sh`, `git rebase --exec`,
+   `git -c alias.x=!…`, `tmux send-keys`, `$SHELL -c`, …) cannot be enumerated.
+   A line is judged by its raw first word, never through wrapper stripping
+   (`watch echo "…"` runs its arguments through `sh -c`) and never past a
+   leading `VAR=value` (`GIT_EDITOR` / `GIT_SSH_COMMAND` run their value); a
+   path (`./cat`) is not the allowlisted command; git options that start a
+   program (`-c`, `--config-env`, `--receive-pack`, `--upload-pack`, `--exec`,
+   `--exec-path`, including the abbreviations git accepts) void the exemption,
+   as do `(` `)` `` ` `` `{` `}` (zsh glob qualifiers such as `*(e:…:)` run code)
+   and any `>` write — writing a file can plant code that git's hooks or a later
+   safe-skipped command runs, so `cat > f <<'EOF'` keeps the deny. Commands with
+   `((`, `$[` or a `<<` inside `${…}` are not parsed at all (an arithmetic or
+   expansion `1<<X` would otherwise be read as a heredoc that swallows the next
+   lines), nor is a `<<$'EOF'` delimiter.
+   A python heredoc whose body starts a line with a denied name (`su = 3`) is a
+   known remaining false positive.
+
+   Right after denial, every `codex` invocation is checked against an
+   **allowlist** of the shapes the codex-consultation / codex-image-gen skills
+   use, and anything outside it is an `ask` (Codex variant: block) before any
+   model is consulted (`codex_flag_ask_reason`): `-s read-only`, or
+   `-s workspace-write` only with a `-C` that resolves (realpath) inside a
+   session scratchpad, `/tmp/claude-<uid>/…`;
+   `-c sandbox_mode=read-only` / `-c model_reasoning_effort=…` only (values
+   decoded as TOML, so escapes do not hide `danger-full-access`); the flags
+   `-C -o -m -i --json --ephemeral --skip-git-repo-check`; subcommands
+   `exec` / `exec resume` / `features list`; no environment assignment but
+   `EDITOR_AI_ONESHOT` (so not `CODEX_HOME=`); no expansion (`$`, backtick, or a
+   brace such as `{x,-s}` that the shell turns into extra words) in an argument
+   or redirect target; a heredoc / here-string prompt only when nothing in the
+   command expands; and a prompt read from a file on stdin only when the command
+   runs `secret_scan.py < <that file>` at a command position, chained with `&&`
+   straight into this `codex` (not after it, not across `||` or `;`, not inside
+   quotes) — a prompt written with the Write tool is otherwise never scanned. Glued short options (`-pevil`, `-cKEY=V`, `-c=K=V`)
+   are normalised first. Like denial, lines inside heredoc bodies and multi-line
+   quoted strings are not read, so a commit message that mentions a flag does
+   not trip it. Claude reaches Codex through `codex exec` on the Bash tool since
+   Codex CLI 0.154 removed its MCP-server mode; a denylist of risky flags kept
+   missing spellings, which is why this is an allowlist. Prefix rules in
+   `permissions.ask` back up the common risky spellings for when the hook is
+   down; they cannot see a flag placed later in the command.
+
    Safe-skip is the conservative side: it matches the raw command string against
    an allowlist, so anything wrapped in grammar simply fails to match and goes
    to review. The resolver is consulted only by the exclusions below (grep / rg
@@ -239,7 +302,8 @@ latency low for the common case:
      an out-of-tree read: an absolute / `~` / `..` path, rg's
      `--pre` / `--pre-glob` / `--hostname-bin` / `-z` / `-f`, a tmux `#(…)`
      format or a `;`-chained second tmux command, and output-file flags
-     (`--output` / `--outfile`, `tree -o`).
+     (`--output` / `--outfile`, `tree -o`, and `tree -R`, which re-runs tree in
+     every subdirectory with `-o 00Tree.html`).
 
 2. **Secret pre-send scan (no external call).** Before any command is handed to
    an LLM, a static scan (`scan_secrets`) checks the command _and_ the full
@@ -248,11 +312,21 @@ latency low for the common case:
    npm / GitLab / Hugging Face / SendGrid / PyPI / Docker / DigitalOcean),
    PEM / OpenPGP private keys, JWTs,
    `Authorization: Bearer`/`Basic` headers, `user:pass@` URLs,
-   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`),
+   credential-shaped assignments / long flags (`PGPASSWORD=…`, `--password …`,
+   also with a prefix that names the credential: `--access-token …`,
+   `--github-token …`, `--aws-secret-access-key …`, `--private-key …`; path-valued
+   `--token-file` / `--password-file` and the negated `--no-password` are not
+   values),
    and a secret-named key followed by its value in known setter CLIs
    (`aws configure set`, `vault kv put`, `gh secret set`, `heroku config:set`, …).
    References to a credential in code (`os.getenv(…)`, `os.environ[…]`,
    `self.token`) are not values and are not flagged.
+   A known-format token counts even when it is glued to a `\n` / `\t` escape
+   (`printf 'a\nghp_…'`, the escaped newlines of a JSON string, and the
+   `\x0a` / `\u000a` / `\012` spellings) or to an
+   underscore (`X=abc_ghp_…`): the start boundary is "no letter or digit
+   before it, or one that belongs to such an escape", not `\b`, which saw
+   `nghp_…` as one word. The session-dossier share redaction reuses this table.
    A hit fails closed to `ask` (Claude) / block (Codex) **without calling Gemini
    or Codex**, so a secret never leaves the machine for review; the
    reason / notification / logs carry only a generic category label, and the raw

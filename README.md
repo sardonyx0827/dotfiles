@@ -186,9 +186,10 @@ npm install -g @github/copilot
 | サーバー            | 用途                            |
 | ------------------- | ------------------------------- |
 | `context7`          | 最新ライブラリドキュメント取得  |
-| `codex`             | Codex 連携                      |
 | `serena`            | コードベース解析 (LSP)          |
 | `gemini-consultant` | 自作 Gemini 相談用 MCP サーバー |
+
+Codex は MCP サーバーとしては登録しません（Codex の MCP サーバーモードは CLI 0.154 で削除されました）。スキル・エージェント・フックは `codex exec` を直接呼びます。
 
 ### 一括更新
 

@@ -1,6 +1,6 @@
 ---
 name: debugging-protocol
-description: Systematic debugging workflow with Codex MCP escalation. Use this skill whenever investigating a bug, test failure, unexpected behavior, error message, or regression — even if the cause seems obvious. Especially important when a first fix attempt has already failed, since it defines when and how to escalate to Codex MCP for root-cause analysis.
+description: Systematic debugging workflow with Codex escalation. Use this skill whenever investigating a bug, test failure, unexpected behavior, error message, or regression — even if the cause seems obvious. Especially important when a first fix attempt has already failed, since it defines when and how to escalate to Codex for root-cause analysis.
 ---
 
 # Debugging Protocol
@@ -81,11 +81,11 @@ Why: it prevents retrying refuted ideas, and it is exactly the "Attempts so far"
 3. Confirm: the new test passes, the original repro passes, the full test suite passes
 4. Ask: "could this same root cause exist elsewhere?" — grep for the pattern
 
-## Escalation to Codex MCP
+## Escalation to Codex
 
 Per the `codex-consultation` skill: after **2 consecutive failed fix attempts on the same issue**, stop iterating and escalate for root-cause analysis. Continuing to guess past this point burns context and compounds confusion.
 
-Use the `codex-delegator` agent (or `mcp__codex__codex` directly with `sandbox: read-only` for code-reading tasks; leave `model` unset to inherit the Codex default). Build the prompt from the attempt log:
+Use the `codex-delegator` agent, or run the `codex-consultation` skill's invocation contract yourself (`codex exec -s read-only` behind the secret-scan gate; leave `-m` unset to inherit the Codex default). Build the prompt from the attempt log and write it to the prompt file:
 
 ```text
 Goal: <what correct behavior looks like>
@@ -102,7 +102,7 @@ Then:
 
 1. Validate Codex's analysis against the evidence yourself — does it explain ALL observed symptoms, not just some?
 2. Implement the strategy with Claude, re-running the Phase 0 repro to verify
-3. Continue the thread with `mcp__codex__codex-reply` (same `threadId`) if the strategy fails, rather than starting over
+3. Continue the same thread with `codex exec resume <thread-id>` (the codex-consultation skill's follow-up turn) if the strategy fails, rather than starting over
 
 ## Anti-Patterns
 
@@ -120,5 +120,5 @@ Then:
 | Bug report received     | Phase 0: reproduce before anything else                            |
 | Regression suspected    | `git log` / `git bisect` first                                     |
 | Hypothesis confirmed    | Failing test → minimal fix → full verification                     |
-| 2 fix attempts failed   | STOP → escalate to Codex MCP with attempt log                      |
+| 2 fix attempts failed   | STOP → escalate to Codex with attempt log                          |
 | Codex strategy received | Validate against evidence → implement → verify with original repro |

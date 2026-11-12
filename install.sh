@@ -1120,7 +1120,13 @@ install_mcp_server_deps() {
 # Register MCP servers with Claude Code (user scope, idempotent).
 # Server connections live in ~/.claude.json, which is NOT under dotfiles
 # management, so re-register them here so a fresh machine matches the
-# servers assumed by .claude/skills/codex-consultation and CLAUDE.md.
+# servers assumed by the skills and CLAUDE.md.
+#
+# Codex is deliberately absent: Codex CLI 0.154 removed its MCP-server mode,
+# so a registration would only fail with CONNECTION_CLOSED on every start.
+# Claude reaches Codex through `codex exec` (.claude/skills/codex-consultation).
+# A registration left over from an older install is not removed here; drop it
+# once with `claude mcp remove --scope user codex`.
 register_claude_mcp_servers() {
   if ! command_exists claude; then
     print_warning "claude CLI not found; skipping MCP server registration"
@@ -1140,7 +1146,6 @@ register_claude_mcp_servers() {
   }
 
   add_mcp context7 -- npx -y @upstash/context7-mcp
-  add_mcp codex -- codex mcp-server
   add_mcp serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
 
   # Bare `python` does not exist on stock Ubuntu or Homebrew installs

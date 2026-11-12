@@ -39,6 +39,13 @@
 #   3. 低リスク層: Gemini ALLOW → 即許可。疑義時のみ Codex 二次確認。ただし
 #      意見を伴う Gemini 判定 (明示的 DENY / 要確認 ASK) は Codex の ALLOW 単独
 #      では自動上書きしない (ask へ)。ERROR (無意見) のみ Codex ALLOW で解消。
+
+# 注釈の評価を遅延させる: macOS 既定の /usr/bin/python3 は 3.9 で、`list[str] | None`
+# を def 時に評価すると TypeError で import ごと落ちる。GUI 起動の Neovim はこの
+# python3 で scripts/secret_scan.py を動かすため、落ちるとエディタの秘密ゲートが
+# 毎回 "unavailable" (= 警告だけで送信) になる。tests/test_python39_compat.py が固定。
+from __future__ import annotations
+
 import concurrent.futures
 import contextlib
 import json
@@ -1593,7 +1600,9 @@ _OUTPUT_FILE_LONG_FLAGS = frozenset({"--output", "--outfile"})
 # 短フラグ側はコマンド個別にする。`-o` は grep では only-matching、ls では
 # 長形式一覧であり、一律に弾くと日常的なコマンドをレビュー送りにしてレイテンシ
 # だけ悪化する。出力先を意味すると確認できたものだけ列挙する。
-_OUTPUT_FILE_SHORT_FLAGS = {"tree": "o"}
+# tree の `-R` は各サブディレクトリで tree を `-o 00Tree.html` 付きで再実行する
+# ため、コマンド中に `-o` が無くても書き込む (既存ファイルも上書き。実バイナリで確認)。
+_OUTPUT_FILE_SHORT_FLAGS = {"tree": "oR"}
 
 
 def _has_output_file_flag(cmd: str) -> bool:
@@ -1855,19 +1864,552 @@ def _is_deny_command(cmd: str) -> tuple[bool, str]:
     return False, ""
 
 
-def find_deny_command(sub_commands: list[str]) -> tuple[bool, str]:
-    """サブコマンド列から最初に一致した危険コマンドを返す (無ければ (False, ""))。
-
-    _split_commands は改行を区切りとして扱わない (シェルは扱う) ため、各サブ
-    コマンドをさらに行単位に分けて検査する。`ls\\nsudo rm -rf /` のように改行の
-    後ろへ隠した危険コマンドを取りこぼさない (high_risk_label と同じ改行対策)。
-    """
+def _find_deny_in_lines(sub_commands: list[str]) -> tuple[bool, str]:
     for sub_cmd in sub_commands:
         for line in sub_cmd.splitlines():
             matched, deny_name = _is_deny_command(line.strip())
             if matched:
                 return True, deny_name
     return False, ""
+
+
+def _scan_backtick(cmd: str, i: int) -> int:
+    """i (開きバッククォート) に対応する閉じの位置を返す。未閉鎖なら -1。"""
+    j = i + 1
+    while j < len(cmd) and cmd[j] != "`":
+        j += 2 if cmd[j] == "\\" else 1
+    return j if j < len(cmd) else -1
+
+
+# 改行を含むクォート区間の置き換え先。空白にすると、区間がコマンド語の位置に
+# あったとき次の語が先頭語に繰り上がる (`"sud\\<改行>o" cat f` が cat に見える)。
+# 許可リストに無い非空白の 1 語にして、その行を data-only と判定させない。
+_MULTILINE_SPAN = "0"
+# `${a:1<<X}` / `${a:-<<E}` のようにパラメータ展開の内側にある `<<` は heredoc では
+# ない。_live_scan はそれを heredoc と読んで後続のコマンド行を本体として捨てるので、
+# 含むものは解析しない ($[…] と ((…)) の算術も同じ理由: _live_texts)。
+_LT_LT_IN_PARAM = re.compile(r"\$\{[^}]*<<")
+
+
+def _live_scan(
+    cmd: str, i: int, extras: list[str], *, nested: bool
+) -> tuple[str | None, int]:
+    """シェルが実際にコマンドとして読む部分だけを残した綴りを返す。
+
+    捨てるのは (1) 改行を含むクォート区間 (1 語の引数であってコマンド行ではない。
+    改行を含まない区間は従来の綴りのまま残す)、(2) heredoc 本体、(3) コメント。
+    `$(...)` は heredoc を本体ごと読み飛ばしながら再帰で辿る (本体のアポストロフィで
+    括弧の対応を見失わないため)。ダブルクォート内の `$(...)` / バッククォートは
+    実行されるので、中身を extras に「もう 1 本の実行されるテキスト」として足す。
+    引用符なし区切りの heredoc 本体に `$(` / バッククォートがあれば本体も展開
+    (= 実行) されるので解析を諦める。未閉鎖のクォートや置換も同様に (None, …)
+    を返し、呼び出し側は除外せず DENY のままにする。nested=True は `$(` の内側で、
+    対応する `)` の位置で戻る。
+    """
+    out: list[str] = []
+    heredocs: list[tuple[str, bool, bool]] = []
+    depth = 0
+    at_word_start = True
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch == "\\":
+            out.append(cmd[i : i + 2])
+            i += 2
+            at_word_start = False
+            continue
+        if ch == "'" or cmd.startswith("$'", i):
+            ansi = ch == "$"
+            j = i + (2 if ansi else 1)
+            while j < n and cmd[j] != "'":
+                j += 2 if ansi and cmd[j] == "\\" else 1
+            if j >= n:
+                return None, n
+            span = cmd[i : j + 1]
+            out.append(_MULTILINE_SPAN if "\n" in span else span)
+            i = j + 1
+            at_word_start = False
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and cmd[j] != '"':
+                if cmd[j] == "\\":
+                    j += 2
+                elif cmd.startswith("$(", j) and not cmd.startswith("$((", j):
+                    inner, close = _live_scan(cmd, j + 2, extras, nested=True)
+                    if inner is None:
+                        return None, n
+                    extras.append(inner)
+                    j = close + 1
+                elif cmd[j] == "`":
+                    close = _scan_backtick(cmd, j)
+                    if close < 0:
+                        return None, n
+                    extras.append(cmd[j + 1 : close])
+                    j = close + 1
+                else:
+                    j += 1
+            if j >= n:
+                return None, n
+            span = cmd[i : j + 1]
+            out.append(_MULTILINE_SPAN if "\n" in span else span)
+            i = j + 1
+            at_word_start = False
+            continue
+        if cmd.startswith("$(", i) and not cmd.startswith("$((", i):
+            inner, close = _live_scan(cmd, i + 2, extras, nested=True)
+            if inner is None:
+                return None, n
+            out.append("$(" + inner + ")")
+            i = close + 1
+            at_word_start = False
+            continue
+        if ch == "`":
+            close = _scan_backtick(cmd, i)
+            if close < 0:
+                return None, n
+            out.append(cmd[i : close + 1])
+            i = close + 1
+            at_word_start = False
+            continue
+        if ch == "#" and at_word_start:
+            nl = cmd.find("\n", i)
+            i = n if nl < 0 else nl
+            continue
+        if cmd.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            at_word_start = False
+            continue
+        if cmd.startswith("<<", i):
+            delim, strip_tabs, end = _read_heredoc_delimiter(cmd, i + 2)
+            raw_delim = cmd[i + 2 : end].lstrip("-").lstrip(" \t")
+            if raw_delim.startswith("$"):
+                # `<<$'EOF'` / `<<$"EOF"`: the shell's delimiter is not the
+                # word _read_heredoc_delimiter returns, so the body end is unknown.
+                return None, n
+            if delim:
+                quoted = any(q in cmd[i + 2 : end] for q in "'\"\\")
+                heredocs.append((delim, strip_tabs, quoted))
+            out.append(cmd[i:end])
+            i = end
+            at_word_start = False
+            continue
+        if ch == "\n" and heredocs:
+            out.append(ch)
+            body_end = _skip_heredoc_bodies(
+                cmd, i + 1, [(d, tabs) for d, tabs, _ in heredocs]
+            )
+            body = cmd[i + 1 : body_end]
+            expands = any(not quoted for _, _, quoted in heredocs)
+            if expands and ("$(" in body or "`" in body):
+                return None, n
+            heredocs = []
+            i = body_end
+            at_word_start = True
+            continue
+        if nested and ch == "(":
+            depth += 1
+        elif nested and ch == ")":
+            if depth == 0:
+                return "".join(out), i
+            depth -= 1
+        out.append(ch)
+        at_word_start = ch in _WORD_BREAKS
+        i += 1
+    if nested:
+        return None, n
+    return "".join(out), n
+
+
+def _live_texts(command: str) -> list[str] | None:
+    """_live_scan の結果と、そこで見つかった実行されるテキスト群。解析不能なら None。
+
+    算術式 (`$((…))` / `((…))`) を含むものは解析しない: その中の `1<<X` は
+    シフトであって heredoc ではないのに、_live_scan は heredoc と読んで後続の
+    コマンド行を本体として捨ててしまう (`echo $((1<<X))` の次行の `sudo id` を
+    bash は実行する)。
+    """
+    if "((" in command or "$[" in command or _LT_LT_IN_PARAM.search(command):
+        return None
+    extras: list[str] = []
+    live, _ = _live_scan(command, 0, extras, nested=False)
+    if live is None:
+        return None
+    return [live, *extras]
+
+
+# DENY の除外を許す「データしか扱わない」コマンド。許可リストにするのは、文字列を
+# コードとして実行する形 (bash -c / eval / | sh / git rebase --exec / tmux send-keys
+# / $SHELL -c ...) の列挙は決して網羅できないから。ここに無いものが 1 つでも
+# 実行されるなら、heredoc 本体やクォート内の行も従来どおり DENY の対象に残す。
+# tee は入れない: ファイルへ書く行は data-only としない (_is_data_only_command)。
+_DATA_ONLY_EXECUTABLES = frozenset({"cat", "echo", "printf", "cd"})
+_DATA_ONLY_GIT_SUBCOMMANDS = frozenset(
+    {
+        "add",
+        "branch",
+        "checkout",
+        "commit",
+        "diff",
+        "fetch",
+        "log",
+        "merge",
+        "mv",
+        "notes",
+        "pull",
+        "push",
+        "reset",
+        "restore",
+        "rm",
+        "show",
+        "stash",
+        "status",
+        "switch",
+        "tag",
+    }
+)
+_DATA_ONLY_GH_SUBCOMMANDS = frozenset({"pr", "issue", "release"})
+# git の引数のうち、文字列をコマンドとして実行させうるもの。グローバルの -c /
+# --config-env は設定値 (alias.x=!cmd / core.pager 等) を介して、--receive-pack /
+# --upload-pack / --exec はローカルパスのリモートに対して指定プログラムを起動し、
+# --exec-path は git がサブコマンドを探す場所を差し替える。git は曖昧でない長
+# オプションの略記 (`--rece=` / `--upload-pa`) も受け付けるので、名前がこれらの
+# 接頭辞であるものも同じ扱いにする。あれば data-only とみなさない。
+_GIT_EXEC_LONG_FLAGS = (
+    "--config-env",
+    "--receive-pack",
+    "--upload-pack",
+    "--exec",
+    "--exec-path",
+)
+# 行に現れたら data-only とみなさない文字。`(` / `)` は zsh のグロブ修飾子
+# (`*(e:'…':)` はコードを実行する) / プロセス置換 `=(…)` / サブシェル、`` ` `` と
+# `{` / `}` は展開、`>` はリダイレクトによる書き込み。書き込みを外すのは、
+# `.git/hooks/*` や PATH 上のファイルへ書いた本体を、同じコマンドの git (フック)
+# や後のセーフスキップされたコマンドが実行しうるため。
+_NOT_DATA_ONLY_CHARS = frozenset("()`{}>")
+
+
+def _is_git_exec_flag(token: str) -> bool:
+    name = token.split("=", 1)[0]
+    if name == "-c":
+        return True
+    return len(name) > 2 and any(full.startswith(name) for full in _GIT_EXEC_LONG_FLAGS)
+
+
+def _is_data_only_command(line: str) -> bool:
+    """行が data-only 許可リストのコマンドか。
+
+    **生の先頭語**で判定し、何も読み飛ばさない:
+    - _split_prefix のようにラッパーを剥がさない。`watch echo "…"` は watch が引数を
+      `sh -c` で実行するのに、剥がすと echo に見えて許可リストを通ってしまう。
+    - 先頭の `VAR=value` も読み飛ばさない。`GIT_EDITOR` / `GIT_SSH_COMMAND` /
+      `GIT_EXTERNAL_DIFF` などは値を git がコマンドとして実行する。
+    - パス付きの語 (`./cat` / `/tmp/x/git`) は許可リストのコマンドではない。
+    `timeout` / `env` / 代入付きの行は除外の対象外になるが、それは安全側。
+    """
+    if any(ch in _NOT_DATA_ONLY_CHARS for ch in line):
+        return False
+    tokens = _tokenize(line)
+    if not tokens or "/" in tokens[0] or _ENV_ASSIGNMENT.match(tokens[0]):
+        return False
+    exe = tokens[0].casefold()
+    if exe in _DATA_ONLY_EXECUTABLES:
+        return True
+    args = tokens[1:]
+    if exe == "gh":
+        return bool(args) and args[0] in _DATA_ONLY_GH_SUBCOMMANDS
+    if exe != "git":
+        return False
+    if any(_is_git_exec_flag(t) for t in args):
+        return False
+    sub = _strip_global_flags("git", args)
+    return bool(sub) and sub[0] in _DATA_ONLY_GIT_SUBCOMMANDS
+
+
+def _deny_only_in_inert_text(command: str) -> bool:
+    """DENY に一致した行が、実行されないテキストの中にしか無いか。
+
+    本体をコードとして読ませる形 (stdin インタプリタ / プロセス置換) は対象外。
+    実行されるテキストだけを同じ _split_commands 経路で検査し直し、そこに DENY が
+    無く、かつ実行されるコマンドがすべて data-only の許可リストに入るときだけ True。
+    元の行と実行テキストの行を文字列で突き合わせはしない (`a; sudo b` のように
+    分割された断片は一致せず、本物のコマンドを除外してしまうため)。
+    """
+    if stdin_interpreter_label(command) or _PROCESS_SUBSTITUTION.search(command):
+        return False
+    texts = _live_texts(command)
+    if texts is None:
+        return False
+    for text in texts:
+        subs = _split_commands(text)
+        if _find_deny_in_lines(subs)[0]:
+            return False
+        for part in subs:
+            for line in part.splitlines():
+                line = line.strip()
+                if line and not _is_data_only_command(line):
+                    return False
+    return True
+
+
+# Claude は Codex を `codex exec` (Bash) で呼ぶ (Codex CLI 0.154 が MCP サーバー
+# モードを削除したため)。codex の呼び出しは **許可リスト**で判定し、外れたものは審査
+# モデルの判定に関わらず利用者の確認を経る (codex_flag_ask_reason)。許すのは
+# codex-consultation / codex-image-gen スキルが使う形だけ:
+#   - `-s read-only`、または `-C` がセッションのスクラッチパッド内の `-s workspace-write`
+#   - `-c sandbox_mode=read-only` / `-c model_reasoning_effort=…` (値は TOML として解読)
+#   - プロンプトファイルを stdin で渡すなら、同じコマンドで先に secret_scan.py に通す
+#   - 前置の代入は EDITOR_AI_ONESHOT だけ、サブコマンドは exec (resume) / features list
+# 危険フラグの列挙 (denylist) は綴りの抜け (`-pevil`、`-c=k=v`、TOML エスケープ、
+# `CODEX_HOME=`、`mcp_servers.*` / `notify` 等の設定キー) を塞ぎきれなかった。フラグは
+# `codex` の後ろのどこにでも置けるので、permissions.ask の前方一致でも表せない。
+# Claude Code のセッション用スクラッチパッドの置き場所 (`/tmp/claude-<uid>/…`)。realpath
+# した `-C` の照合にだけ使い、ここに一時ファイルは作らない。`<uid>/` まで要求するのは、
+# `/tmp/claude-evil` のような同じ接頭辞の別ディレクトリを通さないため。
+_CODEX_SCRATCH_DIR = re.compile(r"^(?:/private)?/tmp/claude-\d+/")  # nosec B108
+# シェルが展開して別の語にするブレース (`{x,-s}` → `x -s`、`{1..2}`)。hook はその結果を
+# 見られないので、`$` / バッククォートと同じく評価できない引数として扱う。
+_BRACE_EXPANSION = re.compile(r"\{[^{}]*(?:,|\.\.)[^{}]*\}")
+_CODEX_VALUE_FLAGS = {
+    "-s": "sandbox",
+    "--sandbox": "sandbox",
+    "-C": "cd",
+    "--cd": "cd",
+    "-c": "config",
+    "--config": "config",
+    "-o": "other",
+    "--output-last-message": "other",
+    "-m": "other",
+    "--model": "other",
+    "-i": "other",
+    "--image": "other",
+    "--color": "other",
+    "--output-schema": "other",
+}
+_CODEX_BARE_FLAGS = frozenset(
+    {
+        "--skip-git-repo-check",
+        "--json",
+        "--ephemeral",
+        "--version",
+        "-V",
+        "--help",
+        "-h",
+    }
+)
+_CODEX_ENV_OK = frozenset({"EDITOR_AI_ONESHOT"})
+_SHELL_REDIRECT = re.compile(r"^(?:\d+|&)?(<<<|<<|<|>>|>)(&\d+|&-)?(.*)$")
+
+
+def _codex_config_value(raw: str) -> str | None:
+    """`-c key=VALUE` の VALUE を Codex と同じく TOML として解読する。
+
+    `"danger\\u002dfull-access"` のようなエスケープも解読した値で照合するため。
+    TOML として読めない裸の語 (`read-only`) は Codex も文字列として扱うのでそのまま。
+    tomllib (3.11+) が無い Python 3.9 では、エスケープを含む値を解読不能 (None) とする。
+    """
+    try:
+        import tomllib
+    except ImportError:  # Python < 3.11
+        return None if "\\" in raw else raw.strip().strip("'\"")
+    try:
+        value = tomllib.loads(f"v = {raw}")["v"]
+    except (tomllib.TOMLDecodeError, KeyError):
+        return None if "\\" in raw else raw.strip().strip("'\"")
+    except (ValueError, RecursionError):
+        # 深い入れ子 (`[[[…`) や桁数の多すぎる整数。解読不能 = 許可リスト外。
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _mask_quoted_spans(text: str) -> str | None:
+    """クォート区間 ('…' / "…" / $'…') を `0` に置き換えた綴り。未閉鎖なら None。
+
+    秘密スキャンが実際に実行される位置にあるかを文字列照合で確かめるため。クォートの
+    中に書かれた `secret_scan.py < /p &&` (echo の引数など) を本物と取り違えない。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if ch == "'" or text.startswith("$'", i) or ch == '"':
+            ansi = ch == "$"
+            quote = "'" if ansi else ch
+            j = i + (2 if ansi else 1)
+            while j < n and text[j] != quote:
+                j += 2 if text[j] == "\\" and (ansi or quote == '"') else 1
+            if j >= n:
+                return None
+            out.append("0")
+            i = j + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _prompt_file_scanned_first(command: str, stdin_file: str) -> bool:
+    """コマンドが `secret_scan.py < FILE && [VAR=v ...] codex` の連鎖を含むか。
+
+    スキャンはコマンド位置 (先頭か `;` `&` `|` `(` の直後) で実行され、`&&` で直接
+    codex に繋がっていなければならない: 後ろにある、`||` を挟む、`;` で区切る、
+    クォートの中に書かれている、のいずれもスキャンを送信の条件にしない。
+    """
+    masked = _mask_quoted_spans(command)
+    if masked is None:
+        return False
+    chain = (
+        r"(?:^|[;&|(])\s*(?:python3?\s+)?\S*secret_scan\.py\s*<\s*"
+        + re.escape(stdin_file)
+        + r"\s*&&\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\S*codex\b"
+    )
+    return re.search(chain, masked, re.M) is not None
+
+
+def _codex_line_reason(line: str, command: str) -> str:
+    tokens = _tokenize(line)
+    at = next(
+        (i for i, t in enumerate(tokens) if t.rsplit("/", 1)[-1].casefold() == "codex"),
+        None,
+    )
+    if at is None:
+        return "a codex invocation this hook cannot read"
+    for tok in tokens[:at]:
+        if _ENV_ASSIGNMENT.match(tok) and tok.split("=", 1)[0] not in _CODEX_ENV_OK:
+            return f"codex run with '{tok.split('=', 1)[0]}' set"
+    args = tokens[at + 1 :]
+    positionals: list[str] = []
+    sandbox = cd = stdin_file = None
+    stdin_inline = False
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        i += 1
+        if "$" in tok or "`" in tok or _BRACE_EXPANSION.search(tok):
+            return "a codex argument with an expansion this hook cannot evaluate"
+        redirect = _SHELL_REDIRECT.match(tok)
+        if redirect:
+            op, dup, target = redirect.groups()
+            if not dup and not target:
+                target = args[i] if i < len(args) else ""
+                i += 1
+            if "$" in target or "`" in target or _BRACE_EXPANSION.search(target):
+                return "a codex redirect with an expansion this hook cannot evaluate"
+            if op == "<":
+                stdin_file = target
+            elif op in ("<<", "<<<"):
+                stdin_inline = True
+            continue
+        if tok == "--":
+            positionals += args[i:]
+            break
+        if tok == "-" or not tok.startswith("-"):
+            positionals.append(tok)
+            continue
+        name, eq, value = tok.partition("=")
+        if name in _CODEX_BARE_FLAGS and not eq:
+            continue
+        if not name.startswith("--"):  # short option, value may be glued (`-pevil`)
+            name, value = tok[:2], tok[2:].removeprefix("=")
+            eq = "=" if value else ""
+        if name not in _CODEX_VALUE_FLAGS:
+            return f"codex flag '{name}' is outside the allowlist"
+        if not eq:
+            value = args[i] if i < len(args) else ""
+            i += 1
+        if "$" in value or "`" in value or _BRACE_EXPANSION.search(value):
+            return "a codex argument with an expansion this hook cannot evaluate"
+        kind = _CODEX_VALUE_FLAGS[name]
+        if kind == "sandbox":
+            if value not in ("read-only", "workspace-write"):
+                return f"codex sandbox '{value}'"
+            sandbox = value
+        elif kind == "cd":
+            cd = value
+        elif kind == "config":
+            key, sep, raw = value.partition("=")
+            key = key.strip().strip("'\"")
+            decoded = _codex_config_value(raw) if sep else None
+            if not (
+                (key == "sandbox_mode" and decoded == "read-only")
+                or (key == "model_reasoning_effort" and decoded is not None)
+            ):
+                return f"codex config '{key}' is outside the allowlist"
+    if positionals and positionals[0] == "features":
+        return "" if positionals[1:] in ([], ["list"]) else "codex features change"
+    if positionals and positionals[0] not in ("exec", "e"):
+        return f"codex subcommand '{positionals[0]}' is outside the allowlist"
+    if sandbox == "workspace-write" and not (
+        cd and _CODEX_SCRATCH_DIR.match(os.path.realpath(cd))
+    ):
+        return "codex workspace-write outside a session scratchpad"
+    if not positionals:
+        return ""
+    prompt_args = positionals[1:]
+    if prompt_args[:1] == ["resume"]:
+        prompt_args = prompt_args[2:]
+    if not prompt_args or "-" in prompt_args:  # the prompt arrives on stdin
+        if stdin_file is not None:
+            if not _prompt_file_scanned_first(command, stdin_file):
+                return "codex prompt file was not secret-scanned first in this command"
+        elif not stdin_inline:
+            return "codex reads a prompt from a pipe that was not secret-scanned"
+        elif "$" in command or "`" in command:
+            # here-string / heredoc の本文は展開される: `<<< "$(cat f)"` は f を送る
+            return "codex reads a heredoc / here-string that expands a command"
+    return ""
+
+
+def codex_flag_ask_reason(sub_commands: list[str], command: str | None = None) -> str:
+    """codex の呼び出しが許可リスト外なら理由を返す (無ければ "")。
+
+    command (元のコマンド) を渡すと、DENY 層と同じく heredoc 本体や複数行のクォート
+    文字列の中の行は見ない (コミットメッセージが `codex … --add-dir` に触れるだけで
+    止まらないように)。解析できない形は従来どおり全サブコマンドを見る。
+    """
+    texts = _live_texts(command) if command is not None else None
+    subs = (
+        sub_commands
+        if texts is None
+        else [part for text in texts for part in _split_commands(text)]
+    )
+    for sub_cmd in subs:
+        for raw in sub_cmd.splitlines():
+            line = raw.strip()
+            if _resolve_executable(line) != "codex":
+                continue
+            reason = _codex_line_reason(line, command or line)
+            if reason:
+                return f"{reason} — confirm manually"
+    return ""
+
+
+def find_deny_command(
+    sub_commands: list[str], command: str | None = None
+) -> tuple[bool, str]:
+    """サブコマンド列から最初に一致した危険コマンドを返す (無ければ (False, ""))。
+
+    _split_commands は改行を区切りとして扱わない (シェルは扱う) ため、各サブ
+    コマンドをさらに行単位に分けて検査する。`ls\\nsudo rm -rf /` のように改行の
+    後ろへ隠した危険コマンドを取りこぼさない (high_risk_label と同じ改行対策)。
+
+    ただし行単位の分割はクォートも heredoc も見ないので、コミットメッセージや
+    heredoc 本体の 1 行が `ssh …` / `curl …` で始まるだけでハード DENY になる
+    (層 1 の deny は ask で覆せない)。Claude Code 自身のコミット形
+    (`git commit -m "$(cat <<'EOF' …)"`) で日常的に起きていた。command (元の
+    コマンド) を渡すと、一致がシェルの実行しないテキストの中だけにあり、実行される
+    のが data-only のコマンドだけなら除外する (_deny_only_in_inert_text)。
+    """
+    matched, deny_name = _find_deny_in_lines(sub_commands)
+    if matched and command is not None and _deny_only_in_inert_text(command):
+        return False, ""
+    return matched, deny_name
 
 
 # -------------------------------------------------------------------
@@ -2578,40 +3120,56 @@ _CREDENTIAL_REFERENCE = (
     r"(?=[\s;,)\]}\"'`\\]|$)"
 )
 
+# 既知形式トークンの「開始境界」。`\b` は使わない: `\b` は `_` と英数字を同じ語の
+# 文字として扱うので、エスケープ `\n` / `\t` の `n` / `t` の直後 (`printf 'a\nghp_…'`、
+# `gh api` / `jq -c` が出す JSON 文字列中の改行) や `_` の直後 (`X=abc_ghp_…`) に
+# 密着したトークンで境界が成立せず、生のまま Gemini / Codex へ送られていた。
+# 直前が英数字でなければ境界とし (`_` は境界側)、英数字でもそれがバックスラッシュ
+# エスケープの一部なら境界とする。直前が素の英数字のもの (`mynpm_…`) は従来どおり
+# 拾わない。share 用 dossier の伏字 (dossier_redact.py) もこの表を流用する。
+# エスケープは `\n` 等の 1 文字形に加え、同じ改行の 16 進 / Unicode / 8 進表記
+# (`\x0a` / `\u000a` / `\012`) も境界とする (どれも末尾が英数字で `\b` が立たない)。
+_TOKEN_START = (
+    r"(?:(?<![A-Za-z0-9])|(?<=\\[nrtfv])|(?<=\\x[0-9A-Fa-f]{2})"
+    r"|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\[0-7]{3}))"
+)
+
 _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
-    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("GitHub PAT", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
-    ("AWS access key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
-    ("Google OAuth token", re.compile(r"\bya29\.[0-9A-Za-z_\-]{20,}")),
-    ("OpenAI key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
+    ("GitHub token", re.compile(_TOKEN_START + r"gh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("GitHub PAT", re.compile(_TOKEN_START + r"github_pat_[A-Za-z0-9_]{20,}\b")),
+    ("AWS access key", re.compile(_TOKEN_START + r"(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("Google API key", re.compile(_TOKEN_START + r"AIza[0-9A-Za-z_\-]{35}\b")),
+    ("Google OAuth token", re.compile(_TOKEN_START + r"ya29\.[0-9A-Za-z_\-]{20,}")),
+    ("OpenAI key", re.compile(_TOKEN_START + r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
     # xapp- は Slack のアプリレベルトークン (Socket Mode)。
     (
         "Slack token",
-        re.compile(r"\b(?:xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,})"),
+        re.compile(
+            _TOKEN_START + r"(?:xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,})"
+        ),
     ),
-    ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
+    ("Stripe key", re.compile(_TOKEN_START + r"[rs]k_live_[0-9A-Za-z]{16,}\b")),
     # 以下は接頭辞だけで高精度に判定できる既知形式 (キーワード付き代入の助けが無い
     # 裸の値でも拾う)。長さは各サービスの発行形式に合わせ、near-miss は拾わない。
-    ("npm token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
-    ("GitLab token", re.compile(r"\bglpat-[0-9A-Za-z_\-]{20,}")),
-    ("Hugging Face token", re.compile(r"\bhf_[A-Za-z0-9]{34,}")),
+    ("npm token", re.compile(_TOKEN_START + r"npm_[A-Za-z0-9]{36}\b")),
+    ("GitLab token", re.compile(_TOKEN_START + r"glpat-[0-9A-Za-z_\-]{20,}")),
+    ("Hugging Face token", re.compile(_TOKEN_START + r"hf_[A-Za-z0-9]{34,}")),
     (
         "SendGrid key",
-        re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}"),
+        re.compile(_TOKEN_START + r"SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}"),
     ),
     # PyPI のトークンは macaroon で、`AgEI` は pypi.org (`AgEN` は test.pypi.org) を指す
     # 固定の先頭。
-    ("PyPI token", re.compile(r"\bpypi-AgE[IN][A-Za-z0-9_\-]{16,}")),
+    ("PyPI token", re.compile(_TOKEN_START + r"pypi-AgE[IN][A-Za-z0-9_\-]{16,}")),
     (
         "Slack webhook URL",
         re.compile(
             r"hooks\.slack\.com/services/T[A-Z0-9]{6,}/B[A-Z0-9]{6,}/[A-Za-z0-9]{12,}"
         ),
     ),
-    ("Docker PAT", re.compile(r"\bdckr_pat_[A-Za-z0-9_\-]{20,}")),
+    ("Docker PAT", re.compile(_TOKEN_START + r"dckr_pat_[A-Za-z0-9_\-]{20,}")),
     # DigitalOcean: dop (PAT) / doo (OAuth) / dor (refresh) はいずれも v1_ + 64 桁 hex。
-    ("DigitalOcean token", re.compile(r"\bdo[opr]_v1_[a-f0-9]{64}\b")),
+    ("DigitalOcean token", re.compile(_TOKEN_START + r"do[opr]_v1_[a-f0-9]{64}\b")),
     # OpenPGP の armor は `PRIVATE KEY BLOCK-----` で終わる (gpg
     # --export-secret-keys --armor の出力)。`KEY-----` 直結だけだと
     # PEM 形式 (OPENSSH / RSA / EC / ENCRYPTED) しか拾えず、PGP 秘密鍵は素通り
@@ -2626,7 +3184,10 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
         # ヘッダ部は有界にする (JWT のヘッダは数百文字)。無制限だと `eyJ-eyJ-...` の
         # ように `eyJ` が連続する入力で、各出現が入力末尾まで走ってから失敗し二次になる
         # (100 KB で約 2 秒)。ペイロード以降は `.` で区切られるので有界化しない。
-        re.compile(r"\beyJ[A-Za-z0-9_\-]{1,2048}\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+        re.compile(
+            _TOKEN_START
+            + r"eyJ[A-Za-z0-9_\-]{1,2048}\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"
+        ),
     ),
     # Bearer / Basic は Authorization ヘッダ文脈に限定する。単に "Bearer" /
     # "Basic" という英単語 (コミットメッセージ等) での誤検知を避けるため。
@@ -2702,7 +3263,10 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
         "secret assignment",
         re.compile(
             r"(?i)(?:password|passwd|passphrase|secret|token|credential"
-            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
+            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret"
+            # ハイフン区切りの `secret-key` / `private-key` は下の [A-Za-z0-9_] が
+            # `-` で止まるため、語として足さないと `--secret-key=V` が素通りする。
+            r"|private[_-]?key|secret[_-]?key)"
             # 末尾の識別子は 64 文字までに有界化する。無制限 (`*`) だと、区切りなしの
             # `token` 連打が各出現で連打の末尾まで貪欲に食い、`[=:]` に届かず巻き戻す
             # ことを出現ごとに繰り返して入力長の二次になる (100 KB で分単位)。
@@ -2721,11 +3285,21 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     # キーワード集合は上の "secret assignment" と対称に保つ (passphrase / credential
     # も含める): --passphrase / --credential は gpg / openssl / バックアップ系 CLI で
     # 生の資格情報を渡す実在フラグで、片方の表にだけあると素通りする。
+    #
+    # キーワードの前には、どの資格情報かを名指す接頭語 (`--access-token` /
+    # `--github-token` / `--aws-secret-access-key`) を許す。実在のフラグはこちらが
+    # 多数派で、`--` 直後だけを見ていたため値が生のまま Gemini と detail log へ
+    # 流れていた。接頭語は語 8 個までに有界化する (区切り [-_] で語が決まるので
+    # 巻き戻しは線形)。`--no-password <arg>` は否定の真偽フラグなので除く。
+    # キーワードの直後に `\s+` を要求する点は変えない: `--token-file path` /
+    # `--private-key-file path` のようなパスを取るフラグは拾わない。
     (
         "secret flag",
         re.compile(
-            r"(?i)--(?:password|passwd|passphrase|token|secret|credential"
-            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)"
+            r"(?i)--(?!no[-_])(?:[A-Za-z0-9]+[-_]){0,8}"
+            r"(?:password|passwd|passphrase|token|secret|credential"
+            r"|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret"
+            r"|private[_-]?key|secret[_-]?key)"
             r"\s+(?![-$])\S{6,}"
         ),
     ),
@@ -2818,17 +3392,31 @@ def build_review_prompt(tool_name: str, tool_input) -> str:
     )
 
 
+# 両入口 ($GEMINI_MODEL / $GEMINI_FLASH_MODEL 未設定時) の既定モデル。入口ごとに
+# 文字列を書くと、下の「既定モデルにだけ thinkingLevel を送る」判定と食い違う。
+DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
+DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-flash-latest"
+
+
 def _build_gemini_payload(target_model: str, prompt: str) -> tuple[str, bytes]:
+    """generateContent の URL と本体を返す。
+
+    `thinkingLevel: "minimal"` (と短い出力上限) は既定モデルにだけ送る。実測で
+    受け付けたのは gemini-flash-lite-latest だけで、フォールバック先の
+    gemini-flash-latest や gemini-pro-latest / gemini-2.5-flash-lite は HTTP 400
+    ("Thinking level ... is not supported") を返す (scripts/gemini_api.py の
+    build_request の記録)。全モデルへ送っていたため、フォールバックは毎回 400 で
+    失敗し (一次の障害は常に Codex 行き)、$GEMINI_MODEL を上書きすると一次まで
+    壊れていた。それ以外のモデルには temperature だけを送り、出力上限も付けない:
+    思考を抑えないモデルでは思考トークンが上限を食い、判定本文が空で返りうる。
+    """
     target_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
+    config: dict = {"temperature": 0.0}
+    if target_model == DEFAULT_GEMINI_MODEL:
+        config["maxOutputTokens"] = 256
+        config["thinkingConfig"] = {"thinkingLevel": "minimal"}
     data = json.dumps(
-        {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": 256,
-                "temperature": 0.0,
-                "thinkingConfig": {"thinkingLevel": "minimal"},
-            },
-        }
+        {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": config}
     ).encode("utf-8")
     return target_url, data
 

@@ -15,6 +15,10 @@
 # あり、claude 変種 (.claude/hooks/bash-review.py) 側の木を意図的にミラーした
 # 複製である。変更するときは両方の入口を揃えて直すこと。共有分岐の理由コメントは
 # .claude 側を正とし、こちらは参照と Codex 固有の注記に留める。
+# 注釈の遅延評価は Python 3.9 で import を通すため (下の `decided_exit: int | None`
+# はモジュール直下の注釈なので、これが無いと 3.9 では実行時に評価されて落ちる)。
+from __future__ import annotations
+
 import json
 import os
 import sys
@@ -29,11 +33,14 @@ sys.path.insert(
     ),
 )
 from _bash_review_common import (
+    DEFAULT_GEMINI_FALLBACK_MODEL,
+    DEFAULT_GEMINI_MODEL,
     _can_skip_review,
     _sanitize_notify,
     _split_commands,
     build_review_prompt,
     classify_high_risk,
+    codex_flag_ask_reason,
     combine_high_risk_verdicts,
     ensure_private_dir,
     find_deny_command,
@@ -53,8 +60,10 @@ from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
 api_key = os.environ.get("GEMINI_API_KEY", "")
-gemini_model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
-gemini_fallback_model = os.environ.get("GEMINI_FLASH_MODEL", "gemini-flash-latest")
+gemini_model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+gemini_fallback_model = os.environ.get(
+    "GEMINI_FLASH_MODEL", DEFAULT_GEMINI_FALLBACK_MODEL
+)
 
 
 # 判定確定後にログ/通知が例外を投げても、下の except の fail-safe
@@ -166,13 +175,23 @@ try:
     secret_found, secret_label = scan_secrets(command, tool_input)
 
     # --- 危険コマンドの即時拒否 (改行分割は find_deny_command が捌く) ---
-    matched, deny_name = find_deny_command(sub_commands)
+    # command も渡す理由は .claude 側の同じ行のコメントを参照。
+    matched, deny_name = find_deny_command(sub_commands, command)
     if matched:
         reason = f"Blocked dangerous command: '{deny_name}'"
         emit_block(reason)
         write_detail_log({"Result": "DENY (pre-blocked)"}, redact_input=secret_found)
         log_summary("DENY", "pre", reason, redact_command=secret_found)
         notify("Bash Review - 拒否", f"危険コマンド検出: {deny_name}", 8)
+        sys.exit(2)
+
+    # --- codex の権限を広げるフラグは静的にブロック (.claude 側では ask) ---
+    codex_reason = codex_flag_ask_reason(sub_commands, command)
+    if codex_reason:
+        emit_block(codex_reason)
+        write_detail_log({"Result": "ASK (codex flag)"}, redact_input=secret_found)
+        log_summary("ASK", "pre", codex_reason, redact_command=secret_found)
+        notify("Bash Review - 確認が必要", "codex の権限を広げるフラグを検出", 8)
         sys.exit(2)
 
     # --- 安全コマンドのスキップ ---

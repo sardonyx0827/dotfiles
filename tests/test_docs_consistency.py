@@ -396,3 +396,89 @@ def test_main_runs_create_symlinks_before_any_package_install():
         "main() no longer links before installing packages; update README.md "
         "and this pair of tests together"
     )
+
+
+# Codex CLI 0.154 removed its MCP-server mode, so the `mcp__codex__*` tools can
+# never connect again: an instruction that still names them sends the model to
+# a tool that does not exist (and the advisor fallback chain silently skips to
+# Gemini). Every Codex call goes through `codex exec` now. The patterns are
+# assembled so this file does not match itself.
+_REMOVED_CODEX_MCP = re.compile(
+    "|".join(
+        (
+            re.escape("mcp__" + "codex__"),
+            re.escape("codex " + "mcp-server"),
+            re.escape("codex" + "-reply"),
+        )
+    )
+)
+
+
+def _tracked_files() -> list:
+    out = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [
+        p
+        for p in out.split("\0")
+        # Vendored by Codex itself, and tests that assert the absence.
+        if p and not p.startswith((".codex/skills/.system/", "tests/"))
+    ]
+
+
+def test_nothing_names_the_removed_codex_mcp_server():
+    hits = []
+    for rel in _tracked_files():
+        try:
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            if _REMOVED_CODEX_MCP.search(line):
+                hits.append(f"{rel}:{n}: {line.strip()[:100]}")
+    assert not hits, "still points at the removed Codex MCP server:\n" + "\n".join(hits)
+
+
+# Shell fences only: a Python example that quotes the command in a string (the
+# subprocess anti-pattern in python-scripting-patterns) is not an invocation.
+# Indented fences count too: the skills put the command inside a numbered list.
+_FENCE = re.compile(
+    r"^[ \t]*```(?:bash|sh|shell|zsh)\b[^\n]*\n(.*?)^[ \t]*```", re.M | re.S
+)
+
+
+def _codex_exec_command_lines() -> list:
+    lines = []
+    for rel_dir in (".claude/skills", ".claude/rules", ".claude/agents", ".claude"):
+        for path in _tracked_markdown(rel_dir):
+            if rel_dir == ".claude" and path.parent != REPO_ROOT / ".claude":
+                continue
+            for block in _FENCE.findall(path.read_text(encoding="utf-8")):
+                for line in block.splitlines():
+                    if re.search(r"\bcodex exec\b", line):
+                        lines.append((path.relative_to(REPO_ROOT), line.strip()))
+    return lines
+
+
+def test_skills_document_codex_exec_invocations():
+    # The migration must leave a runnable command shape behind, not only prose.
+    assert _codex_exec_command_lines(), "no `codex exec` command shape documented"
+
+
+@pytest.mark.parametrize("rel,line", _codex_exec_command_lines() or [("", "")])
+def test_every_documented_codex_exec_scans_the_prompt_first(rel, line):
+    """A prompt written with the Write tool never passes through bash-review, so
+    the secret scan in front of `codex exec` is the only one it gets. Chained with
+    `&&` it also fails closed: exit 1 (a credential) and exit 2 (scanner could not
+    run) both stop the send."""
+    if not line:
+        pytest.skip("no documented invocation")
+    scan_at = line.find("secret_scan.py")
+    assert 0 <= scan_at < line.index("codex exec"), f"{rel}: {line}"
+    assert "&&" in line[scan_at : line.index("codex exec")], f"{rel}: {line}"
+    for forbidden in ("--last", "danger-full-access", "--dangerously"):
+        assert forbidden not in line, f"{rel}: {forbidden} in {line}"

@@ -200,3 +200,28 @@ def test_agent_catalog_model_column_matches_frontmatter():
         assert frontmatter_value(fm, "model", stem) == model, (
             f"{stem}: catalog Model column drifted from the frontmatter"
         )
+
+
+def _tools(stem: str) -> list:
+    fm, _ = split_frontmatter(
+        (CLAUDE_AGENTS_DIR / f"{stem}.md").read_text(encoding="utf-8"), stem
+    )
+    return [t.strip() for t in frontmatter_value(fm, "tools", stem).split(",")]
+
+
+def test_no_agent_lists_a_removed_codex_mcp_tool():
+    # Codex CLI 0.154 removed its MCP-server mode; a `tools:` entry naming one of
+    # its tools grants nothing, and an agent whose only tools were those can do
+    # nothing at all.
+    for path in sorted(CLAUDE_AGENTS_DIR.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        assert not [t for t in _tools(path.stem) if t.startswith("mcp__" + "codex")], (
+            f"{path.stem} still lists a Codex MCP tool"
+        )
+
+
+def test_codex_delegator_can_run_codex_exec():
+    tools = _tools("codex-delegator")
+    assert "Bash" in tools  # `codex exec` is a CLI now
+    assert "Write" in tools  # the prompt file the secret scan reads
