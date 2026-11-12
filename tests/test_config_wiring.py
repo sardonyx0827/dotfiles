@@ -400,6 +400,39 @@ def test_deny_executables_have_permission_deny_backstop():
     )
 
 
+def _edit_ask_paths() -> list[str]:
+    """Representative concrete paths for every `Edit(<glob>)` in permissions.ask."""
+    asks = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))["permissions"]["ask"]
+    paths: list[str] = []
+    for rule in asks:
+        if not (rule.startswith("Edit(") and rule.endswith(")")):
+            continue
+        glob = rule[len("Edit(") : -1]
+        if glob.endswith("/**"):
+            glob = glob[: -len("/**")] + "/a"
+        if glob.startswith("//**/"):
+            tail = glob[len("//**/") :]
+            paths += [f"/r/{tail}", tail]
+        else:
+            paths.append(glob)
+    return paths
+
+
+# Bash can write anything Edit can, so a path that permissions.ask guards against
+# Edit must also be recognised by bash-review's harness-write check -- otherwise
+# `sed -i` / `>` / `tee` reach the same file through the single-model fast path.
+# The relation is ⊇: the Bash side also guards the global CLAUDE.md.
+def test_bash_review_protects_every_edit_ask_path():
+    paths = _edit_ask_paths()
+    assert paths, "no Edit(...) rules found in permissions.ask"
+    missing = [p for p in paths if not _bash_review._is_harness_target(p)]
+    assert not missing, (
+        "bash-review's harness-write check does not recognise these Edit-ask "
+        f"paths: {missing}"
+    )
+    assert _bash_review._is_harness_target(".claude/CLAUDE.md")
+
+
 # `mkfs` is special-cased in the hook (_is_deny_command): it denies bare `mkfs`
 # *and* the `mkfs.<fs>` family (mkfs.ext4, mkfs.xfs, ...) via a `startswith`
 # prefix match. A permissions.deny rule cannot express that family in one entry:

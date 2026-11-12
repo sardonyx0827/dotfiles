@@ -46,6 +46,7 @@ from _bash_review_common import (
     ensure_private_dir,
     find_deny_command,
     format_dual_verdict_reason,
+    harness_write_ask_reason,
     input_limit_reason,
     notify,
     prune_dir,
@@ -195,6 +196,15 @@ try:
         write_detail_log({"Result": "ASK (codex flag)"}, redact_input=secret_found)
         log_summary("ASK", "pre", codex_reason, redact_command=secret_found)
         notify("Bash Review - 確認が必要", "codex の権限を広げるフラグを検出", 8)
+        sys.exit(2)
+
+    # --- ハーネス自身の設定への書き込みは静的にブロック (.claude 側では ask) ---
+    harness_reason = harness_write_ask_reason(sub_commands, command)
+    if harness_reason:
+        emit_block(harness_reason)
+        write_detail_log({"Result": "ASK (harness write)"}, redact_input=secret_found)
+        log_summary("ASK", "pre", harness_reason, redact_command=secret_found)
+        notify("Bash Review - 確認が必要", "ハーネス設定への書き込みを検出", 8)
         sys.exit(2)
 
     # --- 安全コマンドのスキップ ---

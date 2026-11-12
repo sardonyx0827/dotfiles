@@ -3184,6 +3184,328 @@ def classify_high_risk(sub_commands: list[str], command: str) -> str:
     return ", ".join(p for p in parts if p)
 
 
+# --- ハーネス自身の設定への Bash 書き込み (決定論的 ask) --------------------------
+# permissions.ask は Edit ツールによる settings / hooks / mods / codex の書き換えを毎回
+# 確認させるが、Bash から同じファイルへ書く形 (`>` / `tee` / `sed -i` / `python -c`) は
+# DENY・高リスクのどちらにも当たらず、Gemini 単独 ALLOW の経路で自動許可されうる。ゲート
+# 自身を書き換えるコマンドはモデルに委ねず人間へ回す。照合するのは書き込みの「形」で
+# あって言及ではない: 読み取り (`sed -n` / `git diff`) は日常的に保護パスへ触れる
+# (実測で判定の約 4 分の 1)。網羅はしない。既知の穴は hooks/README.md に列挙してある。
+# tests/test_config_wiring.py が「Edit の ask 対象 ⊆ ここの保護対象」を pin している。
+_HARNESS_PATH = re.compile(
+    r"(?<![\w.-])\.claude/(?:settings(?:\.local)?\.json|CLAUDE\.md|hooks|mods)(?![\w.-])"
+    r"|(?<![\w.-])\.codex/hooks(?![\w.-])"
+    r"|(?:~|\$HOME|\$\{HOME\})/\.codex(?![\w.-])",
+    re.IGNORECASE,
+)
+# 書き込み先そのものとしての `.claude` / `.codex` ディレクトリ (`cp x ~/.claude/`)。
+_HARNESS_DIR = re.compile(r"(?:.*/)?\.(?:claude|codex)/?", re.IGNORECASE)
+# 書き込み先が展開 (glob / ブレース / 変数) を含むときは、展開の結果が保護対象になり
+# うるなら保護対象とみなす (_dynamic_harness_hint)。
+_DYNAMIC_WORD = re.compile(r"[*?\[{$`]")
+_GLOB_OR_BRACE = re.compile(r"[*?\[{]")
+_HARNESS_LEAF_FILES = frozenset({"settings.json", "settings.local.json", "claude.md"})
+_HARNESS_DIR_NAMES = frozenset({".claude", ".codex"})
+# 書き込み系のリダイレクト演算子 (`>` `>>` `>|` `&>` `&>>` `>&`)。記号だけのトークンの末尾で判定する。
+_WRITE_REDIRECT = re.compile(r"(?:>|>\||>&)$")
+_SHELL_PUNCTUATION = frozenset("();<>|&")
+# 全被演算子が書き込み先になるもの / 最後の被演算子 (と -t DIR) が書き込み先になるもの
+_HARNESS_ANY_OPERAND_WRITERS = frozenset(
+    {"tee", "rm", "truncate", "touch", "chmod", "mv"}
+)
+_HARNESS_DEST_WRITERS = frozenset({"cp", "install", "ln", "rsync"})
+# 書き込み先ではない値を取るフラグ (`touch -r REF` の REF は読むだけ)
+_HARNESS_WRITER_VALUE_FLAGS = {
+    "touch": frozenset({"-r", "--reference", "-d", "--date", "-t"}),
+    "truncate": frozenset({"-s", "--size", "-r", "--reference"}),
+    "chmod": frozenset({"--reference"}),
+}
+# `-t DIR` を束ねた形 (`-rt DIR` / `-Dt DIR`) と、値を密着させた形 (`-tDIR` / `-rtDIR`)
+_TARGET_DIR_BUNDLE = re.compile(r"^-[A-Za-z]*t$")
+_TARGET_DIR_GLUED = re.compile(r"^-[A-Za-z]*?t(.+)$")
+_SED_IN_PLACE = re.compile(r"^(?:-[A-Za-z]*i|--in-place(?:=|$))")
+_SED_SCRIPT_FLAGS = frozenset({"-e", "-f", "--expression", "--file", "-l"})
+# `-M` / `-m` / `-I` は値 (モジュール名・パス) を密着させるので、その中の i は -i ではない
+_PERL_IN_PLACE = re.compile(r"^-(?![MmI])[A-Za-z0-9]*i")
+_PERL_CODE_FLAGS = frozenset({"-e", "-E"})
+_AWK_EXECUTABLES = frozenset({"awk", "gawk", "mawk", "nawk"})
+
+
+def _is_harness_target(token: str) -> bool:
+    """書き込み先トークンがハーネスの設定 (settings / hooks / mods 等) を指しうるか。"""
+    if _HARNESS_PATH.search(token) or _HARNESS_DIR.fullmatch(token):
+        return True
+    home = os.environ.get("HOME", "").rstrip("/")
+    if home and re.match(re.escape(home) + r"/\.codex(?![\w.-])", token, re.IGNORECASE):
+        return True
+    return bool(_DYNAMIC_WORD.search(token)) and _dynamic_harness_hint(token)
+
+
+def _dynamic_harness_hint(token: str) -> bool:
+    """展開を含む書き込み先が、展開の結果として保護対象になりうるか。
+
+    - `.claude` / `.codex` の直下が展開を含むか、そこで終わる (`.claude/sett*` /
+      `.claude/{hooks,x}/a` / `$HOME/.claude`)
+    - 保護対象の末端ファイル名が見える (`~/.cl*/settings.json` / `$D/settings.json`)
+    - `hooks` / `mods` の親が `.claude` / `.codex` か glob・ブレースを含む (`~/.cl*/hooks/x`)。
+      `src/hooks/*.ts` (React の hooks) のように親が固定名なら外す
+
+    正規表現 1 本にすると、展開文字の位置を探す後戻りが長いトークンで 2 乗になるので、
+    部品ごとに見る。
+    """
+    parts = token.split("/")
+    for i, part in enumerate(parts):
+        name = part.casefold()
+        if name in _HARNESS_LEAF_FILES:
+            return True
+        if name in _HARNESS_DIR_NAMES:
+            following = parts[i + 1] if i + 1 < len(parts) else ""
+            if not following or _DYNAMIC_WORD.search(following):
+                return True
+        if name in ("hooks", "mods") and i > 0:
+            parent = parts[i - 1]
+            if parent.casefold() in _HARNESS_DIR_NAMES or _GLOB_OR_BRACE.search(parent):
+                return True
+    return False
+
+
+def _redirect_targets(line: str) -> list[str] | None:
+    """行の書き込み系リダイレクトの行き先。シェルとして字句解析できなければ None。
+
+    punctuation_chars の shlex はクォートを保ったまま `x>file` を `x` `>` `file` に割る
+    (`'a>b'` は 1 語のまま)。commenters を空にするのは、既定の `#` が `s#a#b#` のような
+    語の途中でも切ってしまうため (コメントは _live_texts が先に落としている)。
+    """
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    return [
+        tokens[i + 1]
+        for i, tok in enumerate(tokens[:-1])
+        if set(tok) <= _SHELL_PUNCTUATION and _WRITE_REDIRECT.search(tok)
+    ]
+
+
+def _operands(
+    args: list[str], value_flags: frozenset[str] = frozenset()
+) -> tuple[list[str], bool]:
+    """フラグとリダイレクトを除いた被演算子と、value_flags が現れたか。"""
+    out: list[str] = []
+    saw = skip = ended = False
+    for tok in args:
+        if skip:
+            skip = False
+        elif ended:
+            out.append(tok)
+        elif tok == "--":
+            ended = True
+        elif _REDIRECT_ALONE.match(tok):
+            skip = True
+        elif _REDIRECT_GLUED.match(tok):
+            pass
+        elif tok.split("=", 1)[0] in value_flags:
+            saw = True
+            skip = "=" not in tok
+        elif not tok.startswith("-") or tok == "-":
+            out.append(tok)
+    return out, saw
+
+
+def _target_dir_values(args: list[str]) -> list[str]:
+    """cp / install / ln の `-t DIR` (束ね・密着形を含む) / `--target-directory[=]DIR` の DIR。"""
+    values = []
+    for i, tok in enumerate(args):
+        if tok.startswith("--"):
+            if tok == "--target-directory" and i + 1 < len(args):
+                values.append(args[i + 1])
+            elif tok.startswith("--target-directory="):
+                values.append(tok.split("=", 1)[1])
+        elif _TARGET_DIR_BUNDLE.match(tok):
+            if i + 1 < len(args):
+                values.append(args[i + 1])
+        else:
+            glued = _TARGET_DIR_GLUED.match(tok)
+            if glued:
+                values.append(glued.group(1))
+    return values
+
+
+def _writes_harness(exe: str, args: list[str]) -> bool:
+    """既知の書き込みコマンドが、保護対象を書き込み先に取るか。"""
+    if exe in _HARNESS_ANY_OPERAND_WRITERS:
+        value_flags = _HARNESS_WRITER_VALUE_FLAGS.get(exe, frozenset())
+        targets = _operands(args, value_flags)[0]
+    elif exe in _HARNESS_DEST_WRITERS:
+        # `-t DIR` があれば行き先はそれだけ (残りの被演算子はすべてコピー元)。
+        # rsync の -t は時刻保持で、行き先ではない。
+        target_dirs = [] if exe == "rsync" else _target_dir_values(args)
+        targets = target_dirs or _operands(args)[0][-1:]
+    elif exe == "dd":
+        targets = [t[len("of=") :] for t in args if t.startswith("of=")]
+    elif exe in ("sed", "gsed") and any(_SED_IN_PLACE.match(t) for t in args):
+        # スクリプトは -e/-f の値、それが無ければ最初の被演算子。BSD の `-i ''` の空語は除く
+        ops, scripted = _operands(args, _SED_SCRIPT_FLAGS)
+        ops = [t for t in ops if t]
+        targets = ops if scripted else ops[1:]
+    elif exe == "perl" and any(_PERL_IN_PLACE.match(t) for t in args):
+        ops, coded = _operands(args, _PERL_CODE_FLAGS)
+        targets = ops if coded else ops[1:]
+    else:
+        return False
+    return any(_is_harness_target(t) for t in targets)
+
+
+def _awk_program(args: list[str]) -> str:
+    """awk のインラインのプログラム (-f でファイルから読むなら "")。"""
+    skip = False
+    for tok in args:
+        if skip:
+            skip = False
+        elif tok == "--file" or (tok.startswith("-f") and not tok.startswith("--")):
+            return ""
+        elif tok in ("-F", "-v", "--assign", "--field-separator"):
+            skip = True
+        elif not tok.startswith("-"):
+            return tok
+    return ""
+
+
+def _harness_reason(form: str) -> str:
+    # 理由文は確認ダイアログとサマリーログへ出るので、コマンドの語を埋め込まない
+    # (同じ行の資格情報が紛れ込まないよう、固定の語彙だけで組む)。
+    return (
+        f"Bash {form} writes to the agent harness configuration "
+        "(settings / hooks / mods / CLAUDE.md / codex) — confirm manually"
+    )
+
+
+def _shell_code(line: str) -> str | None:
+    """行がシェルにコード文字列を渡す形 (`sh -c CODE` / `eval ARGS`) ならその文字列。
+
+    `-c` を含むフラグの直後の語をコードとする (`bash -o pipefail -c CODE` の pipefail は
+    オプションの値でありコードではない)。その後ろの位置引数はコードの `$0` / `$1` / `$@`
+    になるので、クォートしてコードの後ろへ足す: `sh -c 'rm "$@"' _ .claude/hooks/x` は
+    `rm` の被演算子として行き先が見え、読むだけのコード (`cat "$1"`) は書き込みにならない。
+    該当しなければ None。
+    """
+    rest = _split_prefix(_tokenize(line))
+    if not rest:
+        return None
+    exe = rest[0].rsplit("/", 1)[-1].casefold()
+    args = rest[1:]
+    if exe == "eval":
+        return " ".join(args)
+    if exe not in _SHELL_EXECUTABLES:
+        return None
+    for i, tok in enumerate(args):
+        if _is_pwsh_command_flag(tok) if exe == "pwsh" else _COMMAND_FLAG.match(tok):
+            if i + 1 >= len(args):
+                return ""
+            positional = args[i + 2 :]
+            if not positional:
+                return args[i + 1]
+            return args[i + 1] + " " + " ".join(shlex.quote(a) for a in positional)
+    return None
+
+
+def _feeds_shell_stdin(command: str) -> bool:
+    """stdin のコードを実行する裸のインタプリタのうち、シェルがあるか (python 等は除く)。"""
+    labels = stdin_interpreter_label(command)
+    return any(
+        _VERSION_SUFFIX.sub(
+            "", label.replace("stdin into ", "", 1).rsplit("/", 1)[-1].casefold()
+        )
+        in _SHELL_EXECUTABLES
+        for label in labels.split(", ")
+        if label
+    )
+
+
+def harness_write_ask_reason(
+    sub_commands: list[str], command: str, *, _depth: int = 0
+) -> str:
+    """コマンドがハーネス自身の設定へ書き込む形なら理由を返す (無ければ "")。
+
+    対象はシェルとして書き込みと断定できる形に限る: (1) 書き込み系リダイレクトの行き先、
+    (2) 既知の書き込みコマンドの行き先、(3) シェルのコード文字列 (`sh -c` / `eval`) の中の
+    (1)(2)、(4) awk のプログラム中の保護パス。python -c / node -e / `python3 - <<EOF` の
+    ような他言語のコードは読むのか書くのか静的に決められないので、ここでは扱わず高リスク層
+    (二モデル AND ゲート) に任せる (実測ではほぼ全てが hook のソースを読む解析だった)。
+
+    行の集め方は codex_flag_ask_reason と同じで、heredoc 本文・複数行のクォート・コメント
+    の中の行は見ない (コミットメッセージが `rm .claude/hooks/x` に触れるだけで止めない)。
+    ただし本文や stdin をシェルのコードとして実行する形 (`bash <<EOF` / `source <<EOF`) と、
+    複数行のコード文字列を渡す `sh -c` では、元の綴りの行もコマンドとして同じ規則に掛ける。
+    """
+    texts = _live_texts(command)
+    live_subs = (
+        None
+        if texts is None
+        else [part for text in texts for part in _split_commands(text)]
+    )
+    sourced = ("<<" in command or _PROCESS_SUBSTITUTION.search(command)) and any(
+        _resolve_executable(raw.strip()) in _SOURCING_EXECUTABLES
+        for sub in sub_commands
+        for raw in sub.splitlines()
+    )
+    # 複数行のクォートは _live_texts が _MULTILINE_SPAN に畳むので、`sh -c` のコードが
+    # そう見えたら元の綴りへ戻る。
+    multiline_shell_code = live_subs is not None and any(
+        (_shell_code(raw.strip()) or "").split(" ", 1)[0] == _MULTILINE_SPAN
+        for sub in live_subs
+        for raw in sub.splitlines()
+    )
+    if (
+        live_subs is None
+        or sourced
+        or multiline_shell_code
+        or _feeds_shell_stdin(command)
+    ):
+        redirect_text, subs = command, sub_commands
+    else:
+        redirect_text, subs = "\n".join(texts or []), live_subs
+    # リダイレクトは分割前の行で見る: `>|` (noclobber を無視する上書き) の `|` で
+    # _split_commands が行を割ると、演算子と行き先が別のパートに分かれてしまう。
+    # 行継続 (`> \<改行> path`) は先に畳む。
+    for raw in _join_line_continuations(redirect_text).splitlines():
+        targets = _redirect_targets(raw)
+        if targets is None:
+            if ">" in raw and _HARNESS_PATH.search(_normalize_cmd(raw)):
+                return _harness_reason("redirect")
+        elif any(_is_harness_target(t) for t in targets):
+            return _harness_reason("redirect")
+    for sub in subs:
+        lines = [raw.strip() for raw in sub.splitlines() if raw.strip()]
+        for line in lines:
+            rest = _split_prefix(_tokenize(line))
+            if not rest:
+                continue
+            exe = rest[0].rsplit("/", 1)[-1].casefold()
+            args = rest[1:]
+            if _writes_harness(exe, args):
+                return _harness_reason("file command")
+            if exe in _AWK_EXECUTABLES and _HARNESS_PATH.search(_awk_program(args)):
+                return _harness_reason("awk program")
+        if _depth >= 2:
+            continue
+        # シェルのコード文字列はそれ自体がコマンド。同じ規則を 1 段深く掛ける。複数行の
+        # パートはパート全体も見る (shlex は複数行のクォートを 1 語に保つので、改行を含む
+        # `sh -c '…'` のコードが丸ごと取れる)。
+        for candidate in lines + ([sub] if len(lines) > 1 else []):
+            code = _shell_code(candidate)
+            if code:
+                reason = harness_write_ask_reason(
+                    _split_commands(code), code, _depth=_depth + 1
+                )
+                if reason:
+                    return reason
+    return ""
+
+
 # 判定行の頭に付いてよい装飾 (引用・markdown の強調・箇条書き)。行頭の空白は
 # 照合の前に strip で落とす (_parse_verdict): パターンの先頭に `\s*` を置くと、
 # 装飾の後ろの `\s*` と空白を取り合い、空白の長い行の不一致で 2 乗時間になる。

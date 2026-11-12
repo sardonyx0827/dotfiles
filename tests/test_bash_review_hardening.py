@@ -764,3 +764,267 @@ def test_the_verdict_parser_is_linear_in_leading_padding(line):
     started = time.monotonic()
     assert _common._parse_verdict(line) == "ASK"
     assert time.monotonic() - started < 0.5
+
+
+# ---------------------------------------------------------------------------
+# Bash writes to the harness's own configuration (settings / hooks / mods / the
+# global CLAUDE.md / the Codex hooks and home config) are asked deterministically,
+# before any model is consulted. A single Gemini ALLOW must not be enough to let a
+# command rewrite the gate that reviews it. Reads of the same paths stay on their
+# usual path: the check recognises write FORMS, not mentions.
+# ---------------------------------------------------------------------------
+
+HARNESS_REDIRECT_CASES = [
+    "echo '{}' > .claude/settings.json",
+    "echo x>>.claude/settings.local.json",
+    "printf x >| .codex/hooks/a.sh",
+    "ls &> .claude/hooks/log",
+    "make 2>.claude/CLAUDE.md",
+    "true;>.claude/mods/x",
+    "echo x >& .claude/settings.json",
+    'echo x > "$HOME/.codex/config.toml"',
+    "echo x > ${HOME}/.codex/auth.json",
+    "echo x > ~/.codex/c.toml",
+    "echo x > ~/.claude/settings.json",
+    "echo x > ./.claude/hooks/x.py",
+    "echo x > .Claude/Settings.json",  # case-insensitive filesystems
+    "echo x > .claude/hooks/*.py",
+    "echo x > ~/.cl*/settings.json",
+    "echo x > ~/.cl*/hooks/x",
+    "echo x > $D/settings.json",
+    "cat > .claude/hooks/n.py <<'EOF'\nprint(1)\nEOF",
+    "cat x > \\\n  .claude/settings.json",  # line continuation between `>` and target
+    "echo 'x > .claude/settings.json",  # unparsable: conservative fallback
+]
+
+HARNESS_WRITER_CASES = [
+    "tee -a .claude/settings.json",
+    "echo x | tee .claude/hooks/x.py",
+    "rm .claude/hooks/x.py",
+    "rm -rf .claude",
+    "truncate -s 0 .claude/CLAUDE.md",
+    "touch .codex/hooks/x",
+    "chmod +x .claude/hooks/x.sh",
+    "mv .claude/hooks/a.py /tmp/",
+    "cp /tmp/x .claude/settings.json",
+    "cp /tmp/settings.json ~/.claude/",
+    "cp -t .claude/hooks a b",
+    "cp -rt .claude/hooks a b",
+    "cp -at .claude/hooks a b",
+    "cp -t.claude/hooks a",
+    "install -Dt .claude/hooks a",
+    "install --target-directory=.claude/mods x",
+    "ln --target-directory .claude/hooks x",
+    "rsync -a s/ ~/.codex/",
+    "ln -sf /tmp/e .claude/hooks/x.py",
+    "sed -i 's/a/b/' .claude/settings.json",
+    "sed -Ei 's/a/b/' .claude/settings.json",
+    "sed -i.bak s/a/b/ .claude/hooks/x.sh",
+    "sed -i '' s/a/b/ .claude/hooks/x.sh",
+    "gsed --in-place s/a/b/ .codex/hooks/x",
+    "perl -pi -e 's/a/b/' .claude/hooks/x.py",
+    "env FOO=1 timeout 5 rm .claude/hooks/x",
+    "dd if=/dev/zero of=.claude/settings.json",
+]
+
+# Shell code is itself a command line, so the same write forms are found inside it.
+HARNESS_SHELL_CODE_CASES = [
+    "bash -c 'echo x > .claude/hooks/a'",
+    'sh -c "sed -i s/a/b/ .claude/settings.json"',
+    # multi-line code strings (masked out of the live text) are read from the raw form
+    "bash -c 'echo hi\nrm .claude/hooks/x'",
+    'bash -c "echo hi\necho x > .claude/settings.json"',
+    # the code is the word after the flag carrying `c`, not every non-flag word
+    "bash -o pipefail -c 'rm .claude/hooks/x'",
+    "bash -O extglob -c 'rm .claude/hooks/x'",
+    # positional arguments after the code word are the code's $0 / $1 / $@
+    "bash -c 'rm \"$1\"' _ .claude/hooks/x",
+    "sh -c 'rm \"$@\"' sh .claude/hooks/x",
+    "xargs sh -c 'rm \"$@\"' _ .claude/hooks/x",
+    "bash -c 'echo hi\nrm .claude/hooks/x' _ arg",  # multi-line code with positionals
+    'eval "rm .claude/hooks/x"',
+    "awk '{print > \".claude/settings.json\"}' in",
+    "bash <<'EOF'\nrm .claude/hooks/x.py\nEOF",
+    "source /dev/stdin <<'EOF'\ntouch .claude/hooks/x\nEOF",
+]
+
+# Code in another language cannot be told apart statically (read or write?), and
+# replaying the real log showed these were almost always hook-source analysis. They
+# are NOT asked here; they stay on the two-model AND gate, which they reach as
+# inline code / stdin interpreters.
+HARNESS_FOREIGN_CODE_CASES = [
+    "python3 -c \"open('.claude/settings.json','w')\"",
+    "node -e \"fs.rmSync('.codex/hooks')\"",
+    "python3 - <<'EOF'\nimport pathlib\npathlib.Path('.claude/settings.json').write_text('{}')\nEOF",
+    "python3 -c '\nimport pathlib\npathlib.Path(\".claude/hooks/x.py\").unlink()\n'",
+    "python3 -c \"json.load(open('.claude/settings.json'))\"",
+]
+
+HARNESS_NOT_A_WRITE_CASES = [
+    # reads
+    "sed -n 1,5p .claude/hooks/x.py",
+    "git diff -- .claude/settings.json",
+    "cat .claude/settings.json | jq .",
+    "cat < .claude/settings.json | jq .",
+    "cat .claude/settings.json > /tmp/x",
+    "cp .claude/settings.json /tmp/x",
+    "ln -s .claude/hooks/x.py /tmp/l",
+    # a positional argument handed to code that only reads it
+    "bash -c 'cat \"$1\"' _ .claude/settings.json",
+    # with -t, every operand is a source and only the -t value is the destination
+    "cp -t /tmp .claude/settings.json",
+    "cp --target-directory=/tmp/bk .claude/settings.json",
+    "cp -t/tmp/x .claude/hooks/a.py",
+    # reference / value arguments are read, not written
+    "touch -r .claude/settings.json /tmp/x",
+    "perl -Mstrict -ne 'print' .claude/hooks/x.py",
+    # a glob under an unprotected .claude subdirectory cannot expand to a protected path
+    "rm -f .claude/skills/x/__pycache__/*.pyc",
+    "rm -f .codex/agents/*.toml",
+    # `hooks` / `mods` outside the harness (React hooks, git hooks)
+    "echo x > src/hooks/*.ts",
+    "rm -f src/hooks/*.test.ts",
+    "cp tpl src/hooks/use$NAME.ts",
+    'tee "$(git rev-parse --git-dir)/hooks/pre-commit"',
+    "rsync -t .claude/hooks/ /tmp/h/",
+    "cat .claude/settings.json | python3 -c 'import json,sys; json.load(sys.stdin)'",
+    # the protected path is a sed/awk script word or awk input, not a target
+    "sed -i 's#.claude/hooks#x#' README.md",
+    "sed -i -e 's#.claude/hooks#x#' README.md",
+    "awk '{print $1}' .claude/settings.json",
+    "awk -f p.awk .claude/settings.json",
+    # running (not writing) a hook, or sourcing it
+    "python3 .claude/hooks/bash-review.py < p.json",
+    "source .claude/hooks/_hook_common.sh && hook_log x",
+    "diff <(git show HEAD:.claude/settings.json) .claude/settings.json",
+    # fd duplication and harmless targets
+    "echo x 2>&1",
+    "echo x >&2",
+    "echo x > /dev/null",
+    'echo x > "$OUT"',
+    # look-alikes outside the protected set
+    "echo x > .claude/agents/x.md",
+    "echo x > .claude/hooks-old/x",
+    "echo x > .claude/settings.json.bak",
+    "echo x > .codex/config.toml",
+    "{ ls; }",
+    "echo {a,b}",
+    "ls # > .claude/settings.json",
+    # data that merely mentions a write (commit messages, docs)
+    "git commit -m \"$(cat <<'EOF'\nrm .claude/hooks/old.py\nEOF\n)\"",
+    "git commit -F - <<'EOF'\ntee .claude/settings.json\nEOF",
+    'git commit -m "fix\n\nrm .claude/hooks/x.py gone"',
+    "cat > notes.md <<'EOF'\necho x > .claude/settings.json\nEOF",
+    # a python heredoc is not read as shell even though it is code on stdin
+    "python3 - <<'EOF'\nprint(a > \".claude/settings.json\")\nEOF",
+]
+
+# Accepted residuals, documented as known gaps in hooks/README.md. Pinned so that
+# closing one later is a visible, deliberate edit to this list.
+HARNESS_WRITE_RESIDUAL_CASES = [
+    "cd .claude/hooks && echo x > a.py",
+    "git checkout -- .claude/hooks/x.py",
+    "tar -C .claude/hooks -xf a.tar",
+    "x=.claude/settings.json; tee $x",
+    "echo x > $D/hooks/x",
+    # shell code that arrives on stdin as a single word (they reach the AND gate as
+    # stdin interpreters)
+    "echo 'rm .claude/hooks/x' | sh",
+    "printf 'rm .claude/hooks/x' | bash",
+    "bash <<< 'rm .claude/hooks/x'",
+]
+
+
+def _harness_reason(command: str) -> str:
+    return _common.harness_write_ask_reason(_common._split_commands(command), command)
+
+
+class TestHarnessConfigWriteAsks:
+    @pytest.mark.parametrize(
+        "command",
+        HARNESS_REDIRECT_CASES + HARNESS_WRITER_CASES + HARNESS_SHELL_CODE_CASES,
+    )
+    def test_write_forms_are_asked(self, command):
+        assert _harness_reason(command) != "", command
+
+    @pytest.mark.parametrize("command", HARNESS_FOREIGN_CODE_CASES)
+    def test_foreign_code_is_left_to_the_dual_review_gate(self, command):
+        sub = _common._split_commands(command)
+        assert _harness_reason(command) == "", command
+        assert _common.classify_high_risk(sub, command) != "", command
+
+    def test_shell_code_recursion_is_bounded(self):
+        # Three levels of `sh -c` nesting: the third is not unwrapped (it still
+        # reaches the AND gate as `sh -c`), so a pathological nesting cannot make
+        # the deterministic tier recurse without bound.
+        nested = 'sh -c "sh -c \'sh -c \\"echo x > .claude/settings.json\\"\'"'
+        assert _harness_reason(nested) == ""
+        sub = _common._split_commands(nested)
+        assert _common.classify_high_risk(sub, nested) != ""
+
+    @pytest.mark.parametrize("command", HARNESS_NOT_A_WRITE_CASES)
+    def test_reads_and_inert_text_are_not_asked(self, command):
+        assert _harness_reason(command) == "", command
+
+    @pytest.mark.parametrize("command", HARNESS_WRITE_RESIDUAL_CASES)
+    def test_residual_forms_are_pinned(self, command):
+        assert _harness_reason(command) == "", (
+            f"{command!r} is now asked -- if that is intentional, move it out of "
+            "HARNESS_WRITE_RESIDUAL_CASES and drop it from the README's known gaps"
+        )
+
+    def test_absolute_home_codex_path_is_recognised(self, monkeypatch):
+        monkeypatch.setenv("HOME", "/Users/someone")
+        command = "echo x > /Users/someone/.codex/config.toml"
+        assert _harness_reason(command) != ""
+
+    def test_reason_is_fixed_vocabulary(self):
+        # The reason reaches the dialog and the summary log; it must not carry
+        # command text (a credential on the same line would leak through it).
+        reason = _harness_reason(f"echo {FAKE_GITHUB_TOKEN} > .claude/settings.json")
+        assert FAKE_GITHUB_TOKEN not in reason
+        assert reason.endswith("— confirm manually")
+
+    def test_claude_entry_asks_without_consulting_a_model(self, run_hook):
+        # urlopen / run are not faked: a model call would raise, so an "ask" here
+        # proves the decision was made deterministically.
+        res = run_hook(HOOK, hook_payload("echo x > .claude/settings.json"))
+        assert res.decision == "ask"
+        # The exact phrase, not just "harness": a crash in the hook also ends in
+        # "ask" (fail-closed) with an error reason that may contain the word.
+        assert "writes to the agent harness configuration" in res.reason
+        assert "hook error" not in res.reason
+
+    def test_codex_entry_blocks_without_consulting_a_model(self, run_hook):
+        res = run_hook(CODEX_HOOK, hook_payload("sed -i s/a/b/ .claude/settings.json"))
+        assert res.exit_code == 2
+        assert "writes to the agent harness configuration" in res.stderr
+        assert "hook error" not in res.stderr
+        assert res.stdout == ""
+
+    @pytest.mark.parametrize("hook", [HOOK, CODEX_HOOK])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "sed -n 1,5p .claude/hooks/x.py | wc -l",
+            "git commit -F - <<'EOF'\ntee .claude/settings.json\nEOF",
+        ],
+    )
+    def test_reads_keep_their_usual_path(self, run_hook, hook, command):
+        res = run_hook(hook, hook_payload(command), urlopen=fake_gemini("ALLOW"))
+        if hook == HOOK:
+            assert res.decision == "allow", (res.decision, res.reason)
+        else:
+            assert res.exit_code == 0, res.stderr
+
+    def test_deny_still_wins_over_the_harness_ask(self, run_hook):
+        res = run_hook(HOOK, hook_payload("curl x > .claude/settings.json"))
+        assert res.decision == "deny"
+
+    def test_secret_on_the_line_is_redacted_from_the_reason(self, run_hook):
+        res = run_hook(
+            HOOK, hook_payload(f"echo {FAKE_GITHUB_TOKEN} > .claude/settings.json")
+        )
+        assert res.decision == "ask"
+        assert FAKE_GITHUB_TOKEN not in res.reason
+        assert FAKE_GITHUB_TOKEN not in res.stderr

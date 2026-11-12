@@ -325,6 +325,49 @@ latency low for the common case:
    `permissions.ask` back up the common risky spellings for when the hook is
    down; they cannot see a flag placed later in the command.
 
+   Next, a command that **writes to the harness's own configuration** is an
+   `ask` (Codex variant: block) before any model is consulted
+   (`harness_write_ask_reason`), so a single Gemini `ALLOW` cannot let a command
+   rewrite the gate that reviews it. The protected set mirrors the `Edit(…)`
+   rules in `permissions.ask` — `.claude/settings.json`,
+   `.claude/settings.local.json`, `.claude/hooks/`, `.claude/mods/`,
+   `.codex/hooks/`, `~/.codex/` — plus the global `.claude/CLAUDE.md`, and the
+   bare `.claude` / `.codex` directory as a destination;
+   `tests/test_config_wiring.py` fails if an `Edit` ask path is not covered. It
+   recognises write _forms_, not mentions, because reads of these paths
+   (`sed -n`, `git diff`, `cat | jq`) were about a quarter of all logged commands:
+   a write redirect (`>`, `>>`, `>|`, `&>`, `>&`) whose target is protected; a
+   known writer with a protected destination (`tee`, `rm`, `truncate`, `touch`,
+   `chmod`, `mv`; `cp` / `install` / `ln` / `rsync` destinations including
+   `-t DIR`; `dd of=`; `sed -i`; `perl -i`); the same forms inside shell code
+   (`sh -c`, `eval`, `bash <<EOF`, `source <<EOF`); and a protected path in an
+   awk program. A target that expands (glob, brace, `$VAR`) counts when the
+   expansion could land on a protected path (`.claude/sett*`, `$D/settings.json`).
+   Heredoc bodies, multi-line quoted strings and comments are not read, as for
+   denial. Code in another language (`python -c`, `node -e`, `python3 - <<EOF`)
+   is deliberately left to the high-risk gate: whether it reads or writes cannot
+   be decided statically, and in the replayed log it was almost always analysis
+   of the hook's own source. Known gaps, each pinned by a test so closing one is
+   a deliberate change:
+   - a `cd` / `pushd` into a protected directory followed by a relative write;
+   - writers not on the list (`openssl … -out`, `tar -C`, `unzip -d`,
+     `git checkout -- <path>` / `git restore`, `yq -i`, …), and a git branch
+     switch that replaces hook files;
+   - a path held in a variable or assembled at run time (`x=…; tee $x`,
+     `> $D/hooks/x`; a protected file name such as `$D/settings.json` is still
+     caught);
+   - shell code that reaches a shell on stdin as one word (`echo '…' | sh`,
+     `bash <<< '…'`), and shell code nested more than two `sh -c` levels deep
+     (both still reach the high-risk gate, as a stdin interpreter or `sh -c`).
+
+   Three false-positive sources are accepted: a command the parser gives up on
+   (`((`, `$[`) has its heredoc bodies read as commands; a heredoc whose body
+   _text_ pipes into a shell (`… | sh`) is treated as shell code fed on stdin; and
+   a command that passes multi-line code to `sh -c` also has its other multi-line
+   quoted text read as commands.
+   Replaying 981 logged commands changed one decision (an AND-gate command became
+   an ask); the other changes came from probes written to test this check.
+
    Safe-skip is the conservative side: it matches the raw command string against
    an allowlist, so anything wrapped in grammar simply fails to match and goes
    to review. The resolver is consulted only by the exclusions below (grep / rg
