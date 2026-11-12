@@ -91,6 +91,64 @@ export function openerFor(uname: string): "open" | "xdg-open" {
   return uname.trim() === "Darwin" ? "open" : "xdg-open";
 }
 
+// systemd のユーザーユニットに引き継ぐ変数。xdg-open とブラウザは、どの画面に出すか
+// (DISPLAY / WAYLAND_DISPLAY / XAUTHORITY / XDG_SESSION_TYPE) と既定のブラウザ
+// (BROWSER / XDG_CURRENT_DESKTOP) をここから決めるが、ユーザーマネージャーの
+// 環境には入っていないことが多い。
+export const DETACHED_ENV = [
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "XDG_SESSION_TYPE",
+  "XDG_CURRENT_DESKTOP",
+  "BROWSER",
+] as const;
+
+export type DetachedEnv = Readonly<Partial<Record<string, string | undefined>>>;
+
+// 開くときに試す argv を、試す順に返す。xdg-open は既定のブラウザが終わるまで
+// 戻らないことがあり (起動していない Firefox など)、$.process.run は打ち切りの
+// ときにブラウザごと止めてしまう。そこで systemd のユーザーユニットに起動させて
+// 待たない形を先に試し、systemd-run が無い・使えない環境では xdg-open を直接呼ぶ。
+// --wait / --pipe / --scope は付けない (どれも終わるまで待つ形に戻る)。
+// 変数は値まで明示して渡す: -E NAME だけだと、未設定の変数が空の値で設定される。
+// --expand-environment=no: systemd は既定でコマンドの引数の ${VAR} と $$ を展開し、
+// "$" を含むファイル名だと検証したのと別のパスが渡る。これを知らない古い systemd
+// (254 より前) では systemd-run が失敗し、xdg-open を直接呼ぶ形に落ちる。
+// 画面の変数がどちらも無い (headless や SSH) ときは切り離さない: ユニットの起動だけで
+// 成功と見なすと、中の xdg-open が失敗しても「開きました」になってしまう。
+export function openCandidates(
+  opener: "open" | "xdg-open",
+  absolute: string,
+  env: DetachedEnv,
+): string[][] {
+  const direct = openArgv(opener, absolute);
+  if (opener !== "xdg-open") return [direct];
+
+  const isSet = (value: string | undefined): value is string =>
+    value !== undefined && value !== "";
+  if (!isSet(env.DISPLAY) && !isSet(env.WAYLAND_DISPLAY)) return [direct];
+
+  const setenv = DETACHED_ENV.flatMap((name) => {
+    const value = env[name];
+
+    return isSet(value) ? ["-E", `${name}=${value}`] : [];
+  });
+
+  return [
+    [
+      "systemd-run",
+      "--user",
+      "--collect",
+      "--quiet",
+      "--expand-environment=no",
+      ...setenv,
+      ...direct,
+    ],
+    direct,
+  ];
+}
+
 export function extensionOf(path: string): string {
   const base = path.slice(path.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");

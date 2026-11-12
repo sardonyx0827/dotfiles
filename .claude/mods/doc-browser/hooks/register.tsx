@@ -26,11 +26,12 @@ import {
   isSafeRel,
   joinPath,
   lastLine,
-  openArgv,
+  openCandidates,
   openerFor,
   previewDir,
   renderArgv,
 } from "./paths";
+import type { DETACHED_ENV } from "./paths";
 
 // リポジトリの Markdown と、session-report / session-dossier / codebase-survey が
 // 書いたレポートを一覧し、選んだものをブラウザで開くだけの mod。ツールの実行可否に関わる
@@ -257,19 +258,53 @@ async function checked(
   return real;
 }
 
+// systemd のユーザーユニットに引き継ぐ変数の値。$.env.get は名前を文字列リテラル
+// で受けるので 1 つずつ読み、DETACHED_ENV の名前を漏れなく持つことは型で確かめる。
+async function detachedEnv(
+  $: EngineInterface,
+): Promise<Record<(typeof DETACHED_ENV)[number], string | undefined>> {
+  return {
+    DISPLAY: await $.env.get("DISPLAY"),
+    WAYLAND_DISPLAY: await $.env.get("WAYLAND_DISPLAY"),
+    XAUTHORITY: await $.env.get("XAUTHORITY"),
+    XDG_SESSION_TYPE: await $.env.get("XDG_SESSION_TYPE"),
+    XDG_CURRENT_DESKTOP: await $.env.get("XDG_CURRENT_DESKTOP"),
+    BROWSER: await $.env.get("BROWSER"),
+  };
+}
+
 async function launch(
   $: EngineInterface,
   item: DocItem,
   path: string,
 ): Promise<Outcome> {
-  const result = await $.process.run(openArgv(await openerName($), path), {
-    timeoutMs: OPEN_TIMEOUT_MS,
-  });
+  const name = await openerName($);
+  const env = name === "xdg-open" ? await detachedEnv($) : {};
+  const candidates = openCandidates(name, path, env);
+
+  for (const [index, argv] of candidates.entries()) {
+    let result: { exitCode: number; stderr: string };
+    try {
+      result = await $.process.run(argv, { timeoutMs: OPEN_TIMEOUT_MS });
+    } catch (error) {
+      // 最後の形が起動できないときは、これまでどおり呼び出し元が扱う。
+      if (index === candidates.length - 1) throw error;
+      $.ui.log(`doc-browser: ${argv[0]} failed: ${String(error)}`, {
+        to: "debug",
+      });
+      continue;
+    }
+    if (result.exitCode === 0) {
+      return { ok: true, text: `開きました: ${item.label}` };
+    }
+    $.ui.log(
+      `doc-browser: ${argv[0]} exited ${result.exitCode}: ${lastLine(result.stderr)}`,
+      { to: "debug" },
+    );
+  }
 
   // 失敗文はモデルも読むので、絶対パス (ホームのユーザー名を含む) は載せない。
-  return result.exitCode === 0
-    ? { ok: true, text: `開きました: ${item.label}` }
-    : refuse(item, "ブラウザを起動できませんでした");
+  return refuse(item, "ブラウザを起動できませんでした");
 }
 
 // path の HTML が --block-remote の CSP 付きで描かれているか。読めなければ偽。

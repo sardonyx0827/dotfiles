@@ -67,6 +67,20 @@
 - リポジトリから開くのは `.md` だけです。
 - 開く直前に毎回、実体のパスを確かめます。許可した場所（リポジトリ・レポート置き場・プレビュー置き場）の外を指す symlink や、
   通常ファイルでないものは開きません。
+- macOS では `open` で開きます。Linux では `systemd-run --user --collect --quiet --expand-environment=no -E <変数>=<値> … xdg-open <パス>` で、
+  systemd のユーザーユニットに `xdg-open` を起動させ、ブラウザの終了を待ちません。
+  - `--expand-environment=no` は、パスの `${VAR}` や `$$` を systemd に展開させないためです。付けないと、`$` を含む
+    ファイル名で検証したのとは別のパスが渡ります。これを知らない systemd 254 より前では、下の「直接呼ぶ」経路になります。
+  - `xdg-open` は、起動していないブラウザ（Firefox など）を開くとそれが終わるまで戻りません。直接呼ぶと 10 秒の打ち切りに
+    かかり、ブラウザごと閉じられます（Android の Linux ターミナルで VM 内の Firefox を使うときに起きました）。
+  - ユニットに渡す変数は `DISPLAY`・`WAYLAND_DISPLAY`・`XAUTHORITY`・`XDG_SESSION_TYPE`・`XDG_CURRENT_DESKTOP`・`BROWSER`
+    のうち、値があるものだけです。ユーザーマネージャーの環境には画面の変数が入っていないことが多いためです。
+  - `systemd-run` が無い、または失敗した（ユーザーマネージャーが無い WSL やコンテナなど）ときは `xdg-open` を直接呼びます。
+    この経路では、ブラウザを先に起動しておかないと上の打ち切りにかかります。
+  - `DISPLAY` も `WAYLAND_DISPLAY` も無い（headless や SSH）ときは、切り離さずに最初から `xdg-open` を直接呼び、
+    失敗をそのまま「ブラウザを起動できませんでした」と伝えます。
+  - 「開きました」は、ユニットの起動を引き受けたという意味です。ブラウザが実際に表示したかまでは確かめていません
+    （`xdg-open` も、既定のアプリが失敗しても 0 を返すことがあります）。
 
 ### ペインを描けない環境
 
@@ -81,6 +95,6 @@ claude plugin validate .claude/mods/doc-browser   # マニフェストとフッ�
 ```
 
 この mod はツールの実行可否には関与せず、それに関わるイベント（`tool.*` など）にはフックしません。
-一方で、`git`・`uname`・`python3`（renderer）・`open` / `xdg-open` は Bash ツールを通さず、決まった引数でシェルを使わずに直接起動します。
+一方で、`git`・`uname`・`python3`（renderer）・`open` / `systemd-run` / `xdg-open` は Bash ツールを通さず、決まった引数でシェルを使わずに直接起動します。
 そのため、これらは bash-review の審査の対象外です。
 設計と安全上の前提は [docs/claude-architecture.md の「mod (関数フック)」](../../../docs/claude-architecture.md#mod-関数フック) にあります。

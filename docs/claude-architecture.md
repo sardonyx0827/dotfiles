@@ -184,7 +184,9 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
   HTML をそのまま開くことはありません。
 - 開く直前に毎回、項目の realPath が許可した根（リポジトリ・レポート置き場・プレビュー置き場）の下の通常ファイルで、
   拡張子が根ごとに許可したものであることを確かめます。描画結果のパスは renderer の出力ではなく出力先と元の名前から組み立て、
-  外部コマンド（`git`・`python3`・`open` / `xdg-open`）はシェルを通さず argv で渡し、`git` には `core.fsmonitor=false` を付けます。
+  外部コマンド（`git`・`python3`・`open` / `systemd-run` / `xdg-open`）はシェルを通さず argv で渡し、`git` には `core.fsmonitor=false` を付けます。
+  Linux では `systemd-run --user --expand-environment=no` に `xdg-open` を起動させ、ブラウザの終了を待ちません
+  （起動していないブラウザが 10 秒の打ち切りで閉じられるのを避けるため。`$` を systemd に展開させないよう指定します）。
 - 一覧の文字列は制御文字・書式文字（ゼロ幅・bidi・タグ文字）を置き換えてから描き、ペインを描けない環境の本文（モデルも読む）には
   絶対パスを載せません。
 

@@ -42,9 +42,18 @@ function world(
     files?: Record<string, string>;
     // fs.stat が見つけられないパス
     missing?: string[];
+    // uname -s の出力 (既定は Darwin)
+    uname?: string;
+    // systemd-run の結果: 起動できた / 0 以外で終わった / 起動できなかった
+    systemdRun?: "ok" | "fail" | "missing";
+    // xdg-open を直接呼んだときの結果: 終了コード / 起動できない理由
+    xdgOpenExit?: number;
+    xdgOpenDeny?: string;
+    // HOME に重ねる環境変数
+    env?: Record<string, string>;
   } = {},
 ) {
-  mock.env(on, { HOME });
+  mock.env(on, { HOME, ...options.env });
   mock.clock(on);
   const runs: string[][] = [];
   const opened: { id: string; focus?: boolean }[] = [];
@@ -63,7 +72,37 @@ function world(
         isStderrTruncated: false,
       },
     });
-    if (argv[0] === "uname") return ok("Darwin\n");
+    if (argv[0] === "uname") return ok(options.uname ?? "Darwin\n");
+    if (argv[0] === "systemd-run") {
+      if (options.systemdRun === "missing") return { deny: "ENOENT" };
+      if (options.systemdRun === "fail") {
+        return {
+          value: {
+            exitCode: 1,
+            stdout: "",
+            stderr: "Failed to connect to bus",
+            isStdoutTruncated: false,
+            isStderrTruncated: false,
+          },
+        };
+      }
+    }
+    if (argv[0] === "xdg-open") {
+      if (options.xdgOpenDeny !== undefined) {
+        return { deny: options.xdgOpenDeny };
+      }
+      if (options.xdgOpenExit !== undefined) {
+        return {
+          value: {
+            exitCode: options.xdgOpenExit,
+            stdout: "",
+            stderr: "no method available",
+            isStdoutTruncated: false,
+            isStderrTruncated: false,
+          },
+        };
+      }
+    }
     if (argv.includes("rev-parse")) {
       return options.isRepo === false
         ? {
@@ -179,7 +218,9 @@ function world(
   on("command.register", ($, e) => ({ value: { command: e.name } }));
 
   const openRuns = () =>
-    runs.filter((argv) => argv[0] === "open" || argv[0] === "xdg-open");
+    runs.filter((argv) =>
+      ["open", "xdg-open", "systemd-run"].includes(argv[0] ?? ""),
+    );
   const renderRuns = () => runs.filter((argv) => argv[0] === "python3");
 
   return { runs, opened, openRuns, renderRuns };
@@ -581,6 +622,158 @@ describe("調査ドキュメントの HTML", () => {
       ["open", `${REPORTS}/repo/20261104-103000-fix-login.html`],
     ]);
     await ui.unmount();
+  });
+});
+
+describe("Linux での開き方", () => {
+  const LOGIN_HTML = `${REPORTS}/repo/20261104-103000-fix-login.html`;
+  const DETACHED = [
+    "systemd-run",
+    "--user",
+    "--collect",
+    "--quiet",
+    "--expand-environment=no",
+    "-E",
+    "DISPLAY=:0",
+    "xdg-open",
+    LOGIN_HTML,
+  ];
+
+  async function openLogin($: Engine) {
+    await run($, "reports");
+
+    return run($, "open 2");
+  }
+
+  test("systemd-run に xdg-open を起動させ、ブラウザの終了を待たない", async ($, on) => {
+    const w = world(on, {
+      isPlaced: false,
+      uname: "Linux\n",
+      env: { DISPLAY: ":0" },
+    });
+
+    const opened = await openLogin($);
+
+    expect(w.openRuns()).toEqual([DETACHED]);
+    expect(opened.text).toBe("開きました: fix-login");
+  });
+
+  test("systemd-run が 0 以外で終わったら xdg-open を直接呼ぶ", async ($, on) => {
+    const w = world(on, {
+      isPlaced: false,
+      uname: "Linux\n",
+      env: { DISPLAY: ":0" },
+      systemdRun: "fail",
+    });
+
+    const opened = await openLogin($);
+
+    expect(w.openRuns()).toEqual([DETACHED, ["xdg-open", LOGIN_HTML]]);
+    expect(opened.text).toBe("開きました: fix-login");
+  });
+
+  test("systemd-run を起動できなければ xdg-open を直接呼ぶ", async ($, on) => {
+    const w = world(on, {
+      isPlaced: false,
+      uname: "Linux\n",
+      env: { DISPLAY: ":0" },
+      systemdRun: "missing",
+    });
+
+    const opened = await openLogin($);
+
+    expect(w.openRuns()).toEqual([DETACHED, ["xdg-open", LOGIN_HTML]]);
+    expect(opened.text).toBe("開きました: fix-login");
+  });
+
+  test("6 つの変数を、それぞれの名前の値として決まった順で渡す", async ($, on) => {
+    const w = world(on, {
+      isPlaced: false,
+      uname: "Linux\n",
+      env: {
+        BROWSER: "b",
+        XDG_CURRENT_DESKTOP: "cd",
+        XDG_SESSION_TYPE: "st",
+        XAUTHORITY: "xa",
+        WAYLAND_DISPLAY: "wd",
+        DISPLAY: "d",
+      },
+    });
+
+    await openLogin($);
+
+    expect(w.openRuns()).toEqual([
+      [
+        "systemd-run",
+        "--user",
+        "--collect",
+        "--quiet",
+        "--expand-environment=no",
+        "-E",
+        "DISPLAY=d",
+        "-E",
+        "WAYLAND_DISPLAY=wd",
+        "-E",
+        "XAUTHORITY=xa",
+        "-E",
+        "XDG_SESSION_TYPE=st",
+        "-E",
+        "XDG_CURRENT_DESKTOP=cd",
+        "-E",
+        "BROWSER=b",
+        "xdg-open",
+        LOGIN_HTML,
+      ],
+    ]);
+  });
+
+  test("画面の変数が無ければ systemd-run を使わず、xdg-open の失敗をそのまま伝える", async ($, on) => {
+    const w = world(on, {
+      isPlaced: false,
+      uname: "Linux\n",
+      xdgOpenExit: 3,
+    });
+
+    const opened = await openLogin($);
+
+    expect(w.openRuns()).toEqual([["xdg-open", LOGIN_HTML]]);
+    expect(opened.text).toBe(
+      "開けません: fix-login（ブラウザを起動できませんでした）",
+    );
+  });
+
+  test("systemd-run も xdg-open も 0 以外で終わったら開けないと伝える", async ($, on) => {
+    const w = world(on, {
+      isPlaced: false,
+      uname: "Linux\n",
+      env: { DISPLAY: ":0" },
+      systemdRun: "fail",
+      xdgOpenExit: 3,
+    });
+
+    const opened = await openLogin($);
+
+    expect(w.openRuns()).toEqual([DETACHED, ["xdg-open", LOGIN_HTML]]);
+    expect(opened.text).toBe(
+      "開けません: fix-login（ブラウザを起動できませんでした）",
+    );
+  });
+
+  test("最後の xdg-open も起動できなければ固定の文言にし、本文にパスを載せない", async ($, on) => {
+    world(on, {
+      isPlaced: false,
+      uname: "Linux\n",
+      env: { DISPLAY: ":0" },
+      systemdRun: "missing",
+      xdgOpenDeny: `EACCES: ${HOME}/secret/place`,
+    });
+
+    const opened = await openLogin($);
+
+    expect(opened.text).toBe(
+      "開けません: fix-login（想定外のエラーが起きました）",
+    );
+    expect(opened.text).not.toContain(HOME);
   });
 });
 

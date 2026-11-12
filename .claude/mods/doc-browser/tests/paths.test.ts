@@ -7,6 +7,7 @@ import {
   isInside,
   isSafeRel,
   openArgv,
+  openCandidates,
   openerFor,
   previewDir,
   renderArgv,
@@ -138,5 +139,84 @@ describe("argv", () => {
   test("Darwin は open、それ以外は xdg-open", () => {
     expect(openerFor("Darwin\n")).toBe("open");
     expect(openerFor("Linux")).toBe("xdg-open");
+  });
+});
+
+describe("openCandidates", () => {
+  test("open は 1 通りだけで、環境変数は渡さない", () => {
+    expect(openCandidates("open", "/r/a.html", { DISPLAY: ":0" })).toEqual([
+      ["open", "/r/a.html"],
+    ]);
+  });
+
+  test("xdg-open は systemd-run で切り離す形を先に、直接呼ぶ形を後に返す", () => {
+    expect(
+      openCandidates("xdg-open", "/r/a.html", {
+        WAYLAND_DISPLAY: "wayland-0",
+        DISPLAY: ":0",
+      }),
+    ).toEqual([
+      [
+        "systemd-run",
+        "--user",
+        "--collect",
+        "--quiet",
+        "--expand-environment=no",
+        "-E",
+        "DISPLAY=:0",
+        "-E",
+        "WAYLAND_DISPLAY=wayland-0",
+        "xdg-open",
+        "/r/a.html",
+      ],
+      ["xdg-open", "/r/a.html"],
+    ]);
+  });
+
+  test("空や未設定の変数と、一覧に無い変数はユニットに渡さない", () => {
+    const [detached] = openCandidates("xdg-open", "/r/a.html", {
+      DISPLAY: ":0",
+      WAYLAND_DISPLAY: "",
+      BROWSER: undefined,
+      HOME: "/home/tester",
+    });
+
+    expect(detached).toEqual([
+      "systemd-run",
+      "--user",
+      "--collect",
+      "--quiet",
+      "--expand-environment=no",
+      "-E",
+      "DISPLAY=:0",
+      "xdg-open",
+      "/r/a.html",
+    ]);
+  });
+
+  test("パスの $ を systemd に展開させない ($ を含むファイル名でも検証したパスのまま渡す)", () => {
+    const path = "/r/a${HOME}b$$c.html";
+    const [detached] = openCandidates("xdg-open", path, { DISPLAY: ":0" });
+
+    expect(detached).toContain("--expand-environment=no");
+    expect(detached?.slice(-2)).toEqual(["xdg-open", path]);
+  });
+
+  test("画面の変数が無ければ切り離さず、xdg-open を直接呼ぶ形だけを返す", () => {
+    expect(
+      openCandidates("xdg-open", "/r/a.html", {
+        DISPLAY: "",
+        XAUTHORITY: "/home/tester/.Xauthority",
+        BROWSER: "w3m",
+      }),
+    ).toEqual([["xdg-open", "/r/a.html"]]);
+    expect(
+      openCandidates("xdg-open", "/r/a.html", { WAYLAND_DISPLAY: "wayland-0" }),
+    ).toHaveLength(2);
+  });
+
+  test("相対パスはどの形でも受け付けない", () => {
+    expect(() => openCandidates("xdg-open", "a.html", {})).toThrow();
+    expect(() => openCandidates("open", "a.html", {})).toThrow();
   });
 });
