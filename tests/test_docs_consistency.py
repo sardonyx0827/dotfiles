@@ -350,8 +350,8 @@ def test_main_runs_create_symlinks_before_any_package_install():
 
 # Codex CLI 0.154 removed its MCP-server mode, so the `mcp__codex__*` tools can
 # never connect again: an instruction that still names them sends the model to
-# a tool that does not exist (and the advisor fallback chain silently skips to
-# Gemini). Every Codex call goes through `codex exec` now. The patterns are
+# a tool that does not exist (and the second-opinion pair silently loses its
+# Codex half to Gemini). Every Codex call goes through `codex exec` now. The patterns are
 # assembled so this file does not match itself.
 _REMOVED_CODEX_MCP = re.compile(
     "|".join(

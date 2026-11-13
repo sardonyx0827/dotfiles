@@ -359,8 +359,8 @@ flowchart LR
 - **エージェント**: 同じ 14 個ですが、リンクではなく `.toml` です。うち 13 個は
   `scripts/gen_codex_agents.py` が `.claude/agents/*.md` から生成したもので、Codex CLI が
   ビルド無しで読めるよう生成物をコミットしてあり、CI が `--check` で手動編集と SSOT 側だけの
-  更新を弾きます。`codex-delegator` だけは手書きです（Claude 側の本文にある advisor 優先の
-  エスカレーション層が Codex 側に対応物を持たないため）。`--check` は本文を再生成せず
+  更新を弾きます。`codex-delegator` だけは手書きです（Claude 側の本文にある advisor と Codex を組にする
+  第二意見の層が Codex 側に対応物を持たないため）。`--check` は本文を再生成せず
   「存在し、有効な TOML であること」だけを確かめ、`description` が `.md` と一致していることは
   `tests/test_agent_parity.py` が固定します。`.claude/` 側が唯一の上流です。
 - **エージェントで写るものと捨てるもの**: 生成物に写るのは `name` / `description` / 本文だけで、

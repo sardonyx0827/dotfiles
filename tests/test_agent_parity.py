@@ -6,8 +6,8 @@ tests/test_gen_codex_agents.py enforces that the committed output matches the
 SSOT byte-for-byte. This file covers the drift that generation does not:
 
 - codex-delegator, the one agent whose Codex body genuinely diverges in
-  meaning (the Claude copy documents the advisor-first escalation tier, which
-  has no Codex counterpart) and so is still hand-written.
+  meaning (the Claude copy documents the advisor + Codex second-opinion
+  pairing, which has no Codex counterpart) and so is still hand-written.
 - The git-workflow / security rules, which are copied verbatim into three
   instruction files that different runtimes read.
 """

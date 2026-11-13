@@ -22,12 +22,12 @@
   <!-- A. Second Opinion (foam) -->
   <rect x="40" y="244" width="568" height="160" rx="14" fill="#1f1d2e" stroke="#403d52"/>
   <circle cx="64" cy="274" r="6" fill="#9ccfd8"/>
-  <text x="82" y="280" font-size="16" font-weight="700" fill="#e0def4">Second Opinion — 第二意見 (多段)</text>
+  <text x="82" y="280" font-size="16" font-weight="700" fill="#e0def4">Second Opinion — 第二意見 (並走 + 代役)</text>
   <line x1="62" y1="296" x2="588" y2="296" stroke="#403d52"/>
   <g class="mono" font-size="13">
-    <text x="64" y="322" fill="#e0def4">advisor (Opus) · 全軌跡の高速セルフチェック</text>
-    <text x="64" y="347" fill="#e0def4">Codex · クロスベンダーの独立レビュー</text>
-    <text x="64" y="372" fill="#e0def4">Gemini · gemini‑consultant MCP で相談</text>
+    <text x="64" y="322" fill="#e0def4">advisor (Opus) · 全軌跡を見るセルフチェック</text>
+    <text x="64" y="347" fill="#e0def4">Codex · advisor と並走する独立レビュー</text>
+    <text x="64" y="372" fill="#e0def4">Gemini · 動かない側の代役 (Fable 時は advisor 枠)</text>
     <text x="64" y="397" fill="#6e6a86" font-size="12">判定が割れたら両論をユーザーへ提示</text>
   </g>
 

@@ -78,5 +78,5 @@ Located in `~/.claude/agents/`:
 `scripts/gen_codex_agents.py`, and `tests/test_gen_codex_agents.py` pins the committed
 output byte-for-byte — edit the `.md` here and regenerate, never hand-edit the generated
 `.toml`. `codex-delegator` is the one exception (hand-written, because its Claude body
-documents the advisor-first escalation tier that has no Codex counterpart);
+documents the advisor + Codex second-opinion pairing that has no Codex counterpart);
 `tests/test_agent_parity.py` keeps its description in sync.
