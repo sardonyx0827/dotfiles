@@ -231,6 +231,20 @@ class TestDefaults:
         assert server.DEEP_MODEL == "gemini-4-carbon"
         assert server.LIGHT_MODEL == "gemini-4-hydrogen"
 
+    def test_each_request_waits_up_to_180_seconds(self, server, monkeypatch):
+        # A long Carbon answer takes longer than 90 s (41 s for 2.6K output
+        # tokens was measured), so one attempt may wait 180 s.
+        timeouts = []
+        inner = fake_gemini("ok")
+
+        def _urlopen(req, timeout=None):
+            timeouts.append(timeout)
+            return inner(req, timeout)
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+        assert server.call_gemini("question", model="some-model") == "ok"
+        assert timeouts == [180]
+
 
 class TestTools:
     def test_consult_gemini_uses_deep_model_and_logs(self, server, monkeypatch):
@@ -848,7 +862,7 @@ def _slow_urlopen(delay, *replies):
 class TestToolsDoNotBlockTheEventLoop:
     """FastMCP calls a sync tool directly on the event loop.
 
-    A Gemini call can take minutes (3 attempts x 90 s plus backoff), and while
+    A Gemini call can take minutes (3 attempts x 180 s plus backoff), and while
     it runs a blocking tool leaves the server unable to read a cancellation, a
     ping, or a second tool call. The tools must be coroutines that push every
     blocking step (HTTP, backoff sleep, log write, notification) to a thread.

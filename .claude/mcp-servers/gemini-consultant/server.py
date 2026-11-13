@@ -456,7 +456,7 @@ def call_gemini(
 ) -> str:
     # cancel は、待っている側 (async のツール) がキャンセルされたときに立つ。
     # ワーカースレッドは強制終了できないので、試行の合間に見て自分から退く:
-    # 送信済みの 1 リクエストは終わるまで待つが、次の試行 (最大 90 秒 x 残り回数
+    # 送信済みの 1 リクエストは終わるまで待つが、次の試行 (最大 180 秒 x 残り回数
     # とバックオフ) は始めない。None なら従来どおり (直接呼ぶ側・テスト)。
     # strip() は体裁ではなくセキュリティ上の措置。CRLF 改行の .env を source すると
     # 値の末尾に "\r" が残るが、http.client.putheader は CR/LF を含むヘッダ値を
@@ -509,7 +509,12 @@ def call_gemini(
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=90) as resp:  # nosec: B310
+            # 180 秒: 応答時間は主に出力の長さで決まる。gemini-4-carbon の実測で
+            # 入力 6.4K / 出力 2.6K トークンが 41 秒 (約 60 トークン/秒) なので、
+            # 長い回答では 90 秒に届く。最悪 3 回 x 180 秒 + バックオフで約 9 分で、
+            # Claude Code 側の MCP 呼び出し上限 (MCP_TOOL_TIMEOUT、既定 約 28 時間) より
+            # 十分短い。
+            with urllib.request.urlopen(req, timeout=180) as resp:  # nosec: B310
                 body = json.loads(resp.read().decode("utf-8"))
                 return _extract_text(body)
         except urllib.error.HTTPError as e:
@@ -638,7 +643,7 @@ def _refuse_unsafe_send(tool: str, question: str) -> Optional[str]:
 # -------------------------------------------------------------------
 # 2 つのツールは async def で、中身 (_*_sync) を asyncio.to_thread へ渡す。
 # FastMCP は同期関数をイベントループ上で直接呼ぶ。Gemini 呼び出しは最悪
-# 3 回 x 90 秒 + バックオフで 4 分を超え、その間サーバーはキャンセルも ping も
+# 3 回 x 180 秒 + バックオフで 9 分を超え、その間サーバーはキャンセルも ping も
 # 並行する別のツール呼び出しも処理できなくなる。止まる箇所は HTTP と
 # time.sleep のバックオフだけでなく、ログ書き込みと notify (osascript /
 # notify-send を最大 10 秒待つ) にもあるので、本体を丸ごとスレッドへ逃がす。
@@ -652,7 +657,7 @@ async def _run_off_loop(
 
     to_thread をキャンセルしても、止まるのは await だけでスレッドは走り続ける
     (スレッドは強制終了できない)。何もしないと、キャンセル後も残りの再試行
-    (最大 90 秒 x 3 とバックオフ) を打ち、ログと通知まで出す。そこで Event を
+    (最大 180 秒 x 3 とバックオフ) を打ち、ログと通知まで出す。そこで Event を
     渡し、call_gemini が試行の合間に見て自分から退く。
     """
     cancel = threading.Event()
