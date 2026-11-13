@@ -271,7 +271,7 @@ from dataclasses import dataclass, field
 class ReviewConfig:
     api_key: str
     model: str = "gemini-flash-lite-latest"
-    fallback_model: str = "gemini-flash-latest"
+    fallback_model: str = "gemini-4-hydrogen"
     timeout: int = 30
     safe_commands: list[str] = field(default_factory=list)
 

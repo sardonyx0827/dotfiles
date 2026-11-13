@@ -528,7 +528,7 @@ class TestGeminiStage:
 
 class TestGeminiPayload:
     """`thinkingLevel: "minimal"` was measured to be accepted only by the default
-    model (gemini-flash-lite-latest); gemini-flash-latest -- the fallback -- and
+    model (gemini-flash-lite-latest); gemini-flash-latest -- then the fallback -- and
     the other ids tried answer HTTP 400 "Thinking level ... is not supported"
     (scripts/gemini_api.py records the measurement). Sending it to every model
     made the fallback fail on every call, so a primary outage always fell

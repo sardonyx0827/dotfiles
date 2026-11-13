@@ -83,7 +83,7 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 なお `generationConfig` は送りません — `maxOutputTokens` は上の打ち切りを自作することになり、
 `thinkingLevel: "minimal"` は既定モデル以外では HTTP 400 になることを実測で確認しています
 （bash-review フックも同じ理由で、`thinkingLevel` を既定モデルにだけ送り、フォールバック先の
-`gemini-flash-latest` や上書きした `$GEMINI_MODEL` には送りません）。
+`gemini-4-hydrogen`（`$GEMINI_FLASH_MODEL` で上書き可）や上書きした `$GEMINI_MODEL` には送りません）。
 
 ### カーソル文脈ヒント (`<leader>qh` / `<leader>qg`)
 

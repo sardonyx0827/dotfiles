@@ -4010,14 +4010,14 @@ def build_review_prompt(tool_name: str, tool_input) -> str:
 # 両入口 ($GEMINI_MODEL / $GEMINI_FLASH_MODEL 未設定時) の既定モデル。入口ごとに
 # 文字列を書くと、下の「既定モデルにだけ thinkingLevel を送る」判定と食い違う。
 DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
-DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-flash-latest"
+DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-4-hydrogen"
 
 
 def _build_gemini_payload(target_model: str, prompt: str) -> tuple[str, bytes]:
     """generateContent の URL と本体を返す。
 
     `thinkingLevel: "minimal"` (と短い出力上限) は既定モデルにだけ送る。実測で
-    受け付けたのは gemini-flash-lite-latest だけで、フォールバック先の
+    受け付けたのは gemini-flash-lite-latest だけで、当時のフォールバック先の
     gemini-flash-latest や gemini-pro-latest / gemini-2.5-flash-lite は HTTP 400
     ("Thinking level ... is not supported") を返す (scripts/gemini_api.py の
     build_request の記録)。全モデルへ送っていたため、フォールバックは毎回 400 で
