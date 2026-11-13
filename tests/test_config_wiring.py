@@ -531,9 +531,10 @@ def test_pretooluse_bash_hooks_are_unconditional():
 def test_git_push_asks_at_the_permission_layer_too():
     """The push gate must not be hook-only, because the hook fails OPEN.
 
-    git-push-review.sh is deliberately fail-open everywhere (`|| exit 0`,
-    `2>/dev/null`) so a broken summary never blocks a real command, and Claude
-    Code treats a hook that cannot start, crashes, or times out as a
+    git-push-review.sh is deliberately fail-open for a broken summary (`|| exit 0`,
+    `2>/dev/null`) so that never blocks a real command -- the two exceptions, no
+    jq and a push-review library that cannot be loaded, both degrade to an ask --
+    and Claude Code treats a hook that cannot start, crashes, or times out as a
     non-blocking error. With `Bash(git:*)` in allow, defaultMode `auto` and the
     hook as the only gate, every one of those failure modes would let a push
     through with no confirmation at all.
@@ -759,9 +760,9 @@ def test_bash_review_fails_closed_on_timeout():
     into a block. The timeout sits above the review's own worst case (Gemini 30s
     plus Codex 60s) so a slow but healthy review is not cut off.
 
-    git-push-review stays fail-open on purpose (a broken summary must never block
-    a real command; `Bash(git push:*)` in ask is its backstop), so it must not
-    carry the block setting.
+    git-push-review stays fail-open on purpose for a timeout or a crash (a broken
+    summary must never block a real command; `Bash(git push:*)` in ask is its
+    backstop), so it must not carry the block setting.
     """
     hooks = _pretooluse_bash_hooks()
     launcher = [h for h in hooks if "bash-review-launcher.sh" in h["command"]]

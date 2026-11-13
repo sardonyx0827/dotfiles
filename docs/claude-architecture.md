@@ -114,9 +114,10 @@ flowchart TB
 | `PostToolUse` | `Write\|Edit\|MultiEdit` | `format-then-lint.sh`（`auto-format.sh` → `lint.sh`） | 整形してから静的解析。lint は exit 2 で Claude に差し戻す。同一イベントのハンドラは並列に走り順序が保証されないため、1 本のハンドラに畳んで順に実行する |
 | `Stop`        | —                        | `stop-audit.sh`                                       | ターン終了時にデバッグ文の消し忘れを検出してブロック（`EDITOR_AI_ONESHOT` 時は監査しない）                                                              |
 
-`_` 始まりの 4 ファイル（`_hook_common.sh` `_lint_common.sh` `_format_common.sh`
-`_bash_review_common.py`）はフックではなく**共有ライブラリ**で、Claude 側と Codex 側の
-唯一の実体です。設計根拠は [`.claude/hooks/README.md`](../.claude/hooks/README.md) にあります。
+`_` 始まりの 5 ファイル（`_hook_common.sh` `_lint_common.sh` `_format_common.sh`
+`_push_review_common.sh` `_bash_review_common.py`）はフックではなく**共有ライブラリ**で、
+Claude 側と Codex 側の唯一の実体です（`git-push-review.sh` は両側とも薄いアダプタで、
+判定の本体は `_push_review_common.sh`。読めなければ fail-open ではなく確認要求に倒します）。設計根拠は [`.claude/hooks/README.md`](../.claude/hooks/README.md) にあります。
 
 ### Codex はフックもスキルも `codex exec` で呼ぶ
 

@@ -216,7 +216,7 @@ JSON・sed の 3 層をエスケープして生成するので、そうした環
 スクリプトは `~/.codex/hooks/` から本リポジトリの `.codex/hooks/` へシンボリック
 リンクを張る。
 
-次の 4 つは Claude 版と完全に同一のロジックなので、実体を 1 つだけ持ってドリフトを
+次の 5 つは Claude 版と完全に同一のロジックなので、実体を 1 つだけ持ってドリフトを
 構造的に起こらなくしてある。**その 1 つは `.claude/hooks/` 側にあり、この
 `.codex/hooks/` には存在しない** (下記参照):
 
@@ -226,10 +226,12 @@ JSON・sed の 3 層をエスケープして生成するので、そうした環
 | `_hook_common.sh`        | `hook_log` / `hook_notify` / `hook_find_nearest_bin` | `lint.sh` / `auto-format.sh` が source |
 | `_lint_common.sh`        | 言語別 静的解析マトリクス                            | `lint.sh` が source                    |
 | `_format_common.sh`      | 言語別 フォーマッタマトリクス                        | `auto-format.sh` が source             |
+| `_push_review_common.sh` | git push の検知と確認文の組み立て                    | `git-push-review.sh` が source         |
 
 **この `.codex/hooks/` には複製も symlink も置かない**。代わりに読み込む側が
 自分の物理パスから `../../.claude/hooks` を解決して直接読む (`bash-review.py` は
-`os.path.realpath(__file__)`、`lint.sh` / `auto-format.sh` は `cd -P`)。
+`os.path.realpath(__file__)`、`lint.sh` / `auto-format.sh` / `git-push-review.sh` は
+`cd -P`)。
 つまり上の表のファイル名でこのディレクトリを探しても見つからない。
 
 以前はここに相対 symlink を置いていた。実体が 1 つという性質は同じだが、
@@ -248,3 +250,10 @@ symlink 化されたフックディレクトリ経由でも共有ヘルパーが
 解決に失敗した場合に備え、共有ファイルを読む wrapper (`lint.sh` / `auto-format.sh`)
 は読み込み後に `declare -F` で関数の存在を確認し、未定義なら stderr に理由を出して
 exit 0 で抜ける (fail-open。確認箇所は各 wrapper の `SHARED_DIR` 直後)。
+
+`git-push-review.sh` だけは Claude 版・Codex 版とも薄いアダプタで、検知と要約の本体は
+すべて `_push_review_common.sh` にある (アダプタは入力の取り出しと出力の形 =
+exit 2 + stderr だけを持つ)。ライブラリを読めないときの扱いが `lint.sh` /
+`auto-format.sh` と逆な点に注意: あちらは fail-open だが、こちらは push 手前の
+ゲートなので「読めない」を「push ではない」と同一視せず、固定文のブロック
+(exit 2 + stderr に `could not load`) に倒す。詳細は `.claude/hooks/README.md`。

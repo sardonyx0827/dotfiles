@@ -3,6 +3,7 @@
 import concurrent.futures
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -2747,3 +2748,442 @@ def test_an_alias_only_mentioned_in_quoted_text_is_not_confirmed(
     res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
     assert res.returncode == 0, command
     assert res.stdout == "", command
+
+
+# =============================================================================
+# Output snapshots: what the two adapters emit, byte for byte
+# =============================================================================
+# The shared logic lives in one sourced library (_push_review_common.sh) and each
+# adapter only chooses how to emit the result: Claude as a JSON "ask" on stdout
+# (exit 0), Codex -- which has no "ask" -- as the same text on stderr (exit 2). These
+# snapshots pin the complete emitted text, so a refactor of where the logic lives
+# cannot change what the user is shown without a test saying so. Two details are the
+# easy ones to lose and are pinned on purpose:
+#   * the whitespace of the report (the line breaks between the `push target:` line,
+#     the notes and the summary), and
+#   * the TRAILING newline: with no repository the summary is empty, so the report's
+#     own final "\n" is the last byte. Capturing the result with `$(...)` instead of
+#     a variable strips it, and nothing else in the suite would notice.
+CLAUDE_HEADER = (
+    "git push detected. Review before pushing (see ~/.claude/rules/git-workflow.md):"
+)
+CODEX_HEADER = 'git push detected. Review before pushing (see ~/.codex/AGENTS.md "## 3. Git Workflow"):'
+
+_NOT_PARSED_NOTE = (
+    "note: push arguments could not be parsed reliably (the push is not a plain "
+    "`git ... push` word sequence -- e.g. it is inside eval, sh -c, watch, --exec or "
+    "foreach -- or its quoting is not followable) -- review the command itself\n"
+)
+
+# (id, command template, where the hook runs, expected text after the header line).
+# {target} is a second repository; <HASH> stands for an abbreviated commit id.
+SNAPSHOT_CASES = [
+    (
+        "plain-push",
+        "git push origin main",
+        "repo",
+        "push target: remote=origin refspec=main\n"
+        "branch: main\n"
+        "commits to push:\n"
+        "<HASH> initial commit\n"
+        "(no upstream: new branch push)",
+    ),
+    (
+        "dash-C-push",
+        "git -C {target} push",
+        "outside",
+        "push target: remote=(default) refspec=(default)\n"
+        "branch: feature-target\n"
+        "commits to push:\n"
+        "<HASH> target repo commit\n"
+        "(no upstream: new branch push)",
+    ),
+    (
+        "force-push",
+        "git push --force origin main",
+        "repo",
+        "push target: remote=origin refspec=main\n"
+        "WARNING: force/destructive push options: --force\n"
+        "branch: main\n"
+        "commits to push:\n"
+        "<HASH> initial commit\n"
+        "(no upstream: new branch push)",
+    ),
+    (
+        "cd-chain-push",
+        "cd {target} && git push",
+        "outside",
+        "push target: remote=(default) refspec=(default)\n"
+        "branch: feature-target\n"
+        "commits to push:\n"
+        "<HASH> target repo commit\n"
+        "(no upstream: new branch push)",
+    ),
+    (
+        "eval-push",
+        'eval "git push origin main"',
+        "repo",
+        _NOT_PARSED_NOTE + "branch: main\n"
+        "commits to push:\n"
+        "<HASH> initial commit\n"
+        "(no upstream: new branch push)",
+    ),
+    (
+        "push-outside-a-repository",
+        "git push",
+        "outside",
+        # No summary at all: the report's own final newline is the last byte.
+        "push target: remote=(default) refspec=(default)\n",
+    ),
+    (
+        "send-pack-note",
+        "git send-pack origin main",
+        "outside",
+        _NOT_PARSED_NOTE + "(target repository could not be determined: the command "
+        "runs git send-pack / http-push, the transport git push itself uses -- "
+        "review the target manually before approving)",
+    ),
+]
+
+
+def _snapshot_world(tmp_path, git_repo):
+    outside = tmp_path / "not-a-repo"
+    outside.mkdir()
+    target = make_target_repo(tmp_path)
+    return {"repo": git_repo, "outside": outside, "target": target}
+
+
+def _normalise(text, world):
+    """Replace what differs between runs (commit ids, temp paths) with placeholders."""
+    text = re.sub(r"(?m)^[0-9a-f]{7,40} ", "<HASH> ", text)
+    for label in ("target", "repo", "outside"):
+        text = text.replace(str(world[label]), f"<{label.upper()}>")
+    return text
+
+
+def _run_snapshot(shell_env, hook, template, world, where):
+    command = template.format(target=world["target"])
+    return shell_env.run(hook, stdin=payload(command), cwd=world[where])
+
+
+@pytest.mark.parametrize(
+    "case_id,template,where,expected",
+    SNAPSHOT_CASES,
+    ids=[c[0] for c in SNAPSHOT_CASES],
+)
+def test_claude_output_snapshot(
+    shell_env, tmp_path, git_repo, case_id, template, where, expected
+):
+    world = _snapshot_world(tmp_path, git_repo)
+    res = _run_snapshot(shell_env, CLAUDE_HOOK, template, world, where)
+
+    assert res.returncode == 0
+    assert res.stderr == ""
+    parsed = json.loads(res.stdout)
+    # The envelope: key order and compact separators are part of the contract with
+    # the harness, and jq ends the line with exactly one newline.
+    assert list(parsed) == ["hookSpecificOutput"]
+    output = parsed["hookSpecificOutput"]
+    assert list(output) == [
+        "hookEventName",
+        "permissionDecision",
+        "permissionDecisionReason",
+    ]
+    assert output["hookEventName"] == "PreToolUse"
+    assert output["permissionDecision"] == "ask"
+    assert res.stdout == (
+        json.dumps(parsed, separators=(",", ":"), ensure_ascii=False) + "\n"
+    )
+    assert _normalise(output["permissionDecisionReason"], world) == (
+        CLAUDE_HEADER + "\n" + expected
+    )
+
+
+@pytest.mark.parametrize(
+    "case_id,template,where,expected",
+    SNAPSHOT_CASES,
+    ids=[c[0] for c in SNAPSHOT_CASES],
+)
+def test_codex_output_snapshot(
+    shell_env, tmp_path, git_repo, case_id, template, where, expected
+):
+    world = _snapshot_world(tmp_path, git_repo)
+    res = _run_snapshot(shell_env, CODEX_HOOK, template, world, where)
+
+    assert res.returncode == 2
+    assert res.stdout == ""
+    # The heredoc that prints the text ends it with one newline of its own, after
+    # whatever the body ends with.
+    assert _normalise(res.stderr, world) == CODEX_HEADER + "\n" + expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "case_id,template,where,expected",
+    SNAPSHOT_CASES,
+    ids=[c[0] for c in SNAPSHOT_CASES],
+)
+def test_claude_reason_body_equals_codex_stderr_body(
+    shell_env, tmp_path, git_repo, case_id, template, where, expected
+):
+    """The two adapters differ in the header line and the channel, nothing else."""
+    world = _snapshot_world(tmp_path, git_repo)
+    claude = _run_snapshot(shell_env, CLAUDE_HOOK, template, world, where)
+    codex = _run_snapshot(shell_env, CODEX_HOOK, template, world, where)
+
+    reason = json.loads(claude.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    claude_header, claude_body = reason.split("\n", 1)
+    codex_header, codex_body = codex.stderr.split("\n", 1)
+
+    assert claude_header == CLAUDE_HEADER
+    assert codex_header == CODEX_HEADER
+    # Codex's stderr is the reason plus the newline its heredoc appends.
+    assert codex_body == claude_body + "\n"
+
+
+# =============================================================================
+# The shared library: how each adapter loads it, and what it does when it cannot
+# =============================================================================
+# Everything the two adapters share lives in .claude/hooks/_push_review_common.sh (the
+# helper functions plus the entry point hook_push_review_run). Each adapter sources it
+# only AFTER its cheap "no `push` / `send-pack` in the command" guard, so an ordinary
+# Bash call never even parses it. For the calls that do reach the load, a library that
+# is missing, empty, cut short, syntactically broken, or lacking any required function
+# must NOT pass the push through silently: this hook is the gate in front of
+# `git push`, and "could not load" is not "not a push". It degrades to a fixed-text
+# confirmation request (Claude: JSON ask, exit 0; Codex: stderr, exit 2).
+LIBRARY_NAME = "_push_review_common.sh"
+CLAUDE_LIBRARY = CLAUDE_HOOK.parent / LIBRARY_NAME
+
+# The helpers moved out of the adapters, in file order; then the entry point, which
+# must be the last function in the file (the load check treats it as the sentinel).
+PUSH_REVIEW_HELPERS = [
+    "strip_span_counts",
+    "hd_read_delim",
+    "hd_read_body",
+    "strip_quoted_ranges",
+    "git_c_dir_from_words",
+    "cd_target_from_words",
+    "push_show",
+    "build_push_report",
+]
+PUSH_REVIEW_ENTRY = "hook_push_review_run"
+PUSH_REVIEW_FUNCTIONS = [*PUSH_REVIEW_HELPERS, PUSH_REVIEW_ENTRY]
+
+LOAD_FAILURE_COMMANDS = [
+    "git push origin main",
+    "GIT Push origin main",
+    "git send-pack",
+]
+
+
+def _stage_adapters(tmp_path, library=None):
+    """Copy both adapters into sibling .claude/hooks and .codex/hooks directories.
+
+    The Codex adapter finds the library at ../../.claude/hooks relative to itself, so
+    the siblings must really be siblings under one root: if the path escaped into the
+    real repository, every "the library is broken" test would silently load the real
+    one and pass for the wrong reason. `library` is the text of
+    .claude/hooks/_push_review_common.sh, or None for no such file.
+    """
+    root = tmp_path / "staged"
+    claude_dir = root / ".claude/hooks"
+    codex_dir = root / ".codex/hooks"
+    claude_dir.mkdir(parents=True)
+    codex_dir.mkdir(parents=True)
+    shutil.copy2(CLAUDE_HOOK, claude_dir / CLAUDE_HOOK.name)
+    shutil.copy2(CODEX_HOOK, codex_dir / CODEX_HOOK.name)
+    if library is not None:
+        (claude_dir / LIBRARY_NAME).write_text(library, encoding="utf-8")
+    return {
+        "claude": claude_dir / CLAUDE_HOOK.name,
+        "codex": codex_dir / CODEX_HOOK.name,
+    }, claude_dir
+
+
+def _stub_definitions(names):
+    """No-op definitions of the given functions."""
+    return "".join(f"{name}() {{\n  :\n}}\n" for name in names)
+
+
+def _entry_definition(body=":"):
+    return f"{PUSH_REVIEW_ENTRY}() {{\n{body}\n}}\n"
+
+
+def _stub_library(entry_body=":"):
+    """A complete library whose helpers do nothing; only the entry has a body."""
+    return _stub_definitions(PUSH_REVIEW_HELPERS) + _entry_definition(entry_body)
+
+
+def _library_text(state):
+    if state == "absent":
+        return None
+    if state == "empty":
+        return ""
+    if state == "truncated":
+        # Cut off in the middle of the first function: the later ones, the entry point
+        # included, were never defined.
+        return 'strip_span_counts() {\n  local o="$1" sp="$2"\n  case "$sp" in\n'
+    if state == "syntax-error":
+        # A syntax error in the middle of an otherwise complete library. Whether the
+        # shell stops reading at the error or carries on, the library has to be
+        # refused: one that stops leaves the later functions undefined, one that
+        # carries on defines them all but reports the failed read.
+        return (
+            _stub_definitions(PUSH_REVIEW_HELPERS[:4])
+            + "if then fi ((\n"
+            + _stub_definitions(PUSH_REVIEW_HELPERS[4:])
+            + _entry_definition()
+        )
+    if state == "broken-after-the-sentinel":
+        # Every function is defined, but the file does not parse to the end.
+        return _stub_library() + "if then fi ((\n"
+    raise AssertionError(state)
+
+
+LOAD_FAILURE_STATES = [
+    "absent",
+    "empty",
+    "truncated",
+    "syntax-error",
+    "broken-after-the-sentinel",
+]
+
+
+def _assert_load_failure(res, variant, claude_dir):
+    resolved = str(claude_dir.resolve())
+    if variant == "claude":
+        assert res.returncode == 0
+        output = json.loads(res.stdout)["hookSpecificOutput"]
+        assert output["hookEventName"] == "PreToolUse"
+        assert output["permissionDecision"] == "ask"
+        reason = output["permissionDecisionReason"]
+        assert "could not be loaded" in reason
+        assert "Review the push manually" in reason
+        # The reason is fixed text: nothing from the command or the environment is
+        # interpolated into it.
+        assert reason == (
+            "git push detected, but the push-review library (_push_review_common.sh) "
+            "could not be loaded, so this hook could not build the usual push summary. "
+            "Review the push manually before pushing "
+            "(see ~/.claude/rules/git-workflow.md)."
+        )
+        assert res.stderr == (
+            f"git-push-review.sh: could not load {LIBRARY_NAME} from {resolved}\n"
+        )
+    else:
+        assert res.returncode == 2
+        assert res.stdout == ""
+        assert res.stderr == (
+            "git push detected, but the push-review library (_push_review_common.sh) "
+            "could not be loaded, so this hook could not build the usual push summary. "
+            "Review the push manually before pushing "
+            '(see ~/.codex/AGENTS.md "## 3. Git Workflow").\n'
+            f"git-push-review.sh: could not load {LIBRARY_NAME} from {resolved}\n"
+        )
+
+
+@pytest.mark.parametrize("variant", ["claude", "codex"])
+@pytest.mark.parametrize("command", LOAD_FAILURE_COMMANDS)
+@pytest.mark.parametrize("state", LOAD_FAILURE_STATES)
+def test_an_unusable_library_degrades_to_a_confirmation_not_a_pass(
+    shell_env, git_repo, tmp_path, variant, command, state
+):
+    adapters, claude_dir = _stage_adapters(tmp_path, _library_text(state))
+    res = shell_env.run(adapters[variant], stdin=payload(command), cwd=git_repo)
+    _assert_load_failure(res, variant, claude_dir)
+
+
+@pytest.mark.parametrize("variant", ["claude", "codex"])
+@pytest.mark.parametrize("missing", PUSH_REVIEW_FUNCTIONS)
+def test_every_required_function_is_checked_before_the_library_is_trusted(
+    shell_env, git_repo, tmp_path, variant, missing
+):
+    """Dropping ANY one of the nine functions must be refused, not just the entry point.
+
+    The real library is used with one definition renamed, so a partially-defined
+    library that still defines the entry point (and the others) is what is tested.
+    """
+    real = CLAUDE_LIBRARY.read_text(encoding="utf-8")
+    renamed = real.replace(f"\n{missing}() {{", f"\n{missing}_renamed() {{", 1)
+    assert renamed != real, f"{missing} is not defined at the start of a line"
+    adapters, claude_dir = _stage_adapters(tmp_path, renamed)
+    res = shell_env.run(
+        adapters[variant], stdin=payload("git push origin main"), cwd=git_repo
+    )
+    _assert_load_failure(res, variant, claude_dir)
+
+
+@pytest.mark.parametrize("variant", ["claude", "codex"])
+@pytest.mark.parametrize("state", LOAD_FAILURE_STATES)
+def test_a_command_that_is_not_a_push_never_touches_the_library(
+    shell_env, git_repo, tmp_path, variant, state
+):
+    """The cheap guard runs before the load, so an unusable library cannot matter here."""
+    adapters, _ = _stage_adapters(tmp_path, _library_text(state))
+    res = shell_env.run(adapters[variant], stdin=payload("ls -la"), cwd=git_repo)
+    assert res.returncode == 0
+    assert res.stdout == ""
+    assert res.stderr == ""
+
+
+@pytest.mark.parametrize("variant", ["claude", "codex"])
+def test_a_non_push_command_does_not_even_parse_the_library(
+    shell_env, git_repo, tmp_path, variant
+):
+    """A library that announces itself and exits would show if it were sourced."""
+    tripwire = 'echo "SOURCED" >&2\necho "SOURCED"\nexit 9\n'
+    adapters, _ = _stage_adapters(tmp_path, tripwire)
+    res = shell_env.run(adapters[variant], stdin=payload("git status"), cwd=git_repo)
+    assert (res.returncode, res.stdout, res.stderr) == (0, "", "")
+
+
+# The adapter acts on the entry point's return code: 0 = a body to show, 1 = not a push,
+# anything else = the library did something unexpected, which is treated like a load
+# failure. A stand-in library makes each of those answers deterministic.
+FAKE_BODY = "FAKE-BODY line one\nline two with trailing newline\n"
+
+
+def _fake_entry(code):
+    return (
+        "  push_review_body=$'FAKE-BODY line one\\nline two with trailing newline\\n'\n"
+        f"  return {code}"
+    )
+
+
+@pytest.mark.parametrize("variant", ["claude", "codex"])
+def test_rc_0_emits_the_library_body_unchanged(shell_env, git_repo, tmp_path, variant):
+    library = _stub_library(_fake_entry(0))
+    adapters, _ = _stage_adapters(tmp_path, library)
+    res = shell_env.run(adapters[variant], stdin=payload("git push"), cwd=git_repo)
+
+    if variant == "claude":
+        assert res.returncode == 0
+        assert res.stderr == ""
+        reason = json.loads(res.stdout)["hookSpecificOutput"][
+            "permissionDecisionReason"
+        ]
+        # The body's own trailing newline survives into the reason.
+        assert reason == CLAUDE_HEADER + "\n" + FAKE_BODY
+    else:
+        assert res.returncode == 2
+        assert res.stdout == ""
+        assert res.stderr == CODEX_HEADER + "\n" + FAKE_BODY + "\n"
+
+
+@pytest.mark.parametrize("variant", ["claude", "codex"])
+def test_rc_1_means_not_a_push_and_passes_silently(
+    shell_env, git_repo, tmp_path, variant
+):
+    library = _stub_library(_fake_entry(1))
+    adapters, _ = _stage_adapters(tmp_path, library)
+    res = shell_env.run(adapters[variant], stdin=payload("git push"), cwd=git_repo)
+    assert (res.returncode, res.stdout, res.stderr) == (0, "", "")
+
+
+@pytest.mark.parametrize("variant", ["claude", "codex"])
+@pytest.mark.parametrize("code", [2, 7, 127])
+def test_any_other_rc_is_a_load_failure(shell_env, git_repo, tmp_path, variant, code):
+    library = _stub_library(_fake_entry(code))
+    adapters, claude_dir = _stage_adapters(tmp_path, library)
+    res = shell_env.run(adapters[variant], stdin=payload("git push"), cwd=git_repo)
+    _assert_load_failure(res, variant, claude_dir)

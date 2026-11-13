@@ -36,6 +36,9 @@
   (permissionDecision: ask) with a summary of the branch, commits,
   and diffstat about to be pushed. Enforces the pre-push review step
   of `rules/git-workflow.md`.
+  The detection and the summary logic live in `_push_review_common.sh`, shared
+  with the Codex copy (see **Shared libraries** below); `git-push-review.sh`
+  only reads the input and shapes the output (a JSON `ask`, exit 0).
   The summary is taken from the repository the push will actually run in:
   `git -C <dir>` and a literal `cd <dir>` ahead of the push both retarget it.
   When that directory cannot be determined for certain (a variable, `cd -`,
@@ -173,9 +176,9 @@ feeds both, and lets lint's exit code be the hook's.
 
 ## Shared libraries (`_`-prefixed, not hooks themselves)
 
-These four files hold the per-file logic shared between the two sides — the
-lint/format matrices and bash-review's verdict logic. They live here as the
-_only_ copies: `.codex/hooks/` carries neither a duplicate nor a link, and its
+These five files hold the logic shared between the two sides — the
+lint/format matrices, bash-review's verdict logic and git-push-review's
+detection and summary. They live here as the _only_ copies: `.codex/hooks/` carries neither a duplicate nor a link, and its
 entry points resolve `../../.claude/hooks` from their own **physical** location
 (`os.path.realpath(__file__)` in Python, `cd -P` in shell) and load these files
 from there. One file means the shared logic cannot drift apart, and a
@@ -192,7 +195,10 @@ would land on `~/.claude/hooks` and resolve only by the coincidence that
 The hooks that consume this logic (`lint.sh`, `auto-format.sh`,
 `bash-review.py`, …) are _not_ shared: each side keeps its own copy, because
 Claude and Codex differ in how they receive targets, report verdicts, and place
-hooks on events. See `.codex/hooks/README.md` for the full table and those
+hooks on events. `git-push-review.sh` is the one that is kept deliberately thin:
+each side's copy is only an adapter (read the input, drop commands that cannot
+be a push, load `_push_review_common.sh`, shape the result), and everything else
+is in the library. See `.codex/hooks/README.md` for the full table and those
 differences.
 
 - **`_hook_common.sh`**: `hook_log` (timestamped, size-capped),
@@ -201,6 +207,11 @@ differences.
   format).
 - **`_lint_common.sh`**: `hook_lint_file` — the per-language lint matrix.
 - **`_format_common.sh`**: `hook_format_file` — the per-language formatter matrix.
+- **`_push_review_common.sh`**: git-push-review's push detection and its
+  confirmation text (push target, `WARNING` lines, branch / commit summary).
+  One entry point, `hook_push_review_run <raw stdin> <command>`, which returns
+  `0` (a body is in the global `push_review_body`), `1` (not a push) or
+  anything else (unexpected). It must stay the last function in the file.
 - **`_bash_review_common.py`**: bash-review's verdict logic and review calls.
 
 Contract for the shell ones: they define functions and nothing else. Sourcing
@@ -210,6 +221,28 @@ in the structured-output channel Codex parses and fail the hook. Function names
 are namespaced `hook_` because bash is dynamically scoped and a collision with a
 caller's local fails silently. Variables inside them are not prefixed
 (`FILE_PATH`, `EXTENSION`, …), so callers must not rely on names they share.
+
+`_push_review_common.sh` is a **private library**, an exception to the `hook_`
+naming rule: its one public name is the entry point `hook_push_review_run`, and
+the helpers behind it (`strip_quoted_ranges`, `git_c_dir_from_words`,
+`build_push_report`, …) keep the plain names they had when they sat in the hook.
+They were moved verbatim, and renaming them would defeat reviewing that move as a
+plain `diff`. The `gp_*` / `push_report` / `hd_*` variables are intentional
+globals that carry results between those functions (a `$(…)` between them would
+strip a trailing newline).
+
+`git-push-review.sh` does **not** fail open when it cannot load this library, in
+contrast to `lint.sh` / `auto-format.sh`: it is the gate in front of `git push`,
+and "could not load" is not evidence that the command is not a push. The load is
+guarded by a cheap "no `push` / `send-pack` in the command" check that runs
+first, so ordinary Bash calls never parse the library; a command that passes
+the check and then meets a missing, empty, truncated or syntactically broken
+library, a missing required function, or an entry point that returns anything
+but `0` / `1`, degrades to a fixed-text confirmation (Claude: a JSON `ask`,
+exit 0; Codex: stderr, exit 2) saying the library could not be loaded and the
+push must be reviewed manually, plus a `could not load _push_review_common.sh
+from <dir>` line on stderr. That is why the entry point must be the last
+function: the adapters take "it is defined" to mean "the whole file was read".
 
 ## bash-review — design rationale & threat model
 
@@ -513,8 +546,9 @@ latency low for the common case:
    32 KiB of JSON, or more than 32 command substitutions (`$(`, `<(`, `>(`, a
    backtick pair), resolves to `ask` (Codex: block) before step 1, with no
    external review and never `deny`. That bounds the quadratic cost of nested
-   `$(`. `git-push-review.sh` stays fail-open (no `onFailure`), backed by
-   `Bash(git push:*)` in `ask`.
+   `$(`. `git-push-review.sh` stays fail-open (no `onFailure`) for a timeout or a
+   crash, backed by `Bash(git push:*)` in `ask`; a library it cannot load is
+   not a crash but an explicit `ask` (see **Shared libraries**).
    Should the hook layer be disabled altogether, `permissions.deny` still
    mirrors the hook's context-free hard-deny set — `sudo`/`su`/`doas`/`pkexec`,
    `ssh`/`slogin`/`scp`/`sftp`/`telnet`/`socat`/`ftp`/`curl`/`wget`/`nc`/`netcat`/`ncat`,

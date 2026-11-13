@@ -33,7 +33,8 @@ CI（`.github/workflows/ci.yml`）は `pytest-cov` でブランチカバレッ�
 > **カバレッジが測るのは Python だけです。** フックの実体はシェルにもあり
 > （`lint.sh` / `auto-format.sh` / `format-then-lint.sh` / `stop-audit.sh` /
 > `git-push-review.sh` / `bash-review-launcher.sh` と
-> 共有ライブラリ `_hook_common.sh` / `_lint_common.sh` / `_format_common.sh`)、
+> 共有ライブラリ `_hook_common.sh` / `_lint_common.sh` / `_format_common.sh` /
+> `_push_review_common.sh`)、
 > coverage.py はシェルを計装できません。これらはサブプロセス経由のブラック
 > ボックステストで検証しており、上の数値には含まれません。
 
