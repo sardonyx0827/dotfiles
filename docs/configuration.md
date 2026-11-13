@@ -181,12 +181,16 @@ Ctrl+a ]        # ペースト
 >
 > **このフックの限界（重要）**: bash-review は**暴走しがちなエージェントに対する
 > ガードレールであって、敵対的なセキュリティ境界ではありません**。防御を積極的に
-> 破ろうとする人間に耐えることは設計目標に含まれていません。**本当の境界は
-> `settings.json` の `permissions.deny`** であり、bash-review はその上に乗る
-> 助言レイヤーです。したがって `permissions.deny` 側に穴があると、フックが
-> 唯一の砦になってしまいます（設計根拠と既知のトレードオフの全文は
-> [.claude/hooks/README.md](../.claude/hooks/README.md) の "bash-review — design
-> rationale & threat model" を参照）。
+> 破ろうとする人間に耐えることは設計目標に含まれていません。下には
+> `settings.json` の `permissions.deny`（`rm -rf`・`sudo`・`curl`/`wget` 等）も
+> ありますが、**これも「本当の境界」ではありません**。`permissions.deny` は
+> コマンドの前方一致で判定するため、シェル文法で回避できます（素の `rm -r <path>`
+> は拒否されても、`( rm -r <path> )` とサブシェルで包むと実行される）。
+> 両者は「フックが助言で deny が本命」という主従関係ではなく、**どちらも敵対者を
+> 止める境界ではない、ミスを捕まえる独立した 2 回の機会**です。だからこそ
+> bash-review は難読化された書き方を deny 任せにせず自前で解決します（設計根拠と
+> 既知のトレードオフの全文は [.claude/hooks/README.md](../.claude/hooks/README.md)
+> の "bash-review — design rationale & threat model" を参照）。
 >
 > したがって **`settings.json` だけを他環境へコピーし `hooks/` を導入しないと、
 > 実行時ガードが外れて allowlist がそのまま「任意コード実行の自動承認」になります。**
