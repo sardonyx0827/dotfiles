@@ -1,6 +1,6 @@
 ---
 name: codex-consultation
-description: Consult OpenAI Codex (via the `codex exec` CLI) for second opinions on specs, architecture, design decisions, and bug-fix strategy. Use at every second-opinion checkpoint CLAUDE.md defines (Codex runs in the background beside the advisor, or beside Gemini when the advisor is unavailable), and when proposing a specification or design, planning a large-scale modification, writing test strategy, or after 2 consecutive failed fix attempts on the same issue (root-cause analysis). Codex is for discussion only — never let it implement code unless explicitly instructed.
+description: Consult OpenAI Codex (via the `codex exec` CLI) for second opinions on specs, architecture, design decisions, and bug-fix strategy. Use at every second-opinion checkpoint ~/.claude/rules/second-opinion.md defines (Codex runs in the background beside the advisor, or beside Gemini when the advisor is unavailable), and when proposing a specification or design, planning a large-scale modification, writing test strategy, or after 2 consecutive failed fix attempts on the same issue (root-cause analysis). Codex is for discussion only — never let it implement code unless explicitly instructed.
 ---
 
 # Codex consultation (`codex exec`)
@@ -18,7 +18,7 @@ for the command shape; other skills, rules and agents point here.
 
 - Double-checking and gathering opinions when proposing a specification, designing, or making large-scale modifications
 - Gathering opinions when two consecutive attempts to fix an error on the same topic have failed and root-cause analysis or a fix strategy is needed
-- Every second-opinion checkpoint in CLAUDE.md: the main session runs Codex in the background alongside the advisor, or alongside Gemini when the advisor is absent or errors
+- Every second-opinion checkpoint in `~/.claude/rules/second-opinion.md`: the main session runs Codex in the background alongside the advisor, or alongside Gemini when the advisor is absent or errors
 
 ## Escalation Flow
 

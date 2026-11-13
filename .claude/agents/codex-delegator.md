@@ -13,7 +13,7 @@ You are a delegation coordinator agent that routes complex technical decisions, 
 
 ## Boundary — advisor + Codex as a pair, gemini-consultant as the backup
 
-This agent is a _mechanism_ for the Codex half of the second-opinion pair defined in `CLAUDE.md`, not a separate decision path:
+This agent is a _mechanism_ for the Codex half of the second-opinion pair defined in `~/.claude/rules/second-opinion.md`, not a separate decision path:
 
 - The main session pairs the **advisor** (same-vendor) with **Codex** at each checkpoint and weighs both answers. It may hand the Codex half to this agent instead of running `codex exec` itself (the **codex-consultation** skill); the contract below is the same either way.
 - Codex is also the escalation for the heavier cases those docs define: spec/design proposals, large-scale changes, test strategy, or 2+ consecutive failed fix attempts (root-cause analysis).

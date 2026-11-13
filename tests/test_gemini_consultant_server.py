@@ -222,7 +222,7 @@ class TestCallGemini:
 
 class TestDefaults:
     def test_default_models_are_the_gemini_4_ids(self, load_server, monkeypatch):
-        # consult_gemini stands in for the advisor (CLAUDE.md), so its default is
+        # consult_gemini stands in for the advisor (rules/second-opinion.md), so its default is
         # the top Gemini 4 model. The *-latest aliases are not documented to move
         # to Gemini 4, so the defaults name concrete ids.
         monkeypatch.delenv("GEMINI_PRO_MODEL")

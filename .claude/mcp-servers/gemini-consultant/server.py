@@ -32,7 +32,7 @@ mcp = FastMCP("gemini-consultant")
 # 局所的・高頻度なチェック → Flash
 # Gemini 4 から Pro / Flash の名前が消え、gemini-pro-latest / gemini-flash-latest
 # が Gemini 4 へ移るかは公式に示されていないため、既定は具体的な ID で書く。
-# consult_gemini は advisor の代役 (CLAUDE.md) を務め、advisor はメインモデルと
+# consult_gemini は advisor の代役 (rules/second-opinion.md) を務め、advisor はメインモデルと
 # 同等以上でないと意味がないので、Pro 相当は最上位の Carbon にする。
 # Flash 相当は Hydrogen。
 DEEP_MODEL = os.environ.get("GEMINI_PRO_MODEL", "gemini-4-carbon")
