@@ -108,6 +108,53 @@ print_error() {
   echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# --- Install-failure bookkeeping ---------------------------------------------
+# Every optional step warns and carries on (one flaky formula or a dropped
+# connection must not stop the rest of the run), which used to leave the run
+# ending in an unconditional "Installation completed!" however many steps had
+# failed. record_failure notes a step that did not install; main() prints the
+# list at the end and exits 1 when it is non-empty.
+#
+# A plain global indexed array, bash 3.2 safe (macOS /bin/bash): `+=`,
+# `${#a[@]}` and `"${a[@]}"` only -- no negative subscripts, associative
+# arrays, mapfile or `declare -g`. It must be assigned at the top level so it
+# stays global when this file is sourced.
+#
+# record_failure appends in the CURRENT shell, so never call it, try_install or
+# pip_install_user inside `$(...)`, a pipeline or a background job: that runs
+# in a subshell and the entry is silently lost. tests/test_install.py checks
+# the source for exactly that.
+INSTALL_FAILURES=()
+
+# Record that the step called LABEL did not install. Always returns 0: callers
+# call it bare under `set -e`, and a non-zero status here would abort the run
+# it is only meant to describe. An identical consecutive label is dropped, so
+# one failure path that reports itself twice reads as one step; independent
+# failures that happen to share a label further apart are kept.
+record_failure() {
+  local label="$1" count=${#INSTALL_FAILURES[@]}
+  if [ "$count" -gt 0 ] && [ "${INSTALL_FAILURES[$((count - 1))]}" = "$label" ]; then
+    return 0
+  fi
+  INSTALL_FAILURES+=("$label")
+  return 0
+}
+
+# Print the failure summary, or nothing when no step failed. Labels go through
+# printf %s, not print_*/echo -e, so a backslash in one is never interpreted.
+report_install_failures() {
+  local count=${#INSTALL_FAILURES[@]} label
+  if [ "$count" -eq 0 ]; then
+    return 0
+  fi
+  print_error "Installation finished with $count failed step(s):"
+  for label in "${INSTALL_FAILURES[@]}"; do
+    printf '  - %s\n' "$label"
+  done
+  print_info "Reasons are printed above as [WARNING]. Fix the cause and re-run ./install.sh (finished steps are skipped)."
+  return 0
+}
+
 # Help text. Dry-run previews only the steps that modify the user's own files;
 # the text says outright that package installation is skipped, not simulated.
 usage() {
@@ -129,6 +176,17 @@ Options:
 With no options install.sh symlinks the dotfiles into $HOME (backing up any
 real files it replaces), installs packages for the detected OS
 (macOS / Ubuntu / WSL), and switches the default shell to zsh.
+
+An install step that fails prints a warning and the run carries on. The failed
+steps are listed at the end instead of "Installation completed!"; fix the cause
+and re-run (steps that already finished are skipped).
+
+Exit status:
+  0  success, including a completed --dry-run preview and --help.
+  1  one or more install steps failed (listed at the end of the run). Also
+     exits 1 when run outside a dotfiles checkout or on an unsupported OS.
+  2  usage error: an unknown option or unexpected argument (also a DRY_RUN
+     environment value other than 0 or 1).
 EOF
 }
 
@@ -234,6 +292,7 @@ install_homebrew() {
     # skip the brew packages. Bail before the Apple-Silicon PATH block
     # (pointless with no brew to source) and before print_success (a lie).
     if ! fetch_and_run "https://raw.githubusercontent.com/Homebrew/install/$HOMEBREW_INSTALL_REF/install.sh" /bin/bash; then
+      record_failure "Homebrew"
       print_warning "Homebrew bootstrap failed; skipping Homebrew packages"
       return 1
     fi
@@ -283,8 +342,10 @@ install_apt_packages() {
     libreadline-dev \
     libsqlite3-dev \
     libffi-dev \
-    liblzma-dev ||
+    liblzma-dev || {
+    record_failure "APT packages"
     print_warning "Some APT packages failed to install (continuing)"
+  }
 
   # On Debian/Ubuntu the binaries are named `batcat` and `fdfind`, but the
   # configs (.zshrc vf(), nvim telescope) invoke `bat` and `fd`. Provide
@@ -369,11 +430,18 @@ install_wezterm() {
       print_info "Installing WezTerm..."
       if curl -fsSL https://apt.fury.io/wez/gpg.key | sudo gpg --yes --dearmor -o /usr/share/keyrings/wezterm-fury.gpg; then
         echo 'deb [signed-by=/usr/share/keyrings/wezterm-fury.gpg] https://apt.fury.io/wez/ * *' |
-          sudo tee /etc/apt/sources.list.d/wezterm.list >/dev/null ||
+          sudo tee /etc/apt/sources.list.d/wezterm.list >/dev/null || {
+          # Same label as the try_install below, so a repository that could not
+          # be added and the install that then fails with it read as ONE failed
+          # step: apt-get update records nothing in between, and an identical
+          # consecutive label is dropped.
+          record_failure "WezTerm"
           print_warning "Failed to add WezTerm apt repository"
+        }
         sudo apt-get update || print_warning "apt-get update failed"
         try_install WezTerm sudo apt-get install -y wezterm
       else
+        record_failure "WezTerm"
         print_warning "Failed to fetch WezTerm GPG key; skipping WezTerm"
       fi
       if command_exists wezterm; then
@@ -395,11 +463,13 @@ install_fonts() {
     brew install --cask font-ubuntu-mono ||
       {
         fonts_ok=false
+        record_failure "font-ubuntu-mono"
         print_warning "Failed to install font-ubuntu-mono"
       }
     brew install --cask font-hack-nerd-font ||
       {
         fonts_ok=false
+        record_failure "font-hack-nerd-font"
         print_warning "Failed to install font-hack-nerd-font"
       }
     if [[ "$fonts_ok" == true ]]; then
@@ -410,6 +480,7 @@ install_fonts() {
     if sudo apt-get install -y fonts-ubuntu fonts-hack; then
       print_success "Fonts installed"
     else
+      record_failure "fonts-ubuntu fonts-hack"
       print_warning "Failed to install fonts"
     fi
   fi
@@ -454,14 +525,22 @@ install_gh() {
     # keyring/apt step must warn and continue, not abort the installer.
     if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg |
       sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg; then
-      sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg ||
+      # Record a half-done repository setup even when the apt install below
+      # then succeeds (e.g. from the distro's own package), as install_wezterm
+      # does: a broken keyring or sources entry is the user's to fix.
+      sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg || {
+        record_failure "gh"
         print_warning "Failed to chmod gh keyring"
+      }
       echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" |
-        sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null ||
+        sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null || {
+        record_failure "gh"
         print_warning "Failed to add gh apt repository"
+      }
       sudo apt-get update || print_warning "apt-get update failed"
       try_install gh sudo apt-get install -y gh
     else
+      record_failure "gh"
       print_warning "Failed to fetch gh keyring; skipping gh"
     fi
   fi
@@ -480,8 +559,10 @@ install_uv() {
     return
   fi
   print_info "Installing uv (Astral)..."
-  fetch_and_run https://astral.sh/uv/install.sh sh ||
+  fetch_and_run https://astral.sh/uv/install.sh sh || {
+    record_failure "uv"
     print_warning "Failed to install uv"
+  }
   # uv installs to ~/.local/bin; make it visible for the rest of this script.
   export PATH="$HOME/.local/bin:$PATH"
   if command_exists uv; then
@@ -497,8 +578,10 @@ install_pyenv() {
   fi
   if [[ "$OS" == "ubuntu" ]]; then
     print_info "Installing pyenv..."
-    fetch_and_run https://pyenv.run bash ||
+    fetch_and_run https://pyenv.run bash || {
+      record_failure "pyenv"
       print_warning "Failed to install pyenv"
+    }
     if command_exists pyenv || [ -d "$HOME/.pyenv" ]; then
       print_success "pyenv installed"
     fi
@@ -541,8 +624,10 @@ install_lazydocker() {
   if [[ "$OS" == "macos" ]]; then
     try_install lazydocker brew install lazydocker
   elif [[ "$OS" == "ubuntu" ]]; then
-    fetch_and_run "https://raw.githubusercontent.com/jesseduffield/lazydocker/$LAZYDOCKER_INSTALL_REF/scripts/install_update_linux.sh" bash ||
+    fetch_and_run "https://raw.githubusercontent.com/jesseduffield/lazydocker/$LAZYDOCKER_INSTALL_REF/scripts/install_update_linux.sh" bash || {
+      record_failure "lazydocker"
       print_warning "Failed to install lazydocker"
+    }
   fi
   if command_exists lazydocker; then
     print_success "lazydocker installed"
@@ -564,8 +649,10 @@ install_docker() {
     # happy path. Keep it an `if` (no else returns 0), not `&&`, so `set -e`
     # never aborts the installer.
   elif [[ "$OS" == "ubuntu" ]]; then
-    fetch_and_run https://get.docker.com sudo sh ||
+    fetch_and_run https://get.docker.com sudo sh || {
+      record_failure "Docker engine"
       print_warning "Failed to install Docker engine"
+    }
     sudo usermod -aG docker "$USER" 2>/dev/null || true
     print_info "Log out/in (or 'newgrp docker') for group membership to take effect."
   fi
@@ -691,6 +778,7 @@ reclaim_aborted_clone() {
   # -- 物理パスで検査したところで同じものを消す。この行に期待してよいのは
   # 「取り違えに気付く」ところまでで、境界を張っているのは下の検査である。
   if [ -z "$HOME" ] || [ "${dir#"$HOME"/}" = "$dir" ]; then
+    record_failure "$label"
     print_warning "Refusing to reclaim $label: $dir is not under \$HOME"
     return 1
   fi
@@ -699,6 +787,7 @@ reclaim_aborted_clone() {
   # symlink を「通して」true になるので、無防備な修理はリンク先の中身を空に
   # してしまう -- プラグインパスの外側を壊す唯一の経路。決して辿らない。
   if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    record_failure "$label"
     print_warning "Skipping $label: $dir exists but is not a plain directory; remove it by hand and re-run ./install.sh"
     return 1
   fi
@@ -716,6 +805,7 @@ reclaim_aborted_clone() {
   # submodule のポインタを rm -rf する筋合いは無い。
   if [ -n "$(find "$dir" -mindepth 1 -maxdepth 1 ! -name '.git')" ] ||
     [ -L "$dir/.git" ] || [ ! -d "$dir/.git" ]; then
+    record_failure "$label"
     print_warning "$label at $dir looks incomplete but is not an interrupted clone; inspect it, remove it by hand, then re-run ./install.sh"
     return 1
   fi
@@ -736,6 +826,7 @@ reclaim_aborted_clone() {
   # 実際に起こりうる: sudo 配下で中断された clone や、復元したバックアップが
   # 残した root 所有・書き込み不可の .git。
   if ! rm -rf "${dir:?}/.git"; then
+    record_failure "$label"
     print_warning "Could not remove $dir/.git; remove it by hand and re-run ./install.sh"
     return 1
   fi
@@ -774,9 +865,9 @@ install_tmux_plugins() {
 # captured (fd shuttle: 3>&1 1>/dev/null 2>&3) instead of `2>/dev/null`-
 # discarded, so a genuine failure (bad package, no network) prints its reason
 # rather than a bare "Failed to install"; pip's own progress (stdout) stays
-# quiet on success. Non-fatal by contract (warns, returns 0) to match the
-# optional-tool `|| print_warning` idiom the rest of the script uses under
-# `set -e`. --user keeps installs in ~/.local, never system site-packages;
+# quiet on success. Non-fatal by contract (warns, records the failure, returns
+# 0) to match the optional-tool `|| print_warning` idiom the rest of the script
+# uses under `set -e`. A retry that succeeds records nothing. --user keeps installs in ~/.local, never system site-packages;
 # pipx would be the heavier "correct" route for CLI tools but needs its own
 # bootstrap, out of scope here.
 pip_install_user() {
@@ -791,6 +882,7 @@ pip_install_user() {
     fi
   fi
   print_warning "Failed to install $pkg"
+  record_failure "$pkg"
   if [ -n "$err" ]; then
     printf '%s\n' "$err" | sed 's/^/    /'
   fi
@@ -798,7 +890,9 @@ pip_install_user() {
 }
 
 # Run a tool-install command, keeping success quiet but surfacing the reason on
-# failure (non-fatal, warns and returns 0), so a failed toolchain/network
+# failure (non-fatal: warns, records the failure for main()'s end-of-run
+# summary, and returns 0 -- never 1, or a bare caller would abort under
+# `set -e`), so a failed toolchain/network
 # install reports the installer's own error (npm ERR!, go's module error,
 # apt's message, ...) instead of a bare "Failed to install". stderr is captured
 # via the same fd shuttle as pip_install_user; the installer's stdout progress
@@ -815,6 +909,7 @@ try_install() {
     return 0
   fi
   print_warning "Failed to install $label"
+  record_failure "$label"
   if [ -n "$err" ]; then
     printf '%s\n' "$err" | sed 's/^/    /'
   fi
@@ -861,8 +956,10 @@ register_claude_mcp_servers() {
       print_info "MCP server '$name' already registered"
     else
       print_info "Registering MCP server '$name'..."
-      claude mcp add --scope user "$name" "$@" ||
+      claude mcp add --scope user "$name" "$@" || {
+        record_failure "MCP server $name"
         print_warning "Failed to register MCP server '$name'"
+      }
     fi
   }
 
@@ -893,6 +990,7 @@ install_nodejs() {
       if fetch_and_run https://deb.nodesource.com/setup_lts.x sudo -E bash; then
         try_install "Node.js" sudo apt-get install -y nodejs
       else
+        record_failure "Node.js"
         print_warning "NodeSource setup failed; skipping Node.js (continuing)"
       fi
     fi
@@ -952,6 +1050,7 @@ install_oh_my_zsh() {
     if fetch_and_run "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/$OHMYZSH_INSTALL_REF/tools/install.sh" sh -- --unattended --keep-zshrc; then
       print_success "Oh My Zsh installed"
     else
+      record_failure "Oh My Zsh"
       print_warning "Failed to install Oh My Zsh (continuing; the zsh plugins and theme below are skipped, not partially applied)"
     fi
   else
@@ -1011,15 +1110,19 @@ install_oh_my_zsh() {
   # zsh-autosuggestions
   if [ ! -f "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ] &&
     reclaim_aborted_clone "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" zsh-autosuggestions; then
-    git clone https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ||
+    git clone https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" || {
+      record_failure "zsh-autosuggestions"
       print_warning "Failed to clone zsh-autosuggestions (continuing)"
+    }
   fi
 
   # zsh-syntax-highlighting
   if [ ! -f "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ] &&
     reclaim_aborted_clone "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" zsh-syntax-highlighting; then
-    git clone https://github.com/zsh-users/zsh-syntax-highlighting "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ||
+    git clone https://github.com/zsh-users/zsh-syntax-highlighting "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" || {
+      record_failure "zsh-syntax-highlighting"
       print_warning "Failed to clone zsh-syntax-highlighting (continuing)"
+    }
   fi
 
   print_success "zsh plugins installed"
@@ -1104,6 +1207,7 @@ install_vim_plug() {
     curl -fLo "$HOME/.vim/autoload/plug.vim" --create-dirs \
       "https://raw.githubusercontent.com/junegunn/vim-plug/$VIM_PLUG_REF/plug.vim" || {
       rm -f "$HOME/.vim/autoload/plug.vim"
+      record_failure "vim-plug"
       print_warning "Failed to download vim-plug (continuing)"
     }
   fi
@@ -1742,6 +1846,7 @@ install_vim_plugins() {
   if vim +PlugInstall +qall; then
     print_success "Vim plugins installed"
   else
+    record_failure "vim +PlugInstall"
     print_warning "vim +PlugInstall failed (continuing)"
   fi
 }
@@ -2005,6 +2110,7 @@ change_shell() {
       if chsh -s "$(which zsh)"; then
         print_success "Default shell changed to zsh (restart terminal to apply)"
       else
+        record_failure "chsh"
         print_warning "chsh failed; add $(command -v zsh) to /etc/shells and re-run chsh"
       fi
     else
@@ -2044,6 +2150,10 @@ install_os_packages() {
 }
 
 main() {
+  # A run reports only its own failures: start from an empty list rather than
+  # whatever a previous call in the same shell (or a test) left behind.
+  INSTALL_FAILURES=()
+
   # Parse options first, before the banner and the checkout guard, so `--help`
   # works from anywhere and `--dry-run` is set before the first side effect.
   # This script accepts no positional arguments.
@@ -2161,7 +2271,13 @@ main() {
     echo
     return 0
   fi
-  print_success "Installation completed!"
+  # Failed steps only warned and the run carried on; say so here rather than
+  # claiming success, and let the exit status carry it to a calling script.
+  if [ "${#INSTALL_FAILURES[@]}" -gt 0 ]; then
+    report_install_failures
+  else
+    print_success "Installation completed!"
+  fi
   echo
   print_info "Next steps:"
   echo "  1. Restart your terminal"
@@ -2185,6 +2301,10 @@ main() {
   echo "  - ./scripts/new_project.sh : Scaffold a new project (docs/, assets/, README.md, git init; 'np' in zsh)"
   echo "  - ./scripts/tmux_send_to_all_except_nvim.sh : Send commands to tmux panes"
   echo
+  if [ "${#INSTALL_FAILURES[@]}" -gt 0 ]; then
+    return 1
+  fi
+  return 0
 }
 
 # Run main function only when executed directly (not when sourced by tests).

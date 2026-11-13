@@ -237,6 +237,23 @@ Windows環境ではtmuxの代わりにWindows Terminalのタブ機能を使用�
 
 ## 共通トラブルシューティング
 
+### install.sh が終了コード 1 で終わった
+
+個々のインストール手順が失敗しても `install.sh` は警告を出して続行し、最後に失敗したステップの一覧を表示して終了コード `1` で終わります（`Installation completed!` は表示されません）。
+
+```text
+[ERROR] Installation finished with 2 failed step(s):
+  - uv
+  - zsh-autosuggestions
+[INFO] Reasons are printed above as [WARNING]. Fix the cause and re-run ./install.sh (finished steps are skipped).
+```
+
+1. 一覧の各項目について、ログの上の方にある `[WARNING] Failed to install <名前>` などの行と、その直後に字下げして出るインストーラ自身のエラー出力で原因を確認する
+2. 原因（ネットワーク、`sudo` の権限、パッケージ名の変更など）を直す
+3. `./install.sh` を再実行する。導入済みのステップはスキップされるので、何度実行しても安全
+
+dotfiles のシンボリックリンクは最初のステップで張り終えているため、一覧に出るのはその後のパッケージ・ツール・プラグイン関連の失敗です。`./install.sh --help` で終了コードの意味（`0` 成功 / `1` 失敗したステップあり / `2` 引数の誤り）を確認できます。
+
 ### Zshプラグインが動作しない
 
 ```bash

@@ -25,6 +25,33 @@ def run_sourced(snippet: str, env: dict, cwd=None):
     )
 
 
+# Appended to a snippet to read INSTALL_FAILURES back out of the shell: an `N=`
+# line with the count and one `F=` line per label, in order. Indexing in a loop
+# (not `printf '%s\n' "${a[@]}"`) so an empty array prints nothing instead of a
+# blank line, and a label with spaces or quotes survives as one entry.
+_DUMP_FAILURES = (
+    'echo "N=${#INSTALL_FAILURES[@]}"; i=0; '
+    'while [ "$i" -lt "${#INSTALL_FAILURES[@]}" ]; do '
+    'echo "F=${INSTALL_FAILURES[$i]}"; i=$((i + 1)); done'
+)
+
+
+def run_recording(snippet: str, env: dict, cwd=None):
+    """Run `snippet`, then dump INSTALL_FAILURES; return (result, labels).
+
+    Fails loudly when the dump never ran (the snippet aborted under `set -e`):
+    an empty `labels` must mean "nothing was recorded", not "we never got to
+    look".
+    """
+    res = run_sourced(f"{snippet}\n{_DUMP_FAILURES}", env, cwd=cwd)
+    lines = res.stdout.splitlines()
+    counts = [ln for ln in lines if ln.startswith("N=")]
+    assert counts, f"the snippet aborted before the dump:\n{res.stdout}\n{res.stderr}"
+    labels = [ln[2:] for ln in lines if ln.startswith("F=")]
+    assert counts[-1] == f"N={len(labels)}", (counts, labels)
+    return res, labels
+
+
 # Never stripped by _without_commands: these carry core utilities
 # (dirname, touch, sudo, curl, sed, cmp, mktemp, ...) and, for /bin on this
 # platform, bash itself. Some dev-machine tools (pip3, vim, zsh) have a
@@ -2976,6 +3003,40 @@ class TestPipInstallUser:
         # exactly one install attempt (no retry)
         assert sum(c.startswith("pip3 install") for c in shell_env.calls) == 1
 
+    def test_hard_failure_records_the_package(self, shell_env):
+        shell_env.stub("pip3", body=_PIP_HARD_FAIL_STUB)
+        res, failures = run_recording("pip_install_user pip3 boguspkg", shell_env.env)
+        assert res.returncode == 0, res.stderr  # still non-fatal
+        assert failures == ["boguspkg"]
+
+    def test_plain_success_records_nothing(self, shell_env):
+        shell_env.stub("pip3")
+        res, failures = run_recording("pip_install_user pip3 somepkg", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert failures == []
+
+    def test_pep668_retry_that_succeeds_records_nothing(self, shell_env):
+        shell_env.stub("pip3", body=_PIP_PEP668_STUB)
+        res, failures = run_recording("pip_install_user pip3 mypkg", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert any("--break-system-packages mypkg" in c for c in shell_env.calls)
+        assert failures == []
+
+    def test_pep668_retry_that_also_fails_records_the_package_once(self, shell_env):
+        # First call reports the managed-environment guard, the retry then
+        # fails for a real reason: one failed step, one entry.
+        body = (
+            'case "$*" in\n'
+            '  *--break-system-packages*) echo "ERROR: no matching dist" >&2; exit 1 ;;\n'
+            "esac\n"
+            'echo "error: externally-managed-environment" >&2\n'
+            "exit 1\n"
+        )
+        shell_env.stub("pip3", body=body)
+        res, failures = run_recording("pip_install_user pip3 mypkg", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert failures == ["mypkg"]
+
     def test_mcp_deps_install_routes_through_helper_under_pep668(self, shell_env):
         # The real caller (install_mcp_server_deps) must reach the PEP 668
         # recovery: `pip show` reports mcp absent, then the install succeeds
@@ -2999,6 +3060,72 @@ class TestPipInstallUser:
         assert text.count('pip_install_user "$pip_cmd"') == 2
         assert "--break-system-packages" in text
         assert "externally-managed-environment" in text
+
+
+class TestRecordFailureHelpers:
+    """The bookkeeping itself: a global list, an append that can never abort a
+    bare caller under `set -e`, and the end-of-run summary."""
+
+    def test_the_list_starts_empty(self, shell_env):
+        res, failures = run_recording(":", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert failures == []
+
+    def test_record_failure_appends_in_order(self, shell_env):
+        res, failures = run_recording(
+            'record_failure alpha; record_failure "beta gamma"', shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == ["alpha", "beta gamma"]
+
+    def test_an_identical_consecutive_label_is_recorded_once(self, shell_env):
+        # The same failure path reporting itself twice must read as one step.
+        res, failures = run_recording(
+            'record_failure alpha; record_failure alpha; echo "AFTER_DUPLICATE"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_DUPLICATE" in res.stdout  # the skip path returns 0 too
+        assert failures == ["alpha"]
+
+    def test_the_same_label_separated_by_another_step_is_kept(self, shell_env):
+        # Independent failures may legitimately share a label.
+        res, failures = run_recording(
+            "record_failure alpha; record_failure beta; record_failure alpha",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == ["alpha", "beta", "alpha"]
+
+    def test_record_failure_never_aborts_a_bare_caller(self, shell_env):
+        res = run_sourced(
+            'record_failure alpha; echo "AFTER_RECORD"; '
+            'record_failure alpha; echo "AFTER_SKIP"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_RECORD" in res.stdout
+        assert "AFTER_SKIP" in res.stdout
+
+    def test_report_lists_every_label_under_a_count(self, shell_env):
+        res = run_sourced(
+            'INSTALL_FAILURES=(alpha "beta gamma"); report_install_failures; '
+            'echo "AFTER_REPORT"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        out = res.stdout
+        assert "[ERROR]" in out
+        assert "Installation finished with 2 failed step(s):" in out
+        assert out.index("  - alpha\n") < out.index("  - beta gamma\n")
+        assert "Reasons are printed above as [WARNING]" in out
+        assert "re-run ./install.sh" in out
+        assert "AFTER_REPORT" in out
+
+    def test_report_is_silent_when_nothing_failed(self, shell_env):
+        res = run_sourced("report_install_failures", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert res.stdout == ""
 
 
 class TestTryInstall:
@@ -3029,6 +3156,40 @@ class TestTryInstall:
         res = run_sourced("try_install widget faketool install widget", shell_env.env)
         assert res.returncode == 0, res.stderr
         assert "downloading 100%" not in res.stdout
+
+    def test_failure_records_exactly_its_label(self, shell_env):
+        shell_env.stub("faketool", body='echo "E: nope" >&2\nexit 1')
+        res, failures = run_recording(
+            "try_install widget faketool install widget", shell_env.env
+        )
+        assert res.returncode == 0, res.stderr  # still non-fatal
+        assert failures == ["widget"]
+
+    def test_success_records_nothing(self, shell_env):
+        shell_env.stub("faketool")
+        res, failures = run_recording(
+            "try_install widget faketool install widget", shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == []
+
+    def test_a_label_with_spaces_and_quotes_is_recorded_verbatim(self, shell_env):
+        shell_env.stub("faketool", exit_code=1)
+        res, failures = run_recording(
+            "try_install \"Docker 'Desktop' (cask)\" faketool install x",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == ["Docker 'Desktop' (cask)"]
+
+    def test_failures_accumulate_in_call_order(self, shell_env):
+        shell_env.stub("faketool", exit_code=1)
+        res, failures = run_recording(
+            "try_install first faketool a; try_install second faketool b",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == ["first", "second"]
 
     def test_tree_sitter_install_surfaces_brew_failure(self, shell_env):
         # A real caller (install_tree_sitter_cli) must report why brew failed
@@ -3074,6 +3235,838 @@ class TestTryInstall:
         # and must NOT be captured by try_install.
         assert re.search(r"fetch_and_run https://astral\.sh/uv", text)
         assert text.count("try_install ") >= 30
+
+
+def _absent(*names: str) -> str:
+    """Snippet prefix: `command_exists` reports each of `names` as missing.
+
+    The dev machine (and CI image) may really have uv, pyenv, docker, node, gh
+    on PATH; without this the "already installed" branch is taken and a test
+    premised on a failed install passes vacuously.
+    """
+    pattern = "|".join(names)
+    return (
+        f'command_exists() {{ case "$1" in {pattern}) return 1 ;; '
+        '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+    )
+
+
+def _fails_on(*patterns: str) -> str:
+    """Stub body that exits 1 when "$*" matches any of the shell globs."""
+    return f'case "$*" in {"|".join(patterns)}) exit 1 ;; esac'
+
+
+_APT_INSTALL = '*"apt-get install"*'
+_APT_UPDATE = '*"apt-get update"*'
+# Stub prefix: `sudo tee ...` drains stdin like the real tee. A stub that exits
+# without reading lets the writer of `echo ... | sudo tee` die of SIGPIPE, and
+# under pipefail that reads as a failed tee -- a race the gh repository line
+# (whose echo first runs $(dpkg ...)) loses every time.
+_DRAIN_TEE = 'case "$*" in "tee "*) cat >/dev/null ;; esac\n'
+_NOT_YET_INSTALLED = 'case "$*" in "list "*) exit 1 ;; esac'
+
+
+class TestInstallFailureRecording:
+    """Each install step that FAILS leaves exactly one entry in
+    INSTALL_FAILURES; skips and steps whose outcome a later step reports leave
+    none. main() turns the list into the end-of-run summary and exit status.
+
+    The positive cases force the "missing" premise (see _absent) and the
+    negative cases assert the skip's own warning appeared, so an early return
+    cannot make "nothing recorded" pass by never reaching the branch.
+    """
+
+    # --- steps that fail: exactly one entry --------------------------------
+
+    @pytest.mark.parametrize(
+        ("stubs", "snippet", "expected", "also_in_stdout"),
+        [
+            pytest.param(
+                {},
+                _absent("brew") + "fetch_and_run() { return 1; }; "
+                "OS=macos install_os_packages",
+                ["Homebrew"],
+                ["Homebrew bootstrap failed"],
+                id="homebrew-bootstrap-skips-the-brew-packages-with-one-entry",
+            ),
+            pytest.param(
+                {"sudo": _fails_on(_APT_INSTALL)},
+                "OS=ubuntu install_apt_packages",
+                ["APT packages"],
+                ["Some APT packages failed"],
+                id="apt-package-batch",
+            ),
+            pytest.param(
+                {"brew": _fails_on('"list "*', '"install neovim"')},
+                "install_brew_packages",
+                ["neovim"],
+                ["Failed to install neovim"],
+                id="brew-package-through-try_install",
+            ),
+            pytest.param(
+                {"curl": "exit 1", "sudo": ""},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                ["WezTerm"],
+                ["Failed to fetch WezTerm GPG key"],
+                id="wezterm-gpg-key",
+            ),
+            pytest.param(
+                {"curl": "", "sudo": _fails_on(_APT_INSTALL)},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                ["WezTerm"],
+                [],
+                id="wezterm-key-ok-apt-install-fails",
+            ),
+            pytest.param(
+                {"curl": "", "sudo": _fails_on("*tee*", _APT_INSTALL)},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                ["WezTerm"],
+                ["Failed to add WezTerm apt repository"],
+                id="wezterm-repo-add-and-install-both-fail-is-one-entry",
+            ),
+            pytest.param(
+                {"curl": "", "sudo": _fails_on("*tee*")},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                ["WezTerm"],
+                ["Failed to add WezTerm apt repository"],
+                id="wezterm-repo-add-fails-but-apt-install-succeeds",
+            ),
+            pytest.param(
+                {"brew": _fails_on('"list "*', '"install --cask wezterm"')},
+                "OS=macos install_wezterm",
+                ["WezTerm"],
+                [],
+                id="wezterm-macos-cask",
+            ),
+            pytest.param(
+                {"brew": _fails_on("*font-ubuntu-mono*")},
+                "OS=macos install_fonts",
+                ["font-ubuntu-mono"],
+                ["Failed to install font-ubuntu-mono"],
+                id="font-cask-first-only",
+            ),
+            pytest.param(
+                {"brew": _fails_on("*font-hack-nerd-font*")},
+                "OS=macos install_fonts",
+                ["font-hack-nerd-font"],
+                [],
+                id="font-cask-second-only",
+            ),
+            pytest.param(
+                {"brew": "exit 1"},
+                "OS=macos install_fonts",
+                ["font-ubuntu-mono", "font-hack-nerd-font"],
+                [],
+                id="font-casks-both-in-order",
+            ),
+            pytest.param(
+                {"sudo": "exit 1"},
+                "OS=ubuntu install_fonts",
+                ["fonts-ubuntu fonts-hack"],
+                ["Failed to install fonts"],
+                id="apt-fonts",
+            ),
+            pytest.param(
+                {"curl": "exit 1", "sudo": "", "dpkg": "echo amd64"},
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                ["Failed to fetch gh keyring"],
+                id="gh-keyring-download",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _DRAIN_TEE + _fails_on(_APT_INSTALL),
+                    "dpkg": "echo amd64",
+                },
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                [],
+                id="gh-keyring-ok-apt-install-fails-is-one-entry",
+            ),
+            # Same rule as WezTerm: a half-written apt source is a failure the
+            # user must know about even when `apt-get install gh` then works
+            # (e.g. from the distro's own, older package).
+            pytest.param(
+                {"curl": "", "sudo": _fails_on("*tee*"), "dpkg": "echo amd64"},
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                ["Failed to add gh apt repository"],
+                id="gh-repo-add-fails-but-apt-install-succeeds",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _DRAIN_TEE + _fails_on("chmod*"),
+                    "dpkg": "echo amd64",
+                },
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                ["Failed to chmod gh keyring"],
+                id="gh-keyring-chmod-fails-but-apt-install-succeeds",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _fails_on("*tee*", _APT_INSTALL),
+                    "dpkg": "echo amd64",
+                },
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                ["Failed to add gh apt repository"],
+                id="gh-repo-add-and-install-both-fail-is-one-entry",
+            ),
+            pytest.param(
+                {"brew": "exit 1"},
+                _absent("gh") + "OS=macos install_gh",
+                ["gh"],
+                [],
+                id="gh-macos-brew",
+            ),
+            pytest.param(
+                {},
+                _absent("uv") + "fetch_and_run() { return 1; }; install_uv",
+                ["uv"],
+                ["Failed to install uv"],
+                id="uv",
+            ),
+            pytest.param(
+                {},
+                _absent("pyenv")
+                + "fetch_and_run() { return 1; }; OS=ubuntu install_pyenv",
+                ["pyenv"],
+                ["Failed to install pyenv"],
+                id="pyenv-ubuntu",
+            ),
+            pytest.param(
+                {},
+                _absent("lazydocker")
+                + "fetch_and_run() { return 1; }; OS=ubuntu install_lazydocker",
+                ["lazydocker"],
+                ["Failed to install lazydocker"],
+                id="lazydocker-ubuntu",
+            ),
+            pytest.param(
+                {"brew": "exit 1"},
+                _absent("lazydocker") + "OS=macos install_lazydocker",
+                ["lazydocker"],
+                [],
+                id="lazydocker-macos-brew",
+            ),
+            pytest.param(
+                {"sudo": ""},
+                _absent("docker")
+                + "fetch_and_run() { return 1; }; OS=ubuntu install_docker",
+                ["Docker engine"],
+                ["Failed to install Docker engine"],
+                id="docker-engine-ubuntu",
+            ),
+            pytest.param(
+                {"brew": "exit 1"},
+                _absent("docker") + "OS=macos install_docker",
+                ["Docker Desktop"],
+                [],
+                id="docker-desktop-macos",
+            ),
+            pytest.param(
+                {},
+                _absent("node")
+                + "fetch_and_run() { return 1; }; OS=ubuntu install_nodejs",
+                ["Node.js"],
+                ["NodeSource setup failed"],
+                id="nodesource-setup",
+            ),
+            pytest.param(
+                {"sudo": _fails_on(_APT_INSTALL)},
+                _absent("node") + "fetch_and_run() { return 0; }; "
+                "OS=ubuntu install_nodejs",
+                ["Node.js"],
+                [],
+                id="nodesource-ok-apt-install-fails-is-one-entry",
+            ),
+            pytest.param(
+                {},
+                "fetch_and_run() { return 1; }; "
+                "install_oh_my_zsh; link_oh_my_zsh_theme",
+                ["Oh My Zsh"],
+                [
+                    "Failed to install Oh My Zsh",
+                    "skipping the zsh plugins",
+                    "Skipping the Oh My Zsh theme link",
+                ],
+                id="oh-my-zsh-fetch-is-one-entry-not-three",
+            ),
+            pytest.param(
+                {"pip3": 'case "$1" in show) exit 1 ;; esac\nexit 1'},
+                "install_mcp_server_deps",
+                ["mcp"],
+                ["Failed to install mcp"],
+                id="pip-package-through-pip_install_user",
+            ),
+        ],
+    )
+    def test_failed_step_records_one_entry(
+        self, shell_env, stubs, snippet, expected, also_in_stdout
+    ):
+        for name, body in stubs.items():
+            shell_env.stub(name, body=body)
+        res, failures = run_recording(snippet, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == expected, res.stdout
+        for text in also_in_stdout:
+            assert text in res.stdout, (text, res.stdout)
+
+    def _omz_installed(self, home):
+        omz = home / ".oh-my-zsh"
+        omz.mkdir(exist_ok=True)
+        (omz / "oh-my-zsh.sh").write_text("# stub entry point\n", encoding="utf-8")
+
+    def test_each_failed_zsh_plugin_clone_is_recorded_by_name(self, shell_env):
+        self._omz_installed(shell_env.home)
+        shell_env.stub("git", exit_code=1)
+        res, failures = run_recording("install_oh_my_zsh", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == ["zsh-autosuggestions", "zsh-syntax-highlighting"]
+
+    def test_only_the_failing_zsh_plugin_clone_is_recorded(self, shell_env):
+        self._omz_installed(shell_env.home)
+        shell_env.stub("git", body=_fails_on("*zsh-syntax-highlighting*"))
+        res, failures = run_recording("install_oh_my_zsh", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == ["zsh-syntax-highlighting"]
+
+    def test_a_failed_tpm_clone_is_recorded(self, shell_env):
+        shell_env.stub("git", exit_code=1)
+        res, failures = run_recording("install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == ["tpm"]
+
+    def test_a_failed_vim_plug_download_is_recorded(self, shell_env):
+        shell_env.stub("curl", body=_CURL_TRUNCATED)
+        res, failures = run_recording("install_vim_plug", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == ["vim-plug"]
+
+    def test_a_vim_plug_that_is_already_there_records_nothing(self, shell_env):
+        plug = shell_env.home / ".vim/autoload/plug.vim"
+        plug.parent.mkdir(parents=True)
+        plug.write_text('" already here\n', encoding="utf-8")
+        shell_env.stub("curl", exit_code=1)
+        res, failures = run_recording("install_vim_plug", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+
+    def test_a_failed_plug_install_is_recorded(self, shell_env):
+        shell_env.stub("vim", exit_code=1)
+        res, failures = run_recording("install_vim_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "vim +PlugInstall failed" in res.stdout
+        assert failures == ["vim +PlugInstall"]
+
+    def test_a_successful_plug_install_records_nothing(self, shell_env):
+        shell_env.stub("vim")
+        res, failures = run_recording("install_vim_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Vim plugins installed" in res.stdout
+        assert failures == []
+
+    @pytest.mark.parametrize(
+        ("add_fails_for", "expected"),
+        [
+            ("serena", ["MCP server serena"]),
+            (
+                "context7|serena|gemini-consultant",
+                [
+                    "MCP server context7",
+                    "MCP server serena",
+                    "MCP server gemini-consultant",
+                ],
+            ),
+        ],
+    )
+    def test_a_failed_mcp_registration_is_recorded_per_server(
+        self, shell_env, add_fails_for, expected
+    ):
+        # `mcp get` fails so add_mcp proceeds to `mcp add`, which fails for the
+        # named servers only.
+        shell_env.stub(
+            "claude",
+            body=(
+                'if [ "$1 $2" = "mcp get" ]; then exit 1; fi\n'
+                f'case "$5" in {add_fails_for}) exit 1 ;; esac'
+            ),
+        )
+        shell_env.stub("python3")
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == expected
+
+    def test_a_chsh_that_ran_and_failed_is_recorded(self, shell_env):
+        shell_env.stub("zsh")
+        shell_env.stub("chsh", exit_code=1)
+        env = {**shell_env.env, "SHELL": "/bin/bash"}
+        res, failures = run_recording("change_shell", env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "chsh failed" in res.stdout
+        assert failures == ["chsh"]
+
+    def test_a_chsh_that_succeeds_records_nothing(self, shell_env):
+        shell_env.stub("zsh")
+        env = {**shell_env.env, "SHELL": "/bin/bash"}
+        res, failures = run_recording("change_shell", env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Default shell changed to zsh" in res.stdout
+        assert failures == []
+
+    # --- reclaim_aborted_clone ---------------------------------------------
+
+    TPM = ".tmux/plugins/tpm"
+
+    def _interrupted_clone(self, path: Path) -> Path:
+        (path / ".git" / "objects").mkdir(parents=True)
+        (path / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+        return path
+
+    def test_a_cleanup_that_really_fails_is_recorded_once(self, shell_env):
+        # Shadowing `rm` is root-safe (a chmod-based failure is not).
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        self._interrupted_clone(shell_env.home / self.TPM)
+        res, failures = run_recording(
+            "rm() { return 1; }; install_tmux_plugins", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Could not remove" in res.stdout
+        assert failures == ["tpm"]
+        assert not [c for c in shell_env.calls if c.startswith("git clone")]
+
+    def test_a_repair_that_works_records_nothing(self, shell_env):
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        self._interrupted_clone(shell_env.home / self.TPM)
+        res, failures = run_recording("install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert (shell_env.home / self.TPM / "tpm").is_file()
+        assert failures == []
+
+    def test_a_refusal_that_leaves_the_plugin_uninstalled_is_recorded(self, shell_env):
+        # Populated beyond an interrupted clone: reported, never deleted, and
+        # tpm stays missing -- so the run must not end as a success.
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        target = self._interrupted_clone(shell_env.home / self.TPM)
+        (target / "notes.txt").write_text("mine\n", encoding="utf-8")
+        res, failures = run_recording("install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "looks incomplete" in res.stdout
+        assert (target / "notes.txt").is_file()
+        assert failures == ["tpm"]
+
+    def test_a_symlinked_target_refusal_is_recorded(self, shell_env, tmp_path):
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        elsewhere = self._interrupted_clone(tmp_path / "my-own-tpm")
+        (shell_env.home / ".tmux/plugins").mkdir(parents=True)
+        (shell_env.home / self.TPM).symlink_to(elsewhere)
+        res, failures = run_recording("install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "not a plain directory" in res.stdout
+        assert failures == ["tpm"]
+
+    def test_a_target_outside_home_refusal_is_recorded(self, shell_env, tmp_path):
+        outside = self._interrupted_clone(tmp_path / "outside-home")
+        res, failures = run_recording(
+            f'reclaim_aborted_clone "{outside}" demo || true', shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Refusing to reclaim demo" in res.stdout
+        assert failures == ["demo"]
+
+    def test_the_dry_run_decline_is_not_a_failure(self, shell_env):
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        self._interrupted_clone(shell_env.home / self.TPM)
+        res, failures = run_recording("DRY_RUN=1 install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "[DRY-RUN] would remove the interrupted clone" in res.stdout
+        assert failures == []
+
+    # --- skips and steps whose outcome a later step reports: no entry --------
+
+    @pytest.mark.parametrize(
+        ("stubs", "snippet", "warning"),
+        [
+            pytest.param(
+                {"curl": "exit 1"},
+                "fetch_and_run https://example.invalid/x.sh sh || true",
+                "Failed to download",
+                id="fetch_and_run-download-failure-the-caller-records",
+            ),
+            pytest.param(
+                {"curl": ""},
+                "fetch_and_run https://example.invalid/x.sh sh || true",
+                "Downloaded empty script",
+                id="fetch_and_run-empty-script-the-caller-records",
+            ),
+            pytest.param(
+                {"sudo": _fails_on(_APT_UPDATE)},
+                "OS=ubuntu install_apt_packages",
+                "apt-get update failed (continuing)",
+                id="apt-get-update-in-apt-packages",
+            ),
+            pytest.param(
+                {"curl": "", "sudo": _fails_on(_APT_UPDATE)},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                "apt-get update failed",
+                id="apt-get-update-in-wezterm",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _DRAIN_TEE + _fails_on(_APT_UPDATE),
+                    "dpkg": "echo amd64",
+                },
+                _absent("gh") + "OS=ubuntu install_gh",
+                "apt-get update failed",
+                id="apt-get-update-in-gh",
+            ),
+            pytest.param(
+                {},
+                _absent("gh") + "OS=linux install_gh",
+                "No gh install path",
+                id="gh-has-no-install-path-on-this-os",
+            ),
+            pytest.param(
+                {},
+                _absent("glow", "go") + "OS=ubuntu install_glow",
+                "go not found; skipping glow",
+                id="glow-needs-go",
+            ),
+            pytest.param(
+                {},
+                _absent("pip3", "pip") + "install_mcp_server_deps",
+                "pip not found; skipping MCP server deps",
+                id="pip-not-found",
+            ),
+            pytest.param(
+                {},
+                _absent("claude") + "register_claude_mcp_servers",
+                "claude CLI not found",
+                id="claude-not-found",
+            ),
+            pytest.param(
+                {},
+                'vim() { return 127; }; command_exists() { [ "$1" = "vim" ] && '
+                'return 1 || command -v "$1" >/dev/null 2>&1; }; '
+                "install_vim_plugins",
+                "vim not found; skipping Vim plugin installation",
+                id="vim-not-found",
+            ),
+            pytest.param(
+                {},
+                "install_ai_tools </dev/null",
+                "Non-interactive shell detected",
+                id="ai-tools-need-a-tty",
+            ),
+            pytest.param(
+                {},
+                "OS=windows install_os_packages",
+                "Windows detected",
+                id="windows-packages-are-manual",
+            ),
+            pytest.param(
+                {},
+                "OS=linux install_os_packages",
+                "Non-Debian Linux detected",
+                id="non-debian-linux-packages-are-manual",
+            ),
+            pytest.param(
+                {},
+                "link_oh_my_zsh_theme",
+                "Skipping the Oh My Zsh theme link",
+                id="theme-link-without-oh-my-zsh",
+            ),
+            pytest.param(
+                {},
+                _absent("node", "npm") + "OS=windows install_nodejs",
+                "npm not found; skipping npm global directory setup",
+                id="npm-not-found",
+            ),
+        ],
+    )
+    def test_skips_and_deferred_outcomes_record_nothing(
+        self, shell_env, stubs, snippet, warning
+    ):
+        for name, body in stubs.items():
+            shell_env.stub(name, body=body)
+        res, failures = run_recording(snippet, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert warning in res.stdout, res.stdout
+        assert failures == [], res.stdout + res.stderr
+
+    @pytest.mark.parametrize(
+        ("snippet", "login_shell", "message"),
+        [
+            (_absent("zsh") + "change_shell", "/bin/bash", "zsh not found"),
+            (_absent("chsh") + "change_shell", "/bin/bash", "chsh command not found"),
+            ("change_shell", "/bin/zsh", "already zsh"),
+        ],
+    )
+    def test_change_shell_skips_record_nothing(
+        self, shell_env, snippet, login_shell, message
+    ):
+        shell_env.stub("zsh")
+        env = {**shell_env.env, "SHELL": login_shell}
+        res, failures = run_recording(snippet, env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert message in res.stdout, res.stdout
+        assert failures == []
+
+    def test_a_tree_sitter_that_still_shadows_the_install_records_nothing(
+        self, shell_env
+    ):
+        # brew succeeds but an unrunnable shim stays first on PATH: a
+        # derivative of an install that itself worked.
+        shell_env.stub("tree-sitter", body="exit 1", exit_code=1)
+        res, failures = run_recording("OS=macos install_tree_sitter_cli", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "is still not >=" in res.stdout
+        assert failures == []
+
+    def test_tree_sitter_on_ubuntu_without_cargo_records_nothing(self, shell_env):
+        shell_env.hide("cargo")
+        res, failures = run_recording(
+            _TS_ABSENT + "OS=ubuntu install_tree_sitter_cli", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "cargo not found" in res.stdout
+        assert failures == []
+
+    def test_create_symlinks_backup_warnings_record_nothing(self, shell_env):
+        (shell_env.home / ".zshrc").write_text("# a real file\n", encoding="utf-8")
+        res, failures = run_recording("create_symlinks </dev/null", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Backing up existing .zshrc" in res.stdout, res.stdout
+        assert failures == []
+
+
+class TestInstallFailureBookkeepingInTheSource:
+    """record_failure appends to a shell array, and a subshell's copy of that
+    array is thrown away: `x=$(try_install ...)`, a pipeline stage and a `&` job
+    all lose the entry without any error. Nothing at runtime can notice that, so
+    the source is checked for the shapes that cause it.
+
+    Limits, stated rather than papered over: a helper that itself calls
+    try_install and is then invoked inside `$(...)` is invisible to a text
+    check. The runtime tests in TestInstallFailureRecording cover the real call
+    sites.
+    """
+
+    _NAMES = r"(?:try_install|pip_install_user|record_failure)"
+    # Anything that puts the call in a subshell.
+    _IN_SUBSHELL = [
+        # inside $(...) or `...`
+        re.compile(r"(?:\$\(|`)[^)`\n]*\b" + _NAMES + r"\b"),
+        # the receiving end of a single pipe, even across a line break
+        re.compile(r"(?<!\|)\|(?!\|)&?\s*\b" + _NAMES + r"\b"),
+        # the feeding end of a single pipe, on the same logical line
+        re.compile(r"\b" + _NAMES + r"\b[^;&|}\n]*\|(?!\|)"),
+        # a background job (`&&`, `&>` and `>&` are not)
+        re.compile(r"\b" + _NAMES + r"\b[^;&|}\n]*(?<![<>])&(?![&>])"),
+    ]
+
+    @classmethod
+    def _violations(cls, text: str) -> list[str]:
+        # Join `\` continuations so a wrapped call is one logical line, and
+        # drop comment-only lines (the prose above names the helpers freely).
+        text = re.sub(r"\\\n[ \t]*", " ", text)
+        text = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        found = []
+        for pattern in cls._IN_SUBSHELL:
+            found.extend(m.group(0).strip() for m in pattern.finditer(text))
+        return found
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "x=$(try_install widget brew install widget)",
+            'out="$(echo hi; record_failure widget)"',
+            "`pip_install_user pip3 widget`",
+            "echo oops | record_failure widget",
+            "echo oops |\n  record_failure widget",
+            "try_install widget brew install widget | tee log",
+            "try_install widget brew install widget &",
+            "pip_install_user pip3 widget &",
+        ],
+    )
+    def test_the_guard_flags_a_call_in_a_subshell(self, bad):
+        assert self._violations(bad + "\n"), bad
+
+    @pytest.mark.parametrize(
+        "good",
+        [
+            "try_install widget brew install widget",
+            'try_install "$tool" brew install "$tool" || true',
+            "try_install widget brew install widget && echo ok",
+            "try_install widget brew install widget &>/dev/null",
+            "try_install widget sudo tee 2>&1",
+            "fetch_and_run x sh || { record_failure x; print_warning y; }",
+            "curl -fsSL u | sudo tee f || record_failure x",
+            "curl -fsSL u | sudo dd of=f; record_failure x",
+            "# x=$(try_install widget brew install widget) in a comment",
+            "record_failure() {",
+        ],
+    )
+    def test_the_guard_accepts_the_shapes_install_sh_uses(self, good):
+        assert self._violations(good + "\n") == [], good
+
+    def test_no_call_runs_in_a_subshell(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        assert self._violations(text) == [], (
+            "record_failure / try_install / pip_install_user run in a subshell "
+            "here, so the entry they append is lost"
+        )
+
+    def test_the_list_is_declared_at_the_top_level(self):
+        # Indented would mean inside a function, where it is not global when
+        # install.sh is sourced.
+        text = INSTALL.read_text(encoding="utf-8")
+        assert re.search(r"^INSTALL_FAILURES=\(\)$", text, re.M)
+        assert not re.search(
+            r"\b(?:local|declare|typeset)\s+(?:-\S+\s+)*INSTALL_FAILURES\b", text
+        )
+
+    def test_main_resets_the_list_before_doing_anything(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        body = text[text.index("\nmain() {") :]
+        assert "\n  INSTALL_FAILURES=()\n" in body
+        reset = body.index("\n  INSTALL_FAILURES=()\n")
+        assert reset < body.index("\n  create_symlinks\n")
+
+
+# Every step main() calls between create_symlinks and the closing message. The
+# real ones install packages, so a test that runs main() replaces each with a
+# marker echo. test_every_step_main_calls_is_stubbed keeps this list honest: a
+# step added to main() and missing here would otherwise run for real.
+_MAIN_STEPS = (
+    "create_symlinks",
+    "install_os_packages",
+    "install_wezterm",
+    "install_fonts",
+    "install_nodejs",
+    "install_gh",
+    "install_pyenv",
+    "install_uv",
+    "install_glow",
+    "install_docker",
+    "install_lazydocker",
+    "install_tree_sitter_cli",
+    "install_mcp_server_deps",
+    "install_linters_formatters",
+    "install_oh_my_zsh",
+    "install_vim_plug",
+    "install_tmux_plugins",
+    "install_vim_plugins",
+    "setup_neovim",
+    "install_ai_tools",  # reads from a TTY: must never run for real in a test
+    "register_claude_mcp_servers",
+    "link_oh_my_zsh_theme",
+    "change_shell",
+)
+_STUB_MAIN_STEPS = "detect_os() { OS=ubuntu; }; " + "".join(
+    f"{step}() {{ echo STEP_{step}; }}; " for step in _MAIN_STEPS
+)
+
+
+class TestMainExitStatus:
+    """main() ends in a failure summary and exit status 1 when any step
+    recorded a failure, instead of an unconditional "Installation completed!".
+
+    main runs as a plain command, last in the snippet: under `set -e`, `if main`
+    would disable errexit inside it and `main; echo $?` would never reach the
+    echo, so the process exit status is the observable.
+    """
+
+    def test_every_step_main_calls_is_stubbed(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        body = text[text.index("\nmain() {") :]
+        called = set(re.findall(r"^ {2,4}([a-z_]+)$", body, re.M))
+        # Builtins and shell keywords that happen to stand alone on a line.
+        called -= {"echo", "shift", "break", "do", "done", "else", "esac", "fi"}
+        called -= {"report_install_failures"}
+        assert called <= set(_MAIN_STEPS) | {"detect_os"}, (
+            "main() calls steps this test would run for real: "
+            f"{sorted(called - set(_MAIN_STEPS) - {'detect_os'})}"
+        )
+
+    def test_a_clean_run_still_ends_in_success(self, shell_env):
+        res = run_sourced(_STUB_MAIN_STEPS + "main", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Installation completed!" in res.stdout
+        assert "failed step" not in res.stdout
+        assert "Next steps:" in res.stdout
+        for step in _MAIN_STEPS:
+            assert f"STEP_{step}" in res.stdout, step
+
+    def test_recorded_failures_are_listed_and_the_exit_status_is_1(self, shell_env):
+        res = run_sourced(
+            _STUB_MAIN_STEPS + "install_uv() { record_failure alpha; }; "
+            "install_docker() { record_failure beta; }; main",
+            shell_env.env,
+        )
+        out = res.stdout
+        assert res.returncode == 1, out + res.stderr
+        assert "Installation finished with 2 failed step(s):" in out
+        assert out.index("  - alpha\n") < out.index("  - beta\n")
+        assert "Reasons are printed above as [WARNING]" in out
+        assert "Installation completed!" not in out
+        # Failed steps never stop the steps after them...
+        assert "STEP_change_shell" in out
+        # ...and the closing guidance is still printed after the summary.
+        assert out.index("Installation finished with") < out.index("Next steps:")
+
+    def test_a_real_try_install_failure_reaches_the_summary(self, shell_env):
+        shell_env.stub("faketool", body='echo "E: nope" >&2\nexit 1')
+        res = run_sourced(
+            _STUB_MAIN_STEPS
+            + "install_uv() { try_install widget faketool install widget; }; main",
+            shell_env.env,
+        )
+        assert res.returncode == 1, res.stdout + res.stderr
+        assert "Failed to install widget" in res.stdout
+        assert "Installation finished with 1 failed step(s):" in res.stdout
+        assert "  - widget\n" in res.stdout
+
+    def test_each_run_starts_from_an_empty_list(self, shell_env):
+        res = run_sourced(
+            _STUB_MAIN_STEPS + "INSTALL_FAILURES=(stale); main", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Installation completed!" in res.stdout
+        assert "stale" not in res.stdout
+
+    def test_dry_run_still_exits_zero(self, shell_env):
+        res = run_sourced(_STUB_MAIN_STEPS + "main --dry-run", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Dry-run complete" in res.stdout
+        assert "failed step" not in res.stdout
+
+    def test_dry_run_never_turns_a_recorded_failure_into_exit_1(self, shell_env):
+        # The preview installs nothing, so there is no install result to judge.
+        res = run_sourced(
+            _STUB_MAIN_STEPS
+            + "link_oh_my_zsh_theme() { record_failure alpha; }; main --dry-run",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Dry-run complete" in res.stdout
+        assert "failed step" not in res.stdout
+
+    def test_help_documents_the_exit_status(self, shell_env):
+        res = run_sourced("main --help", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        out = res.stdout
+        assert "Exit status:" in out
+        assert re.search(r"^\s+0\s+\S", out, re.M)
+        assert re.search(r"^\s+1\s+.*install steps? failed", out, re.M)
+        assert re.search(r"^\s+2\s+usage error", out, re.M)
 
 
 class TestLinkingThroughASymlinkedParent:
