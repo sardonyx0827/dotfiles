@@ -400,6 +400,39 @@ def test_deny_executables_have_permission_deny_backstop():
     )
 
 
+def _edit_ask_paths() -> list[str]:
+    """Representative concrete paths for every `Edit(<glob>)` in permissions.ask."""
+    asks = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))["permissions"]["ask"]
+    paths: list[str] = []
+    for rule in asks:
+        if not (rule.startswith("Edit(") and rule.endswith(")")):
+            continue
+        glob = rule[len("Edit(") : -1]
+        if glob.endswith("/**"):
+            glob = glob[: -len("/**")] + "/a"
+        if glob.startswith("//**/"):
+            tail = glob[len("//**/") :]
+            paths += [f"/r/{tail}", tail]
+        else:
+            paths.append(glob)
+    return paths
+
+
+# Bash can write anything Edit can, so a path that permissions.ask guards against
+# Edit must also be recognised by bash-review's harness-write check -- otherwise
+# `sed -i` / `>` / `tee` reach the same file through the single-model fast path.
+# The global CLAUDE.md is on both sides (Edit ask above, Bash ask in the hook).
+def test_bash_review_protects_every_edit_ask_path():
+    paths = _edit_ask_paths()
+    assert paths, "no Edit(...) rules found in permissions.ask"
+    assert ".claude/CLAUDE.md" in paths
+    missing = [p for p in paths if not _bash_review._is_harness_target(p)]
+    assert not missing, (
+        "bash-review's harness-write check does not recognise these Edit-ask "
+        f"paths: {missing}"
+    )
+
+
 # `mkfs` is special-cased in the hook (_is_deny_command): it denies bare `mkfs`
 # *and* the `mkfs.<fs>` family (mkfs.ext4, mkfs.xfs, ...) via a `startswith`
 # prefix match. A permissions.deny rule cannot express that family in one entry:
@@ -586,6 +619,27 @@ def test_hook_and_gate_config_edits_ask_the_user():
     settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
     ask = settings["permissions"].get("ask", [])
     missing = [rule for rule in GATE_FILE_ASKS if rule not in ask]
+    assert not missing, f"permissions.ask is missing {missing}"
+
+
+# Instruction files read into every session: the global CLAUDE.md and the rules it
+# imports with `@`, and the Codex / Gemini equivalents. A prompt-injected session
+# that rewrites one persists its instructions into all later sessions, so ask
+# before the Edit tool changes them, as bash-review does for Bash writes. Skills,
+# agents and commands are deliberately not here: they are loaded on use and are
+# edited far more often (see hooks/README.md).
+INSTRUCTION_FILE_ASKS = [
+    "Edit(//**/.claude/CLAUDE.md)",
+    "Edit(//**/.claude/rules/**)",
+    "Edit(//**/.codex/AGENTS.md)",
+    "Edit(//**/.gemini/GEMINI.md)",
+]
+
+
+def test_global_instruction_file_edits_ask_the_user():
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    ask = settings["permissions"].get("ask", [])
+    missing = [rule for rule in INSTRUCTION_FILE_ASKS if rule not in ask]
     assert not missing, f"permissions.ask is missing {missing}"
 
 

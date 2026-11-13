@@ -116,3 +116,65 @@ class TestStatusline:
         )
         assert "x\\ty" in out
         assert "\t" not in out
+
+
+def directory_part(out: str) -> str:
+    """The first ` | `-separated field: the directory."""
+    return out.split(" | ")[0]
+
+
+class TestDirectoryAbbreviation:
+    """`~` stands for HOME itself or something under it, and nothing else. The test
+    reads the whole field: macOS runs the script under bash 3.2, which printed the
+    replacement's backslash (`\\~/projects`), and a substring check let it through."""
+
+    def test_home_is_a_bare_tilde(self, shell_env):
+        out = render(shell_env, base_input(shell_env))
+        assert directory_part(out) == "~"
+
+    def test_a_directory_under_home_starts_with_a_plain_tilde(self, shell_env):
+        target = shell_env.home / "projects"
+        target.mkdir()
+        out = render(
+            shell_env, base_input(shell_env, workspace={"current_dir": str(target)})
+        )
+        assert directory_part(out) == "~/projects"
+
+    def test_a_deep_directory_under_home_keeps_its_last_two_levels(self, shell_env):
+        deep = shell_env.home / "projects" / "deep" / "mydir"
+        deep.mkdir(parents=True)
+        out = render(
+            shell_env, base_input(shell_env, workspace={"current_dir": str(deep)})
+        )
+        assert directory_part(out) == "~/../deep/mydir"
+
+    def test_a_sibling_whose_name_starts_like_home_is_not_under_home(self, shell_env):
+        sibling = shell_env.home.parent / (shell_env.home.name + "1")
+        sibling.mkdir()
+        out = render(
+            shell_env, base_input(shell_env, workspace={"current_dir": str(sibling)})
+        )
+        assert "~" not in directory_part(out)
+        assert directory_part(out).endswith(shell_env.home.name + "1")
+
+    def test_a_deep_directory_outside_home_gets_no_tilde(self, shell_env):
+        out = render(
+            shell_env,
+            base_input(shell_env, workspace={"current_dir": "/opt/a/b/c/d"}),
+        )
+        assert directory_part(out) == "/../c/d"
+
+
+class TestModelName:
+    def test_a_display_name_is_shown_as_given(self, shell_env):
+        out = render(
+            shell_env,
+            base_input(shell_env, model={"display_name": "Opus 4.7 (1M context)"}),
+        )
+        assert "Opus 4.7 (1M context)" in out
+
+    def test_a_model_id_is_still_prettified(self, shell_env):
+        out = render(
+            shell_env, base_input(shell_env, model={"display_name": "claude-opus-4-7"})
+        )
+        assert "Opus 4 7" in out

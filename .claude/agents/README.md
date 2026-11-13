@@ -44,12 +44,12 @@ Located in `~/.claude/agents/`:
 
 ### Review & Quality
 
-| Agent             | Model  | Purpose                                   | When to Use                                                                                                                                                                             |
-| ----------------- | ------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| code-reviewer     | sonnet | General code review                       | Before a commit or PR                                                                                                                                                                   |
-| security-reviewer | sonnet | Security & OWASP Top 10 analysis          | Before a commit or PR touching auth / input / APIs / secrets / payments / uploads, or permission / hook / mod config; after dependency updates or CVEs (full list: `rules/security.md`) |
-| go-reviewer       | sonnet | Idiomatic Go review (concurrency, errors) | Go code changes                                                                                                                                                                         |
-| database-reviewer | sonnet | PostgreSQL/Supabase query & schema review | SQL, migrations, schema design                                                                                                                                                          |
+| Agent             | Model  | Purpose                                                 | When to Use                                                                                                                                                                             |
+| ----------------- | ------ | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| code-reviewer     | sonnet | General code review                                     | Before a commit or PR                                                                                                                                                                   |
+| security-reviewer | sonnet | Security (OWASP Top 10, permission / hook / mod config) | Before a commit or PR touching auth / input / APIs / secrets / payments / uploads, or permission / hook / mod config; after dependency updates or CVEs (full list: `rules/security.md`) |
+| go-reviewer       | sonnet | Idiomatic Go review (concurrency, errors)               | Go code changes                                                                                                                                                                         |
+| database-reviewer | sonnet | PostgreSQL/Supabase query & schema review               | SQL, migrations, schema design                                                                                                                                                          |
 
 ### Build & Maintenance
 

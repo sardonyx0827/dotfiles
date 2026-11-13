@@ -15,6 +15,17 @@ the project-specific examples in the `.md` copies and never touched the
 `.codex/`. Measured across all 14 pairs at that point, only ~4% of the body
 delta was genuine runtime adaptation; ~81% was unintended drift.
 
+What is carried over, what is dropped
+-------------------------------------
+Carried over: `name`, `description` and the Markdown body (after the
+substitutions below). Dropped: the frontmatter keys `tools`, `model`, `effort`
+and `color` -- Codex's format has no `tools` key, `model` is deliberately not
+mirrored, and the generated agents run at the reasoning effort set in
+`.codex/config.toml.template`, whatever `effort:` the Claude copy pins.
+Consequence: a restriction that exists only in the Claude `tools:` list (no
+write tools) does not exist under Codex. It has to be stated in the body;
+tests/test_agent_parity.py requires that of every agent without write tools.
+
 Design constraints (learned the hard way -- do not relax without evidence)
 -------------------------------------------------------------------------
 * No tool names in the rules. Codex's format has no `tools` key at all, and

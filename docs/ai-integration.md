@@ -37,14 +37,27 @@ Bash コマンドは PreToolUse フックで審査され、`ALLOW` / `ASK` / `DE
 
 ## 3. Neovim のエディタ内 AI
 
-Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）を **統一バックエンド**で扱い、インライン補完・コミットメッセージ生成・選択範囲のリライト・バッファ校正・カーソル文脈ヒント・LSP 診断コピーなどを行います。`claude → gemini` のフォールバックと、**構造化編集による安全な差分適用**（AI が返した編集を元バッファと照合し、一致しないものはスキップ）が特徴です。さらに、外部 AI へ送る前に **統一の秘密スキャンゲート**（Neovim は `backend.run`、classic Vim は `s:AI_Submit`）を通し、選択範囲・diff・指示に生の資格情報が含まれれば確認ダイアログ（既定 No）で送信を止めます。判定は bash-review と同一の検出ロジック（`_bash_review_common.scan_secrets`）を共有する CLI [`scripts/secret_scan.py`](../scripts/secret_scan.py) が担い、ローカルの Ollama は外部送信ではないため対象外、`python3`/スキャナ不在時は警告して送信を許可（fail-open）します。内容スキャンできない Copilot 補完は、`should_attach` で機密パス（`.env`・秘密鍵・`kubeconfig`・クラウド鍵など）のバッファへのアタッチを拒否する粗いパスガードで補います。
+Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）を **統一バックエンド**で扱い、インライン補完・コミットメッセージ生成・選択範囲のリライト・バッファ校正・カーソル文脈ヒント・LSP 診断コピーなどを行います。`claude → gemini` のフォールバックと、**構造化編集による安全な差分適用**（AI が返した編集を元バッファと照合し、一致しないものはスキップ）が特徴です。さらに、外部 AI へ送る前に **統一の送信前ゲート**（Neovim は `backend.run`、classic Vim は `s:AI_Submit`）を通し、次の 2 つを確認ダイアログ（既定 No）で止めます。(1) 選択範囲・diff・指示に**生の資格情報**が含まれる — 判定は bash-review と同一の検出ロジック（`_bash_review_common.scan_secrets`）を共有する CLI [`scripts/secret_scan.py`](../scripts/secret_scan.py) が担い、`python3`/スキャナ不在時は警告して送信を許可（fail-open）します。(2) 送る内容の**出所ファイルのパス**が機密パス（`.env`・秘密鍵・`kubeconfig`・クラウド鍵など）に該当する — 値スキャンでは見えない `DB_HOST=...` だけの `.env` などを、ファイル名で拾う裏打ちです（詳細は下の「送信前ゲートの機密パス確認」）。どちらもローカルの Ollama は外部送信ではないため対象外です。内容スキャンできない Copilot 補完は、`should_attach` で同じ機密パスのバッファへのアタッチを拒否する粗いパスガードで補います。
 
 <p align="center">
   <img src="../assets/nvim-ai.svg" alt="Neovim AI 機能図 — 5ツール統一バックエンド、インライン補完・バッファ校正・コミット生成・選択リライト・カーソル文脈ヒント・診断コピー・ファイル行参照、claude→geminiフォールバック、送信前の秘密スキャンガード" width="100%">
 </p>
 
 - **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`context` = カーソル位置の構文単位の解決、`backend` = ツール起動、`ui` = 表示ドライバ — `run_multi` はフローティングウィンドウ（popup / diff タブ）、`open_report` は右側の縦分割で、校正 `<leader>qf` とヒント `<leader>qh` / `<leader>qg` が使う）
-- インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES · 機密パスは `should_attach` で除外）
+- インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES · 機密パスは `should_attach` で除外。パス一覧は [`ai/sensitive.lua`](../.config/nvim/lua/setup/functions/ai/sensitive.lua) で送信前ゲートと共有）
+
+#### 送信前ゲートの機密パス確認
+
+資格情報スキャンは**値**しか見ません。`DB_HOST=...` や `DB_PORT=...` だけの `.env`、kubeconfig の base64 の `client-key-data`、形式の分からないトークンは検出できず、そのまま外部モデルへ出ていました。そこで、送る内容の**出所ファイルのパス**も確認します。
+
+- **何を見るか**: 出所パスを小文字にして、機密パスのリスト（`.env` / `.env.*` / `.envrc`、`id_rsa` などの秘密鍵と `*.pem` / `*.key` / `*.p12` 等、`~/.ssh` `~/.aws` `~/.gnupg` `~/.azure` `~/.kube` `gcloud` 配下、`.netrc` / `.npmrc` / `.pypirc`、`kubeconfig`、`*.tfstate` / `*.tfvars`、docker 認証設定、サービスアカウント鍵の JSON、名前に `credentials` / `secret(s)` / `password` を含むもの）と部分一致で照合します。相対パス（diff が返す `.kube/config` のようなリポジトリ相対名や相対のバッファ名）は、先頭に `/` があるものとして判定するので、リポジトリ直下の `.kube/` `.ssh/` `.aws/` `gcloud/` 配下も拾います（`docs/kube-notes.md` のような単なる名前の一部は拾いません）。リストは Neovim が [`ai/sensitive.lua`](../.config/nvim/lua/setup/functions/ai/sensitive.lua)（Copilot の `should_attach` と共有）、classic Vim が [`70-ai.vim`](../.vim/rc/70-ai.vim) の `s:ai_sensitive_paths` で、**中身は同一**です（テストが 1 件ずつ突き合わせます）。部分一致なので粗く、`credentials-service/` のようなディレクトリ名でも反応します。
+- **どの機能で効くか**（出所パスの取り方は 2 通り）:
+  - 校正 `<leader>qf`（`f` の修正を含む）、ヒント `<leader>qh` / `<leader>qg`、選択範囲リライト（両エディタ）は、**そのバッファの絶対パス**です。無名バッファは出所なしで、聞きません。パスは選択範囲のテキストと**同時に、プロンプトを開く時点で**記録します（Neovim は `ask_ai_and_replace`、classic Vim は `s:AI_Start`）。プロンプトを開いている間に対象バッファが改名・wipe されても、送るテキストの出所は変わりません。classic Vim では、プロンプト窓ではなく対象バッファのパスです。
+  - コミットメッセージ生成（`<leader>cm` / `cx` / `cg` / `cl`）は、**実際に送る diff** のファイル名です。diff テキスト自身のヘッダ（`diff --git` / `---` / `+++` / `rename` / マージ競合の `diff --cc` / `diff --combined`）から取るので、staged diff でも、staged が空のときに使う unstaged diff でも、送る内容とずれません。大きな diff は stat + 部分パッチに切り詰められますが、名前は切り詰め前の全文から取ります（切り詰めの後ろにある機密ファイルも stat の行として出ていくため）。`git diff` は `--no-color --no-ext-diff` で呼ぶので、ユーザーの `color.ui=always` や `diff.external` の設定でヘッダが壊れて名前が取れなくなることはなく（ANSI エスケープはパーサー側でも除去します）、送る diff にその装飾が混ざることもありません。
+- **確認であって、ブロックではありません**: 該当すると `confirm` ダイアログが出て、既定は No（Enter / Esc で中止）、Yes を選べばそのまま送ります。資格情報ヒットと機密パスが同時でも**ダイアログは 1 つ**にまとまります。
+- **1 リクエストにつき 1 回**: `all`（並列実行）は 1 回だけ聞き、No なら全ツールを止めます。`claude → gemini` のフォールバックは最初の送信前に 1 回だけ聞き、No ならどのツールも起動しません（フォールバック側が聞き直すことも、No を素通りすることもありません）。承認は同じ tick の中だけで、次の操作には持ち越しません。
+- **対象外**: ローカルの Ollama（Gemma）は端末の外へ出ないので聞きません（資格情報スキャンと同じ扱い）。`python3` / スキャナが無くて値スキャンが fail-open になっても、パス確認は python に依存しないので動きます。
+- **限界**: 見るのは**パスだけ**です。リストにない名前のファイルに秘密を書いた場合や、普通のファイルに貼った値は、パスでは拾えません（値スキャンが頼り）。シンボリックリンクは解決しません。LSP 診断コピーとファイル行参照コピーはクリップボードへ書くだけで外部送信がないため、対象外です。
 
 #### ツールごとの経路（`backend.lua` の `TOOLS.kind`）
 
@@ -123,6 +136,8 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 パスガード（[`.vim/rc/70-ai.vim`](../.vim/rc/70-ai.vim)）を備えます。カーソル文脈ヒントは treesitter で範囲を決めるため、
 classic Vim には等価物がありません。コミットメッセージ生成の `all` は Neovim 内でも別構成で、Gemini を含まず
 Claude / Codex / Copilot の 3 つです。
+
+選択範囲リライトには Neovim と同じ**機密パス確認**もあります（`s:AI_Submit` が `s:AI_ConfirmSend` に対象バッファのパスを渡し、既定 No のダイアログ・Ollama は対象外。上の「送信前ゲートの機密パス確認」を参照）。
 
 Copilot だけは CLI に stdin 経路が無く、選択範囲を argv に載せます。ジョブ実行中は `ps aux` から
 同一マシンの任意プロセスに見えるため、機密を含む可能性がある選択範囲では stdin 系のツールを

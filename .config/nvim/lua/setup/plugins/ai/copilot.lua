@@ -17,27 +17,11 @@ return {
     -- mitigation is to refuse to attach Copilot to buffers whose *path* is
     -- obviously sensitive. This does not scan for a secret pasted into an
     -- ordinary file -- an accepted limitation of Copilot completion.
-    local SENSITIVE_PATH = {
-      "%.env$", "%.env%.", "%.envrc$",
-      "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
-      "%.pem$", "%.key$", "%.p12$", "%.pfx$", "%.jks$", "%.keystore$", "%.ppk$",
-      "/%.ssh/", "/%.aws/", "/%.gnupg/", "/%.azure/", "/%.kube/", "/gcloud/",
-      "%.netrc$", "%.npmrc$", "%.pypirc$", "%.pgpass$", "%.my%.cnf$",
-      "kubeconfig", "%.tfstate", "%.tfvars", "%.dockercfg",
-      "docker/config%.json$",
-      -- cloud service-account / admin JSON keys (arbitrary basenames)
-      "service.?account", "adminsdk", "%-key%.json$",
-      "credentials", "secrets?", "password",
-    }
-    local function is_sensitive_path(bufname)
-      local lower = bufname:lower()
-      for _, pat in ipairs(SENSITIVE_PATH) do
-        if lower:find(pat) then
-          return true
-        end
-      end
-      return false
-    end
+    --
+    -- The list itself lives in functions/ai/sensitive.lua, shared with the
+    -- backend's send-time confirm for the custom AI features, so the two guards
+    -- cannot drift apart.
+    local is_sensitive_path = require("setup.functions.ai.sensitive").is_sensitive_path
 
     require("copilot").setup({
       -- Preserve copilot's default attach guards (skip unlisted/special

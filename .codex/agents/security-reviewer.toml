@@ -1,5 +1,5 @@
 name = "security-reviewer"
-description = "Security vulnerability detection and remediation specialist. Use before a commit or PR that touches user input, authentication, API endpoints, secrets, payments, or file uploads, and after dependency updates, CVEs, or security alerts. Flags secrets, SSRF, injection, unsafe crypto, and OWASP Top 10 vulnerabilities."
+description = "Security vulnerability detection and remediation specialist. Use before a commit or PR that touches user input, authentication, API endpoints, secrets, payments, file uploads, or permission / hook / mod configuration, and after dependency updates, CVEs, or security alerts. Flags secrets, SSRF, injection, unsafe crypto, OWASP Top 10 vulnerabilities, and permission / hook / mod changes that widen what runs without review."
 developer_instructions = '''
 # Security Reviewer
 
@@ -13,6 +13,7 @@ Before starting any review, Read `~/.codex/skills/security-review/SKILL.md`. It 
 - Vulnerable vs. secure code patterns for each category
 - Security scanning commands (npm audit, trufflehog, semgrep, etc.)
 - Common false positives — use them to set a finding's confidence
+- Section 14, Agent-Harness Configuration — review permission rules, hook scripts, mods / plugins and agent instruction files by it, not by the web-application list above
 
 Do NOT duplicate that content in your reports; apply it.
 
@@ -24,6 +25,7 @@ Do NOT duplicate that content in your reports; apply it.
 4. **Authentication/Authorization** - Verify proper access controls
 5. **Dependency Security** - Check for vulnerable packages
 6. **Security Best Practices** - Enforce secure coding patterns
+7. **Agent-Harness Configuration** - Check that permission, hook and mod changes do not widen what runs without review (skill section 14)
 
 ## Security Review Workflow
 

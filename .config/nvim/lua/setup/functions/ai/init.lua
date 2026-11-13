@@ -11,6 +11,7 @@
 local backend = require("setup.functions.ai.backend")
 local context = require("setup.functions.ai.context")
 local prompt = require("setup.functions.ai.prompt")
+local sensitive = require("setup.functions.ai.sensitive")
 local ui = require("setup.functions.ai.ui")
 
 local map = vim.keymap.set
@@ -112,6 +113,15 @@ local function model_label(tool, pinned)
   return "default"
 end
 
+-- The file a request's payload was read from, for the backend's sensitive-path
+-- confirm (see ai.backend's pre-send gate). The ABSOLUTE buffer name, not the
+-- cwd-relative one shown in prompts: the path list matches directory components
+-- (`/.ssh/`, `/.aws/`), which a relative path would hide. An unnamed buffer
+-- yields "" and names no source.
+local function buffer_source(buf)
+  return { vim.api.nvim_buf_get_name(buf) }
+end
+
 local function check_current_buffer()
   local buf = vim.api.nvim_get_current_buf()
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
@@ -190,9 +200,11 @@ local function check_current_buffer()
       start = function(_, done)
         -- claude first; on error fall back to gemini (same order as the check).
         return backend.run_with_fallback({
-          { tool = "claude", prompt = fix_system, input = fix_input, model = FIX_MODELS.claude },
+          { tool = "claude", prompt = fix_system, input = fix_input, model = FIX_MODELS.claude,
+            source_paths = buffer_source(buf) },
           -- No model: see CHECK_MODELS.
-          { tool = "gemini", prompt = fix_system, input = fix_input },
+          { tool = "gemini", prompt = fix_system, input = fix_input,
+            source_paths = buffer_source(buf) },
         }, function(ok, result, err, tool)
           if not ok then
             done(false, {}, err)
@@ -261,9 +273,11 @@ local function check_current_buffer()
     start = function(done)
       -- claude first; on error fall back to gemini (see backend.run_with_fallback).
       return backend.run_with_fallback({
-        { tool = "claude", prompt = system, input = input, model = CHECK_MODELS.claude },
+        { tool = "claude", prompt = system, input = input, model = CHECK_MODELS.claude,
+          source_paths = buffer_source(buf) },
         -- No model: see CHECK_MODELS.
-        { tool = "gemini", prompt = system, input = input },
+        { tool = "gemini", prompt = system, input = input,
+          source_paths = buffer_source(buf) },
       }, function(ok, result, err, tool)
         if not ok then
           done(false, {}, err)
@@ -363,7 +377,10 @@ local function hint_at_cursor(tool)
   -- nothing to fall back to, which is exactly what a tool-specific keymap means.
   local specs, models = {}, {}
   for i, step in ipairs(chain) do
-    specs[i] = { tool = step.tool, model = step.model, prompt = system, input = input }
+    specs[i] = {
+      tool = step.tool, model = step.model, prompt = system, input = input,
+      source_paths = buffer_source(buf),
+    }
     models[step.tool] = step.model
   end
   local lead = chain[1].tool
@@ -482,20 +499,35 @@ map("n", "<leader>bc", close_current_buffer,
 ---------------------------------------------------------
 -- Generate a commit message (claude / codex / gemini / all / gemma)
 ---------------------------------------------------------
--- Fetch the diff for commit generation, bounded to MAX_DIFF_BYTES. `cached` is
--- the extra `git diff` flag ("--cached " for staged, "" for unstaged). Only when
--- the full diff is large do we make the extra `--stat` call.
+-- Fetch the diff for commit generation, bounded to MAX_DIFF_BYTES, together
+-- with the file names it covers. `cached` is the extra `git diff` flag
+-- ("--cached " for staged, "" for unstaged). Only when the full diff is large do
+-- we make the extra `--stat` call.
+--
+-- The names are read out of the FULL diff text (sensitive.diff_paths), i.e. out
+-- of what this very `git diff` call returned, not from a second `git` call that
+-- could see a different index. When the diff is cut down to a stat plus a
+-- partial patch the names still come from the whole of it: a credentials file
+-- past the cut goes out as a line in the stat, and that is enough to ask about.
+-- diff_paths is pure, so `vim.v.shell_error` still reports the git call.
+--
+-- `--no-color --no-ext-diff` pin the text to the plain unified format whatever
+-- the user's git config says: `color.ui=always` wraps every header in ANSI
+-- escapes (the names would not parse), and `diff.external` replaces the diff
+-- with another tool's output. Both would also have put that noise in the payload.
+local GIT_DIFF = "git diff --no-color --no-ext-diff "
 local function commit_diff(cached)
-  local full = vim.fn.system("git diff " .. cached)
+  local full = vim.fn.system(GIT_DIFF .. cached)
+  local paths = sensitive.diff_paths(full)
   if vim.v.shell_error ~= 0 or #full <= MAX_DIFF_BYTES then
-    return full
+    return full, paths
   end
-  local stat = vim.fn.system("git diff --stat " .. cached)
-  return prompt.bound_commit_diff(full, stat, MAX_DIFF_BYTES)
+  local stat = vim.fn.system(GIT_DIFF .. "--stat " .. cached)
+  return prompt.bound_commit_diff(full, stat, MAX_DIFF_BYTES), paths
 end
 
 local function generate_commit_message(tool)
-  local diff = commit_diff("--cached ")
+  local diff, diff_paths = commit_diff("--cached ")
   if vim.v.shell_error ~= 0 then
     vim.notify("Not a git repository.", vim.log.levels.ERROR)
     return
@@ -503,7 +535,7 @@ local function generate_commit_message(tool)
 
   local diff_type = "staged"
   if diff == "" then
-    diff = commit_diff("")
+    diff, diff_paths = commit_diff("")
     diff_type = "unstaged"
   end
   if diff == "" then
@@ -532,6 +564,7 @@ local function generate_commit_message(tool)
         prompt = instruction,
         input = diff,
         model = COMMIT_MODELS[t],
+        source_paths = diff_paths,
       }, done)
     end,
   })
@@ -562,6 +595,11 @@ local function ask_ai_and_replace(start_line, end_line, tool)
   local tools = tool == "all" and { "claude", "codex", "gemini", "copilot" } or { tool }
   local target_buf = vim.api.nvim_get_current_buf()
   local selected_lines = vim.api.nvim_buf_get_lines(target_buf, start_line - 1, end_line, false)
+  -- The file those lines were read from, captured WITH them: the prompt window
+  -- stays open for as long as the user types, and a buffer that is renamed or
+  -- wiped in the meantime must not change (or, for a wipe, throw about) the path
+  -- the text is attributed to when it is sent.
+  local source_paths = buffer_source(target_buf)
   -- Recorded at selection time; replace_range compares against this before
   -- overwriting so edits made while the AI response was in flight (prompt
   -- window open, then the async call itself) don't silently smash the wrong
@@ -660,10 +698,12 @@ local function ask_ai_and_replace(start_line, end_line, tool)
         -- Models sometimes ignore replace_system's "no code fences" rule; strip
         -- the wrapper before it reaches the diff preview and the buffer (see
         -- prompt.strip_code_fences).
-        return backend.run({ tool = t, prompt = system, input = input, skip_git_check = true },
-          function(ok, out_lines, err)
-            done(ok, ok and prompt.strip_code_fences(out_lines) or out_lines, err)
-          end)
+        return backend.run({
+          tool = t, prompt = system, input = input, skip_git_check = true,
+          source_paths = source_paths,
+        }, function(ok, out_lines, err)
+          done(ok, ok and prompt.strip_code_fences(out_lines) or out_lines, err)
+        end)
       end,
       on_accept = function(t, lines)
         if replace_range(lines) then

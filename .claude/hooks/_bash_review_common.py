@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import http.client
 import json
 import os
 import platform
@@ -61,6 +62,21 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator
 
+
+class _GeminiTransportError(Exception):
+    """Gemini への 1 回の呼び出しが、読める応答を運んでこなかった。
+
+    接続後の通信失敗 (本体読み取り中の切断・TLS・3.9 の socket.timeout) を
+    この 1 種類にまとめる。どれも URLError と
+    同じ「相手に届かなかった / 壊れて届いた」であって、コマンド文字列を書く側が
+    起こせるものではないので、URLError と同じく回復可能 (フォールバック → ERROR)
+    として扱う。読めた応答に判定が無い場合はここに含めない (_gemini_answer)。
+
+    メッセージにはこちらで組み立てた語 (例外の型名) だけを入れる。元の例外の文面は
+    理由文・ログへ流れるので、何が入っているか保証できないものは運ばない。
+    """
+
+
 # Gemini API / Codex 呼び出しで想定する回復可能な例外。ここに列挙したものは
 # フォールバック (Gemini フラッシュモデル / Gemini 判定へのフェイルクローズ) の
 # 対象とし、それ以外の例外は握り潰さずメインフローの except に伝播させる。
@@ -71,6 +87,7 @@ _API_ERRORS = (
     json.JSONDecodeError,
     IndexError,
     KeyError,
+    _GeminiTransportError,
 )
 
 # 明らかに安全なコマンド (レビューをスキップしてよい読み取り系)。
@@ -461,6 +478,30 @@ _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
 _GLOB_IN_EXECUTABLE = re.compile(r"[*?]|\[[^\]]*\]")
 _HAS_ALNUM = re.compile(r"[A-Za-z0-9]")
 
+# シェルが展開して別の語にするブレース (`{x,-s}` → `x -s`、`{1..2}`)。hook はその結果を
+# 見られないので、`$` / バッククォートと同じく評価できない語として扱う。codex の引数照合
+# (_codex_line_reason) と、実行体位置の判定 (_split_prefix: `{curl,x}` / `c{u,}rl` は
+# 実行前に `curl x` / `curl crl` へ書き換わる) の両方で使う。
+#
+# 「内側に波括弧を持たない `{…}` の塊」を拾ってから中身に `,` / `..` があるかを見る。
+# 1 本の正規表現 (`\{[^{}]*(?:,|\.\.)[^{}]*\}`) にすると、閉じていない `{a,a,a,…` で
+# `,` の位置ごとに後戻りして長さの 2 乗の時間が掛かる (3 万字で約 1 秒、hook は 1 行を
+# 何度も判定するので数秒)。塊の照合は `}` が無ければその開始位置で 1 回走査して終わる。
+_BRACE_GROUP = re.compile(r"\{[^{}]*\}")
+
+
+def _has_brace_expansion(text: str) -> bool:
+    """text にシェルが展開するブレース (`{a,b}` / `{1..3}`) が含まれるか。"""
+    return any(
+        "," in group or ".." in group
+        for group in (m.group() for m in _BRACE_GROUP.finditer(text))
+    )
+
+
+# トークン中の最初のリダイレクト記号。ここより後ろはリダイレクトの行き先なので、
+# 実行体位置のブレース判定から外す (_split_prefix の注記参照)。
+_REDIRECT_CHAR = re.compile(r"[<>]")
+
 # 実行体の位置に現れる「静的に中身を確定できない」トークン。$VAR / ${VAR} /
 # $(...) / `...` は展開結果が空になり得て、その場合シェルはそのトークンごと
 # 消して次のトークンを実行する (`$(true) sudo rm -rf /` は実際には
@@ -621,8 +662,9 @@ _REDIRECT_GLUED = re.compile(r"^(?:&>>|&>|\d*(?:>>|>&|>\||>|<<<|<<|<&|<))\S")
 #     切り出しの枝が塊を `ls` へ切り詰めて読み直すため。
 #   * `watch '(sudo)'` → `sudo` に解決される (文法記号の剥がし)。この形は
 #     たまたま実挙動と一致する: `sh -c "(sudo)"` は本当に sudo を走らせる。
-#   * `watch '{sudo,rm,-rf,/}'` → ブレース展開。`{` の剥がしで
-#     `sudo,rm,-rf,/` になり、どの層にも一致しない。
+#
+# (`watch '{sudo,rm,-rf,/}'` もかつてここに並んでいたが、実行体位置のブレース展開を
+# _split_prefix が判定不能に倒すようになったので塞がった。)
 #
 # これらの枝はフェイルクローズではなく「切り詰めて読み直す」設計で、それ自体は
 # 裸のコマンド (`ls>out`) に対して正しい。塊と区別するには文字クラスを `<>(){},`
@@ -683,6 +725,8 @@ def _split_prefix(
     - 実行体位置の glob 文字 (_GLOB_IN_EXECUTABLE)。glob_unresolvable=False で外す
       (heredoc 本文の行頭語のように、実行体ではないと分かっている行のため)。ただし
       `/` を含む glob (`/usr/b*/env`) は外さない
+    - 実行体位置のブレース展開 (_has_brace_expansion): `{curl,x}` / `c{u,}rl`。
+      glob_unresolvable=False で外す
 
     全トークンが剥がし対象だった場合は空リストを返す (None とは別物で、
     こちらは「実行体が無い」= 判定対象なしを意味する)。
@@ -733,6 +777,18 @@ def _split_prefix(
         if _UNRESOLVABLE_EXPANSION.search(tok):
             # 展開トークンが実行体の位置にある: 空展開なら次のトークンが実行体に
             # なるため、このトークンを実行体と決め打ちできない (上の定義参照)。
+            return None
+        # 実行体位置のブレース展開 (_has_brace_expansion)。文法 `{` の剥がしより先に見る:
+        # 剥がすと `{curl,x}` が `curl,x}` という未知の実行体に化け、DENY と高リスクの
+        # 両層を外れて単独モデルの経路へ落ちる。glob と同じく heredoc 本文の行
+        # (glob_unresolvable=False) では外す。グループの `{` 単独や代入値は一致しない。
+        # 見るのは最初の `<` / `>` より前だけ: その後ろはリダイレクトの行き先で、
+        # 実行体は下のリダイレクト剥がしの後に確定できる。トークン全体を見ると
+        # `>{1..1} sudo id` / `sudo>{1..1} id` が「確定できない」に倒れ、即拒否から
+        # 二モデル AND ゲート (両方 ALLOW なら実行) へ格下げされる。
+        if glob_unresolvable and _has_brace_expansion(
+            _REDIRECT_CHAR.split(tok, maxsplit=1)[0]
+        ):
             return None
         # シェル文法は実行体ではない。剥がして次を見る (上の定義参照)。
         # 大小は畳む: `THEN`/`DO` は文法としては効かないが、畳んでも実行体を
@@ -1711,11 +1767,15 @@ def _grep_is_unrestricted(tokens: list[str]) -> bool:
     operands: list[str] = []
     pattern_from_flag = False
     skip_value = False
-    for tok in tokens:
+    for idx, tok in enumerate(tokens):
         if skip_value:
             skip_value = False
             continue
         if tok == "--":
+            # `--` が終わらせるのはオプションであって、オペランドではない。ここで
+            # 走査を打ち切ると `grep -- PAT src` のディレクトリが検査されずに
+            # セーフスキップへ届く (その先は隠しファイルまで再帰して読む)。
+            operands.extend(tokens[idx + 1 :])
             break
         flag = tok.split("=", 1)[0]
         if flag.startswith("--") and len(flag) > 2:
@@ -2169,9 +2229,6 @@ def _deny_only_in_inert_text(command: str) -> bool:
 # した `-C` の照合にだけ使い、ここに一時ファイルは作らない。`<uid>/` まで要求するのは、
 # `/tmp/claude-evil` のような同じ接頭辞の別ディレクトリを通さないため。
 _CODEX_SCRATCH_DIR = re.compile(r"^(?:/private)?/tmp/claude-\d+/")  # nosec B108
-# シェルが展開して別の語にするブレース (`{x,-s}` → `x -s`、`{1..2}`)。hook はその結果を
-# 見られないので、`$` / バッククォートと同じく評価できない引数として扱う。
-_BRACE_EXPANSION = re.compile(r"\{[^{}]*(?:,|\.\.)[^{}]*\}")
 _CODEX_VALUE_FLAGS = {
     "-s": "sandbox",
     "--sandbox": "sandbox",
@@ -2272,7 +2329,97 @@ def _prompt_file_scanned_first(command: str, stdin_file: str) -> bool:
     return re.search(chain, masked, re.M) is not None
 
 
-def _codex_line_reason(line: str, command: str) -> str:
+# 理由文で名指ししてよい語: フラグ名・サブコマンド・設定キー・変数名の形をした、
+# 英字と `_` `.` `-` だけの語。利用者が打ったトークンをそのまま理由文に埋めると、
+# 確認ダイアログとサマリーログへ平文で出る (redact_command が伏せるのは command
+# 欄だけ)。対話形式 `codex "<prompt>"` では先頭の位置引数がプロンプト全文で、そこに
+# 資格情報が書かれていることがある。数字や記号を含む語・長い語・空白を含む語は
+# 名指しせず伏せる (` | ` や改行がログの 1 行 1 判定を崩すのも同時に防ぐ)。
+# これは表示の絞り込みであって秘匿処理ではない: 秘密スキャンが資格情報を検出した
+# 場合は、理由文ごと固定文に差し替える (codex_flag_ask_reason の redact)。
+_CODEX_NAMEABLE = re.compile(r"-{0,2}[A-Za-z][A-Za-z_.-]{0,47}")
+_CODEX_REDACTED_REASON = (
+    "a codex invocation outside the allowlist "
+    "(details withheld: the command contains a credential)"
+)
+# 後続のコマンドの環境を変える組み込み。`VAR=v codex …` の前置代入は同じ行の
+# トークンとして見えるが、`export VAR=v; codex …` は別のサブコマンドなので、
+# コマンド全体から探す (_changes_codex_environment)。
+_ENV_EXPORTING_BUILTINS = frozenset({"export", "declare", "typeset"})
+
+
+def _codex_name(token: str) -> str:
+    return f"'{token}'" if _CODEX_NAMEABLE.fullmatch(token) else "(not shown)"
+
+
+def _assigned_name(token: str) -> str:
+    return token.split("=", 1)[0].rstrip("+")
+
+
+def _changes_codex_environment(line: str) -> bool:
+    """codex とは別のサブコマンドが、codex の見る環境を変えうるか。
+
+    `export CODEX_HOME=/x; codex exec …` は別の設定一式 (config.toml の notify /
+    hooks / mcp_servers) で codex を動かす。代入だけの行 (`CODEX_HOME=/x;`) も、
+    その変数が既に export 済みなら同じ効果を持つ。`set -a` はそれ以降の代入を
+    すべて export する。
+
+    順序やサブシェルの境界は追わない: codex より後ろの `export LANG=C` も確認に
+    なる。相談・画像生成で使う形は環境を変えないので、過剰検出の側に倒しておく。
+
+    組み込みの前のラッパーと代入は剥がしてから見る (`command export …` /
+    `builtin export …` / `FOO=1 export …`)。数えるのは代入 (`NAME=value`) を伴う語
+    だけ: `declare -p PATH` や `export -p` は表示であって、何も変えない。`eval` /
+    `source` / `.` は、何を設定するかをこのフックが読めないので変更として扱う。
+    """
+    tokens = _tokenize(line)
+    if not tokens:
+        return False
+    if all(_ENV_ASSIGNMENT.match(tok) for tok in tokens):
+        return any(_assigned_name(tok) not in _CODEX_ENV_OK for tok in tokens)
+    rest = _split_prefix(tokens) or []
+    while rest and rest[0] in ("builtin", "command"):
+        rest = rest[1:]
+    if not rest:
+        return False
+    head, args = rest[0], rest[1:]
+    if head in ("eval", "source", "."):
+        return True
+    if head in _ENV_EXPORTING_BUILTINS:
+        return any(
+            _ENV_ASSIGNMENT.match(tok) and _assigned_name(tok) not in _CODEX_ENV_OK
+            for tok in args
+        )
+    if head == "set":
+        return any(
+            (tok.startswith("-") and not tok.startswith("--") and "a" in tok[1:])
+            or (tok == "allexport" and args[idx - 1 : idx] == ["-o"])
+            for idx, tok in enumerate(args)
+        )
+    return False
+
+
+def _codex_is_pipe_target(texts: list[str]) -> bool:
+    """codex がパイプの受け手になっているセグメントがあるか。
+
+    行継続を畳んだ綴りでも見る: `cat f | \\<改行>codex …` は、畳まなければ受け手の
+    先頭行が `\\` だけになり、codex に繋がっていると分からない。codex の呼び出しが
+    複数あっても区別はせず、どれか 1 つが受け手なら全体をそう扱う (確認側の近似)。
+    """
+    for text in texts:
+        for variant in dict.fromkeys((text, _join_line_continuations(text))):
+            for op, segment in _iter_top_level(variant, split_ampersand=True):
+                if op != "|":
+                    continue
+                first = next(
+                    (ln.strip() for ln in segment.splitlines() if ln.strip()), ""
+                )
+                if first and _resolve_executable(first) == "codex":
+                    return True
+    return False
+
+
+def _codex_line_reason(line: str, command: str, *, piped: bool = False) -> str:
     tokens = _tokenize(line)
     at = next(
         (i for i, t in enumerate(tokens) if t.rsplit("/", 1)[-1].casefold() == "codex"),
@@ -2281,17 +2428,29 @@ def _codex_line_reason(line: str, command: str) -> str:
     if at is None:
         return "a codex invocation this hook cannot read"
     for tok in tokens[:at]:
-        if _ENV_ASSIGNMENT.match(tok) and tok.split("=", 1)[0] not in _CODEX_ENV_OK:
-            return f"codex run with '{tok.split('=', 1)[0]}' set"
+        if _ENV_ASSIGNMENT.match(tok) and _assigned_name(tok) not in _CODEX_ENV_OK:
+            return f"codex run with {_codex_name(_assigned_name(tok))} set"
     args = tokens[at + 1 :]
     positionals: list[str] = []
-    sandbox = cd = stdin_file = None
-    stdin_inline = False
+    sandbox = cd = None
+    # 入力リダイレクトは 3 つを別々に持つ。1 つの変数にまとめると、`< /dev/null` が
+    # 付いただけで後ろの heredoc の検査が飛ぶ、fd 3 へのリダイレクトが stdin の
+    # 出どころとして数えられる、といった取り違えが起きる。
+    #   input_files     : `< FILE` の FILE すべて (fd を問わない。どれも codex が
+    #                     読みうる入力なので、スキャン済みを要求する)
+    #   inline_input    : heredoc / here-string がある (本文の展開を確かめる)
+    #   stdin_redirected: fd 0 (fd 指定なしも) がコマンド内で繋ぎ替えられている
+    #                     (そうでなければ stdin はパイプか端末から来る)
+    input_files: list[str] = []
+    inline_input = stdin_redirected = False
+    # `--` より後ろか。終わるのはフラグの解釈だけで、シェルの展開とリダイレクトは
+    # そこでも働くので、下の 2 つの検査は `--` の後ろのトークンにも掛け続ける。
+    after_double_dash = False
     i = 0
     while i < len(args):
         tok = args[i]
         i += 1
-        if "$" in tok or "`" in tok or _BRACE_EXPANSION.search(tok):
+        if "$" in tok or "`" in tok or _has_brace_expansion(tok):
             return "a codex argument with an expansion this hook cannot evaluate"
         redirect = _SHELL_REDIRECT.match(tok)
         if redirect:
@@ -2299,17 +2458,28 @@ def _codex_line_reason(line: str, command: str) -> str:
             if not dup and not target:
                 target = args[i] if i < len(args) else ""
                 i += 1
-            if "$" in target or "`" in target or _BRACE_EXPANSION.search(target):
+            if "$" in target or "`" in target or _has_brace_expansion(target):
                 return "a codex redirect with an expansion this hook cannot evaluate"
+            fd = tok[: len(tok) - len(tok.lstrip("0123456789"))]
+            on_stdin = fd in ("", "0")
             if op == "<":
-                stdin_file = target
+                if dup:
+                    # `0<&3` / `<&-`: 複製元の記述子が何に繋がっているかは追えない。
+                    return "codex input comes from a descriptor this hook cannot trace"
+                input_files.append(target)
+                stdin_redirected = stdin_redirected or on_stdin
             elif op in ("<<", "<<<"):
-                stdin_inline = True
+                inline_input = True
+                stdin_redirected = stdin_redirected or on_stdin
+            elif fd == "0":
+                # `0>&3` / `0>file`: 書き込み側の演算子でも fd 0 は繋ぎ替わる
+                # (dup2 は向きを見ない)。先に書かれた `<` の後ろに置けば上書きできる。
+                return "codex input comes from a descriptor this hook cannot trace"
             continue
-        if tok == "--":
-            positionals += args[i:]
-            break
-        if tok == "-" or not tok.startswith("-"):
+        if tok == "--" and not after_double_dash:
+            after_double_dash = True
+            continue
+        if after_double_dash or tok == "-" or not tok.startswith("-"):
             positionals.append(tok)
             continue
         name, eq, value = tok.partition("=")
@@ -2319,16 +2489,18 @@ def _codex_line_reason(line: str, command: str) -> str:
             name, value = tok[:2], tok[2:].removeprefix("=")
             eq = "=" if value else ""
         if name not in _CODEX_VALUE_FLAGS:
-            return f"codex flag '{name}' is outside the allowlist"
+            return f"codex flag {_codex_name(name)} is outside the allowlist"
         if not eq:
             value = args[i] if i < len(args) else ""
             i += 1
-        if "$" in value or "`" in value or _BRACE_EXPANSION.search(value):
+        if "$" in value or "`" in value or _has_brace_expansion(value):
             return "a codex argument with an expansion this hook cannot evaluate"
         kind = _CODEX_VALUE_FLAGS[name]
         if kind == "sandbox":
             if value not in ("read-only", "workspace-write"):
-                return f"codex sandbox '{value}'"
+                # 値は Codex の語彙 (danger-full-access) のときだけ名指しする。
+                shown = "'danger-full-access'" if value == "danger-full-access" else ""
+                return f"codex sandbox {shown or '(an unrecognised value)'}"
             sandbox = value
         elif kind == "cd":
             cd = value
@@ -2340,10 +2512,13 @@ def _codex_line_reason(line: str, command: str) -> str:
                 (key == "sandbox_mode" and decoded == "read-only")
                 or (key == "model_reasoning_effort" and decoded is not None)
             ):
-                return f"codex config '{key}' is outside the allowlist"
+                return f"codex config {_codex_name(key)} is outside the allowlist"
     if positionals and positionals[0] == "features":
         return "" if positionals[1:] in ([], ["list"]) else "codex features change"
     if positionals and positionals[0] not in ("exec", "e"):
+        if not _CODEX_NAMEABLE.fullmatch(positionals[0]):
+            # サブコマンドの形をしていない先頭の語は対話形式のプロンプト本文。
+            return "an interactive codex run (a prompt without the exec subcommand)"
         return f"codex subcommand '{positionals[0]}' is outside the allowlist"
     if sandbox == "workspace-write" and not (
         cd and _CODEX_SCRATCH_DIR.match(os.path.realpath(cd))
@@ -2354,24 +2529,36 @@ def _codex_line_reason(line: str, command: str) -> str:
     prompt_args = positionals[1:]
     if prompt_args[:1] == ["resume"]:
         prompt_args = prompt_args[2:]
-    if not prompt_args or "-" in prompt_args:  # the prompt arrives on stdin
-        if stdin_file is not None:
-            if not _prompt_file_scanned_first(command, stdin_file):
-                return "codex prompt file was not secret-scanned first in this command"
-        elif not stdin_inline:
-            return "codex reads a prompt from a pipe that was not secret-scanned"
-        elif "$" in command or "`" in command:
-            # here-string / heredoc の本文は展開される: `<<< "$(cat f)"` は f を送る
-            return "codex reads a heredoc / here-string that expands a command"
+    # stdin の出どころは、プロンプトが argv にあっても確かめる。Write で作った
+    # ファイルは bash-review の秘密スキャンを通っていないので、argv に一言添える
+    # だけで `< FILE` やパイプの中身が未スキャンのまま送られる形を残さない。
+    # 3 つの検査は互いに独立に掛ける (どれかが成立しても残りを省かない)。
+    # `/dev/null` も例外にしない: トークンはクォートの有無を持たないので、引数に
+    # 書いた `'</dev/null'` もリダイレクトに見える。それを「無害な stdin」と認めると、
+    # パイプで流し込んだ本文の検査まで外れる。
+    for path in input_files:
+        if not _prompt_file_scanned_first(command, path):
+            return "codex prompt file was not secret-scanned first in this command"
+    if inline_input and ("$" in command or "`" in command):
+        # here-string / heredoc の本文は展開される: `<<< "$(cat f)"` は f を送る
+        return "codex reads a heredoc / here-string that expands a command"
+    if not stdin_redirected and (piped or not prompt_args or "-" in prompt_args):
+        return "codex reads a prompt from a pipe that was not secret-scanned"
     return ""
 
 
-def codex_flag_ask_reason(sub_commands: list[str], command: str | None = None) -> str:
+def codex_flag_ask_reason(
+    sub_commands: list[str], command: str | None = None, *, redact: bool = False
+) -> str:
     """codex の呼び出しが許可リスト外なら理由を返す (無ければ "")。
 
     command (元のコマンド) を渡すと、DENY 層と同じく heredoc 本体や複数行のクォート
     文字列の中の行は見ない (コミットメッセージが `codex … --add-dir` に触れるだけで
     止まらないように)。解析できない形は従来どおり全サブコマンドを見る。
+
+    redact=True (秘密スキャンがこのコマンドに資格情報を検出した) のときは、理由を
+    固定文に差し替える。理由文は確認ダイアログとサマリーログへそのまま出るので、
+    検出済みの資格情報がトークンとして紛れ込む余地を残さない。理由の有無は変えない。
     """
     texts = _live_texts(command) if command is not None else None
     subs = (
@@ -2379,15 +2566,27 @@ def codex_flag_ask_reason(sub_commands: list[str], command: str | None = None) -
         if texts is None
         else [part for text in texts for part in _split_commands(text)]
     )
-    for sub_cmd in subs:
-        for raw in sub_cmd.splitlines():
-            line = raw.strip()
-            if _resolve_executable(line) != "codex":
-                continue
-            reason = _codex_line_reason(line, command or line)
-            if reason:
-                return f"{reason} — confirm manually"
-    return ""
+    lines = [raw.strip() for sub_cmd in subs for raw in sub_cmd.splitlines()]
+    codex_lines = [line for line in lines if _resolve_executable(line) == "codex"]
+    if not codex_lines:
+        return ""
+    piped = _codex_is_pipe_target(
+        texts if texts is not None else [command or "", *sub_commands]
+    )
+    reason = ""
+    for line in codex_lines:
+        reason = _codex_line_reason(line, command or line, piped=piped)
+        if reason:
+            break
+    if not reason and any(
+        _changes_codex_environment(line)
+        for line in lines
+        if _resolve_executable(line) != "codex"
+    ):
+        reason = "the environment is changed in the same command as a codex run"
+    if not reason:
+        return ""
+    return f"{_CODEX_REDACTED_REASON if redact else reason} — confirm manually"
 
 
 def find_deny_command(
@@ -2851,9 +3050,14 @@ def high_risk_label(sub_commands: list[str], command: str | None = None) -> str:
                 relaxed = _high_risk_label(line, glob_unresolvable=False)
                 if relaxed != label:
                     if inert is None:
+                        # 算術式 (`$((1<<2))`) の `<<` は本文の走査が heredoc と読み、
+                        # 区切り語だけの行を終端と見なすので「本文」を偽装できる。
+                        # その形は _live_texts が解析を諦める (None) ので、そのときは
+                        # 緩和しない。
                         inert = (
                             set()
                             if _heredoc_may_run_as_code(sub_commands, command)
+                            or _live_texts(command) is None
                             else _heredoc_body_lines(command)
                         )
                     if line in inert:
@@ -2980,23 +3184,401 @@ def classify_high_risk(sub_commands: list[str], command: str) -> str:
     return ", ".join(p for p in parts if p)
 
 
+# --- ハーネス自身の設定への Bash 書き込み (決定論的 ask) --------------------------
+# permissions.ask は Edit ツールによる settings / hooks / mods / codex と、毎セッション
+# 読み込まれる指示ファイル (CLAUDE.md と rules / Codex の AGENTS.md / Gemini の GEMINI.md)
+# の書き換えを毎回確認させるが、Bash から同じファイルへ書く形 (`>` / `tee` / `sed -i` /
+# `python -c`) は DENY・高リスクのどちらにも当たらず、Gemini 単独 ALLOW の経路で自動許可
+# されうる。ゲート自身や指示を書き換えるコマンドはモデルに委ねず人間へ回す。照合するのは
+# 書き込みの「形」であって言及ではない: 読み取り (`sed -n` / `git diff`) は日常的に保護
+# パスへ触れる (実測で判定の約 4 分の 1)。網羅はしない。既知の穴は hooks/README.md に
+# 列挙してある。tests/test_config_wiring.py が「Edit の ask 対象 ⊆ ここの保護対象」を
+# pin している。
+_HARNESS_PATH = re.compile(
+    r"(?<![\w.-])\.claude/(?:settings(?:\.local)?\.json|CLAUDE\.md|hooks|mods|rules)"
+    r"(?![\w.-])"
+    r"|(?<![\w.-])\.codex/(?:hooks|AGENTS\.md)(?![\w.-])"
+    r"|(?<![\w.-])\.gemini/GEMINI\.md(?![\w.-])"
+    r"|(?:~|\$HOME|\$\{HOME\})/\.codex(?![\w.-])",
+    re.IGNORECASE,
+)
+# 書き込み先そのものとしての `.claude` / `.codex` / `.gemini` ディレクトリ
+# (`cp x ~/.claude/` は settings.json や CLAUDE.md を上書きしうる)。
+_HARNESS_DIR = re.compile(r"(?:.*/)?\.(?:claude|codex|gemini)/?", re.IGNORECASE)
+# 書き込み先が展開 (glob / ブレース / 変数) を含むときは、展開の結果が保護対象になり
+# うるなら保護対象とみなす (_dynamic_harness_hint)。
+_DYNAMIC_WORD = re.compile(r"[*?\[{$`]")
+_GLOB_OR_BRACE = re.compile(r"[*?\[{]")
+_HARNESS_LEAF_FILES = frozenset({"settings.json", "settings.local.json", "claude.md"})
+_HARNESS_DIR_NAMES = frozenset({".claude", ".codex", ".gemini"})
+# 単独では他のプロジェクトにもよくある名前 (React の hooks/、リポジトリ直下の AGENTS.md)
+# なので、親が `.claude` / `.codex` / `.gemini` か glob・ブレースを含むときだけ保護対象に
+# 数える名前 (_dynamic_harness_hint)。
+_HARNESS_CHILD_NAMES = frozenset({"hooks", "mods", "rules", "agents.md", "gemini.md"})
+# 書き込み系のリダイレクト演算子 (`>` `>>` `>|` `&>` `&>>` `>&`)。記号だけのトークンの末尾で判定する。
+_WRITE_REDIRECT = re.compile(r"(?:>|>\||>&)$")
+_SHELL_PUNCTUATION = frozenset("();<>|&")
+# 全被演算子が書き込み先になるもの / 最後の被演算子 (と -t DIR) が書き込み先になるもの
+_HARNESS_ANY_OPERAND_WRITERS = frozenset(
+    {"tee", "rm", "truncate", "touch", "chmod", "mv"}
+)
+_HARNESS_DEST_WRITERS = frozenset({"cp", "install", "ln", "rsync"})
+# 書き込み先ではない値を取るフラグ (`touch -r REF` の REF は読むだけ)
+_HARNESS_WRITER_VALUE_FLAGS = {
+    "touch": frozenset({"-r", "--reference", "-d", "--date", "-t"}),
+    "truncate": frozenset({"-s", "--size", "-r", "--reference"}),
+    "chmod": frozenset({"--reference"}),
+}
+# `-t DIR` を束ねた形 (`-rt DIR` / `-Dt DIR`) と、値を密着させた形 (`-tDIR` / `-rtDIR`)
+_TARGET_DIR_BUNDLE = re.compile(r"^-[A-Za-z]*t$")
+_TARGET_DIR_GLUED = re.compile(r"^-[A-Za-z]*?t(.+)$")
+_SED_IN_PLACE = re.compile(r"^(?:-[A-Za-z]*i|--in-place(?:=|$))")
+_SED_SCRIPT_FLAGS = frozenset({"-e", "-f", "--expression", "--file", "-l"})
+# `-M` / `-m` / `-I` は値 (モジュール名・パス) を密着させるので、その中の i は -i ではない
+_PERL_IN_PLACE = re.compile(r"^-(?![MmI])[A-Za-z0-9]*i")
+_PERL_CODE_FLAGS = frozenset({"-e", "-E"})
+_AWK_EXECUTABLES = frozenset({"awk", "gawk", "mawk", "nawk"})
+
+
+def _is_harness_target(token: str) -> bool:
+    """書き込み先トークンがハーネスの設定 (settings / hooks / mods 等) を指しうるか。"""
+    if _HARNESS_PATH.search(token) or _HARNESS_DIR.fullmatch(token):
+        return True
+    home = os.environ.get("HOME", "").rstrip("/")
+    if home and re.match(re.escape(home) + r"/\.codex(?![\w.-])", token, re.IGNORECASE):
+        return True
+    return bool(_DYNAMIC_WORD.search(token)) and _dynamic_harness_hint(token)
+
+
+def _dynamic_harness_hint(token: str) -> bool:
+    """展開を含む書き込み先が、展開の結果として保護対象になりうるか。
+
+    - `.claude` / `.codex` / `.gemini` の直下が展開を含むか、そこで終わる
+      (`.claude/sett*` / `.claude/{hooks,x}/a` / `$HOME/.claude`)
+    - 保護対象の末端ファイル名が見える (`~/.cl*/settings.json` / `$D/settings.json`)
+    - _HARNESS_CHILD_NAMES (`hooks` / `mods` / `rules` / `AGENTS.md` / `GEMINI.md`) の親が
+      `.claude` / `.codex` / `.gemini` か glob・ブレースを含む (`~/.cl*/hooks/x` /
+      `~/.co*/AGENTS.md`)。`src/hooks/*.ts` (React の hooks) や `$D/AGENTS.md` のように親が
+      固定名・変数なら外す。親と名前の組までは見ないので `.gemini/rules/*.md` も数える
+      (過剰側に倒れるだけ)
+
+    正規表現 1 本にすると、展開文字の位置を探す後戻りが長いトークンで 2 乗になるので、
+    部品ごとに見る。
+    """
+    parts = token.split("/")
+    for i, part in enumerate(parts):
+        name = part.casefold()
+        if name in _HARNESS_LEAF_FILES:
+            return True
+        if name in _HARNESS_DIR_NAMES:
+            following = parts[i + 1] if i + 1 < len(parts) else ""
+            if not following or _DYNAMIC_WORD.search(following):
+                return True
+        if name in _HARNESS_CHILD_NAMES and i > 0:
+            parent = parts[i - 1]
+            if parent.casefold() in _HARNESS_DIR_NAMES or _GLOB_OR_BRACE.search(parent):
+                return True
+    return False
+
+
+def _redirect_targets(line: str) -> list[str] | None:
+    """行の書き込み系リダイレクトの行き先。シェルとして字句解析できなければ None。
+
+    punctuation_chars の shlex はクォートを保ったまま `x>file` を `x` `>` `file` に割る
+    (`'a>b'` は 1 語のまま)。commenters を空にするのは、既定の `#` が `s#a#b#` のような
+    語の途中でも切ってしまうため (コメントは _live_texts が先に落としている)。
+    """
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    return [
+        tokens[i + 1]
+        for i, tok in enumerate(tokens[:-1])
+        if set(tok) <= _SHELL_PUNCTUATION and _WRITE_REDIRECT.search(tok)
+    ]
+
+
+def _operands(
+    args: list[str], value_flags: frozenset[str] = frozenset()
+) -> tuple[list[str], bool]:
+    """フラグとリダイレクトを除いた被演算子と、value_flags が現れたか。"""
+    out: list[str] = []
+    saw = skip = ended = False
+    for tok in args:
+        if skip:
+            skip = False
+        elif ended:
+            out.append(tok)
+        elif tok == "--":
+            ended = True
+        elif _REDIRECT_ALONE.match(tok):
+            skip = True
+        elif _REDIRECT_GLUED.match(tok):
+            pass
+        elif tok.split("=", 1)[0] in value_flags:
+            saw = True
+            skip = "=" not in tok
+        elif not tok.startswith("-") or tok == "-":
+            out.append(tok)
+    return out, saw
+
+
+def _target_dir_values(args: list[str]) -> list[str]:
+    """cp / install / ln の `-t DIR` (束ね・密着形を含む) / `--target-directory[=]DIR` の DIR。"""
+    values = []
+    for i, tok in enumerate(args):
+        if tok.startswith("--"):
+            if tok == "--target-directory" and i + 1 < len(args):
+                values.append(args[i + 1])
+            elif tok.startswith("--target-directory="):
+                values.append(tok.split("=", 1)[1])
+        elif _TARGET_DIR_BUNDLE.match(tok):
+            if i + 1 < len(args):
+                values.append(args[i + 1])
+        else:
+            glued = _TARGET_DIR_GLUED.match(tok)
+            if glued:
+                values.append(glued.group(1))
+    return values
+
+
+def _writes_harness(exe: str, args: list[str]) -> bool:
+    """既知の書き込みコマンドが、保護対象を書き込み先に取るか。"""
+    if exe in _HARNESS_ANY_OPERAND_WRITERS:
+        value_flags = _HARNESS_WRITER_VALUE_FLAGS.get(exe, frozenset())
+        targets = _operands(args, value_flags)[0]
+    elif exe in _HARNESS_DEST_WRITERS:
+        # `-t DIR` があれば行き先はそれだけ (残りの被演算子はすべてコピー元)。
+        # rsync の -t は時刻保持で、行き先ではない。
+        target_dirs = [] if exe == "rsync" else _target_dir_values(args)
+        targets = target_dirs or _operands(args)[0][-1:]
+    elif exe == "dd":
+        targets = [t[len("of=") :] for t in args if t.startswith("of=")]
+    elif exe in ("sed", "gsed") and any(_SED_IN_PLACE.match(t) for t in args):
+        # スクリプトは -e/-f の値、それが無ければ最初の被演算子。BSD の `-i ''` の空語は除く
+        ops, scripted = _operands(args, _SED_SCRIPT_FLAGS)
+        ops = [t for t in ops if t]
+        targets = ops if scripted else ops[1:]
+    elif exe == "perl" and any(_PERL_IN_PLACE.match(t) for t in args):
+        ops, coded = _operands(args, _PERL_CODE_FLAGS)
+        targets = ops if coded else ops[1:]
+    else:
+        return False
+    return any(_is_harness_target(t) for t in targets)
+
+
+def _awk_program(args: list[str]) -> str:
+    """awk のインラインのプログラム (-f でファイルから読むなら "")。"""
+    skip = False
+    for tok in args:
+        if skip:
+            skip = False
+        elif tok == "--file" or (tok.startswith("-f") and not tok.startswith("--")):
+            return ""
+        elif tok in ("-F", "-v", "--assign", "--field-separator"):
+            skip = True
+        elif not tok.startswith("-"):
+            return tok
+    return ""
+
+
+def _harness_reason(form: str) -> str:
+    # 理由文は確認ダイアログとサマリーログへ出るので、コマンドの語を埋め込まない
+    # (同じ行の資格情報が紛れ込まないよう、固定の語彙だけで組む)。
+    return (
+        f"Bash {form} writes to the agent harness configuration "
+        "(settings / hooks / mods / instruction files / codex) — confirm manually"
+    )
+
+
+def _shell_code(line: str) -> str | None:
+    """行がシェルにコード文字列を渡す形 (`sh -c CODE` / `eval ARGS`) ならその文字列。
+
+    `-c` を含むフラグの直後の語をコードとする (`bash -o pipefail -c CODE` の pipefail は
+    オプションの値でありコードではない)。その後ろの位置引数はコードの `$0` / `$1` / `$@`
+    になるので、クォートしてコードの後ろへ足す: `sh -c 'rm "$@"' _ .claude/hooks/x` は
+    `rm` の被演算子として行き先が見え、読むだけのコード (`cat "$1"`) は書き込みにならない。
+    該当しなければ None。
+    """
+    rest = _split_prefix(_tokenize(line))
+    if not rest:
+        return None
+    exe = rest[0].rsplit("/", 1)[-1].casefold()
+    args = rest[1:]
+    if exe == "eval":
+        return " ".join(args)
+    if exe not in _SHELL_EXECUTABLES:
+        return None
+    for i, tok in enumerate(args):
+        if _is_pwsh_command_flag(tok) if exe == "pwsh" else _COMMAND_FLAG.match(tok):
+            if i + 1 >= len(args):
+                return ""
+            positional = args[i + 2 :]
+            if not positional:
+                return args[i + 1]
+            return args[i + 1] + " " + " ".join(shlex.quote(a) for a in positional)
+    return None
+
+
+def _feeds_shell_stdin(command: str) -> bool:
+    """stdin のコードを実行する裸のインタプリタのうち、シェルがあるか (python 等は除く)。"""
+    labels = stdin_interpreter_label(command)
+    return any(
+        _VERSION_SUFFIX.sub(
+            "", label.replace("stdin into ", "", 1).rsplit("/", 1)[-1].casefold()
+        )
+        in _SHELL_EXECUTABLES
+        for label in labels.split(", ")
+        if label
+    )
+
+
+def harness_write_ask_reason(
+    sub_commands: list[str], command: str, *, _depth: int = 0
+) -> str:
+    """コマンドがハーネス自身の設定へ書き込む形なら理由を返す (無ければ "")。
+
+    対象はシェルとして書き込みと断定できる形に限る: (1) 書き込み系リダイレクトの行き先、
+    (2) 既知の書き込みコマンドの行き先、(3) シェルのコード文字列 (`sh -c` / `eval`) の中の
+    (1)(2)、(4) awk のプログラム中の保護パス。python -c / node -e / `python3 - <<EOF` の
+    ような他言語のコードは読むのか書くのか静的に決められないので、ここでは扱わず高リスク層
+    (二モデル AND ゲート) に任せる (実測ではほぼ全てが hook のソースを読む解析だった)。
+
+    行の集め方は codex_flag_ask_reason と同じで、heredoc 本文・複数行のクォート・コメント
+    の中の行は見ない (コミットメッセージが `rm .claude/hooks/x` に触れるだけで止めない)。
+    ただし本文や stdin をシェルのコードとして実行する形 (`bash <<EOF` / `source <<EOF`) と、
+    複数行のコード文字列を渡す `sh -c` では、元の綴りの行もコマンドとして同じ規則に掛ける。
+    """
+    texts = _live_texts(command)
+    live_subs = (
+        None
+        if texts is None
+        else [part for text in texts for part in _split_commands(text)]
+    )
+    sourced = ("<<" in command or _PROCESS_SUBSTITUTION.search(command)) and any(
+        _resolve_executable(raw.strip()) in _SOURCING_EXECUTABLES
+        for sub in sub_commands
+        for raw in sub.splitlines()
+    )
+    # 複数行のクォートは _live_texts が _MULTILINE_SPAN に畳むので、`sh -c` のコードが
+    # そう見えたら元の綴りへ戻る。
+    multiline_shell_code = live_subs is not None and any(
+        (_shell_code(raw.strip()) or "").split(" ", 1)[0] == _MULTILINE_SPAN
+        for sub in live_subs
+        for raw in sub.splitlines()
+    )
+    if (
+        live_subs is None
+        or sourced
+        or multiline_shell_code
+        or _feeds_shell_stdin(command)
+    ):
+        redirect_text, subs = command, sub_commands
+    else:
+        redirect_text, subs = "\n".join(texts or []), live_subs
+    # リダイレクトは分割前の行で見る: `>|` (noclobber を無視する上書き) の `|` で
+    # _split_commands が行を割ると、演算子と行き先が別のパートに分かれてしまう。
+    # 行継続 (`> \<改行> path`) は先に畳む。
+    for raw in _join_line_continuations(redirect_text).splitlines():
+        targets = _redirect_targets(raw)
+        if targets is None:
+            if ">" in raw and _HARNESS_PATH.search(_normalize_cmd(raw)):
+                return _harness_reason("redirect")
+        elif any(_is_harness_target(t) for t in targets):
+            return _harness_reason("redirect")
+    for sub in subs:
+        lines = [raw.strip() for raw in sub.splitlines() if raw.strip()]
+        for line in lines:
+            rest = _split_prefix(_tokenize(line))
+            if not rest:
+                continue
+            exe = rest[0].rsplit("/", 1)[-1].casefold()
+            args = rest[1:]
+            if _writes_harness(exe, args):
+                return _harness_reason("file command")
+            if exe in _AWK_EXECUTABLES and _HARNESS_PATH.search(_awk_program(args)):
+                return _harness_reason("awk program")
+        if _depth >= 2:
+            continue
+        # シェルのコード文字列はそれ自体がコマンド。同じ規則を 1 段深く掛ける。複数行の
+        # パートはパート全体も見る (shlex は複数行のクォートを 1 語に保つので、改行を含む
+        # `sh -c '…'` のコードが丸ごと取れる)。
+        for candidate in lines + ([sub] if len(lines) > 1 else []):
+            code = _shell_code(candidate)
+            if code:
+                reason = harness_write_ask_reason(
+                    _split_commands(code), code, _depth=_depth + 1
+                )
+                if reason:
+                    return reason
+    return ""
+
+
+# 判定行の頭に付いてよい装飾 (引用・markdown の強調・箇条書き)。行頭の空白は
+# 照合の前に strip で落とす (_parse_verdict): パターンの先頭に `\s*` を置くと、
+# 装飾の後ろの `\s*` と空白を取り合い、空白の長い行の不一致で 2 乗時間になる。
+_VERDICT_LEAD = r'["\'`*_#>-]*\s*'
+# DENY / ASK は行頭にあれば採用する (後ろに理由が続く `DENY: …` が正規の形)。
+# 取り違えても確認か拒否に倒れるだけなので、緩いままにしておく。
+_DENY_ASK_LINE = re.compile(_VERDICT_LEAD + r"(ASK|DENY)\b")
+# ALLOW だけは、その行に単独で立っていることを要求する。後ろに続いてよいのは
+# 閉じの装飾 (`"` `'` `` ` `` `*`) と句点 1 つ、空白だけ。レビュアーに求めて
+# いる形は裸の `ALLOW` で (プロンプトの「とだけ答えてください」)、手元の詳細ログ
+# 1001 件でも ALLOW は全件この形だった。行頭一致だけで採用していた頃は
+# `ALLOW is not appropriate here: …` という否定文まで許可として読んでいた。
+# 語境界 (`\b`) は元の条件のまま残す: 外すと `ALLOW_` のように従来は判定に
+# ならなかった綴りが許可になる (`_` は語の文字なので、閉じの装飾にも数えない)。
+# 装飾の繰り返しは 4 個までに有界化する。同じ文字クラスの無制限な繰り返しを
+# 句点の前後に並べると、`ALLOW****…X` の不一致で入力長の 2 乗の巻き戻しになる。
+_ALLOW_LINE = re.compile(_VERDICT_LEAD + r'ALLOW\b["\'`*]{0,4}[.。]?["\'`*]{0,4}\s*$')
+
+
 def _parse_verdict(output: str) -> str:
     """レビュー応答から判定を厳密に抽出する。
 
     行頭の ALLOW / ASK / DENY トークンのみを判定として採用し、
     DENY > ASK > ALLOW の優先順で解決する。部分文字列一致では判定しない
     ("DISALLOW" や DENY の理由文中に現れる "ALLOW" で許可に化けない)。
+    ALLOW は行に単独で立つものだけを採る (_ALLOW_LINE)。
     判定トークンが見つからない応答は ASK に倒してユーザー確認へ回す。
     """
     verdicts = set()
-    for line in output.splitlines():
-        m = re.match(r'^\s*["\'`*_#>-]*\s*(ALLOW|ASK|DENY)\b', line)
+    for raw in output.splitlines():
+        line = raw.strip()
+        m = _DENY_ASK_LINE.match(line)
         if m:
             verdicts.add(m.group(1))
+        elif _ALLOW_LINE.match(line):
+            verdicts.add("ALLOW")
     for verdict in ("DENY", "ASK", "ALLOW"):
         if verdict in verdicts:
             return verdict
     return "ASK"
+
+
+def describe_exception(exc: BaseException) -> str:
+    """例外を「型名 at ファイル名:行」で表す。文面 (str(exc)) は載せない。
+
+    入口の catch-all はこの文字列を確認理由 (Codex 変種では stderr = エージェントが
+    読む) に出す。例外の文面には何が入っているか分からない: http.client は拒んだ
+    ヘッダ値 (API キー) を、他の例外もコマンドの断片を含みうる。型と場所があれば
+    原因は辿れる。場所はフック自身のフレームを優先する (標準ライブラリの奥の行番号
+    より、どの処理から呼んだかの方が役に立つ)。
+    """
+    own = {"_bash_review_common.py", "bash-review.py"}
+    where = innermost = ""
+    tb = exc.__traceback__
+    while tb is not None:
+        innermost = f"{os.path.basename(tb.tb_frame.f_code.co_filename)}:{tb.tb_lineno}"
+        if os.path.basename(tb.tb_frame.f_code.co_filename) in own:
+            where = innermost
+        tb = tb.tb_next
+    where = where or innermost
+    return f"{type(exc).__name__} at {where}" if where else type(exc).__name__
 
 
 # -------------------------------------------------------------------
@@ -3337,6 +3919,39 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
             r"[A-Za-z0-9_]*\s+(?![-$])\S{8,}"
         ),
     ),
+    # `gh secret set NAME --body VALUE` / `-b VALUE` / `--body=VALUE`。gh が値を
+    # 受け取る実在の形はこちらで、上の位置引数形 (`gh secret set NAME VALUE`) は gh に
+    # 無い。`--body` は秘密の名前ではないので "secret flag" に当たらず、NAME が
+    # キーワードを含んでいても直後が `--body` (`-` 始まり) なので上の規則は値に届かない。
+    # このサブコマンドに渡す値は名前に関わらず秘密なので、キーワードは要求しない。
+    #
+    # 値は、クォートで開いたら閉じクォートまで (空白入りの値を 1 つとして拾う)。
+    # 変数参照 (`--body "$VALUE"` / `--body $VALUE`) は値ではないので除く。空白区切りの
+    # 非クォート値は `-` 始まりを除く (次のフラグと区別できない) が、`=` で繋いだ形は
+    # 曖昧さが無いので `-` 始まりの値も拾う。`\\` を除くのは、json.dumps した綴りで
+    # クォートが `\"` になり、`\"$VALUE\"` が非クォート枝に一致するのを防ぐため。
+    # gh の他のサブコマンドの --body (pr create / issue comment の本文) は対象外。
+    # 長さの下限は上の位置引数形と同じ 8 文字。短くすると、この形を説明する文章の
+    # プレースホルダ (`--body VALUE`) まで資格情報として止めてしまう (コミット
+    # メッセージや、Codex へ送る相談文がそれに当たる)。非クォートの値はクォート文字
+    # の手前で止める: json.dumps した綴りでは値の直後に `'"}` が続くので、`\S` だと
+    # それを長さに数えて 5 文字のプレースホルダが下限を越える。
+    (
+        "secret CLI argument",
+        # 語の間の空白は同じ行の空白 ([ \t]) に限る: `\s` だと改行をまたぎ、次の行の
+        # 別コマンドの `-b '…'` (gh issue comment の本文) を値として拾う。間の語に
+        # `\` を許さないのも同じ理由: json.dumps した綴りでは改行が `\n` の 2 文字に
+        # なり、行の切れ目が語の中に埋もれる (クォートを含む語は `\"` になるので
+        # この綴りでは一致しなくなるが、生のコマンドの綴りが拾う)。ダブルクォートの
+        # 値は中に `$` を含めば参照として除く (`"prefix-$VAL"`)。
+        re.compile(
+            r"(?i)\bgh[ \t]+secret[ \t]+set\b(?:[ \t]+[^\s;|&\\]+){0,8}?[ \t]+"
+            r"(?:(?:--body|-b)=(?:\"[^\"\n$]{8,}\"|'[^'\n]{8,}"
+            r"|(?![$\\])[^\s\"'$]{8,})"
+            r"|(?:--body[ \t]+|-b[ \t]*)(?:\"[^\"\n$]{8,}\"|'[^'\n]{8,}"
+            r"|(?![-=$\\])[^\s\"'$]{8,}))"
+        ),
+    ),
 ]
 
 
@@ -3421,6 +4036,81 @@ def _build_gemini_payload(target_model: str, prompt: str) -> tuple[str, bytes]:
     return target_url, data
 
 
+# 判定本文をそのまま採用してよい終了理由。それ以外 (SAFETY / RECITATION /
+# PROHIBITED_CONTENT / MAX_TOKENS / FINISH_REASON_UNSPECIFIED / 将来増える値) は
+# 「最後まで書かれた判定」と確かめられないので、ALLOW を採用しない (_gemini_answer)。
+# 列挙を「通す側」にしておけば、知らない値は確認へ倒れる。空は finishReason を
+# 返さない応答 (テスト用の最小形など)。
+_GEMINI_COMPLETE_FINISH = frozenset({"", "STOP"})
+
+
+def _gemini_label(value: object) -> str:
+    """API が返した列挙値を理由文に載せられる形にする (英数と _ だけ、40 字まで)。"""
+    return re.sub(r"[^A-Za-z0-9_]", "", str(value))[:40] or "unspecified"
+
+
+def _gemini_answer(body: object) -> str:
+    """generateContent の 200 応答から、_parse_verdict に渡す本文を組み立てる。
+
+    思考 (thought) 以外の text part をすべて連結する。先頭の part だけを読むと、
+    後続の part に書かれた `DENY: …` を捨てて ALLOW と読んでしまう。
+
+    判定として読めない応答は ERROR (不可用 = 無意見) にせず、`ASK: …` の行を足して
+    人間確認へ倒す。ERROR は低リスク層で Codex の ALLOW 単独が解消できるので、
+    次のどれも ERROR にすると「Gemini を黙らせれば Codex だけ説得すればよい」
+    経路になる:
+
+    - コンテンツフィルタによる打ち切り (promptFeedback.blockReason / finishReason)。
+      コマンド文字列を書く側が意図的に踏める。
+    - 本文の無い応答・形の崩れた応答。従来から ASK (空文字 → 判定なし) だった。
+    - 出力上限での打ち切り (MAX_TOKENS)。書きかけの判定は ALLOW として採用しない。
+
+    足した行は DENY > ASK > ALLOW の優先順位で効くので、本文が DENY ならそのまま
+    DENY、ALLOW なら ASK になる。行の中身は確認ダイアログに出る理由になる。
+    """
+    if not isinstance(body, dict):
+        return "ASK: Gemini returned no verdict (unexpected response shape)"
+    feedback = body.get("promptFeedback")
+    block = feedback.get("blockReason") if isinstance(feedback, dict) else None
+    candidates = body.get("candidates")
+    first = candidates[0] if isinstance(candidates, list) and candidates else None
+    candidate = first if isinstance(first, dict) else {}
+    finish = candidate.get("finishReason")
+    finish = finish if isinstance(finish, str) else ""
+    content = candidate.get("content")
+    parts = content.get("parts") if isinstance(content, dict) else None
+    # text part でないもの (dict でない要素、text が文字列でない / 無い part) が
+    # 1 つでも混じっていたら、読める part だけを拾って判定にしない: 以前は先頭の
+    # part がそういう形だと例外になり確認へ倒れていた。黙って読み飛ばすと、その
+    # 後ろの `ALLOW` を採用してしまう。
+    malformed = False
+    chunks: list[str] = []
+    for part in parts if isinstance(parts, list) else []:
+        if not isinstance(part, dict):
+            malformed = True
+        elif part.get("thought"):
+            continue
+        elif isinstance(part.get("text"), str):
+            chunks.append(part["text"])
+        else:
+            malformed = True
+    text = "".join(chunks)
+    if block:
+        note = f"ASK: Gemini declined to review (blockReason={_gemini_label(block)})"
+    elif finish not in _GEMINI_COMPLETE_FINISH:
+        note = (
+            "ASK: Gemini declined to review or was cut short "
+            f"(finishReason={_gemini_label(finish)})"
+        )
+    elif malformed:
+        note = "ASK: Gemini returned no verdict (malformed response part)"
+    elif not text.strip():
+        note = "ASK: Gemini returned no verdict (empty response)"
+    else:
+        return text
+    return f"{text}\n{note}" if text.strip() else note
+
+
 def _call_gemini(target_url: str, data: bytes, api_key: str) -> str:
     req = urllib.request.Request(
         target_url,
@@ -3428,14 +4118,36 @@ def _call_gemini(target_url: str, data: bytes, api_key: str) -> str:
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # nosec: B310
-        body = json.loads(resp.read().decode("utf-8"))
-        return (
-            body.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec: B310
+            raw = resp.read()
+    except urllib.error.URLError:
+        # HTTPError を含む。_API_ERRORS がそのまま受ける (文面は URL / ステータスで、
+        # 鍵はヘッダにしか無いので載らない)。OSError の派生なので先に通す。
+        raise
+    except (OSError, http.client.HTTPException) as err:
+        raise _GeminiTransportError(
+            f"transport failure ({type(err).__name__})"
+        ) from None
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # 届いたが読めない本文。以前は入口の catch-all まで抜けて確認になっていた
+        # ので、回復可能 (ERROR) には広げず確認のままにする。
+        return "ASK: Gemini returned no verdict (response is not UTF-8)"
+    # JSON として読めない本文は JSONDecodeError のまま上げる (_API_ERRORS が受ける。
+    # 従来からフォールバックの対象)。
+    return _gemini_answer(json.loads(decoded))
+
+
+def _api_key_is_usable(api_key: str) -> bool:
+    """HTTP ヘッダ値として送れる鍵か (制御文字を含まず、latin-1 で表せる)。
+
+    http.client は CR / LF を含む値を ValueError で、latin-1 に無い文字を
+    UnicodeEncodeError で拒み、どちらの文面にも値そのものが入る。送る前にここで
+    弾けば、鍵がその例外文に乗って理由文やログへ出ていく経路が無くなる。
+    """
+    return api_key.isprintable() and all(ord(ch) < 256 for ch in api_key)
 
 
 def run_gemini_review(
@@ -3448,9 +4160,13 @@ def run_gemini_review(
 
     一次モデルが _API_ERRORS で失敗した場合はフラッシュモデルへフォールバックし、
     両方失敗した場合のみ ERROR を返す。API キー未設定も ERROR (二次確認へ回す)。
+    ヘッダに載せられない鍵 (途中の改行・制御文字など) も未設定と同じ扱いにする:
+    送れば http.client が鍵を文面に含む例外を投げる (_api_key_is_usable)。
     """
     if not api_key:
         return "ERROR", "GEMINI_API_KEY not set"
+    if not _api_key_is_usable(api_key):
+        return "ERROR", "GEMINI_API_KEY is not usable as an HTTP header value"
 
     primary_url, primary_payload = _build_gemini_payload(gemini_model, prompt)
     try:
@@ -3756,6 +4472,15 @@ def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None
         raise
 
 
+# サマリーログで改行の代わりに書く記号。読み手 (.claude/mods/bash-review-log の
+# hooks/log.ts: NEWLINE_MARK) と同じ文字でなければ、詳細ログとの照合が外れる。
+_LOG_NEWLINE = "⏎"
+
+
+def _log_one_line(text: str) -> str:
+    return text.replace("\r", _LOG_NEWLINE).replace("\n", _LOG_NEWLINE)
+
+
 def log_summary(
     summary_log: str,
     command: str,
@@ -3770,11 +4495,23 @@ def log_summary(
     redact_command=True のときは生コマンドを書かず固定のプレースホルダにする。
     秘密検出時に、外部送信を止めた秘密をローカルログ (ディスク常駐) へ書き戻して
     しまわないための不変条件。
+
+    1 判定は必ず 1 物理行に収める。コマンドの改行をそのまま書くと、2 行目以降が
+    `[日時] ALLOW | pre | …` の形をしているだけで、読み手 (bash-review-log mod) が
+    別のエントリとして数え、本物のエントリは理由を失う。改行 (CR / LF) は 1 文字の
+    記号 (_LOG_NEWLINE) に置き換える: 1 文字対 1 文字なので「先頭 80 字 + ...」の
+    長さの約束は変わらず、読み手は詳細ログ側のコマンドに同じ置換を掛けて照合する。
+    理由の中の " | " も置き換える: 読み手は行末側の最後の " | " をコマンドと理由の
+    境目として読む。
     """
     if redact_command:
         short_cmd = "[REDACTED - credential detected]"
     else:
         short_cmd = command[:80] + "..." if len(command) > 80 else command
+    short_cmd = _log_one_line(short_cmd)
+    # `|` は 1 文字ずつ置き換える: " | " の単位で置換すると、重なった並び
+    # (`a | | b`) の 2 つ目が残る。
+    reason = _log_one_line(reason).replace("|", "/")
     line = (
         f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
         f"{decision:5s} | {stage:8s} | {short_cmd} | {reason}\n"

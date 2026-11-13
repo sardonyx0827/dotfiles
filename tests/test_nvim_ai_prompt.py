@@ -42,6 +42,11 @@ import subprocess
 import pytest
 from conftest import REPO_ROOT
 
+# The real-Vim probe lives with the other 70-ai.vim port tests; reusing it keeps one
+# definition of "a Vim that satisfies 70-ai.vim's own guard". Module-level here,
+# function-level there, so the two files do not import each other circularly.
+from test_editor_config_regressions import _real_vim, _run_vim_script
+
 HARNESS = REPO_ROOT / "tests/lua/nvim_call.lua"
 PROMPT_MODULE = "setup.functions.ai.prompt"
 VIM_AI_RC = REPO_ROOT / ".vim/rc/70-ai.vim"
@@ -326,6 +331,72 @@ class TestApplyEdits:
         assert applied == 2
         assert [s["reason"] for s in skipped] == ["original does not match buffer"]
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            pytest.param(edit("1", 1, ["one"], ["X"]), id="string-start"),
+            pytest.param(edit(None, 1, ["one"], ["X"]), id="json-null-start"),
+            pytest.param(
+                {"stop": 1, "original": ["one"], "fixed": ["X"]}, id="missing-start"
+            ),
+            pytest.param(edit(1, "1", ["one"], ["X"]), id="string-stop"),
+            pytest.param(edit(1, None, ["one"], ["X"]), id="json-null-stop"),
+            pytest.param(edit(True, 1, ["one"], ["X"]), id="boolean-start"),
+            pytest.param(edit(["1"], 1, ["one"], ["X"]), id="table-start"),
+        ],
+    )
+    @pytest.mark.parametrize("position", ["first", "middle", "last"])
+    def test_a_malformed_range_among_several_edits_is_skipped_not_thrown(
+        self, bad, position
+    ):
+        """The sort must not run over values it cannot order.
+
+        `apply_edits` used to sort BEFORE validating, with `(a.start or 0)`:
+        with two or more edits a string or JSON-null `start` made the
+        comparator throw ("attempt to compare number with userdata"). Inside
+        the vim.schedule that calls it, that left the fix tab on "[claude:
+        waiting for response...]" with no error shown. The single-edit case
+        above never reaches the comparator, which is how it went unnoticed.
+        The valid neighbours must still apply and the bad one must be reported
+        under the documented reason.
+        """
+        good_first = edit(1, 1, ["one"], ["ONE"])
+        good_last = edit(3, 3, ["three"], ["THREE"])
+        edits = {
+            "first": [bad, good_first, good_last],
+            "middle": [good_first, bad, good_last],
+            "last": [good_first, good_last, bad],
+        }[position]
+        patched, applied, skipped = prompt_call("apply_edits", self.LINES, edits)
+        assert patched == ["ONE", "two", "THREE"]
+        assert applied == 2
+        assert [s["reason"] for s in skipped] == ["non-integer range"]
+
+    def test_every_edit_malformed_reports_every_one_and_leaves_the_buffer(self):
+        patched, applied, skipped = prompt_call(
+            "apply_edits",
+            self.LINES,
+            [
+                edit("1", 1, ["one"], ["X"]),
+                edit(None, 2, ["two"], ["X"]),
+                {"stop": 3, "original": ["three"], "fixed": ["X"]},
+            ],
+        )
+        assert patched == self.LINES
+        assert applied == 0
+        assert [s["reason"] for s in skipped] == ["non-integer range"] * 3
+
+    def test_an_edit_that_is_not_an_object_is_skipped_not_thrown(self):
+        """`edits` crosses a trust boundary; a bare number must not index-error."""
+        patched, applied, skipped = prompt_call(
+            "apply_edits",
+            self.LINES,
+            [5, edit(2, 2, ["two"], ["TWO"]), "junk"],
+        )
+        assert patched == ["one", "TWO", "three"]
+        assert applied == 1
+        assert [s["reason"] for s in skipped] == ["malformed edit"] * 2
+
 
 class TestParseEdits:
     """M.parse_edits: the model's raw stdout is untrusted input."""
@@ -396,6 +467,21 @@ class TestParseEdits:
         assert err is None
 
 
+# One table for both editors: .vim/rc/70-ai.vim's s:AI_OllamaLines is the port
+# of parse_ollama's trimming, and the point of a shared table is that the two
+# cannot be given different expectations. (response, expected lines).
+OLLAMA_TRIM_CASES = [
+    pytest.param("    foo()\n    bar()\n", ["    foo()", "    bar()"], id="repro"),
+    pytest.param("\tx\n", ["\tx"], id="tab-indent"),
+    pytest.param("  \n\n\t  x\n", ["\t  x"], id="whitespace-only-lead-lines"),
+    pytest.param("\r\n  x\r\n", ["  x"], id="crlf-lead-and-trail"),
+    pytest.param("a\n  \n\t\n", ["a"], id="trailing-blank-lines"),
+    pytest.param("  a  ", ["  a"], id="single-line-trailing-only"),
+    pytest.param("a\n\n  b", ["a", "", "  b"], id="interior-blank-kept"),
+    pytest.param("\n\n  a  \n    b  \n\n", ["  a  ", "    b"], id="mixed-padding"),
+]
+
+
 class TestParseOllama:
     def test_splits_the_response_into_lines(self):
         lines, err = prompt_call("parse_ollama", json.dumps({"response": "a\nb"}))
@@ -403,16 +489,52 @@ class TestParseOllama:
         assert lines == ["a", "b"]
 
     def test_trimming_is_whole_string_not_per_line(self):
-        """Only the outer blank lines go; interior indentation must survive.
+        """Only the outer blank lines go; every line's indentation must survive.
 
         Ollama pads its `response` with newlines, but the payload is code
         headed for a buffer -- a per-line strip would silently reindent it.
+
+        EXPECTATION CHANGED deliberately: this used to assert ["a  ", "    b"],
+        i.e. that the FIRST line lost its two leading spaces. That was the
+        defect, pinned as if it were the contract -- `vim.trim` on the whole
+        response eats the first non-blank line's indentation, so a nested
+        snippet came back one line shifted left of the rest (the CLI path,
+        clean_cli_lines, keeps it). Leading blank lines and trailing
+        whitespace are still dropped.
         """
         lines, err = prompt_call(
             "parse_ollama", json.dumps({"response": "\n\n  a  \n    b  \n\n"})
         )
         assert err is None
-        assert lines == ["a  ", "    b"]
+        assert lines == ["  a  ", "    b"]
+
+    def test_the_first_lines_indentation_is_kept(self):
+        """The reproduction: `    foo()` came back as `foo()` next to `    bar()`."""
+        lines, err = prompt_call(
+            "parse_ollama", json.dumps({"response": "    foo()\n    bar()\n"})
+        )
+        assert err is None
+        assert lines == ["    foo()", "    bar()"]
+
+    @pytest.mark.parametrize(("response", "expected"), OLLAMA_TRIM_CASES)
+    def test_only_outer_blank_lines_and_trailing_whitespace_go(
+        self, response, expected
+    ):
+        lines, err = prompt_call("parse_ollama", json.dumps({"response": response}))
+        assert err is None
+        assert lines == expected
+
+    def test_matches_what_the_cli_path_hands_back_for_the_same_text(self):
+        """The two backends must not disagree about the same reply.
+
+        clean_cli_lines only drops the trailing empty string a buffered job
+        appends; for text that has no outer padding both paths must therefore
+        return the same lines, indentation included.
+        """
+        text = "    foo()\n    bar()"
+        (ollama,) = prompt_call("parse_ollama", json.dumps({"response": text}))[:1]
+        (cli,) = prompt_call("clean_cli_lines", text.split("\n") + [""])
+        assert ollama == cli
 
     def test_error_field_is_surfaced(self):
         lines, err = prompt_call(
@@ -442,6 +564,51 @@ class TestParseOllama:
         lines, err = prompt_call("parse_ollama", raw)
         assert lines is None
         assert err == expected
+
+
+class TestVimOllamaLinesParity:
+    """classic Vim trims an Ollama reply exactly as parse_ollama does.
+
+    .vim/rc/70-ai.vim had the same `trim()` and so the same defect: the first
+    line's indentation was stripped. Driven through a real Vim (prepending the
+    rc, as the other 70-ai.vim port tests do) and fed the same table of cases
+    as the Neovim side, because the point is that they agree.
+    """
+
+    @pytest.fixture(scope="class")
+    def vim(self):
+        binary = _real_vim()
+        if binary is None:
+            pytest.skip("no genuine Vim available (the `vim` on PATH may be Neovim)")
+        return binary
+
+    def lines(self, vim, response):
+        source = VIM_AI_RC.read_text(encoding="utf-8")
+        script = (
+            f"let s:r = s:AI_OllamaLines(json_decode('{json.dumps(response)}'))\n"
+            "call writefile([json_encode(s:r)], $PROBE_OUT)\nqa!\n"
+        )
+        out = _run_vim_script(vim, script, extra_source=source).strip()
+        assert out, "the Vim probe wrote nothing: is s:AI_OllamaLines defined?"
+        return json.loads(out)
+
+    @pytest.mark.parametrize(("response", "expected"), OLLAMA_TRIM_CASES)
+    def test_same_lines_as_the_neovim_parser(self, vim, response, expected):
+        assert self.lines(vim, response) == expected
+
+    @pytest.mark.parametrize("blank", ["", "   ", "\n\n", " \t\r\n \n"])
+    def test_a_blank_response_comes_back_as_one_empty_line(self, vim, blank):
+        """What s:AI_OllamaFinish's existing `[''] means empty` check relies on."""
+        assert self.lines(vim, blank) == [""]
+
+    def test_the_finish_path_goes_through_the_helper_not_trim(self):
+        """A source-level backstop: the helper is useless if Finish bypasses it."""
+        src = VIM_AI_RC.read_text(encoding="utf-8")
+        start = src.index("function! s:AI_OllamaFinish")
+        end = src.index("endfunction", start)
+        body = src[start:end]
+        assert "s:AI_OllamaLines(l:decoded.response)" in body
+        assert "trim(l:decoded.response)" not in body
 
 
 class TestStripCodeFences:

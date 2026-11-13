@@ -7,6 +7,7 @@
 -- The UI layer never talks to a tool directly; it only drives `run`.
 ---------------------------------------------------------
 local prompt = require("setup.functions.ai.prompt")
+local sensitive = require("setup.functions.ai.sensitive")
 
 local M = {}
 
@@ -77,15 +78,21 @@ M.TOOLS = TOOLS
 M.gemini_model = gemini_model
 
 ---------------------------------------------------------
--- Pre-send credential scan.
--- Before any payload leaves the editor for an AI tool, it is run through the
--- shared scanner CLI (scripts/secret_scan.py -> the same scan_secrets the
--- bash-review hooks use; the regexes live in one place so Lua never reimplements
--- them). A hit prompts for confirmation defaulting to abort; a missing scanner
--- or python fails OPEN with a visible warning, because blocking every AI action
--- when python is absent (e.g. a GUI-launched nvim without the shell's PATH)
--- would be worse than the risk this guards. Every request funnels through M.run,
--- so this is the single choke point.
+-- Pre-send gate: credential scan + sensitive source path.
+-- Before any payload leaves the editor for an external AI tool it passes two
+-- checks, answered by ONE confirm dialog that defaults to abort:
+--   * the payload is run through the shared scanner CLI (scripts/secret_scan.py
+--     -> the same scan_secrets the bash-review hooks use; the regexes live in
+--     one place so Lua never reimplements them) for raw credential VALUES;
+--   * the file paths the payload was read from (`spec.source_paths`) are matched
+--     against ai.sensitive's list -- `.env`, private keys, kubeconfig, cloud
+--     keys. This is the backstop for what value scanning cannot see: a `.env`
+--     of `DB_HOST=...` lines, base64 `client-key-data`, an opaque token.
+-- A missing scanner or python fails OPEN with a visible warning, because
+-- blocking every AI action when python is absent (e.g. a GUI-launched nvim
+-- without the shell's PATH) would be worse than the risk this guards. The path
+-- check needs neither, so it still asks then. Every request funnels through
+-- M.run, so this is the single choke point.
 ---------------------------------------------------------
 
 -- Scan `text`. Returns "clean" | "secret",<label> | "unavailable".
@@ -116,41 +123,79 @@ local function scan_payload(text)
   return "unavailable" -- scanner import error (2) or any other non-{0,1} exit
 end
 
--- Dedupe scans within one synchronous burst: run_multi's "all" mode calls
+-- Dedupe decisions within one synchronous burst: run_multi's "all" mode calls
 -- M.run once per tool with an identical payload, all in the same tick. Cache the
--- decision keyed by payload text and clear it on the next tick, so "all" prompts
--- once, not once per tool, without persisting an approval across user actions.
-local scan_cache = { text = nil, ok = nil }
+-- decision and clear it on the next tick, so "all" prompts once, not once per
+-- tool, without persisting an approval across user actions.
+--
+-- Keyed on the payload text AND the sensitive paths. Text alone would let an
+-- ordinary file's cached "fine" wave through a request carrying the same bytes
+-- from a `.env` in the same tick.
+local scan_cache = { text = nil, paths = nil, ok = nil, why = nil }
 
--- Gate a payload before sending. Returns true to proceed, false to abort.
--- confirm() defaults to "No", so Enter/Esc aborts the send.
-local function confirm_send(text)
-  if scan_cache.text == text then
-    return scan_cache.ok
+-- Why a refused request was refused, as reported to the caller's `done`.
+local REFUSAL_CREDENTIAL = "credential detected in payload; not sent to AI"
+local REFUSAL_PATH = "sensitive file path in payload; not sent to AI"
+local REFUSAL_BOTH =
+  "credential and sensitive file path detected in payload; not sent to AI"
+
+-- How many sensitive paths the dialog names before folding the rest into a
+-- count. A commit can touch dozens of files; the dialog has to stay readable.
+local MAX_PATHS_SHOWN = 5
+
+-- Gate a payload before sending. Returns true to proceed, false + the reason to
+-- abort. confirm() defaults to "No", so Enter/Esc aborts the send.
+-- `paths` are the files the payload was read from; only the sensitive ones
+-- matter here (an empty / nil list means "no file behind this request").
+local function confirm_send(text, paths)
+  local hits = sensitive.sensitive_paths(paths)
+  local path_key = table.concat(hits, "\n")
+  if scan_cache.text == text and scan_cache.paths == path_key then
+    return scan_cache.ok, scan_cache.why
   end
-  local ok
+  local ok, why
   local status, label = scan_payload(text)
+  local lines = {}
   if status == "secret" then
-    local choice = vim.fn.confirm(
-      string.format(
-        "Possible credential (%s) detected in the AI payload.\n"
-        .. "Send it to the AI tool anyway?", label),
-      "&No\n&Yes", 1, "Warning")
-    ok = choice == 2
-  elseif status == "unavailable" then
+    lines[#lines + 1] = string.format(
+      "Possible credential (%s) detected in the AI payload.", label)
+  end
+  if #hits > 0 then
+    lines[#lines + 1] = "Sensitive file path detected in the AI payload:"
+    for i = 1, math.min(#hits, MAX_PATHS_SHOWN) do
+      lines[#lines + 1] = "  " .. hits[i]
+    end
+    if #hits > MAX_PATHS_SHOWN then
+      lines[#lines + 1] = string.format("  ... and %d more", #hits - MAX_PATHS_SHOWN)
+    end
+  end
+  if status == "unavailable" then
     vim.notify(
       "secret-scan unavailable (python3 / secret_scan.py); "
       .. "sending AI payload without a credential check.",
       vim.log.levels.WARN)
-    ok = true
+  end
+  if #lines > 0 then
+    lines[#lines + 1] = "Send it to the AI tool anyway?"
+    local choice = vim.fn.confirm(table.concat(lines, "\n"), "&No\n&Yes", 1, "Warning")
+    ok = choice == 2
+    if status == "secret" and #hits > 0 then
+      why = REFUSAL_BOTH
+    elseif status == "secret" then
+      why = REFUSAL_CREDENTIAL
+    else
+      why = REFUSAL_PATH
+    end
   else
     ok = true
   end
-  scan_cache.text, scan_cache.ok = text, ok
+  scan_cache.text, scan_cache.paths, scan_cache.ok, scan_cache.why =
+    text, path_key, ok, why
   vim.schedule(function()
-    scan_cache.text, scan_cache.ok = nil, nil
+    scan_cache.text, scan_cache.paths, scan_cache.ok, scan_cache.why =
+      nil, nil, nil, nil
   end)
-  return ok
+  return ok, why
 end
 
 -- Upper bound on the `sh -c` command string. Every request runs as
@@ -439,10 +484,11 @@ local function run_ollama(model, system, input, done)
 end
 
 --- Run an AI request.
---- @param spec table { tool, prompt (instruction), input (stdin string), model?, skip_git_check? }
+--- @param spec table { tool, prompt (instruction), input (stdin string), model?, skip_git_check?,
+---   source_paths? (files the input was read from; see the pre-send gate) }
 --- @param done fun(ok: boolean, lines: string[], err: string|nil)
 --- @return integer|nil job_id usable with vim.fn.jobstop (nil/<=0 on failure)
---- `_skip_scan` is set by run_with_fallback, which scans the shared payload once
+--- `_skip_scan` is set by run_with_fallback, which gates the shared payload once
 --- up front so a fallback attempt does not re-prompt.
 function M.run(spec, done, _skip_scan)
   local def = TOOLS[spec.tool]
@@ -450,23 +496,27 @@ function M.run(spec, done, _skip_scan)
     done(false, {}, "unknown tool: " .. tostring(spec.tool))
     return nil
   end
-  -- Pre-send credential gate (single choke point for every AI request).
-  -- Value-only, like the bash-review hooks: it scans the payload text for raw
-  -- credential VALUES, not the source file's path. A secret that value-scanning
-  -- cannot see (e.g. base64 `client-key-data` in a kubeconfig, or an opaque
-  -- token) can still slip through here; a path-based backstop keyed on the
-  -- buffer name would be the next layer if that gap matters.
+  -- Pre-send gate (single choke point for every AI request): credential
+  -- values in the payload, and sensitive source PATHS (spec.source_paths) -- see
+  -- the banner above confirm_send. The path half exists because value scanning
+  -- cannot see everything: a `.env` of `DB_HOST=...` lines, base64
+  -- `client-key-data` in a kubeconfig, or an opaque token pass the scanner, and
+  -- the file name is then the only thing that says "this is a secrets file".
+  -- It is a confirm, not a block: the user can still send it, deliberately.
   --
   -- Local Ollama (hardcoded to http://localhost:11434) never leaves the machine,
   -- so the *external*-send gate does not apply -- prompting there is friction
-  -- with no matching benefit. Every other kind is scanned, "api" included:
+  -- with no matching benefit. Every other kind is gated, "api" included:
   -- gemini reaching Google directly rather than through its CLI does not make
   -- the payload any less external, and an exemption written as
   -- `kind ~= "cli"` would have quietly granted it one.
-  if not _skip_scan and def.kind ~= "ollama"
-    and not confirm_send((spec.input or "") .. "\n" .. (spec.prompt or "")) then
-    done(false, {}, "credential detected in payload; not sent to AI")
-    return nil
+  if not _skip_scan and def.kind ~= "ollama" then
+    local proceed, why = confirm_send(
+      (spec.input or "") .. "\n" .. (spec.prompt or ""), spec.source_paths)
+    if not proceed then
+      done(false, {}, why)
+      return nil
+    end
   end
   local model = spec.model or def.default_model
   if def.kind == "ollama" then
@@ -499,25 +549,30 @@ function M.run_with_fallback(specs, done)
     done(false, {}, "no tools specified", nil)
     return nil
   end
-  -- Scan once over every spec's payload (fallbacks reuse the same input/prompt,
-  -- differing only by tool), then skip the per-attempt scan so a fallback that
-  -- fires on a later tick does not re-prompt.
+  -- Gate once over every spec's payload and source paths (fallbacks reuse the
+  -- same input/prompt, differing only by tool), then skip the per-attempt gate
+  -- so a fallback that fires on a later tick does not re-prompt -- and, because
+  -- this runs before the first attempt, a "No" here means no attempt at all.
   --
   -- Only the payloads actually bound for a cloud CLI are collected. M.run
   -- exempts Ollama because it hits localhost and never leaves the machine;
   -- gathering every spec unconditionally here would re-impose the prompt on an
   -- all-Ollama list and make the two entry points disagree about the same
   -- policy. When nothing external is left, skip the gate entirely.
-  local parts = {}
+  local parts, paths = {}, {}
   for _, s in ipairs(specs) do
     local def = TOOLS[s.tool]
     if not def or def.kind ~= "ollama" then
       parts[#parts + 1] = (s.input or "") .. "\n" .. (s.prompt or "")
+      vim.list_extend(paths, s.source_paths or {})
     end
   end
-  if #parts > 0 and not confirm_send(table.concat(parts, "\n")) then
-    done(false, {}, "credential detected in payload; not sent to AI", nil)
-    return nil
+  if #parts > 0 then
+    local proceed, why = confirm_send(table.concat(parts, "\n"), paths)
+    if not proceed then
+      done(false, {}, why, nil)
+      return nil
+    end
   end
   -- `cancelled` starts false and is only ever raised from outside (ui.lua's
   -- cancel_job). Defaulting it the other way would turn every ordinary failure

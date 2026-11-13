@@ -29,5 +29,6 @@ Two rules decide whether the resulting report is trustworthy:
 | `pre-pr`     | All phases, plus the **security-review** skill over the diff |
 
 `pre-pr` escalates to the security-review skill because the verification-loop Phase 5 is
-a secret grep — a smoke test, not an audit. For changes touching auth, user input,
-secrets, or payments, run the **security-reviewer** agent regardless of the argument.
+a secret grep — a smoke test, not an audit. Whether the **security-reviewer** agent is
+also needed is decided by the Triggers table in `rules/security.md`, regardless of the
+argument; do not restate its conditions here.

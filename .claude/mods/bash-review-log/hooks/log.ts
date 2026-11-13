@@ -34,12 +34,24 @@ export const DEFAULT_VIEW: BashReviewLogView = {
 
 // _bash_review_common.py の log_summary() が書く 1 行:
 //   [YYYY-MM-DD HH:MM:SS] DECISION | stage    | command | reason
-// decision / stage は空白詰めの固定幅。command は 80 文字で切られ、改行を含めば
-// 次の行以降へ続く (継続行)。reason に " | " は現れないので、エントリ末尾の
-// 最後の " | " が command と reason の境目になる。
+// decision / stage は空白詰めの固定幅。command は 80 文字で切られる。command と
+// reason の改行 (CR / LF) は NEWLINE_MARK の 1 文字に置き換えて書かれるので、1 判定は
+// 1 物理行に収まる。reason の " | " も書き手が置き換えるので、エントリ末尾の最後の
+// " | " が command と reason の境目になる。
+// 改行をそのまま書いていた頃のログは、コマンドが次の行以降へ続く (継続行)。
+// 手元に残っている分を読めるよう、ヘッダの形をしていない行は直前のエントリへ繋ぐ。
 // s フラグ: コマンドに U+2028 / U+2029 / \r が混じっても . が止まらないように。
 const HEADER =
   /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (\S+)\s*\| (\S+)\s*\| (.*)$/s;
+
+// log_summary() が改行の代わりに書く 1 文字 (_bash_review_common.py: _LOG_NEWLINE)。
+// 詳細ログ側のコマンドは実改行のままなので、照合キーを作るときに同じ置換を掛ける。
+// 1 文字を 1 文字に置き換えるので、「先頭 80 字」の数え方は変わらない。
+export const NEWLINE_MARK = "⏎";
+
+function markNewlines(text: string): string {
+  return text.replace(/[\r\n]/g, NEWLINE_MARK);
+}
 
 // ui.render の Text は 10000 字まで、制御文字はタブと改行だけ。どちらかを破ると
 // ペイン全体が描けなくなる (エンジンが自前の表示に差し替える) ので、ログ由来の
@@ -270,19 +282,23 @@ function isTruncated(entry: BashReviewLogEntry): boolean {
 
 // 詳細ログとの照合キー。切られたものは「先頭 80 字」、切られていないものは
 // 「全文」で引く。ちょうど 80 字のコマンドが、それで始まる長いコマンドの
-// キーと混ざらないよう、二つの名前空間に分ける。
+// キーと混ざらないよう、二つの名前空間に分ける。改行はどちらの側も NEWLINE_MARK に
+// 揃える: サマリーは書き手が置き換え済み (以前の形式は継続行から読んだ実改行)、
+// 詳細ログは実改行のまま。
 function entryKey(entry: BashReviewLogEntry): string {
+  const command = markNewlines(entry.command);
+
   return isTruncated(entry)
-    ? `cut:${Array.from(entry.command).slice(0, TRUNCATE_AT).join("")}`
-    : `all:${entry.command}`;
+    ? `cut:${Array.from(command).slice(0, TRUNCATE_AT).join("")}`
+    : `all:${command}`;
 }
 
 function detailKey(detail: Detail): string {
-  const chars = Array.from(detail.command);
+  const chars = Array.from(markNewlines(detail.command));
 
   return chars.length > TRUNCATE_AT
     ? `cut:${chars.slice(0, TRUNCATE_AT).join("")}`
-    : `all:${detail.command}`;
+    : `all:${chars.join("")}`;
 }
 
 // details は古い順。サマリー (末尾 500 行) と詳細ログ (末尾 1000 件、/tmp なので

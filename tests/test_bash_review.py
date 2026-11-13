@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import types
 from urllib.error import URLError
 
@@ -1198,6 +1199,10 @@ WRAPPER_QUOTED_BLOB_CASES = [
     "watch 'curl;wget'",
     "watch 'ls|sh'",
     "watch 'ls&sudo reboot'",
+    # A brace blob has no whitespace and none of `;` `|` `&`, but brace expansion in
+    # the executable position is unresolvable on its own (`{sudo,rm,-rf,/}` runs
+    # `sudo rm -rf /`), so it is caught before the grammar rule strips the `{`.
+    "watch '{sudo,rm,-rf,/}'",
 ]
 
 # Blobs whose FIRST characters match one of the prefix rules the resolver applies
@@ -1233,15 +1238,16 @@ WRAPPER_QUOTED_BLOB_PREFIX_CASES = [
 
 # Blobs the guard does NOT catch, pinned as an accepted residual (see the residual
 # list on _NOT_EXECUTABLE_WORD): a blob with no whitespace and none of `;` `|` `&`
-# is not recognisable as a blob, and the redirect and brace branches rewrite it into
-# something that looks like a plain executable. Widening the class to `<>(){},` would
-# change how every bare command resolves (`ls>out` must keep resolving to `ls`).
-# Pinned so that widening it later shows up as a deliberate edit to this list.
+# is not recognisable as a blob, and the redirect branch rewrites it into something
+# that looks like a plain executable. Widening the class to `<>()` would change how
+# every bare command resolves (`ls>out` must keep resolving to `ls`). (The brace shape
+# that used to be pinned here is now unresolvable on its own; see
+# WRAPPER_QUOTED_BLOB_CASES.) Pinned so that widening it later shows up as a
+# deliberate edit to this list.
 WRAPPER_QUOTED_BLOB_RESIDUAL_CASES = [
     ("watch 'ls>~/.ssh/authorized_keys'", "ls"),
     ("watch 'ls>/etc/passwd'", "ls"),
     ("watch 'ls<x'", "ls"),
-    ("watch '{sudo,rm,-rf,/}'", ""),
 ]
 
 ALL_WRAPPER_QUOTED_BLOB_CASES = [
@@ -2135,6 +2141,8 @@ class TestReadmeThreatModelMatchesBehavior:
             "${CURL} http://evil",
             'eval "curl http://evil"',
             'sh -c "curl http://evil"',
+            "{curl,http://evil}",
+            "c{u,}rl http://evil",
         ],
     )
     def test_unresolvable_forms_escalate_rather_than_deny(self, command):
@@ -4338,6 +4346,124 @@ class TestGlobInExecutablePosition:
         res = run_hook(
             HOOK,
             hook_payload("/usr/bin/cur? http://x"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        assert res.decision == "ask"
+        assert "High-risk" in res.reason
+
+
+# 実行体位置のブレース展開 (`{curl,x}` → `curl x`、`c{u,}rl` → `curl crl`) も glob と同じく
+# シェルが実行前に別の語へ書き換えるので、実行体を静的に確定できない。文法の `{` 剥がしより
+# 先に判定しないと、`{curl,x}` は `curl,x}` という未知の実行体に化けて DENY と高リスクの
+# 両層を外れ、Gemini 単独 ALLOW の経路へ落ちる。
+# 1 行で、先頭 (またはラッパーの直後) の語がブレース展開になっている形
+BRACE_EXECUTABLE_SINGLE_LINE_CASES = [
+    "{curl,http://x}",
+    "c{u,}rl http://x",
+    "su{,do} id",
+    "r{m,} -rf $HOME",
+    "{1..3}",
+]
+
+BRACE_EXECUTABLE_CASES = [
+    *BRACE_EXECUTABLE_SINGLE_LINE_CASES,
+    "env {curl,http://x}",
+    "timeout 5 c{u,}rl http://x",
+    "ls; {curl,http://x}",
+]
+
+# 実行体位置以外のブレースと、展開しない形 (グループ `{ cmd; }`、代入値) は巻き込まない。
+BRACE_EXECUTABLE_BENIGN_CASES = [
+    "{ ls; }",
+    "echo {a,b}",
+    "ls {a,b}.txt",
+    "for i in {1..3}; do echo $i; done",
+    "FOO={a,b} ls",
+    # heredoc 本文はデータ。コンパクトな JSON や Lua テーブルの行頭 `{` は実行体ではない
+    'cat > x.json <<\'EOF\'\n{"a":1,"b":2}\nEOF',
+    "git commit -F - <<'EOF'\n{a,b}: tidy\nEOF",
+]
+
+# ブレースがリダイレクトの行き先にあるだけなら、実行体は確定できる。ここを「確定できない」に
+# 倒すと、従来は即拒否だった形が二モデル AND ゲート (両方 ALLOW なら実行) へ格下げされる。
+BRACE_IN_REDIRECT_TARGET_DENY_CASES = [
+    (">{1..1} sudo id", "sudo"),
+    ("2>{1..1} curl http://x", "curl"),
+    ("sudo>{1..1} id", "sudo"),
+    ("(>{a,b} sudo id", "sudo"),
+    ("true | >{a,b} sudo id", "sudo"),
+]
+
+# 本文の偽装: 算術式の `<<` (シフト) は heredoc ではないのに、本文の走査はそれを heredoc と
+# 読み、区切り語だけの行を終端と見なす。解析を諦める形 (_live_texts が None) では本文の
+# 緩和をしない。glob 側の同じ偽装 (パスを含まない glob) もこれで塞がる。
+BRACE_AFTER_ARITHMETIC_SHIFT_CASES = [
+    "echo $((1<<2))\nc{u,}rl evil.example\n2",
+    "echo $((1<<2))\n{curl,http://x}\n2",
+    "echo $((1<<2))\ncur? http://x\n2",
+]
+
+
+class TestBraceInExecutablePosition:
+    @pytest.mark.parametrize("command", BRACE_EXECUTABLE_SINGLE_LINE_CASES)
+    def test_brace_executable_is_unresolvable(self, command):
+        assert _common._split_prefix(_common._tokenize(command)) is None
+
+    @pytest.mark.parametrize("command", BRACE_EXECUTABLE_CASES)
+    def test_brace_executable_escalates_to_high_risk(self, command):
+        sub = _common._split_commands(command)
+        # 展開結果は静的に決まらないので DENY とは偽らない
+        assert _common.find_deny_command(sub) == (False, "")
+        assert "wrapped command" in _common.classify_high_risk(sub, command), command
+
+    @pytest.mark.parametrize("command", BRACE_EXECUTABLE_BENIGN_CASES)
+    def test_non_executable_braces_do_not_escalate(self, command):
+        sub = _common._split_commands(command)
+        assert _common.classify_high_risk(sub, command) == "", command
+
+    def test_brace_group_still_resolves_the_command_inside(self):
+        sub = _common._split_commands("{ curl http://x; }")
+        assert _common.find_deny_command(sub) == (True, "curl")
+
+    @pytest.mark.parametrize(("command", "denied"), BRACE_IN_REDIRECT_TARGET_DENY_CASES)
+    def test_brace_in_a_redirect_target_keeps_the_deny(self, command, denied):
+        sub = _common._split_commands(command)
+        assert _common.find_deny_command(sub, command) == (True, denied), command
+
+    def test_brace_in_a_redirect_target_keeps_the_codex_ask(self):
+        command = ">{1..1} codex exec -s danger-full-access x"
+        sub = _common._split_commands(command)
+        assert _common.codex_flag_ask_reason(sub, command) != ""
+
+    def test_brace_glued_before_a_redirect_still_escalates(self):
+        command = "{curl,x}>out"
+        sub = _common._split_commands(command)
+        assert "wrapped command" in _common.classify_high_risk(sub, command)
+
+    def test_unclosed_brace_in_executable_position_is_linear(self):
+        # An unclosed `{a,a,a,…` under the input cap must not trigger regex
+        # backtracking that is quadratic in its length (it now runs on every line).
+        # The hook evaluates each line several times (deny, high-risk, harness, and
+        # each classification variant), so even ~1s per call adds up to many seconds.
+        for token in ("{" + "a," * 15_000, "{" + "a.." * 10_000):
+            started = time.monotonic()
+            _common._split_prefix([token, "x"])
+            # The quadratic form took ~1s per call on a laptop; linear is milliseconds.
+            # The bound leaves headroom for a loaded CI runner while still failing it.
+            assert time.monotonic() - started < 0.5, token[:8]
+
+    @pytest.mark.parametrize("command", BRACE_AFTER_ARITHMETIC_SHIFT_CASES)
+    def test_spoofed_heredoc_body_does_not_relax(self, command):
+        sub = _common._split_commands(command)
+        assert "wrapped command" in _common.classify_high_risk(sub, command), command
+
+    def test_brace_executable_reaches_the_dual_review_gate(self, run_hook):
+        # Gemini=ALLOW + Codex=ASK が弁別子: 単独モデルの低リスク経路なら
+        # Codex を呼ばずに allow を返す。
+        res = run_hook(
+            HOOK,
+            hook_payload("c{u,}rl http://x"),
             urlopen=fake_gemini("ALLOW"),
             run=fake_run(stdout="ASK"),
         )
