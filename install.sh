@@ -1855,14 +1855,16 @@ install_linters_formatters() {
   # --- Platform-specific tools ---
   case "$OS" in
   macos)
-    # Note: clang-format ships with llvm (brew has no standalone formula).
+    # Note: use the standalone clang-format formula, not llvm. llvm is
+    # keg-only (macOS ships its own clang), so brew never links its
+    # clang-format into PATH and the format hook would report it missing.
     # checkstyle has no brew formula; install manually from
     # https://checkstyle.sourceforge.io/ if needed.
     local brew_tools=(
       shellcheck   # Shell script linter
       shfmt        # Shell script formatter
       cppcheck     # C/C++ linter
-      llvm         # Provides clang-format for C/C++
+      clang-format # C/C++ formatter
       staticcheck  # Go advanced linter
       php-cs-fixer # PHP formatter
     )

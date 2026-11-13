@@ -2280,6 +2280,41 @@ class TestGoInstallPathExport:
         assert "GOIMPORTS_ON_PATH" in res.stdout, res.stdout
 
 
+class TestMacosClangFormatFormula:
+    """macOS must install the standalone `clang-format` formula, not `llvm`.
+
+    `llvm` is keg-only (Homebrew never links it into /opt/homebrew/bin because
+    macOS ships its own clang), so installing it leaves `clang-format` off PATH
+    and the format hook's C/C++ branch reports it missing. The `brew list` guard
+    then reports llvm "already installed" on every re-run, so the gap never
+    repairs itself. `clang-format` is a regular, linked formula.
+    """
+
+    def test_installs_clang_format_formula_not_llvm(self, shell_env):
+        env = _without_commands(shell_env.env, "goimports", "npm", "pip", "php")
+        shell_env.stub("go", body=_GO_INSTALL_STUB)
+        # Nothing is installed yet: `brew list X` fails, `brew install X` works.
+        shell_env.stub("brew", body='[ "$1" = list ] && exit 1')
+        # GitHub's Ubuntu runner ships php + composer under /usr/bin, which
+        # _without_commands never strips. Model that host here so the test
+        # proves it stays hermetic there: without php|composer in the override
+        # below, the run would reach a real `composer global require`.
+        shell_env.stub("php")
+        shell_env.stub("composer")
+        res = run_sourced(
+            'command_exists() { case "$1" in gem|pip3|php|composer) return 1 ;; '
+            '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+            "OS=macos install_linters_formatters",
+            env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "brew install clang-format" in shell_env.calls, shell_env.calls
+        assert "brew install llvm" not in shell_env.calls, shell_env.calls
+        assert not [c for c in shell_env.calls if c.startswith("composer")], (
+            shell_env.calls
+        )
+
+
 class TestChangeShell:
     def test_chsh_failure_does_not_abort_script(self, shell_env):
         shell_env.stub("zsh")
