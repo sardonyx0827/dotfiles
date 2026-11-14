@@ -15,6 +15,8 @@
 -- vertical split on the right (not a float), with wrap toggling, for long prose
 -- reports you want to keep open and scroll alongside the source buffer.
 ---------------------------------------------------------
+local focus_trap = require("setup.functions.ai.focus_trap")
+
 local M = {}
 
 --- Lines for a "this tool failed" buffer.
@@ -120,6 +122,7 @@ function M.run_multi(opts)
     win = nil,
     original_win = nil,
     original_buf = nil,
+    trap = nil, -- focus_trap handle, set once the windows exist
   }
 
   -- Pre-create per-tool response buffers so the UI renders before any job ends.
@@ -286,6 +289,9 @@ function M.run_multi(opts)
     if state.closed then return end
     state.closed = true
     pcall(vim.api.nvim_del_augroup_by_id, group)
+    -- Before the windows go: the focus change their closing causes must not
+    -- find this cluster still registered and snap into the half-closed pair.
+    focus_trap.unregister(state.trap)
     for t, job in pairs(state.jobs) do
       -- Only pending tools are called off -- one that already answered has
       -- nothing left in flight and no chain left to advance. The label follows
@@ -317,26 +323,14 @@ function M.run_multi(opts)
   })
 
   -- Trap focus inside the window cluster: snap back if the user moves away.
-  local cluster = { [state.win] = true }
+  -- The trap lives in the shared registry (ai.focus_trap), not in an autocmd of
+  -- this cluster's own: two clusters each snapping focus back to themselves
+  -- ping-pong forever. close_all releases it.
+  local trap_wins = { state.win }
   if mode == "diff" then
-    cluster[state.original_win] = true
+    table.insert(trap_wins, state.original_win)
   end
-  local last_focused = state.win
-  vim.api.nvim_create_autocmd("WinEnter", {
-    group = group,
-    callback = function()
-      local cur = vim.api.nvim_get_current_win()
-      if cluster[cur] then
-        last_focused = cur
-      elseif vim.api.nvim_win_is_valid(last_focused) then
-        vim.schedule(function()
-          if vim.api.nvim_win_is_valid(last_focused) then
-            vim.api.nvim_set_current_win(last_focused)
-          end
-        end)
-      end
-    end,
-  })
+  state.trap = focus_trap.register(trap_wins)
 
   -- Pin each window to its expected buffer so :bnext / :bprev / <C-^> can't
   -- replace the contents.

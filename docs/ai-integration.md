@@ -43,7 +43,11 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
   <img src="../assets/nvim-ai.svg" alt="Neovim AI 機能図 — 5ツール統一バックエンド、インライン補完・バッファ校正・コミット生成・選択リライト・カーソル文脈ヒント・診断コピー・ファイル行参照、claude→geminiフォールバック、送信前の秘密スキャンガード" width="100%">
 </p>
 
-- **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`context` = カーソル位置の構文単位の解決、`backend` = ツール起動、`ui` = 表示ドライバ — `run_multi` はフローティングウィンドウ（popup / diff タブ）、`open_report` は右側の縦分割で、校正 `<leader>qf` とヒント `<leader>qh` / `<leader>qg` が使う）
+- **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`context` = カーソル位置の構文単位の解決、`backend` = ツール起動、`ui` = 表示ドライバ — `run_multi` はフローティングウィンドウ（popup / diff タブ）、`open_report` は右側の縦分割で、校正 `<leader>qf` とヒント `<leader>qh` / `<leader>qg` が使う。`focus_trap` = popup / プロンプト窓のフォーカストラップを束ねる共有レジストリ）
+- **フォーカストラップ**: AI のフローティングウィンドウ（`run_multi` の popup / diff、選択範囲リライトのプロンプト窓）は、外へフォーカスを移しても元の窓へ戻します。トラップは窓ごとの autocmd ではなく、[`ai/focus_trap.lua`](../.config/nvim/lua/setup/functions/ai/focus_trap.lua) の**共有レジストリ**と WinEnter ハンドラ 1 つで管理します。窓ごとに持つと、AI の popup を開いたまま別の AI マッピング（`V` → `<C-c>`、`<leader>cx` など。マッピングはグローバル）を押した時にトラップ同士が「自分へ戻す」を繰り返し、`vim.schedule` の中で無限ループして Neovim が 100% CPU のまま固まるためです。
+  - 生きているどのクラスタ（popup 1 枚、diff の Original + Response の 2 枚、プロンプト窓 1 枚）の窓にフォーカスがあっても何もしません（popup とプロンプト窓の行き来は自由）。どのクラスタにも属さない窓へ出たときだけ、**直近にフォーカスしたクラスタ**の、最後にいた窓へ戻します。
+  - 戻す処理は予約済みなら 1 回にまとめ、実行時にもう一度「いまもクラスタの外か」「戻り先がまだ有効か」を確認します（その間に別のクラスタへ戻っていれば何もしません）。クラスタは閉じる経路（`q`・確定・`WinClosed`）で登録解除され、閉じた窓へ戻ることはありません。
+  - **タブページを跨いでは引き戻しません**。戻り先は今いるタブのクラスタだけです。popup を開いたまま別タブへ移ってもそのタブに留まれ、元のタブへ戻れば（またそのタブの別窓へ出れば）そのタブのトラップが効きます。
 - インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES · 機密パスは `should_attach` で除外。パス一覧は [`ai/sensitive.lua`](../.config/nvim/lua/setup/functions/ai/sensitive.lua) で送信前ゲートと共有）
 
 #### 送信前ゲートの機密パス確認
