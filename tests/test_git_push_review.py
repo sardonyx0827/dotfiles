@@ -52,7 +52,10 @@ class TestClaudeVariant:
         assert "git push detected" in reason
         assert "branch: main" in reason
         assert "initial commit" in reason
-        assert "no upstream" in reason
+        # `origin` is named but this repository has no ref for it: the list says so
+        # (and that it is an estimate) instead of implying an upstream comparison.
+        assert "not on any origin ref known locally" in reason
+        assert "as of the last fetch" in reason
 
     def test_push_detected_inside_chain(self, shell_env, git_repo):
         res = shell_env.run(
@@ -2775,6 +2778,22 @@ _NOT_PARSED_NOTE = (
     "foreach -- or its quoting is not followable) -- review the command itself\n"
 )
 
+# The commit-list headings. Every one says the list is an estimate from local refs (the
+# hook never touches the network), and the ones that cannot name the push's destination
+# say so: tests/test_git_push_review_targets.py pins the rest of the label family.
+_ESTIMATE = "estimate from local refs as of the last fetch"
+_HEADING_ORIGIN_UNTRACKED = (
+    "commits to push: commits not on any origin ref known locally "
+    f"(approximate; {_ESTIMATE})\n"
+)
+_HEADING_NO_DESTINATION = (
+    "commits to push: the last 5 commits on HEAD (approximate: no upstream, and the "
+    f"push destination could not be resolved; {_ESTIMATE})\n"
+)
+_STAT_ORIGIN_UNTRACKED = (
+    "(diffstat unavailable: no ref known locally for origin to compare with)"
+)
+
 # (id, command template, where the hook runs, expected text after the header line).
 # {target} is a second repository; <HASH> stands for an abbreviated commit id.
 SNAPSHOT_CASES = [
@@ -2784,9 +2803,9 @@ SNAPSHOT_CASES = [
         "repo",
         "push target: remote=origin refspec=main\n"
         "branch: main\n"
-        "commits to push:\n"
-        "<HASH> initial commit\n"
-        "(no upstream: new branch push)",
+        + _HEADING_ORIGIN_UNTRACKED
+        + "<HASH> initial commit\n"
+        + _STAT_ORIGIN_UNTRACKED,
     ),
     (
         "dash-C-push",
@@ -2794,8 +2813,8 @@ SNAPSHOT_CASES = [
         "outside",
         "push target: remote=(default) refspec=(default)\n"
         "branch: feature-target\n"
-        "commits to push:\n"
-        "<HASH> target repo commit\n"
+        + _HEADING_NO_DESTINATION
+        + "<HASH> target repo commit\n"
         "(no upstream: new branch push)",
     ),
     (
@@ -2805,9 +2824,9 @@ SNAPSHOT_CASES = [
         "push target: remote=origin refspec=main\n"
         "WARNING: force/destructive push options: --force\n"
         "branch: main\n"
-        "commits to push:\n"
-        "<HASH> initial commit\n"
-        "(no upstream: new branch push)",
+        + _HEADING_ORIGIN_UNTRACKED
+        + "<HASH> initial commit\n"
+        + _STAT_ORIGIN_UNTRACKED,
     ),
     (
         "cd-chain-push",
@@ -2815,17 +2834,18 @@ SNAPSHOT_CASES = [
         "outside",
         "push target: remote=(default) refspec=(default)\n"
         "branch: feature-target\n"
-        "commits to push:\n"
-        "<HASH> target repo commit\n"
+        + _HEADING_NO_DESTINATION
+        + "<HASH> target repo commit\n"
         "(no upstream: new branch push)",
     ),
     (
         "eval-push",
         'eval "git push origin main"',
         "repo",
-        _NOT_PARSED_NOTE + "branch: main\n"
-        "commits to push:\n"
-        "<HASH> initial commit\n"
+        _NOT_PARSED_NOTE
+        + "branch: main\n"
+        + _HEADING_NO_DESTINATION
+        + "<HASH> initial commit\n"
         "(no upstream: new branch push)",
     ),
     (

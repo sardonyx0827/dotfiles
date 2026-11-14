@@ -35,7 +35,7 @@
 #   例外: 公開 API はエントリの hook_push_review_run 1 つで、ヘルパーは元のフックの
 #   名前のまま移してある。改名すると「関数をそのまま移しただけ」という差分での検証
 #   (元ファイルとの diff) が効かなくなるため。変数も元のまま無プレフィックスで、
-#   gp_* / push_report / push_foreign / push_shown / hd_* は関数間で値を渡す意図的な
+#   gp_* / push_report / push_plan_* / push_shown / hd_* は関数間で値を渡す意図的な
 #   グローバル (command substitution を挟むと値の末尾改行が落ちる)。
 
 # 空白を含まないクォート区間 <span> の中身を「語」として残してよいか (0=残す)。
@@ -872,6 +872,10 @@ git_c_dir_from_words() {
 #   フィールド2 (status):     ""  = cd/pushd/popd は一切関与しない
 #                              "0" = 確信を持って解決できた(フィールド3が値)
 #                              "1" = 関与するが解決できない
+#                              "2" = push が複数あり、その間にディレクトリを変えうる
+#                                    語 (cd / 隠れた cd) があるか、後続の push の -C が
+#                                    1 つ目と違う。push ごとに実行場所が違いうるので、
+#                                    1 つ目の行き先だけを要約として出さない
 #   フィールド3 (dir):        status が "0" のときの git -C 値
 #
 # 呼び出し側は push_found が "0" の場合、このトークナイザ自体が push を
@@ -917,6 +921,10 @@ git_c_dir_from_words() {
 #     git -C は物理的に `..` を解決するため、シンボリックリンクがあると割れる。
 #   - フックの環境で CDPATH が空でないときの、`/`・`./`・`../` で始まらない
 #     相対の行き先 (シェルは先に CDPATH を探す)。
+#   - push が複数あり、最初の push と最後の push らしいセグメントの間に cd がある
+#     (`git push && cd B && git push`)。status "2" で返す (上の説明と、push_found の
+#     直後の判定を参照)。同じ -C の複数 push (`cd B && git push && git push`) や、
+#     最後の push より後ろの cd は、全ての push が同じ場所で走るので影響しない。
 #
 # 語分割のバックスラッシュ規則は git_c_dir_from_words と同じ (POSIX)。チルダは
 # 3 種に分ける (bash 3.2 / zsh で実測):
@@ -1141,6 +1149,11 @@ cd_target_from_words() {
   local flags_ok=1 expect_val=0 c_val=""
   local cd_arg_taken=0 cd_arg="" cd_bare=1 cd_odd=0
   local seg_index=0 push_seg_index=-1 push_seg_c_val=""
+  # 2 つ目以降の push に備える記録 (出力のフィールド2 = "2" の根拠。下の説明を参照)。
+  # seg_pushish: 今のセグメントに push らしい語があるか。pushish_first / pushish_last:
+  # そうしたセグメントの最初と最後の番号。push_c_differs: 見えている後続の push が
+  # 1 つ目と違う -C を持つ。
+  local seg_pushish=0 pushish_first=-1 pushish_last=-1 push_c_differs=0
   local -a cd_idx=() cd_dir=() cd_bad=() hidden_idx=() boundary_op=()
   local pushdpopd_seen=0
   # boundary_op[N] = セグメント N と N+1 を繋ぐ演算子 (SEQ/AND/OR/BG/PIPE/
@@ -1223,15 +1236,24 @@ cd_target_from_words() {
         cd_dir+=("$resolved")
         cd_bad+=("$bad")
       fi
-      if [ "$seg_git" -eq 1 ] && [ "$seg_push" -eq 1 ] && [ "$push_seg_index" -eq -1 ]; then
-        push_seg_index=$seg_index
-        push_seg_c_val=$c_val
+      if [ "$seg_git" -eq 1 ] && [ "$seg_push" -eq 1 ]; then
+        if [ "$push_seg_index" -eq -1 ]; then
+          push_seg_index=$seg_index
+          push_seg_c_val=$c_val
+        elif [ "$c_val" != "$push_seg_c_val" ]; then
+          push_c_differs=1
+        fi
+      fi
+      if [ "$seg_pushish" -eq 1 ]; then
+        [ "$pushish_first" -lt 0 ] && pushish_first=$seg_index
+        pushish_last=$seg_index
       fi
       last_boundary=$seg_index
       seg_index=$((seg_index + 1))
       seg_start=1
       seg_git=0
       seg_push=0
+      seg_pushish=0
       seg_cd=0
       flags_ok=1
       expect_val=0
@@ -1242,6 +1264,24 @@ cd_target_from_words() {
       cd_odd=0
       continue
     fi
+    # 「このセグメントに push が含まれうるか」を、git/push の語の並びを読まずに語の形だけで
+    # 見る。上の seg_git / seg_push は先頭語が git のセグメントしか push と認めないので、
+    # `time git push` / `FOO=1 git push` / `bash -c 'git push'` / `eval "git push"` /
+    # `git send-pack` の push は見えない。2 つ目以降の push の見落としが、下の「cd を
+    # 挟んだ複数 push」の判定の穴になるため、取りこぼす側ではなく拾いすぎる側に倒す。
+    #   - 語がちょうど push / send-pack、または `-push` で終わる (http-push / git-push)。
+    #   - 空白を含む 1 語 (クォートされた文字列) が push / send-pack と git の両方を含む。
+    #     `git commit -m "fix push"` のメッセージは git を含まないので拾わない。
+    case "$tok" in
+    [Pp][Uu][Ss][Hh] | *-[Pp][Uu][Ss][Hh] | send-pack) seg_pushish=1 ;;
+    *[[:space:]]*)
+      case "$tok" in
+      *[Pp][Uu][Ss][Hh]* | *send-pack*)
+        case "$tok" in *[Gg][Ii][Tt]*) seg_pushish=1 ;; esac
+        ;;
+      esac
+      ;;
+    esac
     if [ "$seg_start" -eq 1 ]; then
       seg_start=0
       case "$tok" in
@@ -1308,6 +1348,25 @@ cd_target_from_words() {
   if [ "$push_found" -eq 0 ]; then
     printf '0%s%s%s' "$out_d" "" "$out_d"
     return
+  fi
+
+  # push が 2 つ以上あり、その間にディレクトリを変えうる語がある (`git push && cd B &&
+  # git push`): 1 つ目の push しか追っていない (push_seg_index は最初の 1 つだけ) ので、
+  # 2 つ目が走る場所 (B) を要約できない。1 つ目の宛先を出すと、B への push に対する
+  # 承認を誘発する。-C の違いを解決できない gp_push_multi_dir と同じ扱いで、行き先を
+  # 諦める (フィールド2 = "2"。cd が確実に効くか効かないかには関係なく先に判定する)。
+  # 「push らしいセグメントが 2 つ以上」かつ「cd / 隠れた cd がその間にある」だけを見る
+  # 保守的な判定で、全体の cwd をシミュレートしない。cd が最後の push より後ろにあるなら
+  # どの push の場所も変えないので対象にしない。pushd / popd は下の involved が
+  # 位置に関係なく解決不能にする。
+  local mi first_cd=-1 bk
+  if [ "$pushish_first" -ge 0 ] && [ "$pushish_last" -gt "$pushish_first" ]; then
+    for mi in "${cd_idx[@]}" "${hidden_idx[@]}"; do
+      if [ "$mi" -gt "$pushish_first" ] && [ "$mi" -lt "$pushish_last" ]; then
+        printf '1%s2%s' "$out_d" "$out_d"
+        return
+      fi
+    done
   fi
 
   # 「push より手前のセグメントにある」だけでは cd が確実に効いたとは言え
@@ -1412,6 +1471,38 @@ cd_target_from_words() {
     return
   fi
 
+  # cd を解決できた場合も、後続の push が別の -C を持てば行き先は 1 つに決まらない
+  # (`cd A && git push && git -C B push`)。cd が関与しない場合の -C の違いは呼び出し側の
+  # gp_push_multi_dir が見る。
+  if [ "$push_c_differs" -eq 1 ]; then
+    printf '1%s2%s' "$out_d" "$out_d"
+    return
+  fi
+
+  # push が複数あり、最初の cd と最後の push らしいセグメントの間に `&` がある場合も
+  # 同じ。`cd B && git push & git push` は `(cd B && git push) &` と `git push` に
+  # 分かれ、cd の効果は `&` までのリストの中 (バックグラウンドのサブシェル) にしか
+  # 無い。1 つ目の push は確かに B で走るが、2 つ目は元の cwd で走る。`;` / `&&` /
+  # `||` はシェル自身の cwd を変えるので、そちらは「全ての push が同じ場所」のまま。
+  # (差分検証 test_multi_push_claims_hold_for_every_push_in_a_real_shell が見つけた形。)
+  if [ "$pushish_first" -ge 0 ] && [ "$pushish_last" -gt "$pushish_first" ]; then
+    for mi in "${cd_idx[@]}"; do
+      if [ "$mi" -lt "$push_seg_index" ] && { [ "$first_cd" -lt 0 ] || [ "$mi" -lt "$first_cd" ]; }; then
+        first_cd=$mi
+      fi
+    done
+    if [ "$first_cd" -ge 0 ]; then
+      bk=$first_cd
+      while [ "$bk" -lt "$pushish_last" ]; do
+        if [ "${boundary_op[$bk]}" = "BG" ]; then
+          printf '1%s2%s' "$out_d" "$out_d"
+          return
+        fi
+        bk=$((bk + 1))
+      done
+    fi
+  fi
+
   local final_dir="$relevant_dir"
   if [ -n "$push_seg_c_val" ]; then
     case "$push_seg_c_val" in
@@ -1440,7 +1531,15 @@ cd_target_from_words() {
 #     `WARNING` 行に並べる。
 #   - refspec の source が現在ブランチでない、または --all/--mirror/--tags/--delete
 #     等で送る ref が変わる場合は、下のコミット一覧が「実際に送られるもの」では
-#     ないと note する (push_foreign=1 でコミット一覧の見出しも変える)。
+#     ないと note する (そのコミット一覧の見出しも変える)。
+#   - push ごとに、コミット一覧を「何と比べて作るか」の種別を push_plan_kind /
+#     push_plan_remote / push_plan_dst (push の番号順の配列) に残す。git は呼ばない
+#     (純粋な引数の解釈)。実際に refs を引いて一覧を作るのは hook_push_review_run:
+#       default  remote も refspec も無い (`git push`)
+#       remote   remote だけ (`git push origin`)
+#       explicit remote と、現在ブランチを送る refspec が 1 つ (`git push b HEAD:main`)
+#       foreign  送る ref が現在ブランチとは限らない (--all / --delete / 別の source 等)
+#       approx   上のどれでもない (refspec が複数 / 展開 / 未知のオプション / 読めない)
 #   - 引数を信頼できる形で読めない場合 (トークナイザが push を見失った / eval や
 #     sh -c の中 / 長さ超過 / 制御文字 / 未知のオプション / 展開を含む refspec) は
 #     推測せず note にする。
@@ -1448,7 +1547,7 @@ cd_target_from_words() {
 # 表示する語は制御文字を空白に置き換えて長さを制限し、URL の userinfo
 # (`https://user:token@host/…`) は伏せる。
 # 呼び出し側: 第 1 引数は現在ブランチ名 (要約を出さないときは空 = source の照合は
-# しない)。結果は push_report / push_foreign (グローバル) で返す。
+# しない)。結果は push_report / push_plan_* (グローバル) で返す。
 push_show() {
   local t="$1" scheme rest auth after
   t=${t//[[:cntrl:]]/ }
@@ -1473,10 +1572,20 @@ build_push_report() {
   local branch="$1" a_sep=$'\x1c' nl=$'\n'
   local total=${#gp_push_args[@]} n=0 elem rest tok r src ch cl
   local remote have_remote warn unsure broad delete expansion expect after_dd
-  local foreign_why tag refs_text remote_text
+  local foreign_why tag refs_text remote_text pkind pdst
+  local hid_warn_n=0 hid_warn_text="" hid_note_n=0
   local -a refs
   push_report=""
-  push_foreign=0
+  # 1 つのコマンドにつなげた push の数に比例して承認文が伸びないよう、全文を出す push は
+  # 先頭の push_shown_max 個だけにする (190 個の `git push` で 110 KB になっていた)。
+  # 超えた分は下で件数だけを言い、force / 削除と「宛先を確かめられない」push の数は
+  # 隠さない (50 個目に埋もれた --force が消えるのは、この上限が作る最悪の見落とし)。
+  # 要約側 (hook_push_review_run) も同じ値を使うので、グローバルで渡す。
+  push_shown_max=5
+  # 早期 return の経路でも空に戻す (空 = 「push ごとの種別を持たない」= 近似として扱う)
+  push_plan_kind=()
+  push_plan_remote=()
+  push_plan_dst=()
   if [ "$gp_ran" -ne 1 ]; then
     push_report="note: push arguments were not parsed (the command is longer than 4000 characters or contains control characters) -- review the command itself${nl}"
     return
@@ -1628,12 +1737,68 @@ build_push_report() {
         foreign_why="${broad} push refs other than just the current branch"
       fi
     fi
+    # コミット一覧の種別 (build_push_report の説明を参照)。承認者に見せる一覧は「この
+    # push の宛先と比べた」ものでなければならない: upstream との差を一律に出すと、
+    # 別の remote への push が「(none)」に見え、新ブランチの push に他人の履歴が混じる。
+    # 単一の ref とはっきり言える形だけを解く。それ以外は近似 / 別物として見出しで言う。
+    pkind=approx
+    pdst=""
+    if [ -n "$foreign_why" ]; then
+      pkind=foreign
+    elif [ "$expansion" -eq 1 ] || [ -n "$unsure" ] || [ "${#refs[@]}" -gt 1 ]; then
+      pkind=approx
+    elif [ "$have_remote" -eq 0 ]; then
+      pkind=default
+    elif [ "${#refs[@]}" -eq 0 ]; then
+      pkind=remote
+    else
+      # refspec が 1 つ: `[+]<src>[:<dst>]`。source は上の照合で現在ブランチ
+      # (HEAD / @ / ブランチ名 / refs/heads/ブランチ名) と分かっている。
+      pkind=explicit
+      r=${refs[0]#+}
+      case "$r" in
+      :*)
+        # `:dst` は削除。送るものが無いので、現在ブランチの一覧は別物。
+        pkind=foreign
+        ;;
+      *:*) pdst=${r#*:} ;;
+      HEAD | @) pdst=$branch ;;
+      *) pdst=$r ;;
+      esac
+      pdst=${pdst#refs/heads/}
+      # dst は素のブランチ名だけを追う。`refs/tags/…` / `refs/for/…` / HEAD / 空 /
+      # `a:b` / 先頭が `-` は、refs/remotes/<remote>/<dst> が対応する追跡 ref とは
+      # 限らないので解かない (detached HEAD の `origin HEAD` は branch が HEAD になる)。
+      case "$pdst" in
+      "" | HEAD | @ | -* | refs/* | *:*) pdst="" ;;
+      esac
+      if [ "$pkind" = explicit ] && [ -z "$pdst" ]; then pkind=approx; fi
+    fi
+    push_plan_kind[n - 1]=$pkind
+    push_plan_remote[n - 1]=$remote
+    push_plan_dst[n - 1]=$pdst
     tag=""
     [ "$total" -gt 1 ] && tag=" [${n}/${total}]"
     remote_text=${remote:-"(default)"}
     if [ "$have_remote" -eq 0 ]; then remote_text="(default)"; fi
     refs_text="(default)"
     if [ "${#refs[@]}" -gt 0 ]; then refs_text="${refs[*]}"; fi
+    if [ "$n" -gt "$push_shown_max" ]; then
+      # 全文は出さず、数と、force 系の綴り (重複は 1 回、全体で 200 文字まで) だけ集める
+      if [ -n "$warn" ]; then
+        hid_warn_n=$((hid_warn_n + 1))
+        case "; ${hid_warn_text}; " in
+        *"; ${warn}; "*) ;;
+        *)
+          if [ "${#hid_warn_text}" -lt 200 ]; then hid_warn_text+="${hid_warn_text:+; }${warn}"; fi
+          ;;
+        esac
+      fi
+      if [ "$expansion" -eq 1 ] || [ -n "$unsure" ] || [ -n "$foreign_why" ]; then
+        hid_note_n=$((hid_note_n + 1))
+      fi
+      continue
+    fi
     push_report+="push target${tag}: remote=${remote_text} refspec=${refs_text}${nl}"
     if [ -n "$warn" ]; then
       push_report+="WARNING${tag}: force/destructive push options: ${warn}${nl}"
@@ -1645,10 +1810,18 @@ build_push_report() {
       push_report+="note${tag}: unrecognised push option(s)${unsure}; the remote/refspec above may be wrong${nl}"
     fi
     if [ -n "$foreign_why" ]; then
-      push_foreign=1
       push_report+="note${tag}: ${foreign_why}; the commit list below describes the current branch only and is NOT necessarily what this push sends${nl}"
     fi
   done
+  if [ "$total" -gt "$push_shown_max" ]; then
+    push_report+="(+$((total - push_shown_max)) more pushes not listed -- review the command itself)${nl}"
+    if [ "$hid_warn_n" -gt 0 ]; then
+      push_report+="WARNING: ${hid_warn_n} of the pushes not listed above carry force/destructive push options: ${hid_warn_text}${nl}"
+    fi
+    if [ "$hid_note_n" -gt 0 ]; then
+      push_report+="note: ${hid_note_n} of the pushes not listed above have a target this hook cannot verify (an expansion, an unrecognised option, or a source other than the current branch)${nl}"
+    fi
+  fi
 }
 
 # ■ push らしくないコマンドを先に捨てるガード (各アダプタが、このファイルを読む前に
@@ -1708,6 +1881,10 @@ build_push_report() {
 # の組み立て) をそのまま関数に包んだもの。変えたのは 3 点だけ: 該当なしの `exit 0` を
 # `return 1` にしたこと、引数を input / cmd に受けること (local)、結果を
 # push_review_body に入れて `return 0` すること。それ以外の変数は元のとおりグローバル。
+# (この「そのまま移した」は移した時点の話。その後に変えたのは 2 点: 末尾のコミット一覧
+# を push の宛先ごとに作るようにしたこと (push_plan_* と下の説明)、cd_target_from_words
+# の status "2" を受けること。どちらも新しい変数は local で、関数は増やしていない:
+# tests/test_hook_sync.py が関数の集合を固定しているため。)
 hook_push_review_run() {
   local input="$1" cmd="$2"
 
@@ -2054,6 +2231,7 @@ $(printf '%s' "$cmd_unquoted" | tr "\"'" '  ')"
   else
     case "$cd_status" in
     1) unresolved_why=$cd_uncertain_why ;;
+    2) unresolved_why="the command runs more than one push and changes directory (cd, or a different -C) between them, so the pushes may run in different repositories" ;;
     0) git_c_opt=(-C "$cd_dir_val") ;;
     *) use_legacy_c_lookup=1 ;;
     esac
@@ -2105,25 +2283,234 @@ $(printf '%s' "$cmd_unquoted" | tr "\"'" '  ')"
     branch=$(git "${git_c_opt[@]}" rev-parse --abbrev-ref HEAD 2>/dev/null)
   fi
   build_push_report "$branch"
-  commits_label="commits to push:"
-  if [ "$push_foreign" -eq 1 ]; then
-    commits_label="commits on the current branch (NOT necessarily what this push sends):"
-  fi
   summary=""
   if [ -n "$unresolved_why" ]; then
     summary="(target repository could not be determined: ${unresolved_why} -- review the target manually before approving)"
   elif [ "$inside_repo" -eq 1 ]; then
-    if git "${git_c_opt[@]}" rev-parse --abbrev-ref '@{upstream}' &>/dev/null; then
-      commits=$(git "${git_c_opt[@]}" log --oneline '@{upstream}..HEAD' 2>/dev/null | head -10)
-      stat=$(git "${git_c_opt[@]}" diff --stat '@{upstream}..HEAD' 2>/dev/null | tail -1)
-    else
-      commits=$(git "${git_c_opt[@]}" log --oneline -5 2>/dev/null)
-      stat="(no upstream: new branch push)"
+    # コミット一覧は push ごとに作る (見出しは [n/N] で push target の行と対応する)。
+    #
+    # 「このコミット一覧が何を数えたものか」を見出しで必ず言う。フックはネットワークに
+    # 出ない (fetch も ls-remote もしない) ので、リモートの実際の状態は知らない。見るのは
+    # ローカルの refs/remotes/* だけで、最後の fetch の時点の推定にすぎない。
+    #   tracked    refs/remotes/<remote>/<dst> が手元にある: `<その ref>..HEAD`
+    #   untracked  remote は名指しだが追跡 ref が無い (新ブランチ / 一度も push していない
+    #              remote): その remote の ref のどれにも無いコミット。「(none)」を
+    #              「送るものが無い」と読ませない (宛先が空の remote には全コミットが行く)
+    #   近似       宛先を解けない: 従来どおり HEAD と upstream の差 (無ければ直近 5 件)
+    #   foreign    送る ref が現在ブランチとは限らない: 同じ一覧を別物と明示する
+    #
+    # 宛先の解き方 (default / remote / explicit は build_push_report の push_plan_*):
+    #   - explicit: remote と dst から refs/remotes/<remote>/<dst>。
+    #   - default: git 自身の `@{push}` (pushRemote / remote.pushDefault / push.default を
+    #     反映する) が解ければそれ。push.default=simple で push 先が upstream と別の
+    #     remote のときは、`@{push}` は「単一の宛先に解けない」と失敗するが、実際の
+    #     `git push` はその remote へ現在ブランチを同名で送る。そこで
+    #     branch.<b>.pushRemote、無ければ remote.pushDefault を push 先とし、dst は
+    #     現在ブランチ名にする。
+    #   - remote (`git push origin`): `@{push}` がその remote の ref を指せばそれ、
+    #     指さなければ dst は現在ブランチ名。
+    # remote / dst は refs/remotes/<remote>/<dst> として妥当な名前でなければ使わない
+    # (URL・パス・glob 文字を含む名前は `--remotes=<pattern>` が別物に化ける)。
+    #
+    # ここで増える変数は、アダプタ (source する側) のグローバルに漏らさないよう local
+    # にする (他の変数が元のとおりグローバルなのは、元のフックのトップレベルにあった
+    # 名前をそのまま移したため。これは新規)。
+    local pest pcount pi pkind premote pdst ptag pref pstat_range pstat pmore pcap
+    local pempty plabel pmore_line ptotal
+    local pseen pnl psep pkey phidden=0 prepeat=0 ppushrefs psrc
+    local -a prev
+    pest="estimate from local refs as of the last fetch"
+    pcount=${#push_plan_kind[@]}
+    [ "$pcount" -gt 0 ] || pcount=1
+    summary="branch: ${branch}"
+    # 全文を出すのは先頭の push_shown_max 個 (build_push_report が決める) まで。残りは
+    # git を呼ばず数だけ言う: 宛先の種別 (種別 / remote / dst) が先に出した節と同じなら
+    # 一覧も同じなので「繰り返し」として数える。1 つのコマンドの push の数で承認文
+    # (と git の呼び出し) が伸びないようにするため。
+    pnl=$'\n'
+    psep=$'\x1c'
+    pseen=$pnl
+    pi=0
+    while [ "$pi" -lt "$pcount" ]; do
+      pkind=${push_plan_kind[$pi]:-approx}
+      premote=${push_plan_remote[$pi]:-}
+      pdst=${push_plan_dst[$pi]:-}
+      pkey="${pkind}${psep}${premote}${psep}${pdst}"
+      if [ "$pi" -ge "$push_shown_max" ]; then
+        phidden=$((phidden + 1))
+        case "$pseen" in
+        *"${pnl}${pkey}${pnl}"*) prepeat=$((prepeat + 1)) ;;
+        esac
+        pi=$((pi + 1))
+        continue
+      fi
+      pseen+="${pkey}${pnl}"
+      ptag=""
+      [ "$pcount" -gt 1 ] && ptag=" [$((pi + 1))/${pcount}]"
+      pref=""
+      case "$pkind" in
+      default | remote)
+        if pref=$(git "${git_c_opt[@]}" rev-parse --symbolic-full-name '@{push}' 2>/dev/null); then
+          # 失敗時に `@{push}` という文字列が出ることがあるので、形も確かめる
+          case "$pref" in
+          refs/remotes/?*) ;;
+          *) pref="" ;;
+          esac
+        else
+          pref=""
+        fi
+        if [ "$pkind" = remote ] && [ -n "$pref" ]; then
+          case "$pref" in "refs/remotes/${premote}/"?*) ;; *) pref="" ;; esac
+        fi
+        if [ -z "$pref" ]; then
+          if [ -n "$branch" ] && [ "$branch" != HEAD ]; then
+            if [ "$pkind" = default ]; then
+              premote=$(git "${git_c_opt[@]}" config --get "branch.${branch}.pushRemote" 2>/dev/null)
+              [ -n "$premote" ] || premote=$(git "${git_c_opt[@]}" config --get remote.pushDefault 2>/dev/null)
+            fi
+            pdst=$branch
+            # refspec が無い push の送り先は、remote.<r>.push があればそれが決める
+            # (`remote.origin.push = main:deploy` なら main は deploy へ行く)。現在
+            # ブランチと同名の ref を宛先と決めつけると、origin/main との差が「(none)」に
+            # なる一方で push は deploy を新規に作る。`@{push}` が解けたときは git 自身が
+            # この設定を適用済みなので、ここに来るのは解けなかったとき: 追跡 ref が
+            # 無い / git は src の短い綴り (`main`) を refspec と照合しない。
+            # 読むのは、値が 1 つだけで src が現在ブランチ (HEAD / @ を含む) の素の
+            # `[+]src[:dst]` (dst は素のブランチ名) だけ。値が複数 / ワイルドカード /
+            # 削除 / 別の src / refs/tags 等への送り先は、宛先を言えないので近似にする。
+            if [ -n "$premote" ]; then
+              ppushrefs=$(git "${git_c_opt[@]}" config --get-all "remote.${premote}.push" 2>/dev/null)
+              if [ -n "$ppushrefs" ]; then
+                pdst=""
+                case "$ppushrefs" in
+                *"$pnl"*) ;;
+                *)
+                  psrc=""
+                  ppushrefs=${ppushrefs#+}
+                  case "$ppushrefs" in
+                  :*) ;;
+                  *:*)
+                    psrc=${ppushrefs%%:*}
+                    pdst=${ppushrefs#*:}
+                    ;;
+                  *)
+                    psrc=$ppushrefs
+                    pdst=$ppushrefs
+                    ;;
+                  esac
+                  case "$psrc" in
+                  HEAD | @)
+                    # `HEAD` だけ (dst 無し) は現在ブランチと同名
+                    if [ "$pdst" = "$psrc" ]; then pdst=$branch; fi
+                    ;;
+                  "$branch" | "refs/heads/$branch") ;;
+                  *) pdst="" ;;
+                  esac
+                  pdst=${pdst#refs/heads/}
+                  case "$pdst" in
+                  "" | HEAD | @ | -* | refs/* | *:* | *[\*\?\[]*) pdst="" ;;
+                  esac
+                  ;;
+                esac
+              fi
+            fi
+          else
+            premote=""
+          fi
+        fi
+        ;;
+      esac
+      if [ -z "$pref" ]; then
+        case "$pkind" in
+        default | remote | explicit)
+          if [ -n "$premote" ] && [ -n "$pdst" ] &&
+            git check-ref-format "refs/remotes/${premote}/${pdst}" 2>/dev/null; then
+            if git "${git_c_opt[@]}" rev-parse --verify -q "refs/remotes/${premote}/${pdst}" >/dev/null 2>&1; then
+              pref="refs/remotes/${premote}/${pdst}"
+            else
+              pkind=untracked
+            fi
+          else
+            pkind=approx
+          fi
+          ;;
+        esac
+      fi
+      [ -n "$pref" ] && pkind=tracked
+
+      # 一覧の取り方: prev = git log / rev-list に渡す引数、pcap = 表示する最大件数、
+      # pmore = 超えた件数を "(+N more)" で言うか、pstat_range = diffstat の範囲
+      # (空なら pstat をそのまま出す)。
+      pstat_range=""
+      pstat=""
+      pmore=1
+      pcap=10
+      pempty="(none by this approximation -- not proof that nothing is sent)"
+      case "$pkind" in
+      tracked)
+        plabel="commits to push${ptag}: commits on HEAD not in ${pref} (${pest})"
+        prev=("${pref}..HEAD")
+        pstat_range="${pref}..HEAD"
+        pempty="(none)"
+        ;;
+      untracked)
+        plabel="commits to push${ptag}: commits not on any ${premote} ref known locally (approximate; ${pest})"
+        prev=(HEAD --not "--remotes=${premote}")
+        pstat="(diffstat unavailable: no ref known locally for ${premote} to compare with)"
+        ;;
+      *)
+        if git "${git_c_opt[@]}" rev-parse --abbrev-ref '@{upstream}' &>/dev/null; then
+          prev=('@{upstream}..HEAD')
+          pstat_range='@{upstream}..HEAD'
+          if [ "$pkind" = foreign ]; then
+            plabel="commits on the current branch${ptag} (NOT necessarily what this push sends; ${pest}):"
+          else
+            plabel="commits to push${ptag}: commits on HEAD not in its upstream (approximate: the push destination could not be resolved; ${pest})"
+          fi
+        else
+          # upstream が無い: 従来どおり直近 5 件 (それ以上は数えない)
+          prev=(HEAD)
+          pcap=5
+          pmore=0
+          pstat="(no upstream: new branch push)"
+          if [ "$pkind" = foreign ]; then
+            plabel="commits on the current branch${ptag} (NOT necessarily what this push sends; ${pest}):"
+          else
+            plabel="commits to push${ptag}: the last 5 commits on HEAD (approximate: no upstream, and the push destination could not be resolved; ${pest})"
+          fi
+        fi
+        ;;
+      esac
+      commits=$(git "${git_c_opt[@]}" log --oneline -n "$pcap" "${prev[@]}" 2>/dev/null)
+      if [ -n "$pstat_range" ]; then
+        pstat=$(git "${git_c_opt[@]}" diff --stat "$pstat_range" 2>/dev/null | tail -1)
+      fi
+      pmore_line=""
+      if [ "$pmore" -eq 1 ]; then
+        ptotal=$(git "${git_c_opt[@]}" rev-list --count "${prev[@]}" 2>/dev/null)
+        case "$ptotal" in
+        '' | *[!0-9]*) ptotal=0 ;;
+        esac
+        if [ "$ptotal" -gt "$pcap" ]; then
+          pmore_line="
+(+$((ptotal - pcap)) more)"
+        fi
+      fi
+      if [ -z "$commits" ]; then commits=$pempty; fi
+      summary="${summary}
+${plabel}
+${commits}${pmore_line}
+${pstat}"
+      pi=$((pi + 1))
+    done
+    if [ "$phidden" -gt 0 ]; then
+      summary="${summary}
+(+${phidden} more pushes not summarised -- review the command itself"
+      if [ "$prepeat" -gt 0 ]; then
+        summary="${summary}; ${prepeat} of them repeat a section above"
+      fi
+      summary="${summary})"
     fi
-    summary="branch: ${branch}
-${commits_label}
-${commits:-"(none)"}
-${stat}"
   fi
 
   # shellcheck disable=SC2034  # 呼び出し側 (アダプタ) が読む。このファイル内では参照しない

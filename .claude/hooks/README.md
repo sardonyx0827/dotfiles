@@ -35,9 +35,18 @@
 - **git-push-review** (`hooks/git-push-review.sh`, matcher: `Bash`,
   no `if` filter — deliberately unconditional):
   Detects `git push` commands and forces a confirmation prompt
-  (permissionDecision: ask) with a summary of the branch, commits,
-  and diffstat about to be pushed. Enforces the pre-push review step
-  of `rules/git-workflow.md`.
+  (permissionDecision: ask) with a summary of the branch and an estimate of
+  the commits and diffstat the push would send. The estimate follows the push
+  target (the named remote and refspec, or `@{push}` /
+  `branch.<b>.pushRemote` / `remote.pushDefault` for a bare `git push`) and is
+  computed from local remote-tracking refs as of the last fetch; the hook
+  never touches the network. A target with no tracking ref is listed as
+  "commits not on any <remote> ref known locally (approximate)", never as
+  "(none)", and a list longer than 10 commits ends with "(+N more)".
+  Only the first five pushes of a chained command get their own target line
+  and commit section; the rest are counted in one line, and any force /
+  delete option among them is still called out.
+  Enforces the pre-push review step of `rules/git-workflow.md`.
   The detection and the summary logic live in `_push_review_common.sh`, shared
   with the Codex copy (see **Shared libraries** below); `git-push-review.sh`
   only reads the input and shapes the output (a JSON `ask`, exit 0).
@@ -46,7 +55,8 @@
   When that directory cannot be determined for certain (a variable, `cd -`,
   `~user`, `pushd` / `popd`, a subshell, a heredoc (`<<`) or comment (`#`)
   in a command that also has a `cd`, several `cd`s, a `cd` with options or
-  extra operands, a `..` component, a quoted `~`, a target that is not an
+  extra operands, more than one push with a `cd` / `pushd` / `popd` (or a
+  different `-C`) between them, a `..` component, a quoted `~`, a target that is not an
   existing directory, a control character in the command other than tab /
   newline (DEL included) or any control character in the `cd` target or the
   `-C` value, `--git-dir` /
