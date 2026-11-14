@@ -744,6 +744,53 @@ install_tree_sitter_cli() {
   fi
 }
 
+# This config needs Neovim 0.12 or later (INSTALL_PLATFORM.md: the `buf` option
+# of vim.keymap.set, vim.lsp.config, ...). The `neovim` package apt installs on
+# current Ubuntu LTS releases is older, and nothing else would say so: the
+# install finishes "successfully" and the editor only fails when first opened.
+NEOVIM_MIN_VERSION="0.12"
+
+# Print the version of the nvim on PATH (e.g. 0.12.4 from `NVIM v0.12.4`).
+# Prints nothing when nvim is missing, cannot run, or prints no version line.
+neovim_version() {
+  command_exists nvim || return 0
+  # Same trap as tree_sitter_cli_version: a broken nvim fails the pipeline, and
+  # under `set -eo pipefail` that would abort the caller's `have=$(...)`.
+  nvim --version 2>/dev/null | awk 'NR == 1 { v = $2; sub(/^v/, "", v); print v }' || true
+}
+
+# Warn when the nvim on PATH is older than NEOVIM_MIN_VERSION. Called after the
+# APT step, the only install path that cannot supply a new enough one (brew
+# ships current releases).
+#
+# WARNING ONLY, deliberately: no record_failure. apt has no newer package to
+# offer, so recording this would make every run on a stock Ubuntu LTS exit 1
+# whatever the user does -- the failure summary would stop meaning "something
+# you can fix by re-running". A missing nvim or an unreadable version warns
+# too and carries on; this must never abort the installer, so it always
+# returns 0 (install_apt_packages ends with this call, and a non-zero status
+# there would trip `set -e` in the caller).
+check_neovim_version() {
+  local have
+  local doc="INSTALL_PLATFORM.md#neovimのバージョンが古い"
+  # Must look like a version before it reaches version_at_least, which turns
+  # any non-numeric field into 0: `nvim` printing garbage would otherwise be
+  # reported as "older than 0.12". The pattern sits in a variable because
+  # bash 3.2 (macOS /bin/bash) and 5 disagree on quoting inside `=~`.
+  local version_re='^[0-9]+\.[0-9]+'
+  have="$(neovim_version)"
+  if ! command_exists nvim; then
+    print_warning "nvim not found; this config needs Neovim $NEOVIM_MIN_VERSION or later (see $doc)"
+  elif [[ ! "$have" =~ $version_re ]]; then
+    print_warning "Could not read the version from \`nvim --version\`; this config needs Neovim $NEOVIM_MIN_VERSION or later (see $doc)"
+  elif version_at_least "$have" "$NEOVIM_MIN_VERSION"; then
+    print_success "Neovim $have is new enough (needs $NEOVIM_MIN_VERSION or later)"
+  else
+    print_warning "Neovim $have is older than $NEOVIM_MIN_VERSION, which this config needs; see $doc"
+  fi
+  return 0
+}
+
 # Clear the way for a re-clone into a directory an INTERRUPTED `git clone`
 # left behind, and report whether cloning may proceed (0 = go, 1 = skip).
 #

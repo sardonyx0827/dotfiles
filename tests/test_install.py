@@ -2019,6 +2019,12 @@ class TestAptAliasSymlinks:
     def _prepare(self, shell_env):
         shell_env.stub("batcat")
         shell_env.stub("fdfind")
+        # install_apt_packages ends with check_neovim_version, which reads the
+        # HOST's nvim unless one is stubbed: an old or absent nvim on the
+        # machine running the tests would add a [WARNING] of its own to every
+        # run here. A current stub keeps the output about what these tests
+        # are about (see TestNeovimVersionCheck for the check itself).
+        shell_env.stub("nvim", body="echo 'NVIM v0.12.4'")
         local_bin = shell_env.home / ".local" / "bin"
         local_bin.mkdir(parents=True, exist_ok=True)
         return local_bin
@@ -2033,7 +2039,12 @@ class TestAptAliasSymlinks:
         assert res.returncode == 0, res.stderr
         assert not mine.is_symlink(), "a real user binary must not become a symlink"
         assert "MINE" in mine.read_text(encoding="utf-8")
-        assert "[WARNING]" in res.stdout
+        # The guard's OWN warning, by name: a bare "[WARNING]" would also be
+        # satisfied by any unrelated warning the step prints.
+        assert any(
+            "[WARNING]" in ln and "is not a symlink" in ln and "fd" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
 
     def test_alias_is_created_when_nothing_is_in_the_way(self, shell_env):
         local_bin = self._prepare(shell_env)
@@ -4720,3 +4731,137 @@ class TestInstallTreeSitterCli:
         assert "cargo not found" in res.stdout
         assert "tree-sitter/releases" in res.stdout
         assert not any(c.startswith("npm ") for c in shell_env.calls)
+
+
+# This config targets Neovim 0.12+ (INSTALL_PLATFORM.md), but apt's `neovim` on
+# the current Ubuntu LTS releases is older, so install_apt_packages can finish
+# "successfully" with an editor the config cannot run on. The check after the
+# APT step says so. It is a WARNING and never a recorded failure: apt cannot
+# provide the version, so recording it would make every run on a stock Ubuntu
+# LTS exit 1 no matter what the user did.
+_NVIM_DOC_ANCHOR = "INSTALL_PLATFORM.md#neovimのバージョンが古い"
+
+
+class TestNeovimVersionCheck:
+    @staticmethod
+    def _nvim(shell_env, first_line):
+        # `nvim --version` prints more than one line; only the first carries
+        # the version, so the stub proves the check does not read past it.
+        shell_env.stub(
+            "nvim", body=f"echo {shlex.quote(first_line)}\necho 'Build type: Release'"
+        )
+
+    @staticmethod
+    def _run(shell_env, snippet="check_neovim_version"):
+        # run_recording fails loudly if the snippet aborted under `set -e`,
+        # and hands back INSTALL_FAILURES: [] is what "warning only" means.
+        return run_recording(f'{snippet}; echo "AFTER_CHECK"', shell_env.env)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "NVIM v0.9.5",  # Ubuntu 24.04 LTS apt
+            "NVIM v0.11.9",  # the boundary: one minor below
+            "NVIM v0.11.0-dev-1234+gabcdef0",  # a nightly BEFORE 0.12
+            "NVIM v0.4.3",
+        ],
+    )
+    def test_an_older_nvim_warns_and_points_at_the_upgrade_steps(self, shell_env, line):
+        self._nvim(shell_env, line)
+
+        res, labels = self._run(shell_env)
+
+        assert res.returncode == 0, res.stderr
+        warning = [ln for ln in res.stdout.splitlines() if "[WARNING]" in ln]
+        assert len(warning) == 1, res.stdout
+        assert "0.12" in warning[0], warning
+        assert line.split("v", 1)[1] in warning[0], warning
+        assert _NVIM_DOC_ANCHOR in warning[0], warning
+        assert labels == [], "an old nvim must not be recorded as a failed step"
+        assert "AFTER_CHECK" in res.stdout
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "NVIM v0.12.0",  # the boundary itself
+            "NVIM v0.12.4",
+            "NVIM v0.12.0-dev-1234+gabcdef0",  # a 0.12 nightly counts as 0.12
+            "NVIM v0.13.1",
+            "NVIM v0.100.0",  # numeric, not lexicographic
+            "NVIM v1.0.0",
+        ],
+    )
+    def test_a_new_enough_nvim_is_accepted_quietly(self, shell_env, line):
+        self._nvim(shell_env, line)
+
+        res, labels = self._run(shell_env)
+
+        assert res.returncode == 0, res.stderr
+        assert "[WARNING]" not in res.stdout, res.stdout
+        assert labels == []
+        assert "AFTER_CHECK" in res.stdout
+
+    def test_a_missing_nvim_warns_and_continues(self, shell_env):
+        # A stub cannot express absence, and a developer machine has a real
+        # nvim on PATH: hide() makes it genuinely absent.
+        shell_env.hide("nvim")
+
+        res, labels = self._run(shell_env)
+
+        assert res.returncode == 0, res.stderr
+        warning = [ln for ln in res.stdout.splitlines() if "[WARNING]" in ln]
+        assert len(warning) == 1, res.stdout
+        assert "nvim" in warning[0] and _NVIM_DOC_ANCHOR in warning[0], warning
+        assert labels == []
+        assert "AFTER_CHECK" in res.stdout
+
+    @pytest.mark.parametrize(
+        ("body", "exit_code"),
+        [
+            ("echo 'something that is not a version banner'", 0),
+            ("", 0),  # prints nothing at all
+            ("echo 'nvim: error while loading shared libraries' >&2", 127),
+            ("echo 'NVIM vNEXT'", 0),  # a `v` and no digits
+        ],
+    )
+    def test_a_version_that_cannot_be_read_warns_and_never_aborts(
+        self, shell_env, body, exit_code
+    ):
+        shell_env.stub("nvim", body=body, exit_code=exit_code)
+
+        res, labels = self._run(shell_env)
+
+        assert res.returncode == 0, res.stderr
+        warning = [ln for ln in res.stdout.splitlines() if "[WARNING]" in ln]
+        assert len(warning) == 1, res.stdout
+        assert _NVIM_DOC_ANCHOR in warning[0], warning
+        # Unparseable is NOT "older than 0.12": garbage must not be reported
+        # as a version it never claimed to be.
+        assert "older than" not in warning[0], warning
+        assert labels == []
+        assert "AFTER_CHECK" in res.stdout
+
+    def test_the_apt_step_runs_the_check(self, shell_env):
+        # The wiring: the check exists so that the APT step cannot report a
+        # clean install of an editor the config cannot run on.
+        self._nvim(shell_env, "NVIM v0.9.5")
+
+        res, labels = self._run(shell_env, snippet="install_apt_packages")
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert any(
+            "[WARNING]" in ln and _NVIM_DOC_ANCHOR in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+        assert "APT packages installed" in res.stdout
+        assert labels == []
+        assert "AFTER_CHECK" in res.stdout
+
+    def test_the_apt_step_is_quiet_about_a_current_nvim(self, shell_env):
+        self._nvim(shell_env, "NVIM v0.12.4")
+
+        res, labels = self._run(shell_env, snippet="install_apt_packages")
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert _NVIM_DOC_ANCHOR not in res.stdout
+        assert labels == []
