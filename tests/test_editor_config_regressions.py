@@ -53,6 +53,74 @@ def test_fixwhitespace_command_uses_the_wrapped_trim():
     )
 
 
+# In a few filetypes trailing whitespace is content, not noise: Markdown's two-space
+# hard line break, the lone-space context lines of a diff / patch (a trimmed `.patch`
+# no longer applies), and a commit message, which `git commit -v` fills with a diff.
+# The save-time trim (Neovim: setup/init.lua, Vim: 80-custom.vim) must leave those
+# alone and keep trimming everything else. The explicit :FixWhitespace stays
+# unconditional: asking for it is the user's call.
+_TRIM_PROBE_LINES = ["hard break  ", " ", "end"]
+_TRIM_TRIMMED_LINES = ["hard break", "", "end"]
+_TRIM_CASES = [
+    ("markdown", True),
+    ("diff", True),
+    ("gitcommit", True),
+    ("lua", False),
+    ("text", False),
+]
+
+
+class TestVimSaveTimeTrimKeepsSignificantWhitespace:
+    @pytest.fixture(scope="class")
+    def vim(self):
+        return _real_vim_or_skip()
+
+    @pytest.mark.parametrize(("filetype", "kept"), _TRIM_CASES)
+    def test_save_time_trim_by_filetype(self, vim, tmp_path, filetype, kept):
+        target = tmp_path / f"probe.{filetype}"
+        script = (
+            f"source {VIM_CUSTOM_RC}\n"
+            f"call setline(1, {json.dumps(_TRIM_PROBE_LINES)})\n"
+            f"setlocal filetype={filetype}\n"
+            f"execute 'write ' . fnameescape({json.dumps(str(target))})\n"
+            "call writefile(['done'], $PROBE_OUT)\nqa!\n"
+        )
+        assert _run_vim_script(vim, script, extra_source=None).strip() == "done"
+        want = _TRIM_PROBE_LINES if kept else _TRIM_TRIMMED_LINES
+        assert target.read_text(encoding="utf-8").splitlines() == want
+
+    def test_fixwhitespace_still_trims_a_markdown_buffer(self, vim):
+        script = (
+            f"source {VIM_CUSTOM_RC}\n"
+            f"call setline(1, {json.dumps(_TRIM_PROBE_LINES)})\n"
+            "setlocal filetype=markdown\n"
+            "FixWhitespace\n"
+            "call writefile(getline(1, '$'), $PROBE_OUT)\nqa!\n"
+        )
+        got = _run_vim_script(vim, script, extra_source=None).splitlines()
+        assert got == _TRIM_TRIMMED_LINES
+
+
+@pytest.mark.parametrize(("filetype", "kept"), _TRIM_CASES)
+def test_nvim_save_time_trim_by_filetype(tmp_path, filetype, kept):
+    target = tmp_path / f"probe.{filetype}"
+    lines = "{" + ", ".join(json.dumps(line) for line in _TRIM_PROBE_LINES) + "}"
+    got = _nvim_headless(
+        tmp_path,
+        _STUB_SETUP_MODULES
+        + f"""
+dofile({str(NVIM_INIT_LUA)!r})
+vim.api.nvim_buf_set_lines(0, 0, -1, false, {lines})
+vim.bo.filetype = {json.dumps(filetype)}
+vim.cmd("write " .. vim.fn.fnameescape({json.dumps(str(target))}))
+emit({{ lines = vim.fn.readfile({json.dumps(str(target))}) }})
+vim.cmd("qa!")
+""",
+    )
+    want = _TRIM_PROBE_LINES if kept else _TRIM_TRIMMED_LINES
+    assert got["lines"] == want
+
+
 # `:ToggleTerm 2direction=horizontal` parses as an unrecognized "2direction" key, not a
 # count plus a `direction` option. See toggleterm.lua's own comment for why. Verified
 # against the real module: parse("2direction=horizontal").direction == nil.
