@@ -57,7 +57,22 @@ return {
     local telescope = require("telescope")
     telescope.setup({
       defaults = {
-        file_ignore_patterns = { "node_modules", "vendor", "dist", "build", "^.git/" },
+        -- Lua patterns tried with string.find on the path relative to the cwd:
+        -- anchor each one to a whole directory component ("^x/" at the top,
+        -- "/x/" below it). A bare "build" hid every path that merely contained
+        -- the word (.claude/agents/build-error-resolver.md), and "^.git/" let
+        -- the unescaped "." match any character ("agit/").
+        file_ignore_patterns = {
+          "^node_modules/",
+          "/node_modules/",
+          "^vendor/",
+          "/vendor/",
+          "^dist/",
+          "/dist/",
+          "^build/",
+          "/build/",
+          "^%.git/",
+        },
         path_display = { "truncate" },
       },
       pickers = {

@@ -1146,6 +1146,68 @@ emit({ names = names, bad = bad })
     assert got["bad"] == [], f"not picker option tables: {got['bad']}"
 
 
+# telescope tests every `file_ignore_patterns` entry with string.find (Lua patterns)
+# against the path relative to the cwd. A bare "build" therefore hid every path that
+# merely CONTAINS the word -- in this repo .claude/agents/build-error-resolver.md and
+# .claude/commands/build-fix.md never showed up in find_files / live_grep.
+_TELESCOPE_IGNORED = [
+    "node_modules/pkg/index.js",
+    "web/node_modules/pkg/index.js",
+    "vendor/lib/x.go",
+    "pkg/vendor/x.go",
+    "dist/app.js",
+    "web/dist/app.js",
+    "build/out.o",
+    "packages/app/build/out.js",
+    ".git/HEAD",
+]
+_TELESCOPE_SHOWN = [
+    ".claude/agents/build-error-resolver.md",
+    ".claude/commands/build-fix.md",
+    ".codex/agents/go-build-resolver.toml",
+    "docs/distribution.md",
+    "src/rebuild.sh",
+    "vendored/notes.md",
+    "app/vendor.go",
+    "x.gitignore",
+    "agit/notes.md",
+]
+
+
+def test_telescope_ignore_patterns_match_directories_not_substrings(tmp_path):
+    got = _nvim_probe(
+        tmp_path,
+        f"""
+local captured
+package.loaded["telescope"] = {{
+  setup = function(opts) captured = opts end,
+  load_extension = function() end,
+}}
+require("setup.plugins.utilities.telescope").config()
+local patterns = ((captured or {{}}).defaults or {{}}).file_ignore_patterns or {{}}
+local function ignored(path)
+  for _, pattern in ipairs(patterns) do
+    if path:find(pattern) then return true end
+  end
+  return false
+end
+local result = {{ patterns = patterns, ignored = {{}}, shown = {{}} }}
+for _, path in ipairs({json.dumps(_TELESCOPE_IGNORED).replace("[", "{").replace("]", "}")}) do
+  result.ignored[path] = ignored(path)
+end
+for _, path in ipairs({json.dumps(_TELESCOPE_SHOWN).replace("[", "{").replace("]", "}")}) do
+  result.shown[path] = ignored(path)
+end
+emit(result)
+""",
+    )
+    assert got["patterns"], "telescope.setup no longer receives file_ignore_patterns"
+    not_hidden = [p for p, hit in got["ignored"].items() if not hit]
+    wrongly_hidden = [p for p, hit in got["shown"].items() if hit]
+    assert not_hidden == [], f"should be ignored: {not_hidden}"
+    assert wrongly_hidden == [], f"hidden by a substring match: {wrongly_hidden}"
+
+
 def test_eager_plugin_specs_declare_no_lazy_load_triggers(tmp_path):
     """A `lazy = false` spec must not also declare `cmd` / `event` / `ft`.
 
