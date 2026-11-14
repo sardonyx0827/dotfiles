@@ -56,9 +56,13 @@ function markNewlines(text: string): string {
 // ui.render の Text は 10000 字まで、制御文字はタブと改行だけ。どちらかを破ると
 // ペイン全体が描けなくなる (エンジンが自前の表示に差し替える) ので、ログ由来の
 // 文字列は displayText() を通してから描く。bidi 制御と行区切りは表示の偽装に
-// 使えるので一緒に置き換える。
+// 使えるので一緒に置き換える。書式文字 (Cf: ゼロ幅、BOM、ソフトハイフン、タグ文字)
+// と既定で無視される文字も置き換える: ペインの無い /bash-review-log ではこの文字列が
+// モデルの読む本文になり、不可視の文で指示を埋め込めるため (doc-browser の
+// catalog.ts と同じ文字クラス。bidi 制御は Cf に含まれる)。u フラグでタグ文字などの
+// astral 文字も 1 字として置き換える。
 const UNSAFE =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029]/g;
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 export const COMPACT_MAX = 500;
 export const FULL_MAX = 9000;
 const LABEL_MAX = 200;
