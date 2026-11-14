@@ -1424,17 +1424,28 @@ _render_git_local_config() {
   fi
 
   # os.gitconfig is generated and rewritten on every run, so a symlink there
-  # -- even a broken one -- is ours to replace (backup_if_real's rule). The
+  # -- live or broken -- is ours to replace (backup_if_real's rule). The
   # dangling ~/.zsh_secrets / user.gitconfig redirects are left alone because
   # they hold the user's own keys and identity; nothing of the user's lives
-  # in this file. Writing THROUGH the stale link is the one thing not to do:
-  # with its target's directory gone the redirect below failed, and with it
-  # present the render landed wherever the link happened to point.
-  if [ -L "$os_gitconfig" ] && [ ! -e "$os_gitconfig" ]; then
+  # in this file. Writing THROUGH the link is the one thing not to do, whether
+  # it is stale or not: with its target's directory gone the redirect below
+  # failed, and with the target present the render overwrote whatever the link
+  # pointed at, with no backup. `rm -f` on a symlink removes the link itself
+  # and never follows it, so the target is left exactly as it was.
+  #
+  # The `-e` test only picks the wording: it follows the link, so it is false
+  # exactly when the link is dangling. It must not gate the replacement, which
+  # is what used to let a live link through.
+  if [ -L "$os_gitconfig" ]; then
+    local link_kind="symlink" link_dest
+    [ -e "$os_gitconfig" ] || link_kind="dangling symlink"
+    # `|| true`: the assignment's status is readlink's, and this is a message,
+    # not a decision -- it must not abort the installer under `set -e`.
+    link_dest="$(readlink "$os_gitconfig" || true)"
     if [ "$DRY_RUN" -eq 1 ]; then
-      print_warning "[DRY-RUN] would replace dangling symlink $os_gitconfig with the generated file"
+      print_warning "[DRY-RUN] would replace $link_kind $os_gitconfig (-> $link_dest) with the generated file; the link's target is not written to"
     else
-      print_warning "Replacing dangling symlink $os_gitconfig with the generated file"
+      print_warning "Replacing $link_kind $os_gitconfig (-> $link_dest) with the generated file; the link's target is not written to"
       rm -f "$os_gitconfig"
     fi
   fi

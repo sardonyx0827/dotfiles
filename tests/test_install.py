@@ -4296,6 +4296,74 @@ class TestOsGitconfigWrite:
         ), res.stdout
         assert rendered.is_symlink() and rendered.readlink() == target
 
+    # The case the dangling-only guard missed: a LIVE link. `[ -e ]` follows
+    # the link, so it is true here, the replacement was skipped, and the
+    # redirect wrote THROUGH the link -- overwriting whatever the link points
+    # at, with no backup, wherever that happens to be (another dotfiles
+    # checkout, a shared config, a file the user keeps by hand). The link is
+    # ours to replace; its target is not ours to touch.
+    @pytest.mark.parametrize("target_kind", ["file", "directory"])
+    def test_a_live_link_is_replaced_and_its_target_is_left_alone(
+        self, shell_env, tmp_path, target_kind
+    ):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        target = tmp_path / "elsewhere" / "os.gitconfig"
+        target.parent.mkdir()
+        if target_kind == "file":
+            original = "[user]\n\tname = the-users-own-file\n"
+            target.write_text(original, encoding="utf-8")
+        else:
+            target.mkdir()
+            (target / "keep.txt").write_text("keep\n", encoding="utf-8")
+        rendered = home / ".config/git/os.gitconfig"
+        rendered.symlink_to(target)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert not rendered.is_symlink() and rendered.is_file()
+        assert "helper = " in rendered.read_text(encoding="utf-8")
+        if target_kind == "file":
+            assert target.read_text(encoding="utf-8") == original, (
+                "the render was written through the live link"
+            )
+        else:
+            assert [p.name for p in target.iterdir()] == ["keep.txt"]
+        # Said out loud: a live link is not the stale-link case, and the user
+        # should be told their link was replaced.
+        assert any(
+            "Replacing symlink" in ln and "os.gitconfig" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+
+    def test_dry_run_previews_replacing_a_live_link_and_changes_nothing(
+        self, shell_env, tmp_path
+    ):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        target = tmp_path / "elsewhere" / "os.gitconfig"
+        target.parent.mkdir()
+        target.write_text("mine\n", encoding="utf-8")
+        rendered = home / ".config/git/os.gitconfig"
+        rendered.symlink_to(target)
+
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        # "would render" alone would also match the plain preview line; the
+        # replacement must be announced as its own decision.
+        assert any(
+            "[DRY-RUN]" in ln
+            and "would replace" in ln
+            and "symlink" in ln
+            and "os.gitconfig" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+        assert "dangling" not in res.stdout.lower()
+        assert rendered.is_symlink() and rendered.readlink() == target
+        assert target.read_text(encoding="utf-8") == "mine\n"
+
     # A directory where the file belongs: the redirect fails with EISDIR on
     # every bash, and a directory is not ours to delete. create_symlinks is
     # called bare -- on the left of `&&` errexit is suspended and a non-zero
