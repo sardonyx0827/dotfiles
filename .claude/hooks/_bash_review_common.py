@@ -52,6 +52,7 @@ import http.client
 import json
 import os
 import platform
+import posixpath
 import re
 import shlex
 import stat
@@ -3241,13 +3242,50 @@ _AWK_EXECUTABLES = frozenset({"awk", "gawk", "mawk", "nawk"})
 
 
 def _is_harness_target(token: str) -> bool:
-    """書き込み先トークンがハーネスの設定 (settings / hooks / mods 等) を指しうるか。"""
+    """書き込み先トークンがハーネスの設定 (settings / hooks / mods 等) を指しうるか。
+
+    字面そのままに加えて、字面だけで畳んだ綴り (`//` の圧縮・`/./` の除去・`x/..` の解決:
+    posixpath.normpath) でも調べる。シェルが同じファイルへ解決する `.claude//settings.json`
+    / `.claude/./settings.json` / `.claude/x/../settings.json` は、そのままでは保護パスの
+    パターンに当たらず Gemini 単独の経路へ抜けていた。畳んだ綴りは「置き換え」ではなく
+    「追加」で見る: symlink 越しの `..` や変数・glob を含むと、畳んだ結果は実際の行き先と
+    一致しないので、もとの綴りの判定は残す (どちらかが当たれば保護対象)。
+    """
+    if _is_harness_spelling(token):
+        return True
+    collapsed = posixpath.normpath(token)
+    return collapsed != token and _is_harness_spelling(collapsed)
+
+
+def _is_harness_spelling(token: str) -> bool:
+    """_is_harness_target の 1 つの綴り分の判定 (字面のパターンと展開の可能性)。"""
     if _HARNESS_PATH.search(token) or _HARNESS_DIR.fullmatch(token):
         return True
     home = os.environ.get("HOME", "").rstrip("/")
     if home and re.match(re.escape(home) + r"/\.codex(?![\w.-])", token, re.IGNORECASE):
         return True
     return bool(_DYNAMIC_WORD.search(token)) and _dynamic_harness_hint(token)
+
+
+# 自由文 (解析できなかった行・awk のプログラム) の中の「語」。パスを区切る文字
+# (空白・クォート・リダイレクト・`=` など) で切る。単一の否定文字クラスの繰り返しなので
+# 走査は線形で、長い語でも巻き戻さない。
+_PATH_WORD = re.compile(r"[^\s'\"`<>|;&()=,{}]+")
+
+
+def _mentions_harness_path(text: str) -> bool:
+    """自由文に保護パスが現れるか。`_is_harness_target` と同じく綴りの揺れも畳んで見る。
+
+    トークンに割れない文 (シェルとして解析できない行・awk のプログラム) には正規表現を
+    そのまま掛けるしかないので、`/` を含む語だけを posixpath.normpath で畳んだ文を
+    追加で照合する。
+    """
+    if _HARNESS_PATH.search(text):
+        return True
+    collapsed = _PATH_WORD.sub(
+        lambda m: posixpath.normpath(m.group()) if "/" in m.group() else m.group(), text
+    )
+    return collapsed != text and bool(_HARNESS_PATH.search(collapsed))
 
 
 def _dynamic_harness_hint(token: str) -> bool:
@@ -3486,7 +3524,7 @@ def harness_write_ask_reason(
     for raw in _join_line_continuations(redirect_text).splitlines():
         targets = _redirect_targets(raw)
         if targets is None:
-            if ">" in raw and _HARNESS_PATH.search(_normalize_cmd(raw)):
+            if ">" in raw and _mentions_harness_path(_normalize_cmd(raw)):
                 return _harness_reason("redirect")
         elif any(_is_harness_target(t) for t in targets):
             return _harness_reason("redirect")
@@ -3500,7 +3538,7 @@ def harness_write_ask_reason(
             args = rest[1:]
             if _writes_harness(exe, args):
                 return _harness_reason("file command")
-            if exe in _AWK_EXECUTABLES and _HARNESS_PATH.search(_awk_program(args)):
+            if exe in _AWK_EXECUTABLES and _mentions_harness_path(_awk_program(args)):
                 return _harness_reason("awk program")
         if _depth >= 2:
             continue

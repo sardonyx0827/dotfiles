@@ -862,6 +862,61 @@ HARNESS_SHELL_CODE_CASES = [
 # replaying the real log showed these were almost always hook-source analysis. They
 # are NOT asked here; they stay on the two-model AND gate, which they reach as
 # inline code / stdin interpreters.
+# Spellings of a protected path that the shell resolves to the same file but that the
+# raw pattern does not contain: a doubled slash, a `/./` component, a `x/..` detour.
+# The raw token is still checked first; the lexically normalised form is checked in
+# addition (never instead: normalising can change the meaning once a symlink, variable
+# or glob is involved).
+HARNESS_NONCANONICAL_SPELLING_CASES = [
+    "echo x > .claude//settings.json",
+    "echo x > .claude///settings.local.json",
+    "tee .claude/./settings.json",
+    "cp f .claude//hooks/",
+    "echo x > .codex//hooks/x",
+    "echo x > .gemini//GEMINI.md",
+    "echo x > .claude/x/../settings.json",
+    "echo x > ./.claude/./CLAUDE.md",
+    "echo x > .claude//CLAUDE.md",
+    "echo x > .claude//rules/x.md",
+    "echo x > .claude//mods/x",
+    "echo x > .codex//AGENTS.md",
+    "echo x > ~//.codex/config.toml",
+    "echo x > $HOME//.codex/auth.json",
+    "echo x > ${HOME}/./.codex/auth.json",
+    "sed -i s/a/b/ .claude//settings.json",
+    "rm .claude/x/../hooks/y",
+    # the bare directory as a destination, spelled with extra separators
+    "cp f .claude/./",
+    "cp f ~/.claude//",
+    "rm -rf .claude/x/..",
+    "cp f .Claude//Hooks/",  # case-insensitive filesystems
+    # an expansion that only lands on a protected path once the spelling is collapsed
+    "echo x > .claude/./sett*",
+    # the same inside shell code, and in the whole-line fallbacks
+    "bash -c 'echo x > .claude//settings.json'",
+    "echo 'x > .claude//settings.json",  # unparsable: conservative fallback
+    'awk \'BEGIN{print "x" > ".claude//settings.json"}\'',
+]
+
+# The same collapse must not turn a mention, a read or a look-alike into a write.
+HARNESS_NONCANONICAL_NOT_A_WRITE_CASES = [
+    "sed -n 1,5p .claude//hooks/x.py",
+    "cat .claude//settings.json | jq .",
+    "cp -t /tmp .claude//settings.json",
+    "echo x > .claude//agents/x.md",
+    "echo x > .claude/./agents/x.md",
+    "echo x > .claude/hooks-old//x",
+    "echo x > .claude/agents/../agents/x.md",
+    "echo x > src//hooks/x.ts",
+    "echo x > .codex//config.toml",
+    "echo x > .claude//settings.json.bak",
+    "echo x > .gemini//GEMINI.md.bak",
+    "echo x > docs//rules/x.md",
+    "cp f .claude//agents/",
+    "echo x > ./x/../y/z",
+    'awk \'BEGIN{print "x" > ".claude//agents/y"}\'',
+]
+
 HARNESS_FOREIGN_CODE_CASES = [
     "python3 -c \"open('.claude/settings.json','w')\"",
     "node -e \"fs.rmSync('.codex/hooks')\"",
@@ -967,6 +1022,37 @@ class TestHarnessConfigWriteAsks:
     )
     def test_write_forms_are_asked(self, command):
         assert _harness_reason(command) != "", command
+
+    @pytest.mark.parametrize("command", HARNESS_NONCANONICAL_SPELLING_CASES)
+    def test_non_canonical_spellings_of_a_protected_path_are_asked(self, command):
+        assert _harness_reason(command) != "", command
+
+    @pytest.mark.parametrize("command", HARNESS_NONCANONICAL_NOT_A_WRITE_CASES)
+    def test_collapsing_a_spelling_does_not_ask_for_reads_or_lookalikes(self, command):
+        assert _harness_reason(command) == "", command
+
+    def test_absolute_home_codex_path_with_a_doubled_slash_is_recognised(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("HOME", "/Users/someone")
+        assert _harness_reason("echo x > /Users/someone//.codex/config.toml") != ""
+        assert _harness_reason("echo x > /Users/someone/./.codex/config.toml") != ""
+
+    def test_the_original_spelling_still_decides_where_normalising_would_lose_it(self):
+        # `..` after a symlinked directory is not the lexical parent, so the raw token
+        # is matched as well: `.claude/hooks/../agents/x` collapses to an unprotected
+        # path but names `.claude/hooks` literally, and stays asked.
+        assert _harness_reason("echo x > .claude/hooks/../agents/x.md") != ""
+
+    def test_claude_entry_asks_for_a_doubled_slash_spelling(self, run_hook):
+        res = run_hook(HOOK, hook_payload("echo x > .claude//settings.json"))
+        assert res.decision == "ask"
+        assert "writes to the agent harness configuration" in res.reason
+
+    def test_codex_entry_blocks_a_doubled_slash_spelling(self, run_hook):
+        res = run_hook(CODEX_HOOK, hook_payload("tee .codex//hooks/x"))
+        assert res.exit_code == 2
+        assert "writes to the agent harness configuration" in res.stderr
 
     @pytest.mark.parametrize("command", HARNESS_FOREIGN_CODE_CASES)
     def test_foreign_code_is_left_to_the_dual_review_gate(self, command):

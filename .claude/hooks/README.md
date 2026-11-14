@@ -382,6 +382,13 @@ latency low for the common case:
    (`sh -c`, `eval`, `bash <<EOF`, `source <<EOF`); and a protected path in an
    awk program. A target that expands (glob, brace, `$VAR`) counts when the
    expansion could land on a protected path (`.claude/sett*`, `$D/settings.json`).
+   A target is matched as written **and** in a lexically collapsed spelling (`//`
+   squeezed, `/./` dropped, `x/..` resolved), so `.claude//settings.json`,
+   `.claude/./settings.json` and `.claude/x/../settings.json` ask like the plain
+   one. The written form is always checked too: collapsing can change the
+   meaning once a symlink, variable or glob is involved. The two places that
+   match free text rather than a token (a redirect line the shell parser gave up
+   on, an awk program) collapse each word that contains a `/` the same way.
    Heredoc bodies, multi-line quoted strings and comments are not read, as for
    denial. Code in another language (`python -c`, `node -e`, `python3 - <<EOF`)
    is deliberately left to the high-risk gate: whether it reads or writes cannot
