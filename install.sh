@@ -367,11 +367,21 @@ install_apt_packages() {
     ln -sf "$(command -v "$source_cmd")" "$alias_path"
   }
 
-  mkdir -p "$HOME/.local/bin"
+  # ensure_dir, not a bare `mkdir -p`: a dangling symlink at ~/.local (or
+  # ~/.local/bin) makes mkdir fail, and under `set -e` that ends the whole run
+  # with no [ERROR] line and no failure summary -- before Node.js, the shell
+  # setup or anything else after the package step. The parent is cleared first
+  # for the same reason as ~/.config / ~/.config/git in _render_git_local_config.
+  ensure_dir "$HOME/.local"
+  ensure_dir "$HOME/.local/bin"
   link_debian_alias batcat bat
   link_debian_alias fdfind fd
 
   print_success "APT packages installed"
+
+  # Last, so the caveat is the final word of this step rather than scrolling
+  # away above the success line. Warning only -- see check_neovim_version.
+  check_neovim_version
 }
 
 # Install Homebrew packages (macOS)
@@ -1005,7 +1015,12 @@ install_nodejs() {
   # set` exits 127 and `set -e` aborts the whole run, skipping every step
   # after this one (e.g. gh, pyenv, docker, linters, oh-my-zsh).
   if command_exists npm; then
-    mkdir -p "$HOME/.npm-global"
+    # ensure_dir, not a bare `mkdir -p`: a dangling symlink at ~/.npm-global
+    # (an unmounted volume, a moved directory) fails mkdir, and under `set -e`
+    # that ends the whole run with no [ERROR] line and no failure summary. A
+    # symlink that resolves to a real directory is the user's redirect and is
+    # kept.
+    ensure_dir "$HOME/.npm-global"
     npm config set prefix "$HOME/.npm-global"
     # Ensure the npm-global bin is visible to the rest of this script so subsequent
     # `command_exists` checks and direct invocations of globally installed tools

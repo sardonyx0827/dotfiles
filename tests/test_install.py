@@ -4239,6 +4239,61 @@ class TestDanglingParentSymlinks:
         assert res.returncode == 0, res.stderr
         assert (home / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme").is_symlink()
 
+    # The two package-install sites. They are not behind create_symlinks, so
+    # nothing else has cleared the way: a bare `mkdir -p` on a dangling link
+    # kills the run under `set -e` (and the AFTER_ marker never prints) with
+    # no [ERROR] line and no failure summary.
+    def test_a_dangling_npm_global_symlink_is_replaced(self, shell_env):
+        home = shell_env.home
+        shell_env.stub("node")
+        shell_env.stub("npm")
+        (home / ".npm-global").symlink_to("/nonexistent/gone")
+
+        res = run_sourced('OS=macos install_nodejs; echo "AFTER_NODEJS"', shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "AFTER_NODEJS" in res.stdout
+        assert (home / ".npm-global").is_dir()
+        assert not (home / ".npm-global").is_symlink()
+        assert f"npm config set prefix {home}/.npm-global" in shell_env.calls
+
+    def test_a_live_npm_global_symlink_is_the_users_redirect_and_is_kept(
+        self, shell_env, tmp_path
+    ):
+        # ensure_dir's own rule: only a DANGLING link is replaced.
+        home = shell_env.home
+        shell_env.stub("node")
+        shell_env.stub("npm")
+        real = tmp_path / "bigger-disk" / "npm-global"
+        real.mkdir(parents=True)
+        (home / ".npm-global").symlink_to(real)
+
+        res = run_sourced('OS=macos install_nodejs; echo "AFTER_NODEJS"', shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert (home / ".npm-global").is_symlink()
+        assert (home / ".npm-global").readlink() == real
+
+    # `.local` is the parent: `mkdir -p ~/.local/bin` fails just the same when
+    # the PARENT is the stale link, exactly as `.config` / `.config/git` above.
+    @pytest.mark.parametrize("rel", [".local", ".local/bin"])
+    def test_a_dangling_symlink_where_the_apt_alias_dir_belongs_is_replaced(
+        self, shell_env, rel
+    ):
+        home = shell_env.home
+        shell_env.stub("batcat")
+        shell_env.stub("fdfind")
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).symlink_to("/nonexistent/gone")
+
+        res = run_sourced('install_apt_packages; echo "AFTER_APT"', shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "AFTER_APT" in res.stdout
+        assert (home / rel).is_dir() and not (home / rel).is_symlink()
+        for name in ("bat", "fd"):
+            assert (home / ".local/bin" / name).is_symlink(), f"no {name} alias"
+
 
 class TestOsGitconfigWrite:
     """os.gitconfig's write must be checked, never assumed.
