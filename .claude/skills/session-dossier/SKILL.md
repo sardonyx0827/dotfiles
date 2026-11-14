@@ -81,7 +81,10 @@ artifact` implies `--mode share` and requires `--session`:
      system-reminder blocks and private-key blocks (whole, also an END line
      whose BEGIN is elsewhere); secrets (the bash-review hook's
      `_SECRET_SCANNERS` plus share-only rules for key=value secrets,
-     Authorization and Cookie headers, name/value pairs, escaped forms);
+     Authorization and Cookie headers, name/value pairs, escaped forms, URL
+     passwords up to the last `@` (also when the password holds a `/`; a URL
+     like `host:443/@scope` is over-redacted), and passwords given as flags
+     of `curl -u`, `mysql -p`, `sshpass -p`, `redis-cli -a` and `docker login`);
      e-mail addresses; this and any other home directory, the home-derived
      project slug and the bare user name; Claude's temp directory; git author,
      committer, co-author and configured user names. JSON is scrubbed leaf by
