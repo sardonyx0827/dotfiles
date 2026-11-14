@@ -171,7 +171,10 @@ feeds both, and lets lint's exit code be the hook's.
   `debugger` in JS/TS, `breakpoint()` / `pdb.set_trace()` in Python)
   and blocks once with the findings so Claude removes them. Before the
   first commit (no `HEAD` yet) it scans the staged files instead of the
-  diff against `HEAD`.
+  diff against `HEAD`. The selection itself comes from
+  `hook_git_changed_files` in `_hook_common.sh`; if that library cannot be
+  loaded the audit stands down (exit 0, message on stderr), like the
+  missing-`jq` case.
   The report is bounded — 5 matches per file, 200 bytes per matched line
   (cut on a character boundary), 20 files and a count of the rest — because a
   single minified line used to stall the hook for minutes under macOS's
@@ -216,7 +219,11 @@ differences.
 - **`_hook_common.sh`**: `hook_log` (timestamped, size-capped),
   `hook_notify` (terminal-notifier / osascript / notify-send), and
   `hook_find_nearest_bin` (nearest `node_modules/.bin` lookup used by lint and
-  format).
+  format), and `hook_git_changed_files <repo_root>` (the git-derived list of
+  changed files: the diff against `HEAD` -- or against the index before the
+  first commit -- then untracked files; repo-relative, NUL-separated; shared by
+  both `stop-audit.sh` copies and the Codex `auto-format.sh` / `lint.sh` git
+  fallback).
 - **`_lint_common.sh`**: `hook_lint_file` — the per-language lint matrix.
 - **`_format_common.sh`**: `hook_format_file` — the per-language formatter matrix.
 - **`_push_review_common.sh`**: git-push-review's push detection and its

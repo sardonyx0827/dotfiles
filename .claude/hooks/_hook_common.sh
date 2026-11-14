@@ -1,11 +1,11 @@
 #!/bin/bash
 # _hook_common.sh
-# lint.sh / auto-format.sh が共有するログ出力・デスクトップ通知・ローカル
-# node_modules/.bin 解決。
+# lint.sh / auto-format.sh / stop-audit.sh が共有するログ出力・デスクトップ通知・
+# ローカル node_modules/.bin 解決・git 作業ツリーの変更ファイル選択。
 #
 # このファイルが唯一の実体。.codex/hooks/ 側には複製もリンクも無く、あちらの
-# lint.sh / auto-format.sh が cd -P で ../../.claude/hooks を解決して直接読む。
-# 編集はここだけ。
+# lint.sh / auto-format.sh / stop-audit.sh が cd -P で ../../.claude/hooks を
+# 解決して直接読む。編集はここだけ。
 # 実体を 1 つにしてドリフトを構造的に防ぐ経緯は _bash_review_common.py のヘッダを参照。
 #
 # ■ source 側との契約
@@ -134,4 +134,52 @@ hook_find_nearest_bin() {
     dir=$(dirname "$dir")
   done
   return 1
+}
+
+# hook_git_changed_files <repo_root>
+#
+# 「このターンで変わったファイル」= 作業ツリーの変更 + 未追跡ファイルを、
+# <repo_root> 相対のパスとして NUL 区切りで標準出力に書く。常に 0 を返す
+# (git リポジトリでない・git が失敗した場合は何も書かない)。
+#
+# Stop の payload にはファイルパスが無いので、Stop フック (stop-audit.sh、
+# Codex の auto-format.sh、lint.sh の git 差分フォールバック) は対象を git から
+# 決める。その選び方を 1 箇所にまとめるための関数。以前は各フックが
+# `git diff --name-only -z HEAD` を個別に持ち、unborn branch への対応が
+# stop-audit.sh にだけ入って、Codex の 2 つには入らないまま残っていた。
+#
+# 最初のコミット前 (`git init` 直後の unborn branch) は HEAD が解決できず、
+# `diff --name-only -z HEAD` が "ambiguous argument 'HEAD'" で失敗する。しかも
+# 最初のコミット用にステージした内容は `ls-files --others` (未追跡用) の対象外
+# なので、どちらのコマンドにも現れずに黙って対象から漏れる (見逃すゲートは、
+# うるさいゲートより質が悪い)。`diff --cached` は HEAD が無くても index を
+# 空ツリーとの差分として扱えるので、unborn のときだけこちらに切り替える。born
+# 側は --cached だとステージ済みしか見えないため、ステージ済み・未ステージの
+# 両方を拾える HEAD 相手の diff のままにする。
+#
+# 順序は「HEAD との差分 → 未追跡」。両者は排他なので重複しない。stop-audit.sh の
+# 報告 (max_files で切る) がこの順に依存している。
+#
+# -z が必須: 既定の core.quotePath が有効だと、引用符や非 ASCII を含むパスを
+# `"evil\".ts"` のようにクォートして返し、そのままでは開けず黙って漏れる。出力も
+# NUL 区切りなので、改行を含むファイル名でも壊れない。呼び出し側は
+# `done < <(hook_git_changed_files "$root")` のようにプロセス置換か直接のパイプで
+# 読むこと。コマンド置換 `$(...)` で受けると bash が NUL を捨てて壊れる。
+#
+# 出力は <repo_root> 相対のまま。絶対パスにするか、-f で実体を確かめるかは
+# 呼び出し側の関心事 (削除されたファイルも diff には出る)。
+#
+# 変数は全て local。source 時に副作用を持たない契約 (ヘッダ参照) に加えて、
+# 呼び出し元の変数を汚さない。
+hook_git_changed_files() {
+  local repo_root="$1"
+  [ -n "$repo_root" ] || return 0
+
+  if git -C "$repo_root" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    git -C "$repo_root" diff --name-only -z HEAD 2>/dev/null
+  else
+    git -C "$repo_root" diff --name-only -z --cached 2>/dev/null
+  fi
+  git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
+  return 0
 }

@@ -90,7 +90,12 @@ Matcher: `Write|Edit|MultiEdit`
    報告は量を限る(1 ファイル 5 件、一致行は 200 バイトまで、20 ファイルと残りの件数)。
    巨大な 1 行でフックが分単位で止まるのを防ぐため。
    最初のコミット前(`HEAD` がまだ無い)は、`HEAD` との差分の代わりに
-   ステージ済みのファイルを監査する。
+   ステージ済みのファイルを監査する。この「変更ファイルの選び方」は
+   `_hook_common.sh` の `hook_git_changed_files` に一本化してあり、
+   `auto-format.sh` と `lint.sh` の git 差分フォールバックも同じ関数を使う
+   (以前は Codex の 2 つだけ `HEAD` 前提で、最初のコミット前のステージ済み
+   ファイルを黙って飛ばしていた)。そのヘルパーを読めなければ監査を諦めて
+   exit 0 で抜ける(jq 不在と同じ fail-open)。
    `EDITOR_AI_ONESHOT` が立っていれば監査そのものを飛ばす — vim / nvim の AI
    機能が `codex exec` / `claude -p` を叩くときに付ける目印。あれは生成専用の
    一発呼び出しで、監査対象はエージェントが書いたコードではなくユーザ自身の
@@ -220,18 +225,18 @@ JSON・sed の 3 層をエスケープして生成するので、そうした環
 構造的に起こらなくしてある。**その 1 つは `.claude/hooks/` 側にあり、この
 `.codex/hooks/` には存在しない** (下記参照):
 
-| ファイル                 | 中身                                                 | 読み込む側                             |
-| ------------------------ | ---------------------------------------------------- | -------------------------------------- |
-| `_bash_review_common.py` | 判定ロジック・レビュー呼び出し                       | `bash-review.py` が import             |
-| `_hook_common.sh`        | `hook_log` / `hook_notify` / `hook_find_nearest_bin` | `lint.sh` / `auto-format.sh` が source |
-| `_lint_common.sh`        | 言語別 静的解析マトリクス                            | `lint.sh` が source                    |
-| `_format_common.sh`      | 言語別 フォーマッタマトリクス                        | `auto-format.sh` が source             |
-| `_push_review_common.sh` | git push の検知と確認文の組み立て                    | `git-push-review.sh` が source         |
+| ファイル                 | 中身                                                                            | 読み込む側                                               |
+| ------------------------ | ------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `_bash_review_common.py` | 判定ロジック・レビュー呼び出し                                                  | `bash-review.py` が import                               |
+| `_hook_common.sh`        | `hook_log` / `hook_notify` / `hook_find_nearest_bin` / `hook_git_changed_files` | `lint.sh` / `auto-format.sh` / `stop-audit.sh` が source |
+| `_lint_common.sh`        | 言語別 静的解析マトリクス                                                       | `lint.sh` が source                                      |
+| `_format_common.sh`      | 言語別 フォーマッタマトリクス                                                   | `auto-format.sh` が source                               |
+| `_push_review_common.sh` | git push の検知と確認文の組み立て                                               | `git-push-review.sh` が source                           |
 
 **この `.codex/hooks/` には複製も symlink も置かない**。代わりに読み込む側が
 自分の物理パスから `../../.claude/hooks` を解決して直接読む (`bash-review.py` は
-`os.path.realpath(__file__)`、`lint.sh` / `auto-format.sh` / `git-push-review.sh` は
-`cd -P`)。
+`os.path.realpath(__file__)`、`lint.sh` / `auto-format.sh` / `stop-audit.sh` /
+`git-push-review.sh` は `cd -P`)。
 つまり上の表のファイル名でこのディレクトリを探しても見つからない。
 
 以前はここに相対 symlink を置いていた。実体が 1 つという性質は同じだが、

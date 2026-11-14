@@ -300,7 +300,15 @@ hook_lint_file() {
       # I (import 整列) は auto-format の `ruff check --select I --fix` が直す。
       # 整形前 (before-format) にだけ外す。--ignore は設定側の ignore を消さない。
       [ "$hook_phase" = "before-format" ] && ruff_args=(--ignore I)
-      if ! OUTPUT=$(ruff check "${ruff_args[@]}" "$FILE_PATH" 2>&1); then
+      # --force-exclude が必須: ruff は明示的に渡したパスには `exclude` /
+      # `extend-exclude` を適用しない (フラグ無しだと `ruff check gen/a.py` は
+      # exclude = ["gen"] を無視して解析する)。このフックは常に 1 ファイルを
+      # 明示的に渡すので、フラグが無いとプロジェクトが除外したファイルまで
+      # exit 2 で返し、`ruff check .` が通るプロジェクトで編集がブロックされる。
+      # 除外されたファイルは ruff が何も解析せず終了コード 0 で返すので、ここでは
+      # 「やることが無かった = 通過」として下の passed 分岐に落ちる (エラー扱いに
+      # しない)。実 ruff での確認は tests の TestRuffForceExcludeRealRuff。
+      if ! OUTPUT=$(ruff check "${ruff_args[@]}" --force-exclude "$FILE_PATH" 2>&1); then
         LINT_ERRORS="${LINT_ERRORS}[ruff]\n${OUTPUT}\n"
       else
         echo "  ruff passed"

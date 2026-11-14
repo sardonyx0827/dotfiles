@@ -9,6 +9,21 @@
 
 input=$(cat)
 
+# 共有ヘルパー (hook_git_changed_files)。lint.sh / auto-format.sh と同じ読み込み方
+# (実体と単一コピー方針は _hook_common.sh のヘッダを参照)。変更ファイルの選び方を
+# 各フックが個別に持っていた頃は、unborn branch への対応が stop-audit.sh にだけ入り
+# Codex の auto-format.sh / lint.sh に入らないままだった。
+# 読めなければ、下の jq 不在と同じく fail-open: 監査を諦めて抜ける。ここで
+# 「command not found」のまま進むと、対象一覧が空になって何も検出せず exit 0 に
+# なるが、それは「問題なし」と区別が付かない。理由を stderr に残して抜ける。
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_hook_common.sh
+. "$HOOK_DIR/_hook_common.sh"
+if ! declare -F hook_git_changed_files >/dev/null 2>&1; then
+  echo "stop-audit: could not load _hook_common.sh from ${HOOK_DIR:-<unresolved>}; debug-statement audit skipped" >&2
+  exit 0
+fi
+
 # jq が無いと stop_hook_active を読めない。読めないまま監査を続けると、block
 # からの継続でもフラグが空 = false 扱いで再び block し、Stop が終わらなくなる。
 # lint.sh / auto-format.sh と同じく jq 不在は監査しない。
@@ -44,26 +59,11 @@ git rev-parse --is-inside-work-tree &>/dev/null || exit 0
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$repo_root" ] && exit 0
 
-# HEAD が無い(= `git init` 直後、最初のコミット前の unborn branch)場合、
-# `diff --name-only -z HEAD` は "fatal: ambiguous argument 'HEAD'" で失敗し
-# `2>/dev/null` に握りつぶされる。かつ最初のコミット用にステージした内容は
-# `ls-files --others` (未追跡ファイル用) の対象外なので、下の2コマンドの
-# どちらにも一切現れず監査から漏れる。`diff --cached` は HEAD が無くても
-# index を空ツリーとの差分として扱える(=最初のコミットとしてステージした
-# 内容がそのまま出る)ので、unborn 時だけこちらに切り替える。born 側は
-# --cached だとステージ済みしか見ないので、ステージ済み・未ステージ両方を
-# 拾える HEAD 相手の diff のままにする。
-if git -C "$repo_root" rev-parse -q --verify HEAD >/dev/null 2>&1; then
-  diff_cmd=(git -C "$repo_root" diff --name-only -z HEAD)
-else
-  diff_cmd=(git -C "$repo_root" diff --name-only -z --cached)
-fi
-
-# 作業ツリーの変更ファイル + 未追跡ファイル(両者は排他なので重複しない)。
-#
-# -z が必須: 既定の core.quotePath が有効だと、引用符や非 ASCII を含むパスを
-# `"evil\".ts"` のようにクォートして返す。そのままでは開けず、監査から黙って
-# 漏れてしまう(見逃すゲートは、うるさいゲートより質が悪い)。
+# 作業ツリーの変更ファイル + 未追跡ファイル(両者は排他なので重複しない)は
+# hook_git_changed_files (_hook_common.sh) が選ぶ。最初のコミット前 (HEAD が無い
+# unborn branch) でもステージ済みの内容を拾う理由、-z で NUL 区切りにする理由
+# (core.quotePath でクォートされたパスは開けず黙って漏れる。見逃すゲートは、
+# うるさいゲートより質が悪い) はそちらを参照。
 #
 # NUL 区切りの一覧はコマンド置換では受け取れない(bash が NUL を捨てる)ため、
 # プロセス置換でループへ直接流し込む。パイプにすると findings がサブシェルに
@@ -119,10 +119,7 @@ while IFS= read -r -d '' f; do
     found=$((found + 1))
     [ "$found" -le "$max_files" ] && findings="${findings}${f}:${nl}${hits}${nl}"
   fi
-done < <(
-  "${diff_cmd[@]}" 2>/dev/null
-  git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
-)
+done < <(hook_git_changed_files "$repo_root")
 
 [ "$found" -eq 0 ] && exit 0
 

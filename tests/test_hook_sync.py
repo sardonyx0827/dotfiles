@@ -41,7 +41,11 @@ CODEX_HOOKS = REPO_ROOT / ".codex/hooks"
 # (shared file, loader that consumes it, functions it must define)
 SHARED_FILES = [
     ("_bash_review_common.py", "python", []),
-    ("_hook_common.sh", "bash", ["hook_log", "hook_notify"]),
+    (
+        "_hook_common.sh",
+        "bash",
+        ["hook_log", "hook_notify", "hook_find_nearest_bin", "hook_git_changed_files"],
+    ),
     ("_lint_common.sh", "bash", ["hook_lint_file"]),
     ("_format_common.sh", "bash", ["hook_format_file"]),
     # git-push-review.sh's logic, shared by the Claude and Codex adapters. Unlike the
@@ -82,6 +86,7 @@ PUSH_REVIEW_ADAPTERS = [
 SHELL_ENTRY_POINTS = [
     ("lint.sh", "could not load"),
     ("auto-format.sh", "could not load"),
+    ("stop-audit.sh", "could not load"),
 ]
 
 
@@ -146,7 +151,11 @@ def test_shell_entry_point_loads_helpers_through_symlinked_dir(
     installed = tmp_path / "installed-codex-hooks"
     installed.symlink_to(CODEX_HOOKS)
 
-    res = shell_env.run(installed / name, stdin="{}")
+    # cwd is a plain directory, not the repo: Codex's auto-format.sh and
+    # stop-audit.sh pick their targets from the git tree around the cwd, and
+    # this test only cares whether the helpers loaded, so it must not format or
+    # scan the checkout it happens to run from.
+    res = shell_env.run(installed / name, stdin="{}", cwd=tmp_path)
 
     assert marker not in res.stderr, (
         f"{name}: shared helpers did not resolve through a symlinked hooks dir: "

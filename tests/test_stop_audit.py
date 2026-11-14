@@ -1,6 +1,7 @@
 """Tests for stop-audit.sh (debug-statement audit on Stop)."""
 
 import json
+import shutil
 import time
 
 import pytest
@@ -458,3 +459,67 @@ def test_a_literal_backslash_n_in_a_hit_stays_as_written(
     res = shell_env.run(hook, stdin="{}", cwd=git_repo)
     text = _block_text(res, variant)
     assert 'console.log("one\\ntwo")' in text
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_tracked_changes_are_reported_before_untracked_files(
+    shell_env, git_repo, variant, hook
+):
+    """The report is cut at max_files, so which half comes first decides what is lost.
+
+    hook_git_changed_files (_hook_common.sh) owns the selection now; this pins
+    that the order stop-audit always relied on -- changes against HEAD, then
+    untracked -- survived the move into the shared helper.
+    """
+    from conftest import run_git
+
+    (git_repo / "zz.ts").write_text("const ok = 1\n", encoding="utf-8")
+    run_git(git_repo, "add", "zz.ts")
+    run_git(git_repo, "commit", "-q", "-m", "add zz.ts")
+    (git_repo / "zz.ts").write_text("console.log(1)\n", encoding="utf-8")
+    (git_repo / "aa.ts").write_text("console.log(2)\n", encoding="utf-8")
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    text = _block_text(res, variant)
+    assert text.index("zz.ts") < text.index("aa.ts"), text
+
+
+# --- Loading the shared selection helper -------------------------------------
+# stop-audit.sh no longer carries its own copy of the "changed files" selection;
+# it sources hook_git_changed_files from _hook_common.sh, like lint.sh and
+# auto-format.sh. Two things follow and are pinned here:
+#  - production reaches the hooks through a symlinked dir (install.sh links
+#    ~/.claude/hooks and ~/.codex/hooks into the repo), and the audit must still
+#    find the helper and block;
+#  - the audit fails OPEN, like its jq guard: a helper that cannot be loaded must
+#    stand the audit down with a message, never block every Stop with an error.
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_audit_still_blocks_through_a_symlinked_hooks_dir(
+    shell_env, git_repo, tmp_path, variant, hook
+):
+    installed = tmp_path / "installed-hooks"
+    installed.symlink_to(hook.parent)
+    (git_repo / "app.ts").write_text('console.log("x")\n', encoding="utf-8")
+
+    res = shell_env.run(installed / hook.name, stdin="{}", cwd=git_repo)
+
+    assert "could not load" not in res.stderr, res.stderr
+    assert "app.ts" in _block_text(res, variant)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_unloadable_helper_stands_the_audit_down_instead_of_failing(
+    shell_env, git_repo, tmp_path, variant, hook
+):
+    # A copy of the hook alone: the helper is not next to it (claude) and the
+    # ../../.claude/hooks it would be found through does not exist (codex).
+    lonely_dir = tmp_path / "lonely" / ".codex" / "hooks"
+    lonely_dir.mkdir(parents=True)
+    lonely = lonely_dir / hook.name
+    shutil.copy(hook, lonely)
+    (git_repo / "app.ts").write_text('console.log("x")\n', encoding="utf-8")
+
+    res = shell_env.run(lonely, stdin="{}", cwd=git_repo)
+
+    assert res.returncode == 0, (res.returncode, res.stderr)
+    assert res.stdout == ""
+    assert "could not load" in res.stderr, res.stderr

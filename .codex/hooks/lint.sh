@@ -49,7 +49,8 @@ SHARED_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../.claude/hooks" 2>/dev/
 # source が失敗してここに落ちる)。ここで止めないと、後段の hook_lint_file
 # 呼び出しが軒並み「command not found」で失敗扱いになり、指摘が 1 件も無い
 # のに全ファイルが "Lint Failed" として exit 2 を返してしまう。
-if ! declare -F hook_log >/dev/null 2>&1; then
+if ! declare -F hook_log >/dev/null 2>&1 ||
+  ! declare -F hook_git_changed_files >/dev/null 2>&1; then
   echo "lint.sh: could not load _hook_common.sh from ${SHARED_DIR:-<unresolved>}" >&2
   exit 0
 fi
@@ -146,13 +147,11 @@ collect_targets() {
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
   [ -z "$repo_root" ] && return 0
 
-  # 変更ファイル + 未追跡ファイル。両者は排他なので重複しない。
-  # -z が必須な理由 (core.quotePath でクォートされたパスは開けず黙って漏れる)
-  # は .claude/hooks/stop-audit.sh を参照。
-  {
-    git -C "$repo_root" diff --name-only -z HEAD 2>/dev/null
-    git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
-  } | while IFS= read -r -d '' f; do
+  # 変更ファイル + 未追跡ファイル。選び方は hook_git_changed_files
+  # (_hook_common.sh) に一本化してある。最初のコミット前 (unborn branch) でも
+  # ステージ済みのファイルを拾い、-z / NUL 区切りでクォートされるパスや改行を
+  # 含むパスでも壊れない。理由はそちらを参照。ルート相対で返るので絶対パス化する。
+  hook_git_changed_files "$repo_root" | while IFS= read -r -d '' f; do
     [ -n "$f" ] && printf '%s/%s\0' "$repo_root" "$f"
   done
 }
