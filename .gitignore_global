@@ -7,14 +7,19 @@
 .svn
 
 ## vim ignore
-# Swap
-[._]*.s[a-v][a-z]
-# keep vector files: the swap pattern above also matches [._]*.svg
+# Swap. This file is core.excludesFile, so it applies to EVERY repository: a
+# pattern that is too eager hides real source files elsewhere, and `git add`
+# skips them silently. Vim names a swap file `.<name>.swp` (then .swo, .swn,
+# ...), so these anchor on a leading `.`. The upstream GitHub template says
+# `[._]`, but `_` is the DOS-only swap prefix; it also made `db/_schema.sql`
+# invisible to git.
+.*.s[a-v][a-z]
+# keep vector files: the swap pattern above also matches .*.svg
 !*.svg
-[._]*.sw[a-p]
-[._]s[a-rt-v][a-z]
-[._]ss[a-gi-z]
-[._]sw[a-p]
+.*.sw[a-p]
+.s[a-rt-v][a-z]
+.ss[a-gi-z]
+.sw[a-p]
 
 # Session
 Session.vim
@@ -23,8 +28,14 @@ Sessionx.vim
 # Temporary
 .netrwhist
 *~
-# Auto-generated tag files
+# Auto-generated tag files. The ctags output is a FILE (universal-ctags is
+# installed for vim-gutentags / tagbar), so it stays ignored; a DIRECTORY named
+# `tags` is ordinary source layout (app/tags/x.py) and is re-included. The last
+# matching pattern wins, so `!tags/` must stay below `tags`; and since git cannot
+# re-include a file inside an excluded directory, it is the directory that has
+# to be un-ignored.
 tags
+!tags/
 # Persistent undo
 [._]*.un~
 
