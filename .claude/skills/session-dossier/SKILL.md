@@ -72,11 +72,15 @@ artifact` implies `--mode share` and requires `--session`:
    What share mode does:
    - **Left out** (an allow-list; counted, never rendered): thinking, every
      user-side message that is not the person's own prompt (injected text,
-     summaries, agent-to-agent messages, command output, subagent task
-     prompts), attachments, API request records, session metadata and system
-     records, images, raw unknown records.
+     summaries, agent-to-agent messages, command output, and the subagent's
+     own copy of its task), attachments, API request records, session metadata
+     and system records, images, raw unknown records.
+   - **Shown, scrubbed**: tool calls with their inputs and results (command
+     output, file contents read, subagent reports), so the task a subagent
+     was given stays visible once, as the `prompt` of the Agent call that
+     started it (scrubbed like every other string).
    - **git**: only the diff of files the session edited; no other working-tree
-     changes and no untracked file names.
+     changes, and untracked file names only for files the session edited.
    - **Scrubbed** in every remaining string, before it is escaped:
      system-reminder blocks and private-key blocks (whole, also an END line
      whose BEGIN is elsewhere); secrets (the bash-review hook's
