@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import subprocess
 import time
 
 import pytest
@@ -433,6 +434,43 @@ def test_a_multibyte_line_is_cut_without_losing_the_finding(
     assert "ja.ts" in text
     assert "console.log" in text
     assert len(text) < 1_000, len(text)
+
+
+# A line holding bytes that are not valid UTF-8 (Shift_JIS text, a binary blob in a
+# string) before the debug statement. macOS's BSD grep, running in the user's UTF-8
+# locale, silently skipped such a line, so the audit passed. The scan runs under
+# LC_ALL=C, like cut_hit already does for cut/sed. Run with raw bytes: the quoted hit
+# keeps the invalid bytes, which text-mode decoding would choke on.
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    ("filename", "line"),
+    [
+        # Split like the other fixtures, so this file does not trip the audit itself.
+        ("sjis.py", b'print("\x83e\x83X\x83g"); break' + b"point()\n"),
+        ("sjis.js", b'const s = "\x83e\x83X\x83g"; console.log(s)\n'),
+    ],
+)
+def test_a_line_with_invalid_utf8_is_still_audited(
+    shell_env, git_repo, variant, hook, filename, line
+):
+    (git_repo / filename).write_bytes(line)
+    env = {**shell_env.env, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"}
+    res = subprocess.run(
+        ["bash", str(hook)],
+        input=b"{}",
+        capture_output=True,
+        env=env,
+        cwd=git_repo,
+        timeout=60,
+    )
+    if variant == "claude":
+        assert res.returncode == 0, res.stderr
+        result = json.loads(res.stdout.decode("utf-8", errors="replace"))
+        assert result.get("decision") == "block", result
+        assert filename in result["reason"]
+    else:
+        assert res.returncode == 2, res.stdout
+        assert filename.encode() in res.stderr
 
 
 @pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])

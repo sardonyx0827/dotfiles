@@ -63,11 +63,11 @@ while IFS= read -r -d '' f; do
   [ -f "$path" ] || continue
   case "$f" in
   *.js | *.jsx | *.ts | *.tsx)
-    # console.log / debugger の境界条件の理由は .claude/hooks/stop-audit.sh を参照。
-    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
+    # console.log / debugger の境界条件と LC_ALL=C の理由は .claude/hooks/stop-audit.sh を参照。
+    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *.py)
-    hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
+    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *)
     hits=""

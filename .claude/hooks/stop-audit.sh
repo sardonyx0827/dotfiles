@@ -106,10 +106,17 @@ while IFS= read -r -d '' f; do
     # トークンが続く形が実際に最も多く、`(;|$)` だとそれらを取りこぼす。
     # 融合判定の文字クラスに `_` と `$` を足すのは、JS の識別子文字だから
     # (`debugger_x` / `$debugger` は別の識別子であってデバッグ文ではない)。
-    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
+    #
+    # grep は LC_ALL=C で走らせる (cut_hit と同じ)。利用者の UTF-8 ロケールのままだと、
+    # macOS の BSD grep は UTF-8 として不正なバイト (Shift_JIS の文字列、バイナリ片) を
+    # 検出語より前に含む行を黙って読み飛ばし、監査が素通りする。副作用として、C
+    # ロケールでは非 ASCII の文字が [:alnum:] に入らないので、`日本語console.log(` の
+    # ように非 ASCII の文字が密着した形も境界ありとして拾う (過検出の方向だけ。JS では
+    # 別の識別子だが、実在のコードではまれなので許容する)。
+    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *.py)
-    hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
+    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *)
     hits=""
