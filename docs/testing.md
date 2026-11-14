@@ -63,12 +63,19 @@ CI は pytest に加えて `ruff`（lint / format）、`bandit`（medium 以上�
 1.2.0 に固定）です。
 
 ```bash
-ruff check .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
+# .claude/skills/synced/ の除外は手元でだけ要る。install.sh が ~/.claude/skills を
+# このディレクトリへリンクするため、Claude Code が同期するサードパーティのスキル
+# (Python スクリプト入り) がここに置かれる。gitignore 済みで CI には存在しないが、
+# 引数にディレクトリを渡すと ruff / mypy はその中まで検査し、無関係な指摘で落ちる。
+# ruff は --exclude ではなく extend-exclude を使う (--exclude は既定の除外を置き換える。
+# format は --extend-exclude を受け付けないので --config で渡す)。
+ruff check --config 'extend-exclude = [".claude/skills/synced"]' .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
+ruff format --check --config 'extend-exclude = [".claude/skills/synced"]' .claude/hooks .claude/mcp-servers .claude/skills tests .codex/hooks scripts
 # --no-site-packages は CI の再現に必須。CI の lint ジョブはリンター類 (ruff /
 # bandit / mypy) しか入れず実行時依存 (mcp SDK 等) を入れないため、手元にだけ
 # 入っている実行時依存が import を解決してしまい、ローカル緑・CI 赤という
 # 食い違いが起きる。
-mypy --no-site-packages .claude/hooks .claude/mcp-servers .claude/skills scripts
+mypy --no-site-packages --exclude '\.claude/skills/synced/' .claude/hooks .claude/mcp-servers .claude/skills scripts
 # root を分けるのは同名の bash-review.py の重複を避けるため。MYPYPATH は共有
 # モジュールの解決に必須（実体は .claude/hooks 側にしか無く、実行時の
 # sys.path.insert を mypy は追えない）
