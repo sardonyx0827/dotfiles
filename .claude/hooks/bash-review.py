@@ -29,22 +29,25 @@ from _bash_review_common import (
     codex_flag_ask_reason,
     combine_high_risk_verdicts,
     describe_exception,
-    ensure_private_dir,
     find_deny_command,
     format_dual_verdict_reason,
     harness_write_ask_reason,
     input_limit_reason,
+    note_detail_log_disabled,
     notify,
-    prune_dir,
+    prepare_detail_log_dir,
     scan_secrets,
 )
-from _bash_review_common import log_summary as _log_summary  # noqa: E402
 from _bash_review_common import run_codex_review as _run_codex_review  # noqa: E402
 from _bash_review_common import run_gemini_review as _run_gemini_review  # noqa: E402
 from _bash_review_common import (  # noqa: E402
     run_parallel_reviews as _run_parallel_reviews,
 )
-from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E402
+
+# ログの書き込みは失敗しても判定を変えない版 (_bash_review_common.py の try_* の
+# コメント参照)。
+from _bash_review_common import try_log_summary as _log_summary  # noqa: E402
+from _bash_review_common import try_write_detail_log as _write_detail_log  # noqa: E402
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
 # 鍵は前後の空白を落とす: CRLF で保存した秘密ファイルから読むと末尾に \r が付き、
@@ -121,19 +124,38 @@ try:
     command = tool_input.get("command", "")
 
     # ログ設定
-    # 詳細ログ (コマンドごとに1ファイル)
-    log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
-    # 0700 で作り、既存でも root 配下を 0700 に絞る (ログにはコマンド全文が入る)。
-    ensure_private_dir(log_dir, root="/tmp/claude_hooks")  # nosec B108
-    # ナノ秒 + PID でファイル名を一意化する。秒粒度 (int(time.time())) だと
-    # 同一秒内に複数コマンドをレビューした際に同名となり、後のログが前を上書き
-    # して監査ログが失われる。
-    log_file = os.path.join(log_dir, f"bash_cmd_{time.time_ns()}_{os.getpid()}.log")
-    prune_dir(log_dir)  # 1000件を超えたら古いものから削除
+    # ログの準備と書き込みは判定より前に走るが、判定には影響させない。root を別の uid が
+    # 作っていた (`sudo claude`・コンテナ)、symlink が仕込まれていた、書き込めない、と
+    # いった環境の事情は「この実行の詳細ログを止める」だけで済ませる (以前は例外が
+    # catch-all に落ち、`ls` を含む全コマンドが ask になっていた)。コマンドの解析・
+    # レビューの例外は従来どおりフェイルクローズのまま。
 
     # サマリーログ (1ファイルに追記・500行でローテーション)
     summary_log = os.path.expanduser("~/.claude/logs/bash-review.log")
-    os.makedirs(os.path.dirname(summary_log), exist_ok=True)
+
+    # 詳細ログ (コマンドごとに1ファイル)
+    log_dir = "/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
+    # root (/tmp/claude_hooks) から下の各階層を「実ディレクトリ・自分の所有・0700」で
+    # 検査する (ログにはコマンド全文が入る)。通らなければ詳細ログは止め (log_file が
+    # None)、古いログの掃除も検査に通ったときだけ行う (symlink の先を掃除しない)。
+    detail_log_problem = prepare_detail_log_dir(
+        log_dir,
+        root="/tmp/claude_hooks",  # nosec B108
+    )
+    # ナノ秒 + PID でファイル名を一意化する。秒粒度 (int(time.time())) だと
+    # 同一秒内に複数コマンドをレビューした際に同名となり、後のログが前を上書き
+    # して監査ログが失われる。
+    log_file = (
+        None
+        if detail_log_problem
+        else os.path.join(log_dir, f"bash_cmd_{time.time_ns()}_{os.getpid()}.log")
+    )
+    if detail_log_problem:
+        # bash-review-log mod は全文をこの詳細ログから引く。黙って止めると全文の照合が
+        # 無言で外れるので、サマリーに 1 行残す。この時点では秘密スキャン前なので
+        # コマンドは書かない。止まり続ける間 毎回書くとサマリーが NOTE で埋まるので、
+        # 直近 100 行に既にあれば書かない (note_detail_log_disabled)。
+        note_detail_log_disabled(summary_log, detail_log_problem)
 
     # --- 入力サイズの上限 (何よりも先に。分割・秘密スキャン・プロンプト生成より前) ---
     # 上限超過は二次の計算量になり得る入力。解析せず ask に倒す (deny でも無言 allow でも

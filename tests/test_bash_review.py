@@ -20,16 +20,6 @@ sys.path.insert(0, str(REPO_ROOT / ".claude" / "hooks"))
 import _bash_review_common as _common  # noqa: E402
 
 
-@pytest.fixture(autouse=True)
-def _keep_chmod_inside_the_sandbox(request, monkeypatch):
-    """run_hook remaps open/makedirs/listdir/remove under tmp_path but not lstat/chmod,
-    so the hook's "tighten existing log dirs" step would chmod the REAL /tmp/*_hooks
-    tree of whoever runs the suite. Neutralise just that step for tests that go through
-    run_hook; ensure_private_dir's own tests (no run_hook) exercise the real thing."""
-    if "run_hook" in request.fixturenames:
-        monkeypatch.setattr(_common, "_tighten_dir", lambda path: None)
-
-
 def _run_raw(hook, raw, capsys, monkeypatch):
     """Execute a hook against arbitrary raw stdin bytes (malformed-input tests).
 
@@ -669,12 +659,13 @@ class TestLogs:
     def test_detail_logs_pruned_beyond_1000_files(self, run_hook, tmp_path):
         detail_dir = tmp_path / "fake-tmp/claude_hooks/logs/PreToolUse/Bash/bash-review"
         detail_dir.mkdir(parents=True)
+        # Only the hook's own names (bash_cmd_*.log) are counted and deleted.
         for i in range(1002):
-            (detail_dir / f"a_{i:05d}.log").write_text("x", encoding="utf-8")
+            (detail_dir / f"bash_cmd_{i:05d}_1.log").write_text("x", encoding="utf-8")
         run_hook(HOOK, hook_payload("ls -la"))
-        assert not (detail_dir / "a_00000.log").exists()
-        assert not (detail_dir / "a_00001.log").exists()
-        assert (detail_dir / "a_00002.log").exists()
+        assert not (detail_dir / "bash_cmd_00000_1.log").exists()
+        assert not (detail_dir / "bash_cmd_00001_1.log").exists()
+        assert (detail_dir / "bash_cmd_00002_1.log").exists()
 
     def test_detail_log_filename_is_nanosecond_and_pid_unique(self, run_hook):
         """Detail-log names carry nanoseconds + PID, so rapid / concurrent reviews
@@ -810,14 +801,20 @@ class TestPruneDirConcurrency:
     that converts any exception into a verdict, so a FileNotFoundError here becomes a
     verdict on whatever benign command happened to be running -- "ask" in
     .claude/hooks/bash-review.py and a hard exit-2 BLOCK in the .codex variant. See the
-    docstring of `prune_dir` in _bash_review_common.py.
+    docstring of `prune_dir` in _bash_review_common.py. (Since then the entry points
+    reach prune_dir only through `prepare_detail_log_dir`, which ignores its OSErrors;
+    that is pinned in test_bash_review_logging.py. The lost-race case stays handled in
+    prune_dir itself so a contended prune still finishes its other deletions.)
+
+    The files carry the hook's own names: prune_dir counts and deletes only
+    `bash_cmd_*.log`.
     """
 
     def test_a_racing_deleter_does_not_raise(self, tmp_path, monkeypatch):
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         for i in range(10):
-            (log_dir / f"{i:03d}.log").write_text("x", encoding="utf-8")
+            (log_dir / f"bash_cmd_{i:03d}_1.log").write_text("x", encoding="utf-8")
 
         real_remove = _common.os.remove
 
@@ -832,7 +829,7 @@ class TestPruneDirConcurrency:
         _common.prune_dir(str(log_dir), keep=5)
 
         assert sorted(p.name for p in log_dir.iterdir()) == [
-            f"{i:03d}.log" for i in range(5, 10)
+            f"bash_cmd_{i:03d}_1.log" for i in range(5, 10)
         ], "prune_dir kept the wrong files"
 
     def test_pruning_still_deletes_when_uncontended(self, tmp_path):
@@ -840,27 +837,69 @@ class TestPruneDirConcurrency:
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         for i in range(10):
-            (log_dir / f"{i:03d}.log").write_text("x", encoding="utf-8")
+            (log_dir / f"bash_cmd_{i:03d}_1.log").write_text("x", encoding="utf-8")
 
         _common.prune_dir(str(log_dir), keep=5)
 
         assert sorted(p.name for p in log_dir.iterdir()) == [
-            f"{i:03d}.log" for i in range(5, 10)
+            f"bash_cmd_{i:03d}_1.log" for i in range(5, 10)
         ]
 
-    def test_a_real_permission_error_is_not_swallowed(self, tmp_path, monkeypatch):
-        """Only the benign already-deleted case is suppressed; other OSErrors surface."""
+    def test_an_entry_that_cannot_be_deleted_does_not_halt_pruning(
+        self, tmp_path, monkeypatch
+    ):
+        """One undeletable entry must not stop the pruning behind it.
+
+        Names are tried oldest first, so an entry that always fails (a directory named
+        like a log; a read-only filesystem) and sorts first used to end every prune at
+        that entry: the log directory grew without bound from then on.
+        """
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         for i in range(10):
-            (log_dir / f"{i:03d}.log").write_text("x", encoding="utf-8")
+            (log_dir / f"bash_cmd_{i:03d}_1.log").write_text("x", encoding="utf-8")
+        real_remove = _common.os.remove
+
+        def refuse_the_oldest(path):
+            if path.endswith("bash_cmd_000_1.log"):
+                raise PermissionError("immutable")
+            real_remove(path)
+
+        monkeypatch.setattr(_common.os, "remove", refuse_the_oldest)
+        _common.prune_dir(str(log_dir), keep=5)
+
+        # 10 files, keep 5: five are removed, skipping the one that cannot be.
+        assert sorted(p.name for p in log_dir.iterdir()) == [
+            "bash_cmd_000_1.log",
+            *(f"bash_cmd_{i:03d}_1.log" for i in range(6, 10)),
+        ]
+
+    def test_a_directory_named_like_a_log_does_not_halt_pruning(self, tmp_path):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        trap = log_dir / "bash_cmd_0.log"  # sorts before every real log name
+        trap.mkdir()
+        (trap / "inside").write_text("x", encoding="utf-8")
+        for i in range(8):
+            (log_dir / f"bash_cmd_{i:05d}_1.log").write_text("x", encoding="utf-8")
+        _common.prune_dir(str(log_dir), keep=5)
+        assert trap.is_dir()
+        assert sorted(p.name for p in log_dir.iterdir() if p.is_file()) == [
+            f"bash_cmd_{i:05d}_1.log" for i in range(4, 8)
+        ]
+
+    def test_pruning_never_raises_when_every_delete_fails(self, tmp_path, monkeypatch):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        for i in range(10):
+            (log_dir / f"bash_cmd_{i:03d}_1.log").write_text("x", encoding="utf-8")
 
         def denied(path):
             raise PermissionError("read-only filesystem")
 
         monkeypatch.setattr(_common.os, "remove", denied)
-        with pytest.raises(PermissionError, match="read-only filesystem"):
-            _common.prune_dir(str(log_dir), keep=5)
+        _common.prune_dir(str(log_dir), keep=5)  # must not raise
+        assert len(list(log_dir.iterdir())) == 10
 
 
 # Shell grammar placed in front of a command must not hide its executable from the
@@ -5322,7 +5361,8 @@ class TestPrivateLogPermissions:
             raise PermissionError("not ours")
 
         monkeypatch.setattr(os, "chmod", deny)
-        _common.ensure_private_dir(str(target))  # must not raise
+        # Not raised: reported, so the caller can switch detail logging off.
+        assert _common.ensure_private_dir(str(target))
 
     def test_root_that_is_not_an_ancestor_only_tightens_the_leaf(self, tmp_path):
         other = tmp_path / "other"
@@ -5344,14 +5384,14 @@ class TestPrivateLogPermissions:
         _common.ensure_private_dir(str(target), root=str(target))
         assert (target.stat().st_mode & 0o777) == 0o700
 
-    def test_tighten_ignores_a_missing_path(self, tmp_path):
-        _common._tighten_dir(str(tmp_path / "missing"))  # must not raise
+    def test_tighten_reports_a_missing_path_without_raising(self, tmp_path):
+        assert _common._tighten_dir(str(tmp_path / "missing"))
 
     def test_tighten_leaves_a_regular_file_alone(self, tmp_path):
         f = tmp_path / "f"
         f.write_text("x", encoding="utf-8")
         f.chmod(0o644)
-        _common._tighten_dir(str(f))
+        assert _common._tighten_dir(str(f))
         assert (f.stat().st_mode & 0o777) == 0o644
 
     def test_tighten_does_not_follow_a_symlink(self, tmp_path):
@@ -5361,7 +5401,7 @@ class TestPrivateLogPermissions:
         victim.chmod(0o755)
         link = tmp_path / "link"
         link.symlink_to(victim)
-        _common._tighten_dir(str(link))
+        assert _common._tighten_dir(str(link))
         assert (victim.stat().st_mode & 0o777) == 0o755
 
     def test_tighten_leaves_a_directory_owned_by_someone_else(
@@ -5371,8 +5411,15 @@ class TestPrivateLogPermissions:
         d.mkdir()
         d.chmod(0o755)
         monkeypatch.setattr(os, "geteuid", lambda: d.stat().st_uid + 1)
-        _common._tighten_dir(str(d))
+        assert _common._tighten_dir(str(d))
         assert (d.stat().st_mode & 0o777) == 0o755
+
+    def test_tighten_returns_none_for_a_directory_it_owns(self, tmp_path):
+        d = tmp_path / "mine"
+        d.mkdir()
+        d.chmod(0o755)
+        assert _common._tighten_dir(str(d)) is None
+        assert (d.stat().st_mode & 0o777) == 0o700
 
     def test_write_detail_log_creates_0600_regardless_of_umask(self, tmp_path):
         old = os.umask(0)

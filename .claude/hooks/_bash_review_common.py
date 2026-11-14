@@ -4449,8 +4449,18 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
         pass  # 通知の失敗はメイン処理に影響させない
 
 
+# 詳細ログのファイル名 (`bash_cmd_{ns}_{pid}.log`: 両エントリポイントが組む)。
+# prune_dir が数える・消す対象はこの名前に限る。
+_DETAIL_LOG_PREFIX = "bash_cmd_"
+_DETAIL_LOG_SUFFIX = ".log"
+
+
+def _is_detail_log_name(name: str) -> bool:
+    return name.startswith(_DETAIL_LOG_PREFIX) and name.endswith(_DETAIL_LOG_SUFFIX)
+
+
 def prune_dir(log_dir: str, keep: int = 1000) -> None:
-    """log_dir 内のファイルが keep 件を超えたら名前順で古いものから削除する。
+    """log_dir 内の詳細ログが keep 件を超えたら名前順で古いものから削除する。
 
     削除は listdir で撮ったスナップショットに対して行うので、フックが並行して
     走ると (Claude と Codex のセッションが同時に動く、1 ターンで複数の Bash 呼び出しが
@@ -4462,14 +4472,30 @@ def prune_dir(log_dir: str, keep: int = 1000) -> None:
     この FileNotFoundError はたまたま走っていた無害なコマンドへの判定に化ける
     (.claude/hooks/bash-review.py では ask、.codex 変種では exit 2 = ハードブロック)。
 
-    そこで「既に消えている」= 目的は達成済み、として握りつぶす。抑止するのは
-    この良性ケースだけで、PermissionError 等の本物の異常はそのまま送出する。
+    そこで「既に消えている」= 目的は達成済み、として数える。
+
+    消せない 1 件 (その名前のディレクトリ・不変フラグ・読み取り専用の FS) で掃除全体を
+    止めない。名前順の先頭がそれだと、毎回そこで例外になり、以後ずっと掃除されず
+    ディレクトリが際限なく増える。エントリごとに OSError を握りつぶして次へ進み、
+    消せた件数が超過分に達するまで (または候補が尽きるまで) 続ける。listdir の失敗は
+    ここでは握りつぶさず、呼び出し側 (prepare_detail_log_dir) が無視する。
+
+    数えるのも消すのもフック自身の名前 (`bash_cmd_*.log`) だけ。ディレクトリの中身が
+    何であれ (symlink で別のディレクトリを指していても、利用者が置いた別のファイルが
+    混じっていても) 名前順の先頭から無差別に消さない。
     """
-    files = sorted(os.listdir(log_dir))
-    excess = len(files) - keep
-    for f in files[: max(0, excess)]:
-        with contextlib.suppress(FileNotFoundError):
+    files = sorted(f for f in os.listdir(log_dir) if _is_detail_log_name(f))
+    remaining = len(files) - keep
+    for f in files:
+        if remaining <= 0:
+            break
+        try:
             os.remove(os.path.join(log_dir, f))
+        except FileNotFoundError:
+            pass  # 競り負け: 既に消えている = 目的は達成済み
+        except OSError:
+            continue  # 消せない 1 件で止めない。数えずに次の候補へ
+        remaining -= 1
 
 
 def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None:
@@ -4568,36 +4594,59 @@ _PRIVATE_DIR_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 
 
-def _tighten_dir(path: str) -> None:
-    """自分が所有する実ディレクトリのパーミッションを 0700 に絞る。
+def _tighten_dir(path: str) -> str | None:
+    """path が自分の所有する実ディレクトリであることを確かめ、0700 に絞る。
 
-    symlink や他人所有のディレクトリには触らない (/tmp は誰でも先回りして作れる)。
-    絞れなかった場合はそのまま続行する: ログの秘匿は多層防御の一枚であって、
-    絞れないことでフックの判定を落とさない。
+    問題が無ければ None、あれば呼び出し側がログに書ける短い理由 (パスと分類だけ。
+    例外の文面は出さない) を返す。例外は投げない。次のどれかなら使わない:
+
+    - symlink やディレクトリ以外 (lstat で見る: /tmp は誰でも先回りして作れるので、
+      symlink を辿った先を chmod したり、その先へログを書いたりしない)
+    - 実効 uid 以外の所有 (`sudo claude` やコンテナが先に作ったもの。0700 に絞れても
+      他人が所有する場所へコマンド全文を書かない)
+    - 0700 に絞れない (chmod が失敗する / 効いていない)
+
+    チェックはパスを 2 度引く (lstat → chmod) ので、検査と使用の間にパスを差し替える
+    競合 (TOCTOU) は残る。ディレクトリ fd を開いて fstat / fchmod する方式ではない。
+    詳細は README の「ログの扱い」。
     """
     try:
         st = os.lstat(path)
-    except OSError:
-        return
-    if not stat.S_ISDIR(st.st_mode):
-        return
-    geteuid = getattr(os, "geteuid", None)
-    if geteuid is not None and st.st_uid != geteuid():
-        return
-    if st.st_mode & 0o077:
-        with contextlib.suppress(OSError):
+        if not stat.S_ISDIR(st.st_mode):
+            return f"{path} is not a real directory (symlink or other file type)"
+        geteuid = getattr(os, "geteuid", None)
+        if geteuid is None:
+            # 所有者もパーミッションビットも持たない環境 (Windows): 実ディレクトリで
+            # あることだけを確かめる。
+            return None
+        if st.st_uid != geteuid():
+            return f"{path} is owned by another user"
+        if stat.S_IMODE(st.st_mode) != _PRIVATE_DIR_MODE:
             os.chmod(path, _PRIVATE_DIR_MODE)
+            if stat.S_IMODE(os.lstat(path).st_mode) != _PRIVATE_DIR_MODE:
+                return f"{path} could not be restricted to 0700"
+    except OSError as exc:
+        return f"{path}: {type(exc).__name__}"
+    return None
 
 
-def ensure_private_dir(path: str, root: str | None = None) -> None:
-    """path を 0700 で作り、既存でも root から path までの各ディレクトリを 0700 に絞る。
+def ensure_private_dir(path: str, root: str | None = None) -> str | None:
+    """path を 0700 で用意し、root から path までの各階層を検査する。
 
     詳細ログ (/tmp 配下) にはコマンド全文とレビューモデルの応答が入る。umask 任せ
     (0755) だと同じホストの他ユーザーが読める。os.makedirs の mode は Python 3.7 以降
-    中間ディレクトリに効かないので、root 配下の各階層を明示的に絞る (root が path の
-    祖先でなければ path 自身だけ)。権限を持たない階層より上は触らない。
+    中間ディレクトリに効かないので、root 配下の各階層を 1 つずつ作って検査する
+    (root が path の祖先でなければ path 自身だけ)。
+
+    各階層は「実ディレクトリ・実効 uid の所有・0700」を満たさなければならない
+    (_tighten_dir)。os.makedirs を path に直接使わないのは、symlink の root を辿って
+    先のディレクトリに階層を作ってしまうため: 階層ごとに作る → lstat で検査する → 次へ、
+    の順にして、検査に通らない階層より下には何も作らない。検査するのは root から下だけで、
+    root より上は触らない (macOS の /tmp は /private/tmp への symlink)。
+
+    問題が無ければ None、あれば理由を返す。例外は投げない: 呼び出し側は理由があれば
+    この実行の詳細ログを止める (判定には一切影響させない)。
     """
-    os.makedirs(path, mode=_PRIVATE_DIR_MODE, exist_ok=True)
     top = path
     if root is not None:
         rel = os.path.relpath(path, root)
@@ -4607,12 +4656,42 @@ def ensure_private_dir(path: str, root: str | None = None) -> None:
     if top != path:
         for part in os.path.relpath(path, top).split(os.sep):
             levels.append(os.path.join(levels[-1], part))
-    for level in levels:
-        _tighten_dir(level)
+    try:
+        # root の親 (検査しない側) は無ければ作る。ふつうは /tmp で、既にある。
+        os.makedirs(os.path.dirname(os.path.abspath(top)), exist_ok=True)
+        for level in levels:
+            try:
+                os.mkdir(level, _PRIVATE_DIR_MODE)
+            except FileExistsError:
+                pass  # 既にある: 下の検査が実ディレクトリかどうかを決める
+            problem = _tighten_dir(level)
+            if problem:
+                return problem
+    except OSError as exc:
+        return f"{path}: {type(exc).__name__}"
+    return None
+
+
+def prepare_detail_log_dir(log_dir: str, root: str) -> str | None:
+    """詳細ログのディレクトリを検査して整える。使えなければ理由、使えれば None。
+
+    両エントリポイントが判定より前に呼ぶ。ここの失敗を判定に波及させない (root を
+    他の uid が作っていた PermissionError で、`ls` まで ask / exit 2 になっていた):
+    検査か絞り込みに失敗したら、この実行の詳細ログを止める (None 以外を返す) だけ。
+    古いログの掃除 (prune_dir) は検査に通ったあとにだけ行い、その失敗は無視する:
+    掃除できなくてもログは書けるので、詳細ログは止めない。
+    """
+    problem = ensure_private_dir(log_dir, root=root)
+    if problem:
+        return problem
+    with contextlib.suppress(OSError):
+        prune_dir(log_dir)
+    return None
 
 
 def _open_private(path: str, flags: int) -> int:
-    return os.open(path, flags, _PRIVATE_FILE_MODE)
+    # O_NOFOLLOW: 末尾が symlink に差し替えられていても、その先へは書かない (ELOOP)。
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), _PRIVATE_FILE_MODE)
 
 
 def write_detail_log(
@@ -4637,3 +4716,96 @@ def write_detail_log(
             f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
         for key, value in entries.items():
             f.write(f"{key}: {value}\n")
+
+
+# ログの書き込みは「記録」であって「判定」ではない。ディスクが読み取り専用・他人所有の
+# ディレクトリ・壊れた symlink といった環境の事情で書けないとき、その失敗が判定を
+# 変えてはならない (両エントリポイントの catch-all は例外を ask / exit 2 に変換する)。
+# 以下の try_* は I/O の失敗 (OSError と、UTF-8 にできない文字による UnicodeError)
+# だけを握りつぶして成否を返す。握りつぶすのはログの書き込みに限り、コマンドの解析・
+# 秘密スキャン・レビューの例外は従来どおり呼び出し側の catch-all に落とす
+# (フェイルクローズのまま)。
+def try_write_detail_log(
+    log_file: str | None,
+    tool_name: str,
+    tool_input,
+    entries: dict,
+    *,
+    redact_input: bool = False,
+) -> bool:
+    """write_detail_log が失敗しても例外を投げない版。書けたら True。
+
+    log_file が None のとき (prepare_detail_log_dir がこの実行の詳細ログを止めた) は
+    何もせず False を返す。
+    """
+    if log_file is None:
+        return False
+    try:
+        write_detail_log(
+            log_file, tool_name, tool_input, entries, redact_input=redact_input
+        )
+    except (OSError, UnicodeError):
+        return False
+    return True
+
+
+def try_log_summary(
+    summary_log: str,
+    command: str,
+    decision: str,
+    stage: str,
+    reason: str,
+    *,
+    redact_command: bool = False,
+) -> bool:
+    """サマリーログのディレクトリ作成と追記・ローテーションを、失敗しても投げない版。"""
+    try:
+        os.makedirs(os.path.dirname(summary_log), exist_ok=True)
+        log_summary(
+            summary_log,
+            command,
+            decision,
+            stage,
+            reason,
+            redact_command=redact_command,
+        )
+    except (OSError, UnicodeError):
+        return False
+    return True
+
+
+# 詳細ログが止まっている間の「NOTE」行は、毎回書くと 500 行のサマリーの約半分を NOTE が
+# 占め、残る判定が半分になる。直近 _NOTE_RECENT_LINES 行に NOTE があれば書かない。
+# 読むのは末尾 _NOTE_TAIL_BYTES バイトだけ (有界): 1 行が長い (数百〜数 KB) ログでは
+# 窓に入る行が 100 行に満たず、そのぶん NOTE が早めに再び書かれるが、書かれないほうへは
+# ずれない。
+_NOTE_RECENT_LINES = 100
+_NOTE_TAIL_BYTES = 64 * 1024
+_NOTE_LINE = re.compile(r"^\[[^\]]*\] NOTE\s*\| logging\s*\|")
+
+
+def _recent_lines(path: str, count: int = _NOTE_RECENT_LINES) -> list[str]:
+    """path の末尾 _NOTE_TAIL_BYTES バイトから、最後の count 行 (読めなければ空)。"""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - _NOTE_TAIL_BYTES))
+            tail = f.read()
+    except OSError:
+        return []
+    return tail.decode("utf-8", errors="replace").splitlines()[-count:]
+
+
+def note_detail_log_disabled(summary_log: str, problem: str) -> bool:
+    """詳細ログを止めたことをサマリーに 1 行残す (直近に残していれば残さない)。
+
+    bash-review-log mod は 80 字で切られたコマンドの全文を詳細ログから引く。黙って止まると
+    全文の照合が無言で外れるので、サマリーに `NOTE | logging | - | …` を書く。この時点では
+    秘密スキャン前なのでコマンドは載せない (理由 `problem` は固定語彙とパスだけ)。
+    書けたら True。失敗しても投げない (try_log_summary)。
+    """
+    if any(_NOTE_LINE.match(line) for line in _recent_lines(summary_log)):
+        return False
+    return try_log_summary(
+        summary_log, "-", "NOTE", "logging", f"detail logging disabled: {problem}"
+    )

@@ -17,7 +17,9 @@
   carrying raw credentials to any LLM, a parallel Gemini+Codex AND-gate for
   high-risk commands, and a Gemini→Codex cascade for the low-risk majority.
   Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`
-  (directory 0700, files 0600). The summary log holds one decision per
+  (directory 0700, files 0600; the Codex entry uses `~/.codex/logs/` and
+  `/tmp/codex_hooks/logs/`). Logging is best-effort and never decides a
+  verdict — see **Log handling** below. The summary log holds one decision per
   physical line: a newline in the command or the reason is written as `⏎`,
   and a `|` in the reason as `/`, so a multi-line command cannot plant a
   line that reads as a second decision (the `bash-review-log` mod applies the
@@ -564,6 +566,49 @@ latency low for the common case:
 `permissions.deny` plus these hooks. While disabled, sibling keys under
 `sandbox` (`network.allowedDomains`, `excludedCommands`) are never consulted —
 they are inert, not an active allowlist, so don't read them as protection.
+
+**Log handling.** The detail log holds the full command and the reviewers'
+answers, and `/tmp` is shared, so the entry points treat its tree as untrusted
+input and never let logging decide a verdict:
+
+- Before any decision, `prepare_detail_log_dir` walks from the managed root
+  (`/tmp/claude_hooks`, Codex: `/tmp/codex_hooks`) down to the leaf, one level
+  at a time (`mkdir`, then `lstat`, then `chmod`). Every level must be a real
+  directory (not a symlink), owned by the effective uid, and exactly `0700`. The
+  walk never looks above the root (on macOS `/tmp` is itself a symlink), and
+  stops at the first level that fails, so nothing is created below it. A
+  failure — a root made by another uid (`sudo claude`, a container), a symlink
+  planted in advance, a `chmod` that does not stick — disables **detail**
+  logging for that run only; the verdict is computed as usual. The summary log
+  then gets an extra line, `NOTE | logging | - | detail logging disabled:
+<why>`, so the `bash-review-log` mod's full-command lookup does not stop
+  silently. It is written only when none of the last 100 lines of the summary
+  log is already such a note (only the tail of the file is read), so a tree
+  that stays unusable costs one line per ~100 decisions instead of halving the
+  500-line summary. It carries no command text: the secret scan has not run
+  yet. `NOTE` is not an allow / ask / deny, so a reader that counts decisions
+  files it under "other".
+- Pruning (the oldest files beyond 1000) runs only after that check passes, and
+  counts and deletes only the hook's own names, `bash_cmd_*.log`. An entry that
+  cannot be deleted (a directory with such a name, an immutable file) is skipped
+  and pruning goes on to the next one, so it cannot halt the clean-up for good.
+  A failure to list the directory is ignored: the logs can still be written.
+- Every logging write is best-effort — the detail log (also in the size-limit
+  branch), the summary log's directory creation, append and rotation. An
+  `OSError` (or a character that cannot be encoded to UTF-8) there is swallowed
+  and nothing else is: an exception from parsing, the secret scan or a review
+  still fails closed (ask; Codex: exit 2). The decision is also settled before
+  the logging runs in every branch, so a logging bug cannot flip an allow into
+  a block or replace a block's reason with "hook error".
+- The detail file is opened `O_NOFOLLOW` with mode 0600.
+
+Residual risk: the checks are path-based, not directory-fd based
+(`lstat` then `chmod` / `open` by path), so a swap between the check and the
+use is a TOCTOU window. It is narrow in practice — a level that passes is a
+directory we own, inside a root we own that is `0700`, and `/tmp` is sticky, so
+only the same uid can replace it — but it is not closed. Closing it would mean
+opening each level with `O_DIRECTORY | O_NOFOLLOW` and working through
+`fstat` / `fchmod` / `*at` calls.
 
 **Accepted tradeoffs (chosen, not overlooked):**
 

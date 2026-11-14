@@ -27,13 +27,6 @@ FAKE_GITHUB_TOKEN = "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0" + "K1l2M3n4O5p6Q7r8"
 FAKE_OPAQUE_VALUE = "Zq8vK2mN" + "5xR7tY1w"
 
 
-@pytest.fixture(autouse=True)
-def _keep_chmod_inside_the_sandbox(request, monkeypatch):
-    """Same guard as test_bash_review.py: run_hook does not remap lstat/chmod."""
-    if "run_hook" in request.fixturenames:
-        monkeypatch.setattr(_common, "_tighten_dir", lambda path: None)
-
-
 class _Response:
     def __init__(self, payload: bytes):
         self._payload = payload
