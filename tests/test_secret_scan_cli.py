@@ -74,6 +74,13 @@ class TestMainInProcess:
             # The bare-positional shape of the secret-setting CLIs.
             "aws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123",
             PGP_PRIVATE_KEY_PAYLOAD,
+            # A token glued to Japanese prose. `\b` treated kana / kanji as word
+            # characters, so only the version with a space before the particle
+            # was refused.
+            "キー AKIAIOSFODNN7EXAMPLEです\n",
+            "鍵はghp_" + "a" * 36 + "です",
+            "トークン:npm_" + "a" * 36 + "を使う",
+            "実行aws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123",
         ],
     )
     def test_credential_exits_1_with_generic_label(self, monkeypatch, capsys, text):
@@ -207,6 +214,26 @@ class TestCliSubprocess:
         r = self._run(payload)
         assert r.returncode == 1
         assert r.stdout.strip() == label
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            # The same token with a space before the particle was already refused;
+            # without it the exit code was 0 and the payload went out unscanned.
+            "キー AKIAIOSFODNN7EXAMPLE です\n",
+            "キー AKIAIOSFODNN7EXAMPLEです\n",
+        ],
+    )
+    def test_aws_key_next_to_japanese_exits_1_through_the_real_cli(self, payload):
+        r = self._run(payload)
+        assert r.returncode == 1
+        assert r.stdout.strip() == "AWS access key"
+
+    def test_a_longer_lookalike_next_to_japanese_still_exits_0(self):
+        # Only the follower rule changed: 17 characters after AKIA is not a key.
+        r = self._run("キー AKIAIOSFODNN7EXAMPLEXです\n")
+        assert r.returncode == 0
+        assert r.stdout == ""
 
     def _run_bytes(self, data, env=None):
         return subprocess.run(

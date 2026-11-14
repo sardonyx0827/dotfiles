@@ -3716,13 +3716,51 @@ _TOKEN_START = (
     r"|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\[0-7]{3}))"
 )
 
+# 既知形式トークンの「終了境界」。末尾の `\b` も開始側と同じ理由で使わない: `\b` は
+# Unicode 対応なので、かな・漢字も語の文字に数え、`AKIA…です` のように日本語の地の文に
+# 密着したトークンで境界が立たず素通りしていた (スペースを 1 つ挟めば拾える)。
+# 次の 1 文字が ASCII の語の文字 (英数字と `_`) でなければ終わりとし、従来の ASCII の
+# 意味 (長さの固定・`…EXAMPLE_x` を別の識別子の一部として拾わない) を保ったまま、
+# ASCII 外の文字だけを境界側へ倒す。
+# 本体の文字クラスに `-` を含む形は 2 通り:
+# - sk- は本体が貪欲な `{20,}` で、`-` まで食ってから終了境界を見る。`-` を続きに数えても
+#   何も失わない (旧 `\b` が拾ったものは全部拾う: 差分テストで固定)。
+# - AIza は本体が固定長の `{35}` なので、`-` を続きに数えると、AIza + 35 文字の鍵の直後に
+#   `-` が続く形 (`…-prod` / `…-` / `…?key=…-1`) を「36 文字目が本体」と読んで落とす。
+#   旧 `\b` は 35 文字目 (語の文字) と `-` の間に境界を見て拾っていたので、ここでは
+#   ASCII 版の終了境界と旧 `\b` の和を取る。旧が拾う形を 1 つも失わずに、日本語・é の
+#   直後と、末尾が `-` の鍵の後ろの空白 (旧は境界が立たず取りこぼしていた) を拾える。
+_TOKEN_END = r"(?![A-Za-z0-9_])"
+_TOKEN_END_HYPHEN = r"(?![A-Za-z0-9_\-])"
+_TOKEN_END_OR_BOUNDARY = r"(?:(?![A-Za-z0-9_])|\b)"
+# 英字で始まるコマンド名の「開始境界」(ASCII 版の `\b`)。`実行aws configure set …` で
+# 直前の漢字が語の文字に数えられ、設定系 CLI の裸の秘密が素通りしていた。
+_WORD_START = r"(?<![A-Za-z0-9_])"
+
 _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
-    ("GitHub token", re.compile(_TOKEN_START + r"gh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("GitHub PAT", re.compile(_TOKEN_START + r"github_pat_[A-Za-z0-9_]{20,}\b")),
-    ("AWS access key", re.compile(_TOKEN_START + r"(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("Google API key", re.compile(_TOKEN_START + r"AIza[0-9A-Za-z_\-]{35}\b")),
+    (
+        "GitHub token",
+        re.compile(_TOKEN_START + r"gh[pousr]_[A-Za-z0-9]{36,}" + _TOKEN_END),
+    ),
+    (
+        "GitHub PAT",
+        re.compile(_TOKEN_START + r"github_pat_[A-Za-z0-9_]{20,}" + _TOKEN_END),
+    ),
+    (
+        "AWS access key",
+        re.compile(_TOKEN_START + r"(?:AKIA|ASIA)[0-9A-Z]{16}" + _TOKEN_END),
+    ),
+    (
+        "Google API key",
+        re.compile(_TOKEN_START + r"AIza[0-9A-Za-z_\-]{35}" + _TOKEN_END_OR_BOUNDARY),
+    ),
     ("Google OAuth token", re.compile(_TOKEN_START + r"ya29\.[0-9A-Za-z_\-]{20,}")),
-    ("OpenAI key", re.compile(_TOKEN_START + r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
+    (
+        "OpenAI key",
+        re.compile(
+            _TOKEN_START + r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}" + _TOKEN_END_HYPHEN
+        ),
+    ),
     # xapp- は Slack のアプリレベルトークン (Socket Mode)。
     (
         "Slack token",
@@ -3730,10 +3768,13 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
             _TOKEN_START + r"(?:xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,})"
         ),
     ),
-    ("Stripe key", re.compile(_TOKEN_START + r"[rs]k_live_[0-9A-Za-z]{16,}\b")),
+    (
+        "Stripe key",
+        re.compile(_TOKEN_START + r"[rs]k_live_[0-9A-Za-z]{16,}" + _TOKEN_END),
+    ),
     # 以下は接頭辞だけで高精度に判定できる既知形式 (キーワード付き代入の助けが無い
     # 裸の値でも拾う)。長さは各サービスの発行形式に合わせ、near-miss は拾わない。
-    ("npm token", re.compile(_TOKEN_START + r"npm_[A-Za-z0-9]{36}\b")),
+    ("npm token", re.compile(_TOKEN_START + r"npm_[A-Za-z0-9]{36}" + _TOKEN_END)),
     ("GitLab token", re.compile(_TOKEN_START + r"glpat-[0-9A-Za-z_\-]{20,}")),
     ("Hugging Face token", re.compile(_TOKEN_START + r"hf_[A-Za-z0-9]{34,}")),
     (
@@ -3751,7 +3792,10 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ),
     ("Docker PAT", re.compile(_TOKEN_START + r"dckr_pat_[A-Za-z0-9_\-]{20,}")),
     # DigitalOcean: dop (PAT) / doo (OAuth) / dor (refresh) はいずれも v1_ + 64 桁 hex。
-    ("DigitalOcean token", re.compile(_TOKEN_START + r"do[opr]_v1_[a-f0-9]{64}\b")),
+    (
+        "DigitalOcean token",
+        re.compile(_TOKEN_START + r"do[opr]_v1_[a-f0-9]{64}" + _TOKEN_END),
+    ),
     # OpenPGP の armor は `PRIVATE KEY BLOCK-----` で終わる (gpg
     # --export-secret-keys --armor の出力)。`KEY-----` 直結だけだと
     # PEM 形式 (OPENSSH / RSA / EC / ENCRYPTED) しか拾えず、PGP 秘密鍵は素通り
@@ -3906,7 +3950,7 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     (
         "secret CLI argument",
         re.compile(
-            r"(?i)\b(?:aws\s+configure\s+set"
+            r"(?i)" + _WORD_START + r"(?:aws\s+configure\s+set"
             r"|vault\s+kv\s+(?:put|patch)"
             r"|heroku\s+config:set"
             r"|wrangler\s+secret\s+put"
@@ -3945,7 +3989,8 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
         # この綴りでは一致しなくなるが、生のコマンドの綴りが拾う)。ダブルクォートの
         # 値は中に `$` を含めば参照として除く (`"prefix-$VAL"`)。
         re.compile(
-            r"(?i)\bgh[ \t]+secret[ \t]+set\b(?:[ \t]+[^\s;|&\\]+){0,8}?[ \t]+"
+            r"(?i)" + _WORD_START + r"gh[ \t]+secret[ \t]+set\b"
+            r"(?:[ \t]+[^\s;|&\\]+){0,8}?[ \t]+"
             r"(?:(?:--body|-b)=(?:\"[^\"\n$]{8,}\"|'[^'\n]{8,}"
             r"|(?![$\\])[^\s\"'$]{8,})"
             r"|(?:--body[ \t]+|-b[ \t]*)(?:\"[^\"\n$]{8,}\"|'[^'\n]{8,}"

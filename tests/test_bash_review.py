@@ -4984,6 +4984,241 @@ class TestBareTokenFormats:
         assert token not in res.reason
 
 
+FAKE_GITHUB_PAT = "github_pat_" + "a" * 22
+FAKE_DO_TOKEN = FAKE_BARE_TOKENS["DigitalOcean token"]
+FAKE_NPM_TOKEN = FAKE_BARE_TOKENS["npm token"]
+
+# 末尾が `\b` だった 8 種 + `\b` を持たない既知形式。日本語の直後でも拾えること。
+TRAILING_BOUNDARY_TOKENS = [
+    ("GitHub token", FAKE_GH_TOKEN),
+    ("GitHub PAT", FAKE_GITHUB_PAT),
+    ("AWS access key", FAKE_AWS_KEY),
+    ("Google API key", FAKE_GOOGLE_KEY),
+    ("OpenAI key", FAKE_OPENAI_KEY),
+    ("Stripe key", FAKE_STRIPE_KEY),
+    ("npm token", FAKE_NPM_TOKEN),
+    ("DigitalOcean token", FAKE_DO_TOKEN),
+]
+
+
+class TestSecretTokenNextToNonAscii:
+    """既知形式トークンの末尾境界は ASCII の語文字だけを見る。
+
+    末尾の `\\b` は Unicode 対応で、かな / 漢字を語の文字として扱う。`AKIA…です` は
+    `A` と `で` の間に境界が立たず、スペースを 1 つ挟めば拾えるトークンが日本語の地の文に
+    密着しただけで素通りしていた (secret_scan.py も Neovim / Vim の AI ゲートも同じ表を使う)。
+    """
+
+    @pytest.mark.parametrize(("label", "token"), TRAILING_BOUNDARY_TOKENS)
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "echo キー {token}です",  # かな
+            "echo 鍵{token}漢字",  # 漢字 (前後とも密着)
+            "echo {token}、次の行",  # 読点 (従来から拾えていた)
+            "echo {token}。",  # 句点 (従来から拾えていた)
+            "echo {token}é",  # ASCII 外のラテン文字
+            "echo {token}😀",  # 絵文字
+            "echo キー{token}",  # 直前が日本語
+            # JSON の改行エスケープを前後に挟んだ形 (printf / jq -c)
+            "printf 'キー\\n{token}です\\n'",
+            '{{"body":"鍵\\n{token}\\nです"}}',
+        ],
+    )
+    def test_token_glued_to_non_ascii_is_detected(
+        self, hook_fns, label, token, template
+    ):
+        command = template.format(token=token)
+        found, got = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, got) == (True, label), f"missed {command!r}"
+
+    @pytest.mark.parametrize(("label", "token"), TRAILING_BOUNDARY_TOKENS)
+    def test_token_between_real_newlines_is_detected(self, hook_fns, label, token):
+        command = f"echo 鍵\n{token}\nです"
+        found, got = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, got) == (True, label)
+
+    @pytest.mark.parametrize(
+        ("label", "token"),
+        [
+            ("GitHub token", FAKE_GH_TOKEN),
+            ("AWS access key", FAKE_AWS_KEY),
+            ("Stripe key", FAKE_STRIPE_KEY),
+            ("npm token", FAKE_NPM_TOKEN),
+            ("DigitalOcean token", FAKE_DO_TOKEN),
+            ("Google API key", FAKE_GOOGLE_KEY),
+        ],
+    )
+    @pytest.mark.parametrize("follower", ["_x", "_", "_です"])
+    def test_underscore_after_the_token_still_blocks_the_match(
+        self, hook_fns, label, token, follower
+    ):
+        # `_` は語の文字: これまでも `…EXAMPLE_x` は別の識別子の一部として拾わなかった。
+        command = f"echo {token}{follower}"
+        found, _ = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is False, f"false positive on {command!r}"
+
+    @pytest.mark.parametrize(
+        ("label", "prefix", "body", "length"),
+        [
+            ("AWS access key", "AKIA", "A", 16),
+            ("Google API key", "AIza", "B", 35),
+            ("npm token", "npm_", "a", 36),
+            ("DigitalOcean token", "dop_v1_", "0", 64),
+        ],
+    )
+    @pytest.mark.parametrize("follower", ["です", " です", ""])
+    def test_exact_length_formats_stay_exact(
+        self, hook_fns, label, prefix, body, length, follower
+    ):
+        def scan(n: int):
+            command = f"echo {prefix}{body * n}{follower}"
+            return hook_fns["scan_secrets"](command, {"command": command})
+
+        assert scan(length) == (True, label)
+        # 1 文字短い / 長いものは別物。日本語が続いても長さの境界は動かない。
+        assert scan(length - 1) == (False, "")
+        assert scan(length + 1) == (False, "")
+
+    @pytest.mark.parametrize(
+        "follower",
+        [
+            "です",
+            " ",  # 旧 `\b` は `-` の後ろの空白で境界が立たず取りこぼしていた
+            "",
+            "-",
+            "-x",
+            "x",  # 旧 `\b` は `-` と語の文字の間に境界を見て拾っていた
+        ],
+    )
+    def test_google_key_ending_in_a_hyphen_is_matched(self, hook_fns, follower):
+        # 末尾が `-` の鍵は、続きが何でも拾う。旧 `\b` は「次が語の文字」のときだけ、
+        # 新しい終了境界は「次が ASCII の語の文字でない」ときだけで、両方を合わせる。
+        command = f"echo AIza{'B' * 34}-{follower}"
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (True, "Google API key")
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            "-prod",  # 鍵の直後にハイフンで環境名を付けた形
+            "-",
+            "--",
+            "-\n",
+            "-x",
+            "-1",
+        ],
+    )
+    def test_google_key_followed_by_a_hyphen_is_still_detected(self, hook_fns, tail):
+        # 回帰: 終了境界に `-` を足した版は、39 文字の鍵 (AIza + 35) に `-` が続くと
+        # 36 文字目と数えて落としていた。旧 `\b` は `B` と `-` の間に境界を見て拾う。
+        for command in (
+            f"echo {FAKE_GOOGLE_KEY}{tail}",
+            f"curl 'https://x.example/v1?key={FAKE_GOOGLE_KEY}{tail}1'",
+            f"echo キー{FAKE_GOOGLE_KEY}{tail}です",
+        ):
+            found, label = hook_fns["scan_secrets"](command, {"command": command})
+            assert (found, label) == (True, "Google API key"), f"missed {command!r}"
+
+    def test_google_key_one_longer_is_still_not_a_match(self, hook_fns):
+        # 長さの境界は動かさない: 36 文字目が英数字・`_` の鍵は別物。
+        for body_char in ("B", "_"):
+            command = f"echo AIza{'B' * 35}{body_char}x"
+            found, _ = hook_fns["scan_secrets"](command, {"command": command})
+            assert found is False, command
+
+    def test_every_google_key_the_old_boundary_matched_is_still_matched(self):
+        # 旧 (`\b`) との差分テスト: 旧が拾った綴りは、末尾の続きが何であっても (ハイフン・
+        # `_`・空白・改行・日本語) 新しい規則でも拾う。拾いが増える側 (日本語・é・末尾 `-`
+        # の後ろの空白) はこのテストの対象外 (上のテストで固定している)。
+        import random
+
+        old = re.compile(_common._TOKEN_START + r"AIza[0-9A-Za-z_\-]{35}\b")
+        new = dict(_common._SECRET_SCANNERS)["Google API key"]
+        rng = random.Random(20240601)
+        alphabet = "ABCxyz0129_-"
+        followers = ["", "-", "--", "-x", "-prod", "_", "_x", " ", "\n", "\\n",
+                     "、", "です", "é", "'", '"', ".", "/", "=", "&", "x", "9"]  # fmt: skip
+        checked = matched = 0
+        for _ in range(20_000):
+            body = "".join(
+                rng.choice(alphabet) for _ in range(rng.choice([34, 35, 35, 36]))
+            )
+            text = f"echo AIza{body}{rng.choice(followers)}"
+            checked += 1
+            if old.search(text):
+                matched += 1
+                assert new.search(text), f"old matched but new does not: {text!r}"
+        # テスト自体が空振りしていないこと (旧が拾う綴りが十分に含まれる)。
+        assert matched > 1_000, (checked, matched)
+
+    def test_every_openai_key_the_old_boundary_matched_is_still_matched(self):
+        # sk- は本体が貪欲なので `-` を足した終了境界でも失わない。それを同じ形の
+        # 差分で固定する。
+        import random
+
+        old = re.compile(_common._TOKEN_START + r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")
+        new = dict(_common._SECRET_SCANNERS)["OpenAI key"]
+        rng = random.Random(20240602)
+        alphabet = "ABCxyz0129_-"
+        followers = ["", "-", "--", "-x", "_", " ", "\n", "、", "です", "'", "x"]
+        matched = 0
+        for _ in range(20_000):
+            body = "".join(
+                rng.choice(alphabet) for _ in range(rng.choice([19, 20, 24, 40]))
+            )
+            text = f"echo sk-{body}{rng.choice(followers)}"
+            if old.search(text):
+                matched += 1
+                assert new.search(text), f"old matched but new does not: {text!r}"
+        assert matched > 1_000, matched
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo " + "x" * 5 + "AKIA" + "A" * 16,  # 直前が英数字
+            "echo mynpm_" + "a" * 36,
+        ],
+    )
+    def test_leading_boundary_is_unchanged(self, hook_fns, command):
+        found, _ = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # 直前が日本語: 先頭の `\b` が立たず、設定系 CLI の裸の秘密が素通りしていた
+            "実行aws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123",
+            "手順:aws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123",
+            # 値の直後が日本語 (値は非空白 `\S{8,}` なので日本語も値の一部)
+            "aws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123です",
+            # 区切りが全角空白
+            "aws configure set aws_secret_access_key　wJalrXUtnFEMIKSAMPLEKEY123",
+            # 区切り記号の無い位置引数形だけで拾える形 (代入・フラグの規則には当たらない)
+            "実行vault kv put secret/app password hunter2hunter2",
+            "実行gh secret set TOKEN_X --body 'abcdefgh12345678'",
+            "実行heroku config:set API_KEY wJalrXUtnFEMIKSAMPLEKEY123",
+        ],
+    )
+    def test_secret_setting_cli_next_to_japanese_is_detected(self, hook_fns, command):
+        found, label = hook_fns["scan_secrets"](command, {"command": command})
+        assert (found, label) == (True, "secret CLI argument"), f"missed {command!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # 英数字・`_` の直後は従来どおり別の語の一部で、設定コマンドとは読まない
+            "xaws configure set aws_secret_access_key wJalrXUtnFEMIKSAMPLEKEY123",
+            "_gh secret set TOKEN_X --body 'abcdefgh12345678'",
+            # キーワードの無い名前の設定は対象外のまま
+            "実行aws configure set region ap-northeast-1",
+        ],
+    )
+    def test_secret_setting_cli_leading_boundary_is_unchanged(self, hook_fns, command):
+        found, _ = hook_fns["scan_secrets"](command, {"command": command})
+        assert found is False, f"false positive on {command!r}"
+
+
 class TestSecretScanIsLinear:
     """区切りなしの連打でも線形時間。"secret assignment" の `[A-Za-z0-9_]*` が
     連打の末尾まで貪欲に食って巻き戻すと二次になる (100 KB の `token` 連打が分単位)。

@@ -581,7 +581,15 @@ they are inert, not an active allowlist, so don't read them as protection.
   long flags) or short-flag secrets (`-p<pw>`, which collide with `mkdir -p` etc.),
   and leaves sensitive _paths_ to normal review. A miss falls through to the
   usual AI review, not to a silent send of an unreviewed secret; a false
-  positive only costs an `ask`.
+  positive only costs an `ask`. A known-format token ends at the first ASCII
+  word character that cannot belong to it, so one glued to Japanese prose
+  (`AKIA…です`) is still caught; kana / kanji are not word characters here
+  (a regex `\b` would count them as such and miss the token). Nothing the old
+  `\b` matched is lost: the two formats whose body may contain `-` keep it.
+  `sk-…` is greedy, so a trailing `-` is simply part of its body; `AIza` + 35
+  characters accepts either end condition (no ASCII word character follows, or
+  the old `\b`), so `AIza<35>-prod`, `…-`, `…--` and `?key=AIza<35>-1` are still
+  caught, as is a key whose last character is `-` followed by a space.
 - Safe-skipped `git status` / `git log` / `git diff` / … assume a **trusted** repository. Config-driven
   execution (`.git/config` `core.pager`, `[alias]`, `diff.external`) is out of
   scope — verifying it on every call would defeat the point of the skip. See the
