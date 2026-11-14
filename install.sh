@@ -396,7 +396,7 @@ install_brew_packages() {
     tmux
     curl
     wget
-    fzf             # fuzzy finder (.zshrc `eval "$(fzf --zsh)"`, sshs/cf/vf)
+    fzf             # fuzzy finder (.zshrc shell integration via `fzf --zsh`, sshs/cf/vf)
     jq              # JSON processor (.claude/statusline-command.sh)
     ripgrep         # rg: vim :Find / nvim telescope live_grep
     bat             # vf() fzf preview

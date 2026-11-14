@@ -107,6 +107,13 @@ sudo apt-get update
 sudo apt-get install -y neovim
 ```
 
+#### fzf のキーバインド（Ctrl-T / Ctrl-R / Alt-C）が効かない
+
+`fzf --zsh` は fzf 0.48 以降のオプションで、それ以前の `apt` 版（Ubuntu 22.04 / 24.04 など）には存在しません。
+`.zshrc` は `fzf --zsh` が成功したときだけその出力を読み込み、失敗した場合は `apt` 版が同梱する
+`/usr/share/doc/fzf/examples/key-bindings.zsh` と `completion.zsh`（無ければ `/usr/share/fzf/` 配下）を読み込むので、
+通常は何もしなくてもキーバインドが使えます。それでも効かない場合は `fzf --version` と、上のファイルが存在するかを確認してください。
+
 #### tmuxでマウス操作が動作しない
 
 tmux 2.1以降が必要です。バージョン確認：
