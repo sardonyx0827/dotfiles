@@ -151,7 +151,7 @@ report_install_failures() {
   for label in "${INSTALL_FAILURES[@]}"; do
     printf '  - %s\n' "$label"
   done
-  print_info "Reasons are printed above as [WARNING]. Fix the cause and re-run ./install.sh (finished steps are skipped)."
+  print_info "Reasons are printed above as [WARNING] or [ERROR]. Fix the cause and re-run ./install.sh (finished steps are skipped)."
   return 0
 }
 
@@ -1534,8 +1534,17 @@ _render_git_local_config() {
     # ~/.config itself may be a dangling symlink (see ensure_dir); this is the
     # first write under it, ahead of _link_editor_configs. So may ~/.config/git,
     # where a bare `mkdir -p` would die with no [ERROR] line.
-    ensure_dir "$HOME/.config"
-    ensure_dir "$HOME/.config/git"
+    #
+    # Failures here are recorded, not fatal: create_symlinks calls this bare
+    # under `set -e`, and a non-zero return used to stop the whole run half-way
+    # (the editor / Claude / Codex / Gemini links and every package step
+    # skipped) over one unwritable file -- against main()'s "symlinks first".
+    # main's failure summary and exit status still carry it.
+    if ! ensure_dir "$HOME/.config" || ! ensure_dir "$HOME/.config/git"; then
+      print_error "Could not create $HOME/.config/git: git has no credential helper or identity file until it is fixed and ./install.sh is re-run"
+      record_failure "git config (os.gitconfig)"
+      return 0
+    fi
     # The github blocks are emitted BEFORE the generic one, and the order is
     # behaviour rather than taste: their `helper =` resets the helper list
     # accumulated so far, so a generic helper written above them would be
@@ -1563,7 +1572,7 @@ _render_git_local_config() {
       fi
     else
       print_error "Could not write $os_gitconfig: git has no credential helper until it is fixed and ./install.sh is re-run"
-      return 1
+      record_failure "git config (os.gitconfig)"
     fi
 
     if [ -e "$git_user_config" ]; then
@@ -1589,22 +1598,43 @@ _render_git_local_config() {
         # `#` / `;` (comment start), `"` (swallowed) or a trailing backslash
         # (line continuation -- the name then absorbed the email line and
         # user.email was left unset, so git refused to commit).
-        git config --file "$git_user_config" user.name "$git_name"
-        git config --file "$git_user_config" user.email "$git_email"
-        print_success "Rendered user.gitconfig ($git_name <$git_email>)"
+        #
+        # Checked like the os.gitconfig write above: a read-only ~/.config/git
+        # fails both, and a bare failure here would abort the run under set -e.
+        if git config --file "$git_user_config" user.name "$git_name" &&
+          git config --file "$git_user_config" user.email "$git_email"; then
+          print_success "Rendered user.gitconfig ($git_name <$git_email>)"
+        else
+          # A name without an email would be kept as "existing identity" by
+          # every later run; drop the partial file so the re-run writes it.
+          rm -f "$git_user_config"
+          print_error "Could not write $git_user_config: git has no identity until it is fixed and ./install.sh is re-run"
+          record_failure "git config (user.gitconfig)"
+        fi
       else
         # Commented-out keys, not empty ones: an empty `name =` makes git report
         # a configured-but-blank identity instead of prompting the user to set it.
-        printf '# Fill in before committing:\n#[user]\n#\tname = Your Name\n#\temail = you@example.com\n' \
-          >"$git_user_config"
-        print_warning "No git identity configured. Edit $git_user_config before committing."
+        if printf '# Fill in before committing:\n#[user]\n#\tname = Your Name\n#\temail = you@example.com\n' \
+          >"$git_user_config"; then
+          print_warning "No git identity configured. Edit $git_user_config before committing."
+        else
+          rm -f "$git_user_config"
+          print_error "Could not write $git_user_config"
+          record_failure "git config (user.gitconfig)"
+        fi
       fi
     fi
   fi
 }
 
 _link_editor_configs() {
-  ensure_dir "$HOME/.config"
+  # Recorded, not fatal (see _render_git_local_config): an unusable ~/.config
+  # would otherwise abort the run here, before the Claude / Codex / Gemini links.
+  if ! ensure_dir "$HOME/.config"; then
+    print_error "Could not create $HOME/.config: the Neovim and VS Code links are skipped until it is fixed"
+    record_failure "editor configs"
+    return 0
+  fi
 
   link_entry "$DOTFILES_DIR/.config/nvim" "$HOME/.config/nvim"
 

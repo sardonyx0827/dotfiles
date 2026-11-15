@@ -1,6 +1,7 @@
 """Tests for install.sh (sourced; main() is guarded and never runs here)."""
 
 import json
+import os
 import re
 import shlex
 import shutil
@@ -4691,23 +4692,85 @@ class TestOsGitconfigWrite:
         assert target.read_text(encoding="utf-8") == "mine\n"
 
     # A directory where the file belongs: the redirect fails with EISDIR on
-    # every bash, and a directory is not ours to delete. create_symlinks is
-    # called bare -- on the left of `&&` errexit is suspended and a non-zero
-    # return would be swallowed.
-    def test_a_failed_write_is_an_error_not_a_success(self, shell_env):
+    # every bash, and a directory is not ours to delete. The failure is an
+    # [ERROR] plus a recorded failure (main's summary and exit status carry it),
+    # not an abort: under `set -e` a non-zero return here used to stop
+    # create_symlinks half-way, leaving the editor / Claude / Codex / Gemini
+    # links unmade and skipping the whole package phase -- the opposite of
+    # main()'s "symlinks first" rationale.
+    def test_a_failed_write_is_recorded_and_linking_continues(self, shell_env):
         home = shell_env.home
         blocker = home / ".config/git/os.gitconfig"
         blocker.mkdir(parents=True)
 
-        res = run_sourced("create_symlinks", shell_env.env)
+        res, failures = run_recording("create_symlinks", shell_env.env)
 
         out = res.stdout + res.stderr
-        assert res.returncode != 0, out
         assert any(
             "[ERROR]" in ln and "os.gitconfig" in ln for ln in out.splitlines()
         ), out
         assert "Rendered os.gitconfig" not in out
         assert blocker.is_dir() and not any(blocker.iterdir())
+        assert failures == ["git config (os.gitconfig)"]
+        # The links that come after the git render still happen.
+        assert (home / ".claude/settings.json").is_symlink(), out
+        assert (home / ".gemini/GEMINI.md").is_symlink(), out
+
+    # ~/.config/git unusable (here: a plain file in its place) made the bare
+    # ensure_dir fail with only mkdir's own message and abort the run.
+    def test_an_unusable_config_git_dir_is_recorded_and_linking_continues(
+        self, shell_env
+    ):
+        home = shell_env.home
+        (home / ".config").mkdir(parents=True)
+        (home / ".config/git").write_text("not a directory\n", encoding="utf-8")
+
+        res, failures = run_recording("create_symlinks", shell_env.env)
+
+        out = res.stdout + res.stderr
+        assert any(
+            "[ERROR]" in ln and ".config/git" in ln for ln in out.splitlines()
+        ), out
+        assert failures == ["git config (os.gitconfig)"]
+        assert (home / ".config/git").read_text(encoding="utf-8") == "not a directory\n"
+        assert (home / ".claude/settings.json").is_symlink(), out
+
+    # A read-only ~/.config/git is the usual reason the os.gitconfig write
+    # fails; the identity file in the same directory then fails too, and its
+    # writes were bare under `set -e`.
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+    def test_a_read_only_config_git_dir_is_recorded_and_linking_continues(
+        self, shell_env
+    ):
+        home = shell_env.home
+        git_dir = home / ".config/git"
+        git_dir.mkdir(parents=True)
+        git_dir.chmod(0o555)
+        try:
+            res, failures = run_recording("create_symlinks", shell_env.env)
+        finally:
+            git_dir.chmod(0o755)
+
+        out = res.stdout + res.stderr
+        assert failures == [
+            "git config (os.gitconfig)",
+            "git config (user.gitconfig)",
+        ], out
+        assert (home / ".claude/settings.json").is_symlink(), out
+
+    # ~/.config itself unusable: the git render records it, and the editor
+    # links (nvim under ~/.config) must not abort the run one step later.
+    def test_an_unusable_config_dir_is_recorded_and_linking_continues(self, shell_env):
+        home = shell_env.home
+        (home / ".config").write_text("not a directory\n", encoding="utf-8")
+
+        res, failures = run_recording("create_symlinks", shell_env.env)
+
+        out = res.stdout + res.stderr
+        assert "git config (os.gitconfig)" in failures, out
+        assert "editor configs" in failures, out
+        assert (home / ".config").read_text(encoding="utf-8") == "not a directory\n"
+        assert (home / ".claude/settings.json").is_symlink(), out
 
 
 class TestBackupsAreAnnounced:
