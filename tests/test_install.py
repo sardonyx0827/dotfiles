@@ -1450,23 +1450,28 @@ def _stub_curl_serving(shell_env, tarball: Path):
     )
 
 
-def _install_neovim(shell_env, digest, arch="x86_64", extra=""):
+def _install_neovim(shell_env, digest, arch="x86_64", extra="", recording=False):
     """Run install_neovim for one architecture with a known-good digest.
 
     The two digests are deliberately DIFFERENT: only the architecture under
     test gets the real one. Setting both to the same value would let a swapped
     arch->digest mapping in install.sh pass every test here, since either
     branch would then verify successfully.
+
+    recording=True runs it through run_recording and returns (result, labels)
+    -- the INSTALL_FAILURES entries the run left behind.
     """
     real_arch = arch in ("x86_64", "amd64")
     x86 = digest if real_arch else "1" * 64
     arm = "2" * 64 if real_arch else digest
-    return run_sourced(
+    snippet = (
         f"OS=ubuntu; uname() {{ echo {arch}; }}; "
         f'NEOVIM_SHA256_X86_64="{x86}"; NEOVIM_SHA256_ARM64="{arm}"; '
-        f'{extra}install_neovim; echo "AFTER_NEOVIM"',
-        shell_env.env,
+        f'{extra}install_neovim; echo "AFTER_NEOVIM"'
     )
+    if recording:
+        return run_recording(snippet, shell_env.env)
+    return run_sourced(snippet, shell_env.env)
 
 
 class TestVersionAtLeast:
@@ -1865,6 +1870,301 @@ class TestInstallNeovim:
         assert "AFTER_NEOVIM" in res.stdout
         assert not any(c.startswith("curl ") for c in shell_env.calls)
         assert not (shell_env.home / ".local/nvim").exists()
+
+
+def _managed_nvim(shell_env, version):
+    """A managed install of `version` under ~/.local/nvim; returns the prefix."""
+    prefix = shell_env.home / ".local/nvim"
+    (prefix / "bin").mkdir(parents=True)
+    binary = prefix / "bin/nvim"
+    binary.write_text(_FAKE_NVIM.format(version=version), encoding="utf-8")
+    binary.chmod(0o755)
+    return prefix
+
+
+def _serve_release(shell_env, tmp_path):
+    tarball, digest = _fake_release_tarball(tmp_path)
+    _stub_curl_serving(shell_env, tarball)
+    return digest
+
+
+# An `mv` stub that fails for the moves whose source matches `pattern` and
+# performs every other move for real.
+def _mv_failing_on(pattern):
+    return f'case "$1" in {pattern}) exit 1 ;; esac\nexec /bin/mv "$@"'
+
+
+# record_failure drops a consecutive duplicate label, so `labels == [x]` alone
+# cannot tell one call from several. This override keeps every call, for the
+# tests whose claim is "exactly one call".
+_KEEP_EVERY_RECORD = 'record_failure() { INSTALL_FAILURES+=("$1"); }; '
+
+
+class TestInstallNeovimFailureRecording:
+    """install_neovim follows main's record_failure contract: a Neovim the
+    step tried to install and could not leaves exactly one `neovim` entry
+    (the same label try_install records for the Homebrew formula on macOS),
+    so the run ends in the failure summary and exit 1.
+
+    Not recorded: no upstream build this machine can host (no build for the
+    arch, a tarball that does not run here) and a missing checksum tool (a
+    missing prerequisite is a skip, like `go not found`) -- user decision;
+    check_neovim_version still warns. Nor a stranded backup that cannot be
+    restored (the rest of the run reports its own outcome), leaving a user's
+    own file at ~/.local/bin/nvim alone, or cleanup warnings.
+    """
+
+    # --- the step failed: exactly one entry ---------------------------------
+
+    def test_a_local_dir_that_is_not_a_neovim_prefix(self, shell_env):
+        shell_env.hide("nvim")
+        prefix = shell_env.home / ".local/nvim"
+        prefix.mkdir(parents=True)
+        (prefix / "notes.md").write_text("mine\n", encoding="utf-8")
+
+        res, labels = _install_neovim(shell_env, "0" * 64, recording=True)
+
+        assert "holds no bin/nvim" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_local_bin_cannot_be_created(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        # ~/.local is a plain file, so `mkdir -p ~/.local/bin` fails.
+        (shell_env.home / ".local").write_text("", encoding="utf-8")
+        digest = _serve_release(shell_env, tmp_path)
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "Failed to create" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_the_staging_directory_cannot_be_created(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        shell_env.stub("mktemp", exit_code=1)
+        digest = _serve_release(shell_env, tmp_path)
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "staging directory" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_a_failed_download(self, shell_env):
+        shell_env.hide("nvim")
+        shell_env.stub("curl", exit_code=1)
+
+        res, labels = _install_neovim(shell_env, "0" * 64, recording=True)
+
+        assert "Failed to download" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_a_failed_upgrade_is_recorded_even_with_an_older_nvim_kept(self, shell_env):
+        # The old managed nvim survives, but the pinned version did not
+        # install -- and re-running is exactly what fixes a failed download.
+        shell_env.hide("nvim")
+        _managed_nvim(shell_env, "0.12.4")
+        shell_env.stub("curl", exit_code=1)
+
+        res, labels = _install_neovim(shell_env, "0" * 64, recording=True)
+
+        assert "Failed to download" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_a_checksum_mismatch_is_one_entry_despite_four_warnings(
+        self, shell_env, tmp_path
+    ):
+        shell_env.hide("nvim")
+        _serve_release(shell_env, tmp_path)
+
+        res, labels = _install_neovim(
+            shell_env, "0" * 64, extra=_KEEP_EVERY_RECORD, recording=True
+        )
+
+        assert res.stdout.count("[WARNING]") >= 4
+        assert labels == ["neovim"]
+
+    def test_a_checksum_tool_that_fails_to_run(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        digest = _serve_release(shell_env, tmp_path)
+        shell_env.stub("sha256sum", exit_code=1)
+        shell_env.stub("shasum", exit_code=1)
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "Checksum mismatch" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_a_failed_extraction(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        digest = _serve_release(shell_env, tmp_path)
+        shell_env.stub("tar", exit_code=1)
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "Failed to extract" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_the_existing_prefix_cannot_be_moved_aside(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        _managed_nvim(shell_env, "0.12.4")
+        digest = _serve_release(shell_env, tmp_path)
+        shell_env.stub("mv", body=_mv_failing_on("*/.local/nvim"))
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "Failed to move the existing" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_the_new_tree_cannot_be_moved_into_place(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        digest = _serve_release(shell_env, tmp_path)
+        shell_env.stub("mv", body=_mv_failing_on("*nvim-linux-*"))
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "Failed to install Neovim into" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_a_failed_install_and_a_failed_restore_are_one_entry(
+        self, shell_env, tmp_path
+    ):
+        shell_env.hide("nvim")
+        _managed_nvim(shell_env, "0.12.4")
+        digest = _serve_release(shell_env, tmp_path)
+        shell_env.stub("mv", body=_mv_failing_on("*nvim-linux-*|*.old"))
+
+        res, labels = _install_neovim(
+            shell_env, digest, extra=_KEEP_EVERY_RECORD, recording=True
+        )
+
+        assert "Failed to install Neovim into" in res.stdout
+        assert "move it back by hand" in res.stdout
+        assert labels == ["neovim"]
+
+    def test_a_failed_link_at_the_pinned_version(self, shell_env):
+        shell_env.hide("nvim")
+        _managed_nvim(shell_env, "0.12.5")
+        shell_env.stub("ln", exit_code=1)
+        shell_env.stub("curl", exit_code=1)
+
+        res, labels = _install_neovim(shell_env, "0" * 64, recording=True)
+
+        assert "Failed to link" in res.stdout
+        assert labels == ["neovim"]
+
+    # --- not a failure of this step: no entry -------------------------------
+
+    def test_a_successful_install_records_nothing(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        digest = _serve_release(shell_env, tmp_path)
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "Neovim 0.12.5 installed" in res.stdout
+        assert labels == []
+
+    def test_a_failing_cleanup_after_a_good_install_records_nothing(
+        self, shell_env, tmp_path
+    ):
+        shell_env.hide("nvim")
+        digest = _serve_release(shell_env, tmp_path)
+        shell_env.stub("rm", body='echo "rm: cannot remove: denied" >&2', exit_code=1)
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "Failed to remove" in res.stdout
+        assert "Neovim 0.12.5 installed" in res.stdout
+        assert labels == []
+
+    def test_a_stranded_backup_that_cannot_be_restored_records_nothing(
+        self, shell_env, tmp_path
+    ):
+        # The restore warning alone is not the step's outcome: here the run
+        # goes on to install the pinned version, so nothing failed.
+        shell_env.hide("nvim")
+        stranded = shell_env.home / ".local/nvim.old"
+        (stranded / "bin").mkdir(parents=True)
+        (stranded / "bin/nvim").write_text(
+            _FAKE_NVIM.format(version="0.11.5"), encoding="utf-8"
+        )
+        (stranded / "bin/nvim").chmod(0o755)
+        digest = _serve_release(shell_env, tmp_path)
+        shell_env.stub("mv", body=_mv_failing_on("*.old"))
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "stranded" in res.stdout
+        assert "Neovim 0.12.5 installed" in res.stdout
+        assert labels == []
+
+    def test_an_unsupported_architecture_records_nothing(self, shell_env):
+        shell_env.hide("nvim")
+        shell_env.stub("curl")
+
+        res, labels = _install_neovim(
+            shell_env, "0" * 64, arch="armv7l", recording=True
+        )
+
+        assert "no Neovim build for armv7l" in res.stdout
+        assert labels == []
+
+    def test_a_missing_checksum_tool_records_nothing(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        digest = _serve_release(shell_env, tmp_path)
+        no_checksum_tool = (
+            'command_exists() { case "$1" in sha256sum|shasum) return 1;; '
+            '*) command -v "$1" >/dev/null 2>&1;; esac; }; '
+        )
+
+        res, labels = _install_neovim(
+            shell_env, digest, extra=no_checksum_tool, recording=True
+        )
+
+        assert "unverified Neovim" in res.stdout
+        assert labels == []
+
+    def test_a_tarball_that_does_not_run_here_records_nothing(
+        self, shell_env, tmp_path
+    ):
+        shell_env.hide("nvim")
+        broken = tmp_path / "release" / "nvim-linux-x86_64"
+        (broken / "bin").mkdir(parents=True)
+        (broken / "bin/nvim").write_text("#!/bin/bash\nexit 127\n", encoding="utf-8")
+        (broken / "bin/nvim").chmod(0o755)
+        tarball = tmp_path / "nvim-linux-x86_64.tar.gz"
+        subprocess.run(
+            ["tar", "-czf", str(tarball), "-C", str(broken.parent), broken.name],
+            check=True,
+            capture_output=True,
+        )
+        _stub_curl_serving(shell_env, tarball)
+        digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "does not run on this machine" in res.stdout
+        assert labels == []
+
+    def test_a_user_file_at_the_link_path_records_nothing(self, shell_env, tmp_path):
+        shell_env.hide("nvim")
+        (shell_env.home / ".local/bin").mkdir(parents=True)
+        wrapper = shell_env.home / ".local/bin/nvim"
+        wrapper.write_text("#!/bin/bash\n# my own wrapper\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        digest = _serve_release(shell_env, tmp_path)
+
+        res, labels = _install_neovim(shell_env, digest, recording=True)
+
+        assert "not a symlink" in res.stdout
+        assert labels == []
+
+    def test_a_new_enough_nvim_left_alone_records_nothing(self, shell_env):
+        shell_env.stub("nvim", body='[ "$1" = "--version" ] && echo "NVIM v0.12.0"')
+        shell_env.stub("curl", exit_code=1)
+
+        res, labels = _install_neovim(shell_env, "0" * 64, recording=True)
+
+        assert "leaving it alone" in res.stdout
+        assert labels == []
 
 
 class TestNeovimPin:
@@ -5782,8 +6082,9 @@ class TestInstallTreeSitterCli:
 # a new enough one, but it can still end with an older or missing nvim on PATH
 # (an unsupported arch, a failed download, an older nvim earlier on PATH), so
 # the check right after it says so. It is a WARNING and never a recorded
-# failure: those causes are either reported by install_neovim already or out of
-# the installer's reach, and must not make every run exit 1.
+# failure: install_neovim records its own failed attempts, and the rest is
+# warning-only on purpose or out of the installer's reach -- recording it here
+# would count failures twice or make every run exit 1.
 _NVIM_DOC_ANCHOR = "INSTALL_PLATFORM.md#neovimのバージョンが古い"
 
 
@@ -5960,4 +6261,6 @@ class TestNeovimVersionCheck:
         assert "Failed to download" in res.stdout
         assert "nvim not found" not in res.stdout
         assert "Neovim 0.12.4 is new enough" in res.stdout
-        assert labels == []
+        # The failed download is install_neovim's one entry; the check that
+        # follows records nothing of its own.
+        assert labels == ["neovim"]

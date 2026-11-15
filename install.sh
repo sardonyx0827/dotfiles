@@ -566,9 +566,12 @@ install_neovim() {
   fi
 
   # A ~/.local/nvim that is not a Neovim prefix belongs to someone else; this
-  # function is not entitled to replace it.
+  # function is not entitled to replace it. Recorded: Neovim stays uninstalled
+  # until the user moves it away and re-runs, the same as the plugin clones
+  # reclaim_aborted_clone refuses to overwrite.
   if [ -e "$prefix" ] && [ ! -e "$prefix/bin/nvim" ]; then
     print_warning "$prefix exists but holds no bin/nvim; leaving it alone (no Neovim installed)"
+    record_failure "neovim"
     return 0
   fi
 
@@ -584,6 +587,9 @@ install_neovim() {
     sha="$NEOVIM_SHA256_ARM64"
     ;;
   *)
+    # Not record_failure: this machine cannot host the upstream build -- no
+    # install path for this arch, like gh on an OS it has none for.
+    # check_neovim_version still warns.
     print_warning "Upstream publishes no Neovim build for $arch; install Neovim >= $NEOVIM_MIN_VERSION manually (see INSTALL_PLATFORM.md)"
     return 0
     ;;
@@ -597,7 +603,8 @@ install_neovim() {
   else
     # Fail closed. Skipping the check would install unverified bytes that then
     # run as this user on every `nvim`; skipping the install only costs an
-    # editor, and says so.
+    # editor, and says so. A missing prerequisite tool, so a skip rather
+    # than a recorded failure (like `go not found; skipping glow`).
     print_warning "Neither sha256sum nor shasum found; refusing to install an unverified Neovim"
     return 0
   fi
@@ -607,11 +614,13 @@ install_neovim() {
   # debris next to the prefix instead of in /tmp.
   if ! mkdir -p "$HOME/.local/bin"; then
     print_warning "Failed to create $HOME/.local/bin; skipping Neovim"
+    record_failure "neovim"
     return 0
   fi
   local tmpdir
   if ! tmpdir="$(mktemp -d "$HOME/.local/.nvim-install.XXXXXX")"; then
     print_warning "Failed to create a staging directory for Neovim"
+    record_failure "neovim"
     return 0
   fi
 
@@ -619,6 +628,7 @@ install_neovim() {
   local url="https://github.com/neovim/neovim/releases/download/$NEOVIM_VERSION/$asset"
   if ! curl -fsSL "$url" -o "$tmpdir/$asset"; then
     print_warning "Failed to download $asset"
+    record_failure "neovim"
     rm_rf_safely "$tmpdir"
     return 0
   fi
@@ -636,12 +646,14 @@ install_neovim() {
     print_warning "  expected: $sha"
     print_warning "  actual:   ${actual:-<none>}"
     print_warning "  If Neovim $NEOVIM_VERSION was re-released, refresh NEOVIM_SHA256_* in install.sh."
+    record_failure "neovim"
     rm_rf_safely "$tmpdir"
     return 0
   fi
 
   if ! tar -xzf "$tmpdir/$asset" -C "$tmpdir"; then
     print_warning "Failed to extract $asset"
+    record_failure "neovim"
     rm_rf_safely "$tmpdir"
     return 0
   fi
@@ -652,6 +664,9 @@ install_neovim() {
   # existing setup survive a bad release.
   local staged="$tmpdir/${asset%.tar.gz}"
   if ! have="$(nvim_version_of "$staged/bin/nvim")"; then
+    # Not record_failure, for the same reason as an unsupported arch: this
+    # machine cannot host the upstream build (an old glibc, say).
+    # check_neovim_version still warns about what is left on PATH.
     print_warning "The downloaded Neovim does not run on this machine; leaving the current setup alone"
     rm_rf_safely "$tmpdir"
     return 0
@@ -662,11 +677,13 @@ install_neovim() {
   rm_rf_safely "$prefix.old"
   if [ -e "$prefix" ] && ! mv "$prefix" "$prefix.old"; then
     print_warning "Failed to move the existing $prefix aside; Neovim not updated"
+    record_failure "neovim"
     rm_rf_safely "$tmpdir"
     return 0
   fi
   if ! mv "$staged" "$prefix"; then
     print_warning "Failed to install Neovim into $prefix"
+    record_failure "neovim"
     if [ -e "$prefix.old" ] && ! mv "$prefix.old" "$prefix"; then
       print_warning "The previous Neovim is left at $prefix.old; move it back by hand"
     fi
@@ -697,6 +714,7 @@ link_managed_nvim() {
   # warning -- see rm_rf_safely's header for why that costs the whole run.
   if ! (mkdir -p "$(dirname "$link")" && ln -sf "$prefix/bin/nvim" "$link"); then
     print_warning "Failed to link $link -> $prefix/bin/nvim"
+    record_failure "neovim"
   fi
   return 0
 }
@@ -1049,12 +1067,14 @@ neovim_version() {
 # an unsupported arch, a failed download or an older nvim earlier on PATH can
 # still leave the editor unable to run this config.
 #
-# WARNING ONLY, deliberately: no record_failure. What leaves an old nvim behind
-# is either already reported by install_neovim (no build for this arch, a
-# failed download or checksum) or out of the installer's reach (an older nvim
-# earlier on PATH, a real file at ~/.local/bin/nvim); recording it would make
-# every such run exit 1 whatever the user does -- the failure summary would
-# stop meaning "something you can fix by re-running".
+# WARNING ONLY, deliberately: no record_failure. When install_neovim tried and
+# failed (download, checksum, extraction, swap, link) it has recorded that
+# itself; what else leaves an old nvim behind is warning-only on purpose (no
+# upstream build this machine can run, no checksum tool) or out of the
+# installer's reach (an older nvim earlier on PATH, a real file at
+# ~/.local/bin/nvim). Recording here would count the first group twice and
+# make every run exit 1 for the rest whatever the user does -- the failure
+# summary would stop meaning "something you can fix by re-running".
 # A missing nvim or an unreadable version warns too and carries on; this must
 # never abort the installer, so it always returns 0 (main() calls it bare, and
 # a non-zero status there would trip `set -e`).
