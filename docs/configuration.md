@@ -156,6 +156,8 @@ Ctrl+a ]        # ペースト
   - `agents/` と `skills/` はディレクトリごとリンクします。共有スキルはリポジトリ内の相対シンボリックリンク（`.codex/skills/<name>` → `../../.claude/skills/<name>`）として定義しています。共有の追加・削除はこのリンクの増減で行い、`install.sh` 側にスキル一覧は持ちません（なおフックは以前この方式でしたが、`core.symlinks=false` の clone で壊れるため参照側のパス解決に移行済みです。スキルは Codex 自身がディレクトリを読むため同じ手は使えません）
   - `~/.codex/skills` はチェックアウト内を指すため、Codex が書き込む組込みスキル `.system/` はリポジトリ配下に出現します（`.gitignore` 済み）
 - **`.gemini/`**: Gemini CLI の指示（`GEMINI.md`）と `settings.json`
+  - `settings.json` はリンクせず、`install.sh` が `~/.gemini/` へ初回のみ権限 0600 で複製します（既存のファイルは中身を残して権限だけ 0600 に絞ります）。Gemini CLI は設定を書き戻すときに `${GITHUB_ACCESS_TOKEN}` を実際の値へ展開し、一時ファイル（0644）の rename で置き換える（symlink も実ファイルに化ける）ためです
+  - 書き戻しのたびにファイルの権限は 0644 に戻るので、`install.sh` は `~/.gemini` ディレクトリ自体も 0700 に絞ります（`~/.gemini` 自体が別の場所への symlink の場合はリンク先を変更せず、警告だけ出します）。以前の実行でバックアップ（`~/.dotfiles_backup_*/.gemini/settings.json`）に他人が読める状態で残ったコピーも 0600 に絞り、警告を出します
 
 > **⚠️ セキュリティモデル（`.claude/settings.json` はフックとセットで安全）**
 >

@@ -4,6 +4,7 @@ import json
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -477,7 +478,10 @@ class TestCreateSymlinks:
         assert (home / ".claude/mods").resolve() == (
             REPO_ROOT / ".claude/mods"
         ).resolve()
-        assert (home / ".gemini/settings.json").is_symlink()
+        # ~/.gemini/settings.json is seeded, not linked (see the Gemini tests
+        # below); GEMINI.md stays a link.
+        assert (home / ".gemini/GEMINI.md").is_symlink()
+        assert not (home / ".gemini/settings.json").is_symlink()
         assert (home / ".config/nvim").resolve() == (
             REPO_ROOT / ".config/nvim"
         ).resolve()
@@ -569,6 +573,227 @@ class TestCreateSymlinks:
         config = home / ".codex/config.toml"
         assert config.is_file()
         assert not config.is_symlink()
+
+    # --- Gemini settings.json: seeded owner-only, never linked ---------------
+    # Gemini CLI rewrites ~/.gemini/settings.json (`gemini mcp add`, /auth,
+    # /theme) with ${VAR} references such as ${GITHUB_ACCESS_TOKEN} expanded.
+    # It writes a temp file at the default mode (0644 under umask 022) and
+    # renames it over settings.json, so a symlink becomes a plain world-readable
+    # file holding the token, and backup_if_real would then move that file into
+    # ~/.dotfiles_backup_*. Because every rewrite resets the file mode, the
+    # ~/.gemini directory itself is what keeps others out.
+
+    @staticmethod
+    def _mode(path):
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_gemini_settings_is_seeded_as_an_owner_only_real_file(self, shell_env):
+        home = shell_env.home
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        settings = home / ".gemini/settings.json"
+        assert settings.is_file()
+        assert not settings.is_symlink(), (
+            "settings.json must not be a symlink: Gemini CLI replaces it with "
+            "a plain file holding expanded tokens"
+        )
+        assert settings.read_text(encoding="utf-8") == (
+            REPO_ROOT / ".gemini/settings.json"
+        ).read_text(encoding="utf-8")
+        assert self._mode(settings) == 0o600
+        assert self._mode(home / ".gemini") == 0o700, (
+            "Gemini's rewrites reset the file to 0644; only the directory mode "
+            "keeps other users out"
+        )
+        assert not list((home / ".gemini").glob(".settings.json.*")), (
+            "the seed's temp file was left behind"
+        )
+
+    def test_gemini_settings_written_by_gemini_is_kept_tightened_not_backed_up(
+        self, shell_env
+    ):
+        home = shell_env.home
+        (home / ".gemini").mkdir(parents=True)
+        (home / ".gemini").chmod(0o755)
+        live = home / ".gemini/settings.json"
+        live.write_text('{"headers": {"Authorization": "Bearer secret"}}\n')
+        live.chmod(0o644)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert not live.is_symlink()
+        assert "Bearer secret" in live.read_text(encoding="utf-8")
+        assert self._mode(live) == 0o600
+        assert self._mode(home / ".gemini") == 0o700
+        for backup in home.glob(".dotfiles_backup_*"):
+            assert not (backup / ".gemini/settings.json").exists(), (
+                f"a live Gemini settings.json (expanded tokens) was moved into {backup}"
+            )
+
+    def test_gemini_settings_symlink_is_replaced_with_a_real_file(
+        self, shell_env, tmp_path
+    ):
+        """Self-heal the older install that linked it into the checkout."""
+        home = shell_env.home
+        # Link to a copy, not the real checkout: a regression that writes or
+        # chmods through the link must not touch the developer's tree.
+        old = tmp_path / "old-checkout-settings.json"
+        old.write_text('{"old": true}\n', encoding="utf-8")
+        old.chmod(0o644)
+        (home / ".gemini").mkdir(parents=True)
+        (home / ".gemini/settings.json").symlink_to(old)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        settings = home / ".gemini/settings.json"
+        assert settings.is_file()
+        assert not settings.is_symlink()
+        assert self._mode(settings) == 0o600
+        assert settings.read_text(encoding="utf-8") == (
+            REPO_ROOT / ".gemini/settings.json"
+        ).read_text(encoding="utf-8")
+        assert old.read_text(encoding="utf-8") == '{"old": true}\n'
+        assert self._mode(old) == 0o644, "the link target was chmodded"
+
+    def test_gemini_settings_dry_run_keeps_a_live_file_untouched(self, shell_env):
+        home = shell_env.home
+        (home / ".gemini").mkdir(parents=True)
+        (home / ".gemini").chmod(0o755)
+        live = home / ".gemini/settings.json"
+        live.write_text("{}\n", encoding="utf-8")
+        live.chmod(0o644)
+
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+        assert res.returncode == 0, res.stderr
+
+        assert live.read_text(encoding="utf-8") == "{}\n"
+        assert self._mode(live) == 0o644
+        assert self._mode(home / ".gemini") == 0o755
+        assert not list(home.glob(".dotfiles_backup_*"))
+        plan = [
+            ln
+            for ln in res.stdout.splitlines()
+            if "[DRY-RUN]" in ln and ".gemini" in ln
+        ]
+        assert any("would keep existing" in ln and "0600" in ln for ln in plan), (
+            res.stdout
+        )
+        assert any("0700" in ln for ln in plan), res.stdout
+
+    def test_gemini_settings_symlink_preview_matches_the_real_seed(
+        self, shell_env, tmp_path
+    ):
+        old = tmp_path / "old-checkout-settings.json"
+        old.write_text("{}\n", encoding="utf-8")
+        dry_home = tmp_path / "dry-home"
+        real_home = tmp_path / "real-home"
+        for home in (dry_home, real_home):
+            (home / ".gemini").mkdir(parents=True)
+            (home / ".gemini/settings.json").symlink_to(old)
+
+        dry = run_sourced(
+            "create_symlinks", {**shell_env.env, "HOME": str(dry_home), "DRY_RUN": "1"}
+        )
+        real = run_sourced("create_symlinks", {**shell_env.env, "HOME": str(real_home)})
+        assert dry.returncode == 0, dry.stderr
+        assert real.returncode == 0, real.stderr
+
+        dry_plan = [ln for ln in dry.stdout.splitlines() if ".gemini/settings" in ln]
+        assert any("would replace" in ln for ln in dry_plan), dry.stdout
+        assert any("would seed" in ln for ln in dry_plan), dry.stdout
+        assert not any("would keep existing" in ln for ln in dry_plan), dry.stdout
+        assert (dry_home / ".gemini/settings.json").readlink() == old
+        assert "Seeded ~/.gemini/settings.json" in real.stdout
+        assert not (real_home / ".gemini/settings.json").is_symlink()
+
+    def test_gemini_settings_directory_at_dest_is_left_alone(self, shell_env):
+        home = shell_env.home
+        (home / ".gemini/settings.json").mkdir(parents=True)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert (home / ".gemini/settings.json").is_dir()
+        assert "is a directory" in res.stdout + res.stderr
+
+    def test_gemini_settings_left_in_old_backups_is_restricted(self, shell_env):
+        """Older runs moved a token-bearing 0644 copy into the backup dirs."""
+        home = shell_env.home
+        stale = home / ".dotfiles_backup_20200101_000000/.gemini/settings.json"
+        stale.parent.mkdir(parents=True)
+        stale.write_text('{"Authorization": "Bearer old"}\n', encoding="utf-8")
+        stale.chmod(0o644)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert self._mode(stale) == 0o600
+        assert str(stale) in res.stdout + res.stderr
+
+    def test_gemini_settings_symlink_to_a_directory_is_replaced(
+        self, shell_env, tmp_path
+    ):
+        # `mv -f tmp dest` with dest a link to a directory moves the file INTO
+        # that directory and leaves the link: the seed must not report success
+        # for a file that is not at dest.
+        home = shell_env.home
+        elsewhere = tmp_path / "some-dir"
+        elsewhere.mkdir()
+        (home / ".gemini").mkdir(parents=True)
+        (home / ".gemini/settings.json").symlink_to(elsewhere)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        settings = home / ".gemini/settings.json"
+        assert settings.is_file() and not settings.is_symlink()
+        assert list(elsewhere.iterdir()) == [], "the seed landed in the link target"
+
+    def test_gemini_settings_failed_copy_never_lands_and_is_recorded(self, shell_env):
+        home = shell_env.home
+        (home / ".gemini").mkdir(parents=True)
+        shell_env.stub("cp", exit_code=1)
+
+        res, failures = run_recording("_seed_gemini_settings", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert failures == ["Gemini settings.json"]
+        assert not (home / ".gemini/settings.json").exists()
+        assert not list((home / ".gemini").glob(".settings.json.*")), (
+            "the failed seed left its temp file behind"
+        )
+
+    def test_gemini_dry_run_on_a_fresh_home_previews_the_0700_step(self, shell_env):
+        # The real run creates ~/.gemini (ensure_dir) and then restricts it, so
+        # the preview must announce that even though the dir does not exist yet.
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+        assert res.returncode == 0, res.stderr
+        assert any(
+            "[DRY-RUN]" in ln and "~/.gemini" in ln and "0700" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+
+    def test_gemini_dir_linked_elsewhere_warns_that_it_is_not_restricted(
+        self, shell_env, tmp_path
+    ):
+        # A user-redirected ~/.gemini (a link to a real dir outside the
+        # checkout) is not chmodded through the link; say so instead of
+        # silently leaving every Gemini rewrite at 0644.
+        home = shell_env.home
+        elsewhere = tmp_path / "gemini-elsewhere"
+        elsewhere.mkdir()
+        elsewhere.chmod(0o755)
+        (home / ".gemini").symlink_to(elsewhere)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert self._mode(elsewhere) == 0o755
+        out = res.stdout + res.stderr
+        assert any("0700" in ln and "symlink" in ln for ln in out.splitlines()), out
 
     # --- ~/.zsh_secrets: seeded in $HOME, never in the checkout -------------
     # ~/.zshrc is a symlink into the repo, so an `export API_KEY=...` added to
@@ -4129,6 +4354,10 @@ class TestLinkingThroughASymlinkedParent:
         checkout = self._scratch_checkout(tmp_path)
         (shell_env.home / rel).symlink_to(checkout / rel)
         before = self._shape(checkout / rel)
+        modes = {
+            p: stat.S_IMODE(p.lstat().st_mode)
+            for p in [checkout / rel, *(checkout / rel).rglob("*")]
+        }
 
         res = subprocess.run(
             ["bash", "-c", f'source "{checkout / "install.sh"}"\ncreate_symlinks'],
@@ -4140,10 +4369,41 @@ class TestLinkingThroughASymlinkedParent:
 
         assert res.returncode == 0, res.stderr
         assert self._shape(checkout / rel) == before, "the checkout was modified"
+        assert {p: stat.S_IMODE(p.lstat().st_mode) for p in modes} == modes, (
+            "a file mode in the checkout was changed"
+        )
         assert not list(shell_env.home.glob(f".dotfiles_backup_*/{rel}")), (
             "the repository's own files were moved into the backup dir"
         )
         assert "resolves into the checkout" in res.stdout + res.stderr
+        if rel == ".gemini":
+            # GEMINI.md's link_entry prints "resolves into the checkout" too, so
+            # pin the settings.json guard by its own wording.
+            assert "Skipping settings.json" in res.stdout + res.stderr
+
+    def test_old_gemini_backups_are_restricted_even_when_gemini_is_in_the_checkout(
+        self, shell_env, tmp_path
+    ):
+        # The backups live under $HOME, independent of where ~/.gemini points.
+        checkout = self._scratch_checkout(tmp_path)
+        (shell_env.home / ".gemini").symlink_to(checkout / ".gemini")
+        stale = (
+            shell_env.home / ".dotfiles_backup_20200101_000000/.gemini/settings.json"
+        )
+        stale.parent.mkdir(parents=True)
+        stale.write_text("{}\n", encoding="utf-8")
+        stale.chmod(0o644)
+
+        res = subprocess.run(
+            ["bash", "-c", f'source "{checkout / "install.sh"}"\ncreate_symlinks'],
+            capture_output=True,
+            text=True,
+            env=shell_env.env,
+            timeout=120,
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert stat.S_IMODE(stale.stat().st_mode) == 0o600
 
     # The -ef guard must cover the dry-run branch of _render_git_local_config
     # too, or the preview promises to render os.gitconfig / user.gitconfig that

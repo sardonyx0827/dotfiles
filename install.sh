@@ -1836,14 +1836,134 @@ _link_codex_config() {
 
 _link_gemini_config() {
   ensure_dir "$HOME/.gemini"
-  local gemini_entries=(
-    "GEMINI.md"
-    "settings.json"
-  )
   # `[ -e ] && link_entry` ではなく if/fi な理由は _link_claude_config を参照。
-  for entry in "${gemini_entries[@]}"; do
-    if [ -e "$DOTFILES_DIR/.gemini/$entry" ]; then
-      link_entry "$DOTFILES_DIR/.gemini/$entry" "$HOME/.gemini/$entry"
+  if [ -e "$DOTFILES_DIR/.gemini/GEMINI.md" ]; then
+    link_entry "$DOTFILES_DIR/.gemini/GEMINI.md" "$HOME/.gemini/GEMINI.md"
+  fi
+  _seed_gemini_settings
+}
+
+# ~/.gemini/settings.json is deliberately NOT symlinked -- the same reasoning as
+# ~/.codex/config.toml in _link_codex_config. Gemini CLI owns this file at
+# runtime: `gemini mcp add`, /auth and /theme rewrite it with ${VAR} references
+# (the tracked file's ${GITHUB_ACCESS_TOKEN} header) expanded to their values.
+# The rewrite writes a temp file at the default mode (0644 under umask 022) and
+# renames it over settings.json, so a symlink turns into a world-readable file
+# holding the token, silently detached from the checkout -- and link_entry's
+# backup_if_real would then move that file into ~/.dotfiles_backup_* on the
+# next run.
+#
+# So: seed the tracked baseline once, owner-only; leave an existing real file's
+# content alone (no backup, no replace) but restrict it to 0600; replace a
+# symlink left by older installs with a real copy. Every Gemini rewrite resets
+# the file to 0644 again, so the ~/.gemini directory is restricted to 0700 as
+# well: that is what actually keeps other users out between install runs.
+_seed_gemini_settings() {
+  local src="$DOTFILES_DIR/.gemini/settings.json"
+  local gemini_dir="$HOME/.gemini"
+  local dest="$gemini_dir/settings.json"
+  [ -f "$src" ] || return 0
+  # A ~/.gemini that resolves into the checkout would make dest the tracked
+  # file itself (see the guard in link_entry and _link_codex_config). Nothing
+  # here can fix that layout: Gemini's own rewrites land in the working tree.
+  # The backups live under $HOME whatever ~/.gemini points at.
+  _restrict_gemini_backups
+  if [ "$gemini_dir" -ef "$DOTFILES_DIR/.gemini" ]; then
+    print_warning "Skipping settings.json: $gemini_dir resolves into the checkout, so Gemini CLI writes expanded tokens into the working tree; make ~/.gemini a real directory"
+    return 0
+  fi
+  # A ~/.gemini the user redirected elsewhere is not chmodded through the link
+  # (that would change a directory this installer does not own); say so, since
+  # nothing else then keeps Gemini's 0644 rewrites away from other users.
+  if [ -L "$gemini_dir" ]; then
+    local dry_prefix=""
+    if [ "$DRY_RUN" -eq 1 ]; then
+      dry_prefix="[DRY-RUN] "
+    fi
+    print_warning "${dry_prefix}Not restricting ~/.gemini to mode 0700: it is a symlink; restrict the directory it points to yourself"
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    # Also on a fresh HOME: the real run creates ~/.gemini (ensure_dir) first.
+    print_info "[DRY-RUN] would restrict ~/.gemini to mode 0700"
+  elif [ -d "$gemini_dir" ] && ! chmod 700 "$gemini_dir"; then
+    print_error "Could not restrict $gemini_dir to mode 0700"
+    record_failure "Gemini settings.json"
+  fi
+  if [ -d "$dest" ] && [ ! -L "$dest" ]; then
+    print_warning "Skipping settings.json: $dest is a directory"
+    return 0
+  fi
+  # Decided up front so dry-run reports the same plan as the real run (the
+  # trap described in _link_codex_config).
+  local seed=0
+  if [ -L "$dest" ] || [ ! -e "$dest" ]; then
+    seed=1
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    if [ -L "$dest" ]; then
+      print_info "[DRY-RUN] would replace the ~/.gemini/settings.json symlink with a real file"
+    fi
+    if [ "$seed" -eq 1 ]; then
+      print_info "[DRY-RUN] would seed ~/.gemini/settings.json from .gemini/settings.json (mode 0600)"
+    else
+      print_info "[DRY-RUN] would keep existing ~/.gemini/settings.json (Gemini CLI owns it) and restrict it to mode 0600"
+    fi
+    return 0
+  fi
+  if [ "$seed" -eq 1 ]; then
+    if [ -L "$dest" ]; then
+      print_warning "Replacing the ~/.gemini/settings.json symlink with a real file"
+    fi
+    # Copy into an owner-only temp file next to dest, then rename it into
+    # place, so a copy that fails half-way never lands at dest (a truncated
+    # file there would be kept forever by the "existing file" branch on later
+    # runs). An old link at dest is dropped only once the copy is complete, and
+    # dropped rather than renamed over: `mv` onto a link to a directory moves
+    # the file INTO that directory and leaves the link. The final test makes
+    # success mean "a real file is at dest", not "mv returned 0".
+    local tmp=""
+    if tmp="$(umask 077 && mktemp "$gemini_dir/.settings.json.XXXXXX")" &&
+      cp "$src" "$tmp" && chmod 600 "$tmp" &&
+      { [ ! -L "$dest" ] || rm -f "$dest"; } &&
+      mv -f "$tmp" "$dest" && [ -f "$dest" ] && [ ! -L "$dest" ]; then
+      print_success "Seeded ~/.gemini/settings.json (mode 0600)"
+    else
+      if [ -n "$tmp" ]; then
+        rm -f "$tmp"
+      fi
+      print_error "Could not seed $dest"
+      record_failure "Gemini settings.json"
+    fi
+  elif chmod 600 "$dest"; then
+    print_info "Keeping existing ~/.gemini/settings.json (Gemini CLI owns it; baseline lives in .gemini/settings.json); mode 0600"
+  else
+    print_error "Could not restrict $dest to mode 0600"
+    record_failure "Gemini settings.json"
+  fi
+}
+
+# Older installs linked ~/.gemini/settings.json. Once Gemini CLI had replaced
+# that link with a token-bearing 0644 file, the next run's backup_if_real moved
+# the file (mode and all) into ~/.dotfiles_backup_<stamp>/.gemini/. Restrict
+# any such copy that others can still read; the user decides whether to delete
+# it or rotate the token.
+_restrict_gemini_backups() {
+  local f
+  for f in "$HOME"/.dotfiles_backup_*/.gemini/settings.json; do
+    if [ ! -f "$f" ] || [ -L "$f" ]; then
+      continue
+    fi
+    # `-perm -040` = group-read set, `-perm -004` = other-read set; the same
+    # spelling works in BSD and GNU find.
+    if [ -z "$(find "$f" \( -perm -040 -o -perm -004 \) -print 2>/dev/null)" ]; then
+      continue
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would restrict $f to mode 0600 (an older run backed it up readable by others)"
+    elif chmod 600 "$f"; then
+      print_warning "Restricted $f to mode 0600: an older run backed it up readable by others. If it holds a token, consider deleting it and rotating the token"
+    else
+      print_error "Could not restrict $f to mode 0600"
+      record_failure "Gemini settings.json"
     fi
   done
 }
