@@ -714,11 +714,13 @@ class TestCreateSymlinks:
         home = shell_env.home
         (home / ".gemini/settings.json").mkdir(parents=True)
 
-        res = run_sourced("create_symlinks", shell_env.env)
-        assert res.returncode == 0, res.stderr
+        res, failures = run_recording("create_symlinks", shell_env.env)
 
         assert (home / ".gemini/settings.json").is_dir()
         assert "is a directory" in res.stdout + res.stderr
+        # Gemini has no usable settings file, so the run must not end with
+        # "Installation completed!".
+        assert failures == ["Gemini settings.json"], failures
 
     def test_gemini_settings_left_in_old_backups_is_restricted(self, shell_env):
         """Older runs moved a token-bearing 0644 copy into the backup dirs."""

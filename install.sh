@@ -1950,8 +1950,11 @@ _seed_gemini_settings() {
     print_error "Could not restrict $gemini_dir to mode 0700"
     record_failure "Gemini settings.json"
   fi
+  # Not moved aside: it is the user's, and older installs never made one. But
+  # Gemini has no usable settings file this way, so it is a failed step.
   if [ -d "$dest" ] && [ ! -L "$dest" ]; then
     print_warning "Skipping settings.json: $dest is a directory"
+    record_failure "Gemini settings.json"
     return 0
   fi
   # Decided up front so dry-run reports the same plan as the real run (the
