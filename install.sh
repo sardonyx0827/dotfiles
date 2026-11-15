@@ -1045,20 +1045,25 @@ register_claude_mcp_servers() {
     esac
   fi
   if [ -n "$python_cmd" ]; then
-    # install_mcp_server_deps resolves pip on its own, so it can have installed
-    # `mcp` for a different interpreter; check the one being registered.
-    if ! "$python_cmd" -c 'import mcp.server.fastmcp' &>/dev/null; then
-      print_warning "$python_cmd cannot import the 'mcp' package; gemini-consultant will not start until it is installed for that interpreter (e.g. $python_cmd -m pip install --user mcp)"
-      record_failure "gemini-consultant (mcp not importable)"
-    fi
     # add_mcp keeps an existing registration, so one made by an older run with
-    # the pyenv shim (or a since-removed version) stays as it was.
-    local registered
+    # the pyenv shim (or a since-removed version) stays as it was. Only check
+    # `mcp` on the interpreter the registration will actually use: a working
+    # registration with another interpreter is not this python's problem.
+    local registered check_mcp=1
     if registered="$(claude mcp get gemini-consultant 2>/dev/null)"; then
       case "$registered" in
       *"$python_cmd"*) ;;
-      *) print_warning "MCP server 'gemini-consultant' is registered with another interpreter than $python_cmd; to re-pin it run: claude mcp remove --scope user gemini-consultant && ./install.sh" ;;
+      *)
+        check_mcp=0
+        print_warning "MCP server 'gemini-consultant' is registered with another interpreter than $python_cmd; to re-pin it run: claude mcp remove --scope user gemini-consultant && ./install.sh"
+        ;;
       esac
+    fi
+    # install_mcp_server_deps resolves pip on its own, so it can have installed
+    # `mcp` for a different interpreter; check the one being registered.
+    if [ "$check_mcp" -eq 1 ] && ! "$python_cmd" -c 'import mcp.server.fastmcp' &>/dev/null; then
+      print_warning "$python_cmd cannot import the 'mcp' package; gemini-consultant will not start until it is installed for that interpreter (e.g. $python_cmd -m pip install --user mcp)"
+      record_failure "gemini-consultant (mcp not importable)"
     fi
     add_mcp gemini-consultant -- "$python_cmd" "$HOME/.claude/mcp-servers/gemini-consultant/server.py"
   else

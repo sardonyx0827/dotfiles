@@ -2227,6 +2227,32 @@ class TestRegisterClaudeMcpServers:
             res.stdout
         )
 
+    def test_mcp_is_not_checked_on_an_interpreter_the_registration_does_not_use(
+        self, shell_env
+    ):
+        # Registered with another interpreter: only the re-pin hint applies. The
+        # current python lacking mcp says nothing about the registered one.
+        shell_env.stub(
+            "claude",
+            body=(
+                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
+                '  [ "$3" = gemini-consultant ] && { echo "  Command: /other/python3"; exit 0; }\n'
+                "  exit 1\n"
+                "fi"
+            ),
+        )
+        real = shell_env.stub(
+            "python3.13-real", body='case "$2" in *"import mcp"*) exit 1 ;; esac'
+        )
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert "claude mcp remove --scope user gemini-consultant" in res.stdout
+        assert "cannot import" not in res.stdout, res.stdout
+        assert failures == [], failures
+
     def test_a_registration_with_the_same_interpreter_gets_no_hint(self, shell_env):
         real = shell_env.stub("python3.13-real")
         shell_env.stub(
