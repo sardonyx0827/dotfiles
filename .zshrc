@@ -277,8 +277,13 @@ setopt hist_ignore_all_dups
 
 # display japanese character
 setopt print_eight_bit
+# Extended glob operators (`^` negation, `~` exclusion, `#` repetition). They
+# make an unquoted `HEAD^` a pattern ("no matches found"): write `HEAD~1` or
+# quote it ('HEAD^').
 setopt extended_glob
-setopt braceccl
+# braceccl is deliberately NOT set: it turns `{0}` / `{u}` into brace
+# character classes, so `stash@{0}`, `@{u}` and `HEAD@{1}` reached git
+# silently rewritten to `stash@0`, `@u` and `HEAD@1`.
 # correct command when mistyped
 setopt correct
 

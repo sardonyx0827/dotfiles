@@ -284,3 +284,31 @@ class TestTheBlockItself:
             ln for ln in _fzf_block().splitlines() if not ln.lstrip().startswith("#")
         )
         assert not re.search(r'eval\s+"\$\(fzf\s+--zsh\)"', code)
+
+
+# ---------------------------------------------------------------------------
+# Interactive options must not rewrite git revision syntax.
+#
+# `setopt braceccl` makes `{0}` / `{u}` / `{1}` brace character-class
+# expansions, so `git stash apply stash@{0}`, `git diff @{u}` and
+# `git reflog show HEAD@{1}` reached git silently rewritten to `stash@0`, `@u`
+# and `HEAD@1`. Every `setopt` line of .zshrc is applied in `zsh -f` (the rest
+# of the file needs Oh My Zsh) and the words are echoed back.
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(ZSH is None, reason="zsh not installed")
+def test_zshrc_options_leave_git_reflog_syntax_alone():
+    setopts = [
+        ln.strip()
+        for ln in ZSHRC.read_text(encoding="utf-8").splitlines()
+        if re.match(r"\s*setopt\s", ln)
+    ]
+    assert setopts, "expected setopt lines in .zshrc"
+    words = ["@{u}", "stash@{0}", "HEAD@{1}", "HEAD@{upstream}"]
+    script = "\n".join([*setopts, "print -r -- " + " ".join(words)])
+
+    res = subprocess.run(
+        [ZSH, "-f", "-c", script], capture_output=True, text=True, timeout=30
+    )
+
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.split() == words, res.stdout
