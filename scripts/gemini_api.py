@@ -238,8 +238,8 @@ def build_request(
       it would make an override of the default silently break the feature.
       bash-review applies the same finding: it sends `thinkingLevel` only when
       the model is its default (`_build_gemini_payload` in
-      .claude/hooks/_bash_review_common.py), never to its gemini-flash-latest
-      fallback or an overridden $GEMINI_MODEL.
+      .claude/hooks/_bash_review_common.py), never to its fallback model or an
+      overridden $GEMINI_MODEL.
     """
     # Before anything else: this is the single point where the key becomes a
     # header value, so checking it here covers every caller, including one that

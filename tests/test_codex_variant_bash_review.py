@@ -24,16 +24,6 @@ sys.path.insert(0, str(REPO_ROOT / ".claude" / "hooks"))
 import _bash_review_common as _common  # noqa: E402
 
 
-@pytest.fixture(autouse=True)
-def _keep_chmod_inside_the_sandbox(request, monkeypatch):
-    """run_hook remaps open/makedirs/listdir/remove under tmp_path but not lstat/chmod,
-    so the hook's "tighten existing log dirs" step would chmod the REAL /tmp/*_hooks
-    tree of whoever runs the suite. Neutralise just that step for tests that go through
-    run_hook; ensure_private_dir's own tests (no run_hook) exercise the real thing."""
-    if "run_hook" in request.fixturenames:
-        monkeypatch.setattr(_common, "_tighten_dir", lambda path: None)
-
-
 def _run_raw(hook, raw, capsys, monkeypatch):
     """Execute a hook against arbitrary raw stdin bytes (malformed-input tests)."""
     hook_path = REPO_ROOT / hook

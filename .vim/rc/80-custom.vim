@@ -13,11 +13,17 @@ function! s:TrimTrailingWhitespace() abort
   keeppatterns %s/\s\+$//e
   call winrestview(l:view)
 endfunction
-" Manual trigger for the trim above, kept safe the same way.
+" Manual trigger for the trim above, kept safe the same way. It trims in any
+" filetype: asking for it is the user's call.
 command! FixWhitespace call s:TrimTrailingWhitespace()
+" The save-time trim skips filetypes where trailing whitespace is content:
+" Markdown's two-space hard line break, the lone-space context lines of a diff /
+" patch (a trimmed patch no longer applies), and commit messages (`git commit -v`
+" embeds a diff). Keep in step with keep_trailing_ws in nvim's setup/init.lua.
+let s:keep_trailing_ws = ['markdown', 'diff', 'gitcommit']
 augroup TrimWhitespace
   autocmd!
-  autocmd BufWritePre * call s:TrimTrailingWhitespace()
+  autocmd BufWritePre * if index(s:keep_trailing_ws, &filetype) < 0 | call s:TrimTrailingWhitespace() | endif
 augroup END
 
 "*****************************************************************************

@@ -9,6 +9,19 @@
 
 input=$(cat)
 
+# 共有ヘルパー (hook_git_changed_files)。実体は .claude/hooks/_hook_common.sh 一本で、
+# こちらには複製もリンクも置かず、自分の物理パスから ../../.claude/hooks を解決して
+# 直接読む (cd -P で解決する理由は lint.sh の SHARED_DIR のコメントを参照)。
+# 読めなければ、下の jq 不在と同じく fail-open で監査を諦めて抜ける (理由は
+# .claude/hooks/stop-audit.sh を参照)。
+SHARED_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../.claude/hooks" 2>/dev/null && pwd)"
+# shellcheck source=../../.claude/hooks/_hook_common.sh
+. "$SHARED_DIR/_hook_common.sh"
+if ! declare -F hook_git_changed_files >/dev/null 2>&1; then
+  echo "stop-audit: could not load _hook_common.sh from ${SHARED_DIR:-<unresolved>}; debug-statement audit skipped" >&2
+  exit 0
+fi
+
 # jq が無いと stop_hook_active を読めない。読めないまま監査を続けると、block
 # からの継続でもフラグが空 = false 扱いで再び block し、Stop が終わらなくなる。
 # lint.sh / auto-format.sh と同じく jq 不在は監査しない。
@@ -33,17 +46,9 @@ git rev-parse --is-inside-work-tree &>/dev/null || exit 0
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$repo_root" ] && exit 0
 
-# HEAD が無い(= unborn branch)場合は `diff --name-only -z HEAD` が失敗して
-# ステージ済みの内容が監査から漏れるため、unborn 時だけ `diff --cached` に切り替える
-# (詳細は .claude/hooks/stop-audit.sh)。
-if git -C "$repo_root" rev-parse -q --verify HEAD >/dev/null 2>&1; then
-  diff_cmd=(git -C "$repo_root" diff --name-only -z HEAD)
-else
-  diff_cmd=(git -C "$repo_root" diff --name-only -z --cached)
-fi
-
-# 作業ツリーの変更ファイル + 未追跡ファイル(両者は排他なので重複しない)。
-# -z とプロセス置換が必須な理由は .claude/hooks/stop-audit.sh を参照。
+# 作業ツリーの変更ファイル + 未追跡ファイル(両者は排他なので重複しない)は
+# hook_git_changed_files (_hook_common.sh) が選ぶ(unborn branch への対応もそちら)。
+# プロセス置換でループへ流し込む理由は .claude/hooks/stop-audit.sh を参照。
 # 報告は量を限る (一致行は 1 行 200 バイト、ファイルは max_files 件まで) うえで、最初
 # から実改行で組む。理由は .claude/hooks/stop-audit.sh を参照 (巨大な 1 行で Stop が
 # 分単位で止まり、検出行に書かれた `\n` まで改行に変えていた)。
@@ -58,11 +63,11 @@ while IFS= read -r -d '' f; do
   [ -f "$path" ] || continue
   case "$f" in
   *.js | *.jsx | *.ts | *.tsx)
-    # console.log / debugger の境界条件の理由は .claude/hooks/stop-audit.sh を参照。
-    hits=$(grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
+    # console.log / debugger の境界条件と LC_ALL=C の理由は .claude/hooks/stop-audit.sh を参照。
+    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *.py)
-    hits=$(grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
+    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
     ;;
   *)
     hits=""
@@ -72,10 +77,7 @@ while IFS= read -r -d '' f; do
     found=$((found + 1))
     [ "$found" -le "$max_files" ] && findings="${findings}${f}:${nl}${hits}${nl}"
   fi
-done < <(
-  "${diff_cmd[@]}" 2>/dev/null
-  git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
-)
+done < <(hook_git_changed_files "$repo_root")
 
 [ "$found" -eq 0 ] && exit 0
 

@@ -31,10 +31,18 @@ autocmd("TextYankPost", {
 -- Wrapped in winsaveview/winrestview so the cursor and scroll position are
 -- preserved, and `keeppatterns` so the last search pattern is not clobbered by
 -- `\s\+$` (a bare `:%s/.../` would leave the cursor moved and pollute `n`/`N`).
+-- Skipped where trailing whitespace is content: Markdown's two-space hard line
+-- break, the lone-space context lines of a diff / patch (a trimmed patch no
+-- longer applies), and commit messages (`git commit -v` embeds a diff). Keep
+-- this list in step with s:keep_trailing_ws in .vim/rc/80-custom.vim.
+local keep_trailing_ws = { markdown = true, diff = true, gitcommit = true }
 autocmd({ "BufWritePre" }, {
   group = setupGroup,
   pattern = "*",
-  callback = function()
+  callback = function(args)
+    if keep_trailing_ws[vim.bo[args.buf].filetype] then
+      return
+    end
     local view = vim.fn.winsaveview()
     vim.cmd([[keeppatterns %s/\s\+$//e]])
     vim.fn.winrestview(view)

@@ -70,6 +70,7 @@ SHARED_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../.claude/hooks" 2>/dev/
 # shellcheck source=../../.claude/hooks/_format_common.sh
 . "$SHARED_DIR/_format_common.sh"
 if ! declare -F hook_log >/dev/null 2>&1 ||
+  ! declare -F hook_git_changed_files >/dev/null 2>&1 ||
   ! declare -F hook_format_file >/dev/null 2>&1; then
   echo "auto-format.sh: could not load shared hook helpers from ${SHARED_DIR:-<unresolved>}" >&2
   exit 0
@@ -90,16 +91,12 @@ collect_targets() {
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
   [ -z "$repo_root" ] && return 0
 
-  # 変更ファイル + 未追跡ファイル(apply_patch は新規作成も行う)。両者は排他
-  # なので重複しない。git はリポジトリルート相対のパスを返すため絶対パス化する。
-  #
-  # -z が必須な理由 (core.quotePath でクォートされたパスは開けず黙って漏れる)
-  # は .claude/hooks/stop-audit.sh を参照。出力も NUL 区切りにして、改行を含む
-  # ファイル名でも壊れないようにする。
-  {
-    git -C "$repo_root" diff --name-only -z HEAD 2>/dev/null
-    git -C "$repo_root" ls-files --others --exclude-standard -z 2>/dev/null
-  } | while IFS= read -r -d '' f; do
+  # 変更ファイル + 未追跡ファイル(apply_patch は新規作成も行う)。選び方は
+  # hook_git_changed_files (_hook_common.sh) に一本化してある。最初のコミット前
+  # (unborn branch) でもステージ済みのファイルを拾う、-z / NUL 区切りで
+  # core.quotePath や改行を含むパスでも壊れない、といった理由はそちらを参照。
+  # git はリポジトリルート相対のパスを返すため、ここで絶対パス化する。
+  hook_git_changed_files "$repo_root" | while IFS= read -r -d '' f; do
     [ -n "$f" ] && printf '%s/%s\0' "$repo_root" "$f"
   done
 }

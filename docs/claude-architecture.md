@@ -114,9 +114,10 @@ flowchart TB
 | `PostToolUse` | `Write\|Edit\|MultiEdit` | `format-then-lint.sh`（`auto-format.sh` → `lint.sh`） | 整形してから静的解析。lint は exit 2 で Claude に差し戻す。同一イベントのハンドラは並列に走り順序が保証されないため、1 本のハンドラに畳んで順に実行する |
 | `Stop`        | —                        | `stop-audit.sh`                                       | ターン終了時にデバッグ文の消し忘れを検出してブロック（`EDITOR_AI_ONESHOT` 時は監査しない）                                                              |
 
-`_` 始まりの 4 ファイル（`_hook_common.sh` `_lint_common.sh` `_format_common.sh`
-`_bash_review_common.py`）はフックではなく**共有ライブラリ**で、Claude 側と Codex 側の
-唯一の実体です。設計根拠は [`.claude/hooks/README.md`](../.claude/hooks/README.md) にあります。
+`_` 始まりの 5 ファイル（`_hook_common.sh` `_lint_common.sh` `_format_common.sh`
+`_push_review_common.sh` `_bash_review_common.py`）はフックではなく**共有ライブラリ**で、
+Claude 側と Codex 側の唯一の実体です（`git-push-review.sh` は両側とも薄いアダプタで、
+判定の本体は `_push_review_common.sh`。読めなければ fail-open ではなく確認要求に倒します）。設計根拠は [`.claude/hooks/README.md`](../.claude/hooks/README.md) にあります。
 
 ### Codex はフックもスキルも `codex exec` で呼ぶ
 
@@ -361,8 +362,8 @@ flowchart LR
 - **エージェント**: 同じ 14 個ですが、リンクではなく `.toml` です。うち 13 個は
   `scripts/gen_codex_agents.py` が `.claude/agents/*.md` から生成したもので、Codex CLI が
   ビルド無しで読めるよう生成物をコミットしてあり、CI が `--check` で手動編集と SSOT 側だけの
-  更新を弾きます。`codex-delegator` だけは手書きです（Claude 側の本文にある advisor 優先の
-  エスカレーション層が Codex 側に対応物を持たないため）。`--check` は本文を再生成せず
+  更新を弾きます。`codex-delegator` だけは手書きです（Claude 側の本文にある advisor と Codex を組にする
+  第二意見の層が Codex 側に対応物を持たないため）。`--check` は本文を再生成せず
   「存在し、有効な TOML であること」だけを確かめ、`description` が `.md` と一致していることは
   `tests/test_agent_parity.py` が固定します。`.claude/` 側が唯一の上流です。
 - **エージェントで写るものと捨てるもの**: 生成物に写るのは `name` / `description` / 本文だけで、

@@ -13,9 +13,9 @@ Claude Code が主エンジンとして駆動し、他の LLM は **第二意見
 </p>
 
 - **Claude Code** — 主エンジン（Opus セッション / agents・commands・skills・hooks・MCP）
-- **advisor (Opus)** — 全軌跡を見る高速なセルフチェック（一次の第二意見）。advisor ツールがセッションに無いとき、または呼び出し自体がエラーになったときは Codex → Gemini(Pro) の順にフォールバックする（後者2つは軌跡を直接見ないため、状況を再構成して渡す）
-- **Codex** — クロスベンダーの独立レビュー / 委譲先（`codex-consultation` skill・`codex-delegator` agent）
-- **Gemini** — 高速な一次審査と相談（自作 `gemini-consultant` MCP サーバー）
+- **advisor (Opus)** — 全軌跡を見るセルフチェック。チェックポイント（方針を決める前・最初に行き詰まったとき・完了宣言の前）では Codex と組で動かし、メインモデルが両方の回答を踏まえて判断する
+- **Codex** — クロスベンダーの独立レビュー。各チェックポイントでバックグラウンドの `codex exec` として advisor と並走し、重い案件（仕様・設計・大規模変更・修正の 2 連続失敗）のエスカレーション先も兼ねる（`codex-consultation` skill・`codex-delegator` agent）
+- **Gemini** — advisor か Codex のどちらかが動かないときの代役（自作 `gemini-consultant` MCP サーバー）。Fable がメインのときは Opus の advisor が付かないため、Codex + Gemini の組になる。Codex と Gemini は軌跡を直接見ないため、状況を再構成して渡す
 - **GitHub Copilot** — 補完 + CLI
 - **Gemma (Ollama)** — ローカル/オフライン実行
 
@@ -43,7 +43,11 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
   <img src="../assets/nvim-ai.svg" alt="Neovim AI 機能図 — 5ツール統一バックエンド、インライン補完・バッファ校正・コミット生成・選択リライト・カーソル文脈ヒント・診断コピー・ファイル行参照、claude→geminiフォールバック、送信前の秘密スキャンガード" width="100%">
 </p>
 
-- **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`context` = カーソル位置の構文単位の解決、`backend` = ツール起動、`ui` = 表示ドライバ — `run_multi` はフローティングウィンドウ（popup / diff タブ）、`open_report` は右側の縦分割で、校正 `<leader>qf` とヒント `<leader>qh` / `<leader>qg` が使う）
+- **実装**: [`.config/nvim/lua/setup/functions/ai/`](../.config/nvim/lua/setup/functions/ai/)（`init` = キーマップ、`prompt` = プロンプト生成、`context` = カーソル位置の構文単位の解決、`backend` = ツール起動、`ui` = 表示ドライバ — `run_multi` はフローティングウィンドウ（popup / diff タブ）、`open_report` は右側の縦分割で、校正 `<leader>qf` とヒント `<leader>qh` / `<leader>qg` が使う。`focus_trap` = popup / プロンプト窓のフォーカストラップを束ねる共有レジストリ）
+- **フォーカストラップ**: AI のフローティングウィンドウ（`run_multi` の popup / diff、選択範囲リライトのプロンプト窓）は、外へフォーカスを移しても元の窓へ戻します。トラップは窓ごとの autocmd ではなく、[`ai/focus_trap.lua`](../.config/nvim/lua/setup/functions/ai/focus_trap.lua) の**共有レジストリ**と WinEnter ハンドラ 1 つで管理します。窓ごとに持つと、AI の popup を開いたまま別の AI マッピング（`V` → `<C-c>`、`<leader>cx` など。マッピングはグローバル）を押した時にトラップ同士が「自分へ戻す」を繰り返し、`vim.schedule` の中で無限ループして Neovim が 100% CPU のまま固まるためです。
+  - 生きているどのクラスタ（popup 1 枚、diff の Original + Response の 2 枚、プロンプト窓 1 枚）の窓にフォーカスがあっても何もしません（popup とプロンプト窓の行き来は自由）。どのクラスタにも属さない窓へ出たときだけ、**直近にフォーカスしたクラスタ**の、最後にいた窓へ戻します。
+  - 戻す処理は予約済みなら 1 回にまとめ、実行時にもう一度「いまもクラスタの外か」「戻り先がまだ有効か」を確認します（その間に別のクラスタへ戻っていれば何もしません）。クラスタは閉じる経路（`q`・確定・`WinClosed`）で登録解除され、閉じた窓へ戻ることはありません。
+  - **タブページを跨いでは引き戻しません**。戻り先は今いるタブのクラスタだけです。popup を開いたまま別タブへ移ってもそのタブに留まれ、元のタブへ戻れば（またそのタブの別窓へ出れば）そのタブのトラップが効きます。
 - インライン補完のプラグイン設定: [`.config/nvim/lua/setup/plugins/ai/copilot.lua`](../.config/nvim/lua/setup/plugins/ai/copilot.lua)（panel + NES · 機密パスは `should_attach` で除外。パス一覧は [`ai/sensitive.lua`](../.config/nvim/lua/setup/functions/ai/sensitive.lua) で送信前ゲートと共有）
 
 #### 送信前ゲートの機密パス確認
@@ -83,7 +87,7 @@ Neovim では 5 つのツール（Claude / Codex / Gemini / Copilot / Gemma）�
 なお `generationConfig` は送りません — `maxOutputTokens` は上の打ち切りを自作することになり、
 `thinkingLevel: "minimal"` は既定モデル以外では HTTP 400 になることを実測で確認しています
 （bash-review フックも同じ理由で、`thinkingLevel` を既定モデルにだけ送り、フォールバック先の
-`gemini-flash-latest` や上書きした `$GEMINI_MODEL` には送りません）。
+`gemini-4-hydrogen`（`$GEMINI_FLASH_MODEL` で上書き可）や上書きした `$GEMINI_MODEL` には送りません）。
 
 ### カーソル文脈ヒント (`<leader>qh` / `<leader>qg`)
 

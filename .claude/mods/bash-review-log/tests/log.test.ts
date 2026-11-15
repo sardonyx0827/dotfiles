@@ -121,6 +121,26 @@ describe("displayText", () => {
     );
     expect(displayText("abc", 3)).toBe("abc");
   });
+
+  // ペインの無い /bash-review-log ではこの文字列がモデルの読む本文になる。不可視の
+  // 書式文字 (ゼロ幅・BOM・タグ文字) を残すと、ログ経由で見えない指示を埋め込める。
+  // doc-browser の displayText (catalog.ts) と同じ文字クラスを置き換える。
+  test("ゼロ幅文字・BOM・ソフトハイフン・タグ文字も置き換える (不可視の指示を残さない)", () => {
+    // ZWJ (0x200d) と異体字セレクタ (0xfe0f) も置き換える: 絵文字の連結表示は崩れるが、
+    // 見えない文字を残さないことを優先する (doc-browser と同じ割り切り)。
+    const hidden = [
+      0x200b, 0x200d, 0x2060, 0xfeff, 0x061c, 0x00ad, 0xfe0f, 0xe0041, 0xe007f,
+    ];
+    const input = `a${hidden.map((cp) => String.fromCodePoint(cp)).join("b")}z`;
+
+    expect(displayText(input, 100)).toBe(
+      `a${hidden.map(() => "�").join("b")}z`,
+    );
+  });
+
+  test("書式文字を置き換えてもタブと改行と通常の日本語は残す", () => {
+    expect(displayText("日本語\tタブ\n改行", 100)).toBe("日本語\tタブ\n改行");
+  });
 });
 
 describe("formatEntry", () => {

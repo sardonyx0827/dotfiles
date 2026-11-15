@@ -43,22 +43,25 @@ from _bash_review_common import (
     codex_flag_ask_reason,
     combine_high_risk_verdicts,
     describe_exception,
-    ensure_private_dir,
     find_deny_command,
     format_dual_verdict_reason,
     harness_write_ask_reason,
     input_limit_reason,
+    note_detail_log_disabled,
     notify,
-    prune_dir,
+    prepare_detail_log_dir,
     scan_secrets,
 )
-from _bash_review_common import log_summary as _log_summary  # noqa: E402
 from _bash_review_common import run_codex_review as _run_codex_review  # noqa: E402
 from _bash_review_common import run_gemini_review as _run_gemini_review  # noqa: E402
 from _bash_review_common import (  # noqa: E402
     run_parallel_reviews as _run_parallel_reviews,
 )
-from _bash_review_common import write_detail_log as _write_detail_log  # noqa: E402
+
+# ログの書き込みは失敗しても判定を変えない版 (_bash_review_common.py の try_* の
+# コメント参照)。
+from _bash_review_common import try_log_summary as _log_summary  # noqa: E402
+from _bash_review_common import try_write_detail_log as _write_detail_log  # noqa: E402
 
 # 環境変数由来の設定 (stdin に依存しないので try の外で読む)
 # 鍵は前後の空白を落とす (.claude 側の入口と同じ理由: CRLF の秘密ファイル由来の \r)。
@@ -137,17 +140,29 @@ try:
     command = tool_input.get("command", "")
 
     # ログ設定
-    # 詳細ログ (コマンドごとに1ファイル)
-    log_dir = "/tmp/codex_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
-    # 0700 で作り、既存でも root 配下を 0700 に絞る (ログにはコマンド全文が入る)。
-    ensure_private_dir(log_dir, root="/tmp/codex_hooks")  # nosec B108
-    # ナノ秒 + PID でファイル名を一意化する (理由は .claude/hooks/bash-review.py 参照)。
-    log_file = os.path.join(log_dir, f"bash_cmd_{time.time_ns()}_{os.getpid()}.log")
-    prune_dir(log_dir)  # 1000件を超えたら古いものから削除
+    # ログの準備と書き込みの失敗は判定に影響させず、この実行の詳細ログを止めるだけに
+    # する (理由は .claude/hooks/bash-review.py の同箇所参照)。以前は例外が catch-all に
+    # 落ち、`ls` を含む全コマンドが exit 2 のブロックになっていた。
 
     # サマリーログ (1ファイルに追記・500行でローテーション)
     summary_log = os.path.expanduser("~/.codex/logs/bash-review.log")
-    os.makedirs(os.path.dirname(summary_log), exist_ok=True)
+
+    # 詳細ログ (コマンドごとに1ファイル)
+    log_dir = "/tmp/codex_hooks/logs/PreToolUse/Bash/bash-review"  # nosec B108
+    # root (/tmp/codex_hooks) から下の各階層を検査する。通らなければ詳細ログは止める。
+    detail_log_problem = prepare_detail_log_dir(
+        log_dir,
+        root="/tmp/codex_hooks",  # nosec B108
+    )
+    # ナノ秒 + PID でファイル名を一意化する (理由は .claude/hooks/bash-review.py 参照)。
+    log_file = (
+        None
+        if detail_log_problem
+        else os.path.join(log_dir, f"bash_cmd_{time.time_ns()}_{os.getpid()}.log")
+    )
+    if detail_log_problem:
+        # 止めたことをサマリーに 1 行残す (理由は .claude/hooks/bash-review.py 参照)。
+        note_detail_log_disabled(summary_log, detail_log_problem)
 
     # --- 入力サイズの上限 (何よりも先に。理由は .claude/hooks/bash-review.py 参照) ---
     # Codex には ask 相当が無いので、結果は exit 2 のブロックとして返す (秘密検出と同じ
@@ -248,6 +263,15 @@ try:
         reason = format_dual_verdict_reason(
             risk_label, gemini_verdict, gemini_output, codex_verdict, codex_output
         )
+        # 両モデル ALLOW 一致のみ許可 (exit 0)。それ以外 (ask/deny) は
+        # Codex ではブロック (exit 2) で理由を stderr に返す。
+        # 判定はログより先に確定する (他の分岐・Claude 側と同じ順序)。ログが例外を
+        # 投げても、allow を catch-all の exit 2 に、ブロックの理由を "hook error" に
+        # 差し替えないため。
+        if decision == "allow":
+            decided_exit = 0
+        else:
+            emit_block(reason)
         write_detail_log(
             {
                 "Gemini": gemini_output,
@@ -262,13 +286,9 @@ try:
             f"risk={risk_label}, gemini={gemini_verdict}, "
             f"codex={codex_verdict}, took={elapsed:.1f}s",
         )
-        # 両モデル ALLOW 一致のみ許可 (exit 0)。それ以外 (ask/deny) は
-        # Codex ではブロック (exit 2) で理由を stderr に返す。
         if decision == "allow":
-            decided_exit = 0
             notify("Bash Review", f"高リスク許可 (両モデル承認): {short_cmd}", 4)
             sys.exit(0)
-        emit_block(reason)
         if decision == "deny":
             notify("Bash Review - 拒否", f"{short_cmd}", 8)
         else:

@@ -531,9 +531,10 @@ def test_pretooluse_bash_hooks_are_unconditional():
 def test_git_push_asks_at_the_permission_layer_too():
     """The push gate must not be hook-only, because the hook fails OPEN.
 
-    git-push-review.sh is deliberately fail-open everywhere (`|| exit 0`,
-    `2>/dev/null`) so a broken summary never blocks a real command, and Claude
-    Code treats a hook that cannot start, crashes, or times out as a
+    git-push-review.sh is deliberately fail-open for a broken summary (`|| exit 0`,
+    `2>/dev/null`) so that never blocks a real command -- the two exceptions, no
+    jq and a push-review library that cannot be loaded, both degrade to an ask --
+    and Claude Code treats a hook that cannot start, crashes, or times out as a
     non-blocking error. With `Bash(git:*)` in allow, defaultMode `auto` and the
     hook as the only gate, every one of those failure modes would let a push
     through with no confirmation at all.
@@ -759,9 +760,9 @@ def test_bash_review_fails_closed_on_timeout():
     into a block. The timeout sits above the review's own worst case (Gemini 30s
     plus Codex 60s) so a slow but healthy review is not cut off.
 
-    git-push-review stays fail-open on purpose (a broken summary must never block
-    a real command; `Bash(git push:*)` in ask is its backstop), so it must not
-    carry the block setting.
+    git-push-review stays fail-open on purpose for a timeout or a crash (a broken
+    summary must never block a real command; `Bash(git push:*)` in ask is its
+    backstop), so it must not carry the block setting.
     """
     hooks = _pretooluse_bash_hooks()
     launcher = [h for h in hooks if "bash-review-launcher.sh" in h["command"]]
@@ -899,6 +900,35 @@ def test_vscode_git_stage_keys_are_distinct():
     by_key = {b["key"]: b["command"] for b in bindings if "git.stage" in b["command"]}
     assert by_key.get("ctrl+g shift+s") == "git.stageAll"
     assert by_key.get("ctrl+g s") == "git.stage"
+
+
+def test_vscode_clipboard_keys_are_not_taken_over_unconditionally():
+    """A clipboard chord bound to something else needs a `when` clause.
+
+    `cmd+x` bound to closeActiveEditor with no `when` closed the editor instead
+    of cutting -- in the editor, the find widget, the chat input and the
+    explorer alike, since a user binding without `when` wins everywhere.
+    """
+    clipboard = {"cmd+x", "cmd+c", "cmd+v", "ctrl+x", "ctrl+c", "ctrl+v"}
+    # Exact IDs, not substrings: "cut" is inside "executeCodeAction".
+    clipboard_commands = {
+        "editor.action.clipboardCutAction",
+        "editor.action.clipboardCopyAction",
+        "editor.action.clipboardPasteAction",
+        "execCut",
+        "execCopy",
+        "execPaste",
+    }
+    bindings = _load_jsonc(VSCODE_USER / "keybindings.json")
+    offenders = [
+        b
+        for b in bindings
+        if b.get("key") in clipboard
+        and b.get("command", "") not in clipboard_commands
+        and not b.get("command", "").startswith("-")
+        and not b.get("when")
+    ]
+    assert offenders == [], offenders
 
 
 def test_tmux_double_click_selects_the_word_under_the_mouse():

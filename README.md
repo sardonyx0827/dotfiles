@@ -107,7 +107,7 @@ cd ~/dotfiles
   - `~/.zsh_secrets`（API キー等の置き場）の雛形を、存在しない場合のみ権限 600 で作成
 - 必要なパッケージのインストール
   - macOS: Homebrew経由でVim、Neovim、tmux、WezTermなど
-  - Ubuntu/Debian: APT経由でVim、tmux、WezTermなど（**Neovim は APT を使いません**。配布版が `.config/nvim` の要求する 0.11+ より古いため、公式リリースの tarball を sha256 検証のうえ `~/.local/nvim` へ展開し、`~/.local/bin/nvim` からリンクします）
+  - Ubuntu/Debian: APT経由でVim、tmux、WezTermなど（**Neovim は APT を使いません**。配布版が `.config/nvim` の要求する 0.12+ より古いため、公式リリースの tarball を sha256 検証のうえ `~/.local/nvim` へ展開し、`~/.local/bin/nvim` からリンクします）
 - CLI ツール（ripgrep、fd、bat、universal-ctags、tree-sitter、lazydocker など）のインストール
 - GitHub CLI（gh）、pyenv、uv、glow のインストール
 - Docker のインストール
@@ -121,6 +121,8 @@ cd ~/dotfiles
 - フォントのインストール
 - Claude Code への MCP サーバー登録（`claude` コマンドが PATH にある場合のみ。無ければ警告してスキップ）
 - デフォルトシェルをZshに変更
+
+> **ステップが失敗したとき**: 個々のインストール手順（パッケージ・ツール・プラグインの導入、MCP サーバー登録、`chsh` など）が失敗しても、警告（`[WARNING]`）を出して残りの手順を続行します。最後に `Installation completed!` の代わりに失敗したステップの一覧（`Installation finished with N failed step(s):`）を表示し、終了コードは `1` になります。原因は一覧の上に出ている `[WARNING]` を見て直し、`./install.sh` を再実行してください（導入済みのステップはスキップされるため、何度実行しても安全です）。`--dry-run` はインストール手順を実行しないので、事前チェックで中止した場合を除き常に `0` で終わります。終了コードの一覧は `./install.sh --help` にあります。
 
 3. **AIツールのインストール（オプション）**
 

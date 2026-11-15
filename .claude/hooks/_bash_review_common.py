@@ -52,6 +52,7 @@ import http.client
 import json
 import os
 import platform
+import posixpath
 import re
 import shlex
 import stat
@@ -3241,13 +3242,50 @@ _AWK_EXECUTABLES = frozenset({"awk", "gawk", "mawk", "nawk"})
 
 
 def _is_harness_target(token: str) -> bool:
-    """書き込み先トークンがハーネスの設定 (settings / hooks / mods 等) を指しうるか。"""
+    """書き込み先トークンがハーネスの設定 (settings / hooks / mods 等) を指しうるか。
+
+    字面そのままに加えて、字面だけで畳んだ綴り (`//` の圧縮・`/./` の除去・`x/..` の解決:
+    posixpath.normpath) でも調べる。シェルが同じファイルへ解決する `.claude//settings.json`
+    / `.claude/./settings.json` / `.claude/x/../settings.json` は、そのままでは保護パスの
+    パターンに当たらず Gemini 単独の経路へ抜けていた。畳んだ綴りは「置き換え」ではなく
+    「追加」で見る: symlink 越しの `..` や変数・glob を含むと、畳んだ結果は実際の行き先と
+    一致しないので、もとの綴りの判定は残す (どちらかが当たれば保護対象)。
+    """
+    if _is_harness_spelling(token):
+        return True
+    collapsed = posixpath.normpath(token)
+    return collapsed != token and _is_harness_spelling(collapsed)
+
+
+def _is_harness_spelling(token: str) -> bool:
+    """_is_harness_target の 1 つの綴り分の判定 (字面のパターンと展開の可能性)。"""
     if _HARNESS_PATH.search(token) or _HARNESS_DIR.fullmatch(token):
         return True
     home = os.environ.get("HOME", "").rstrip("/")
     if home and re.match(re.escape(home) + r"/\.codex(?![\w.-])", token, re.IGNORECASE):
         return True
     return bool(_DYNAMIC_WORD.search(token)) and _dynamic_harness_hint(token)
+
+
+# 自由文 (解析できなかった行・awk のプログラム) の中の「語」。パスを区切る文字
+# (空白・クォート・リダイレクト・`=` など) で切る。単一の否定文字クラスの繰り返しなので
+# 走査は線形で、長い語でも巻き戻さない。
+_PATH_WORD = re.compile(r"[^\s'\"`<>|;&()=,{}]+")
+
+
+def _mentions_harness_path(text: str) -> bool:
+    """自由文に保護パスが現れるか。`_is_harness_target` と同じく綴りの揺れも畳んで見る。
+
+    トークンに割れない文 (シェルとして解析できない行・awk のプログラム) には正規表現を
+    そのまま掛けるしかないので、`/` を含む語だけを posixpath.normpath で畳んだ文を
+    追加で照合する。
+    """
+    if _HARNESS_PATH.search(text):
+        return True
+    collapsed = _PATH_WORD.sub(
+        lambda m: posixpath.normpath(m.group()) if "/" in m.group() else m.group(), text
+    )
+    return collapsed != text and bool(_HARNESS_PATH.search(collapsed))
 
 
 def _dynamic_harness_hint(token: str) -> bool:
@@ -3486,7 +3524,7 @@ def harness_write_ask_reason(
     for raw in _join_line_continuations(redirect_text).splitlines():
         targets = _redirect_targets(raw)
         if targets is None:
-            if ">" in raw and _HARNESS_PATH.search(_normalize_cmd(raw)):
+            if ">" in raw and _mentions_harness_path(_normalize_cmd(raw)):
                 return _harness_reason("redirect")
         elif any(_is_harness_target(t) for t in targets):
             return _harness_reason("redirect")
@@ -3500,7 +3538,7 @@ def harness_write_ask_reason(
             args = rest[1:]
             if _writes_harness(exe, args):
                 return _harness_reason("file command")
-            if exe in _AWK_EXECUTABLES and _HARNESS_PATH.search(_awk_program(args)):
+            if exe in _AWK_EXECUTABLES and _mentions_harness_path(_awk_program(args)):
                 return _harness_reason("awk program")
         if _depth >= 2:
             continue
@@ -3716,13 +3754,51 @@ _TOKEN_START = (
     r"|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\[0-7]{3}))"
 )
 
+# 既知形式トークンの「終了境界」。末尾の `\b` も開始側と同じ理由で使わない: `\b` は
+# Unicode 対応なので、かな・漢字も語の文字に数え、`AKIA…です` のように日本語の地の文に
+# 密着したトークンで境界が立たず素通りしていた (スペースを 1 つ挟めば拾える)。
+# 次の 1 文字が ASCII の語の文字 (英数字と `_`) でなければ終わりとし、従来の ASCII の
+# 意味 (長さの固定・`…EXAMPLE_x` を別の識別子の一部として拾わない) を保ったまま、
+# ASCII 外の文字だけを境界側へ倒す。
+# 本体の文字クラスに `-` を含む形は 2 通り:
+# - sk- は本体が貪欲な `{20,}` で、`-` まで食ってから終了境界を見る。`-` を続きに数えても
+#   何も失わない (旧 `\b` が拾ったものは全部拾う: 差分テストで固定)。
+# - AIza は本体が固定長の `{35}` なので、`-` を続きに数えると、AIza + 35 文字の鍵の直後に
+#   `-` が続く形 (`…-prod` / `…-` / `…?key=…-1`) を「36 文字目が本体」と読んで落とす。
+#   旧 `\b` は 35 文字目 (語の文字) と `-` の間に境界を見て拾っていたので、ここでは
+#   ASCII 版の終了境界と旧 `\b` の和を取る。旧が拾う形を 1 つも失わずに、日本語・é の
+#   直後と、末尾が `-` の鍵の後ろの空白 (旧は境界が立たず取りこぼしていた) を拾える。
+_TOKEN_END = r"(?![A-Za-z0-9_])"
+_TOKEN_END_HYPHEN = r"(?![A-Za-z0-9_\-])"
+_TOKEN_END_OR_BOUNDARY = r"(?:(?![A-Za-z0-9_])|\b)"
+# 英字で始まるコマンド名の「開始境界」(ASCII 版の `\b`)。`実行aws configure set …` で
+# 直前の漢字が語の文字に数えられ、設定系 CLI の裸の秘密が素通りしていた。
+_WORD_START = r"(?<![A-Za-z0-9_])"
+
 _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
-    ("GitHub token", re.compile(_TOKEN_START + r"gh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("GitHub PAT", re.compile(_TOKEN_START + r"github_pat_[A-Za-z0-9_]{20,}\b")),
-    ("AWS access key", re.compile(_TOKEN_START + r"(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("Google API key", re.compile(_TOKEN_START + r"AIza[0-9A-Za-z_\-]{35}\b")),
+    (
+        "GitHub token",
+        re.compile(_TOKEN_START + r"gh[pousr]_[A-Za-z0-9]{36,}" + _TOKEN_END),
+    ),
+    (
+        "GitHub PAT",
+        re.compile(_TOKEN_START + r"github_pat_[A-Za-z0-9_]{20,}" + _TOKEN_END),
+    ),
+    (
+        "AWS access key",
+        re.compile(_TOKEN_START + r"(?:AKIA|ASIA)[0-9A-Z]{16}" + _TOKEN_END),
+    ),
+    (
+        "Google API key",
+        re.compile(_TOKEN_START + r"AIza[0-9A-Za-z_\-]{35}" + _TOKEN_END_OR_BOUNDARY),
+    ),
     ("Google OAuth token", re.compile(_TOKEN_START + r"ya29\.[0-9A-Za-z_\-]{20,}")),
-    ("OpenAI key", re.compile(_TOKEN_START + r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b")),
+    (
+        "OpenAI key",
+        re.compile(
+            _TOKEN_START + r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}" + _TOKEN_END_HYPHEN
+        ),
+    ),
     # xapp- は Slack のアプリレベルトークン (Socket Mode)。
     (
         "Slack token",
@@ -3730,10 +3806,13 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
             _TOKEN_START + r"(?:xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,})"
         ),
     ),
-    ("Stripe key", re.compile(_TOKEN_START + r"[rs]k_live_[0-9A-Za-z]{16,}\b")),
+    (
+        "Stripe key",
+        re.compile(_TOKEN_START + r"[rs]k_live_[0-9A-Za-z]{16,}" + _TOKEN_END),
+    ),
     # 以下は接頭辞だけで高精度に判定できる既知形式 (キーワード付き代入の助けが無い
     # 裸の値でも拾う)。長さは各サービスの発行形式に合わせ、near-miss は拾わない。
-    ("npm token", re.compile(_TOKEN_START + r"npm_[A-Za-z0-9]{36}\b")),
+    ("npm token", re.compile(_TOKEN_START + r"npm_[A-Za-z0-9]{36}" + _TOKEN_END)),
     ("GitLab token", re.compile(_TOKEN_START + r"glpat-[0-9A-Za-z_\-]{20,}")),
     ("Hugging Face token", re.compile(_TOKEN_START + r"hf_[A-Za-z0-9]{34,}")),
     (
@@ -3751,7 +3830,10 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     ),
     ("Docker PAT", re.compile(_TOKEN_START + r"dckr_pat_[A-Za-z0-9_\-]{20,}")),
     # DigitalOcean: dop (PAT) / doo (OAuth) / dor (refresh) はいずれも v1_ + 64 桁 hex。
-    ("DigitalOcean token", re.compile(_TOKEN_START + r"do[opr]_v1_[a-f0-9]{64}\b")),
+    (
+        "DigitalOcean token",
+        re.compile(_TOKEN_START + r"do[opr]_v1_[a-f0-9]{64}" + _TOKEN_END),
+    ),
     # OpenPGP の armor は `PRIVATE KEY BLOCK-----` で終わる (gpg
     # --export-secret-keys --armor の出力)。`KEY-----` 直結だけだと
     # PEM 形式 (OPENSSH / RSA / EC / ENCRYPTED) しか拾えず、PGP 秘密鍵は素通り
@@ -3906,7 +3988,7 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     (
         "secret CLI argument",
         re.compile(
-            r"(?i)\b(?:aws\s+configure\s+set"
+            r"(?i)" + _WORD_START + r"(?:aws\s+configure\s+set"
             r"|vault\s+kv\s+(?:put|patch)"
             r"|heroku\s+config:set"
             r"|wrangler\s+secret\s+put"
@@ -3945,7 +4027,8 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
         # この綴りでは一致しなくなるが、生のコマンドの綴りが拾う)。ダブルクォートの
         # 値は中に `$` を含めば参照として除く (`"prefix-$VAL"`)。
         re.compile(
-            r"(?i)\bgh[ \t]+secret[ \t]+set\b(?:[ \t]+[^\s;|&\\]+){0,8}?[ \t]+"
+            r"(?i)" + _WORD_START + r"gh[ \t]+secret[ \t]+set\b"
+            r"(?:[ \t]+[^\s;|&\\]+){0,8}?[ \t]+"
             r"(?:(?:--body|-b)=(?:\"[^\"\n$]{8,}\"|'[^'\n]{8,}"
             r"|(?![$\\])[^\s\"'$]{8,})"
             r"|(?:--body[ \t]+|-b[ \t]*)(?:\"[^\"\n$]{8,}\"|'[^'\n]{8,}"
@@ -4010,14 +4093,14 @@ def build_review_prompt(tool_name: str, tool_input) -> str:
 # 両入口 ($GEMINI_MODEL / $GEMINI_FLASH_MODEL 未設定時) の既定モデル。入口ごとに
 # 文字列を書くと、下の「既定モデルにだけ thinkingLevel を送る」判定と食い違う。
 DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
-DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-flash-latest"
+DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-4-hydrogen"
 
 
 def _build_gemini_payload(target_model: str, prompt: str) -> tuple[str, bytes]:
     """generateContent の URL と本体を返す。
 
     `thinkingLevel: "minimal"` (と短い出力上限) は既定モデルにだけ送る。実測で
-    受け付けたのは gemini-flash-lite-latest だけで、フォールバック先の
+    受け付けたのは gemini-flash-lite-latest だけで、当時のフォールバック先の
     gemini-flash-latest や gemini-pro-latest / gemini-2.5-flash-lite は HTTP 400
     ("Thinking level ... is not supported") を返す (scripts/gemini_api.py の
     build_request の記録)。全モデルへ送っていたため、フォールバックは毎回 400 で
@@ -4404,8 +4487,18 @@ def notify(title: str, message: str, timeout: int = 5) -> None:
         pass  # 通知の失敗はメイン処理に影響させない
 
 
+# 詳細ログのファイル名 (`bash_cmd_{ns}_{pid}.log`: 両エントリポイントが組む)。
+# prune_dir が数える・消す対象はこの名前に限る。
+_DETAIL_LOG_PREFIX = "bash_cmd_"
+_DETAIL_LOG_SUFFIX = ".log"
+
+
+def _is_detail_log_name(name: str) -> bool:
+    return name.startswith(_DETAIL_LOG_PREFIX) and name.endswith(_DETAIL_LOG_SUFFIX)
+
+
 def prune_dir(log_dir: str, keep: int = 1000) -> None:
-    """log_dir 内のファイルが keep 件を超えたら名前順で古いものから削除する。
+    """log_dir 内の詳細ログが keep 件を超えたら名前順で古いものから削除する。
 
     削除は listdir で撮ったスナップショットに対して行うので、フックが並行して
     走ると (Claude と Codex のセッションが同時に動く、1 ターンで複数の Bash 呼び出しが
@@ -4417,14 +4510,30 @@ def prune_dir(log_dir: str, keep: int = 1000) -> None:
     この FileNotFoundError はたまたま走っていた無害なコマンドへの判定に化ける
     (.claude/hooks/bash-review.py では ask、.codex 変種では exit 2 = ハードブロック)。
 
-    そこで「既に消えている」= 目的は達成済み、として握りつぶす。抑止するのは
-    この良性ケースだけで、PermissionError 等の本物の異常はそのまま送出する。
+    そこで「既に消えている」= 目的は達成済み、として数える。
+
+    消せない 1 件 (その名前のディレクトリ・不変フラグ・読み取り専用の FS) で掃除全体を
+    止めない。名前順の先頭がそれだと、毎回そこで例外になり、以後ずっと掃除されず
+    ディレクトリが際限なく増える。エントリごとに OSError を握りつぶして次へ進み、
+    消せた件数が超過分に達するまで (または候補が尽きるまで) 続ける。listdir の失敗は
+    ここでは握りつぶさず、呼び出し側 (prepare_detail_log_dir) が無視する。
+
+    数えるのも消すのもフック自身の名前 (`bash_cmd_*.log`) だけ。ディレクトリの中身が
+    何であれ (symlink で別のディレクトリを指していても、利用者が置いた別のファイルが
+    混じっていても) 名前順の先頭から無差別に消さない。
     """
-    files = sorted(os.listdir(log_dir))
-    excess = len(files) - keep
-    for f in files[: max(0, excess)]:
-        with contextlib.suppress(FileNotFoundError):
+    files = sorted(f for f in os.listdir(log_dir) if _is_detail_log_name(f))
+    remaining = len(files) - keep
+    for f in files:
+        if remaining <= 0:
+            break
+        try:
             os.remove(os.path.join(log_dir, f))
+        except FileNotFoundError:
+            pass  # 競り負け: 既に消えている = 目的は達成済み
+        except OSError:
+            continue  # 消せない 1 件で止めない。数えずに次の候補へ
+        remaining -= 1
 
 
 def append_and_rotate(summary_log: str, line: str, max_lines: int = 500) -> None:
@@ -4523,36 +4632,59 @@ _PRIVATE_DIR_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 
 
-def _tighten_dir(path: str) -> None:
-    """自分が所有する実ディレクトリのパーミッションを 0700 に絞る。
+def _tighten_dir(path: str) -> str | None:
+    """path が自分の所有する実ディレクトリであることを確かめ、0700 に絞る。
 
-    symlink や他人所有のディレクトリには触らない (/tmp は誰でも先回りして作れる)。
-    絞れなかった場合はそのまま続行する: ログの秘匿は多層防御の一枚であって、
-    絞れないことでフックの判定を落とさない。
+    問題が無ければ None、あれば呼び出し側がログに書ける短い理由 (パスと分類だけ。
+    例外の文面は出さない) を返す。例外は投げない。次のどれかなら使わない:
+
+    - symlink やディレクトリ以外 (lstat で見る: /tmp は誰でも先回りして作れるので、
+      symlink を辿った先を chmod したり、その先へログを書いたりしない)
+    - 実効 uid 以外の所有 (`sudo claude` やコンテナが先に作ったもの。0700 に絞れても
+      他人が所有する場所へコマンド全文を書かない)
+    - 0700 に絞れない (chmod が失敗する / 効いていない)
+
+    チェックはパスを 2 度引く (lstat → chmod) ので、検査と使用の間にパスを差し替える
+    競合 (TOCTOU) は残る。ディレクトリ fd を開いて fstat / fchmod する方式ではない。
+    詳細は README の「ログの扱い」。
     """
     try:
         st = os.lstat(path)
-    except OSError:
-        return
-    if not stat.S_ISDIR(st.st_mode):
-        return
-    geteuid = getattr(os, "geteuid", None)
-    if geteuid is not None and st.st_uid != geteuid():
-        return
-    if st.st_mode & 0o077:
-        with contextlib.suppress(OSError):
+        if not stat.S_ISDIR(st.st_mode):
+            return f"{path} is not a real directory (symlink or other file type)"
+        geteuid = getattr(os, "geteuid", None)
+        if geteuid is None:
+            # 所有者もパーミッションビットも持たない環境 (Windows): 実ディレクトリで
+            # あることだけを確かめる。
+            return None
+        if st.st_uid != geteuid():
+            return f"{path} is owned by another user"
+        if stat.S_IMODE(st.st_mode) != _PRIVATE_DIR_MODE:
             os.chmod(path, _PRIVATE_DIR_MODE)
+            if stat.S_IMODE(os.lstat(path).st_mode) != _PRIVATE_DIR_MODE:
+                return f"{path} could not be restricted to 0700"
+    except OSError as exc:
+        return f"{path}: {type(exc).__name__}"
+    return None
 
 
-def ensure_private_dir(path: str, root: str | None = None) -> None:
-    """path を 0700 で作り、既存でも root から path までの各ディレクトリを 0700 に絞る。
+def ensure_private_dir(path: str, root: str | None = None) -> str | None:
+    """path を 0700 で用意し、root から path までの各階層を検査する。
 
     詳細ログ (/tmp 配下) にはコマンド全文とレビューモデルの応答が入る。umask 任せ
     (0755) だと同じホストの他ユーザーが読める。os.makedirs の mode は Python 3.7 以降
-    中間ディレクトリに効かないので、root 配下の各階層を明示的に絞る (root が path の
-    祖先でなければ path 自身だけ)。権限を持たない階層より上は触らない。
+    中間ディレクトリに効かないので、root 配下の各階層を 1 つずつ作って検査する
+    (root が path の祖先でなければ path 自身だけ)。
+
+    各階層は「実ディレクトリ・実効 uid の所有・0700」を満たさなければならない
+    (_tighten_dir)。os.makedirs を path に直接使わないのは、symlink の root を辿って
+    先のディレクトリに階層を作ってしまうため: 階層ごとに作る → lstat で検査する → 次へ、
+    の順にして、検査に通らない階層より下には何も作らない。検査するのは root から下だけで、
+    root より上は触らない (macOS の /tmp は /private/tmp への symlink)。
+
+    問題が無ければ None、あれば理由を返す。例外は投げない: 呼び出し側は理由があれば
+    この実行の詳細ログを止める (判定には一切影響させない)。
     """
-    os.makedirs(path, mode=_PRIVATE_DIR_MODE, exist_ok=True)
     top = path
     if root is not None:
         rel = os.path.relpath(path, root)
@@ -4562,12 +4694,42 @@ def ensure_private_dir(path: str, root: str | None = None) -> None:
     if top != path:
         for part in os.path.relpath(path, top).split(os.sep):
             levels.append(os.path.join(levels[-1], part))
-    for level in levels:
-        _tighten_dir(level)
+    try:
+        # root の親 (検査しない側) は無ければ作る。ふつうは /tmp で、既にある。
+        os.makedirs(os.path.dirname(os.path.abspath(top)), exist_ok=True)
+        for level in levels:
+            try:
+                os.mkdir(level, _PRIVATE_DIR_MODE)
+            except FileExistsError:
+                pass  # 既にある: 下の検査が実ディレクトリかどうかを決める
+            problem = _tighten_dir(level)
+            if problem:
+                return problem
+    except OSError as exc:
+        return f"{path}: {type(exc).__name__}"
+    return None
+
+
+def prepare_detail_log_dir(log_dir: str, root: str) -> str | None:
+    """詳細ログのディレクトリを検査して整える。使えなければ理由、使えれば None。
+
+    両エントリポイントが判定より前に呼ぶ。ここの失敗を判定に波及させない (root を
+    他の uid が作っていた PermissionError で、`ls` まで ask / exit 2 になっていた):
+    検査か絞り込みに失敗したら、この実行の詳細ログを止める (None 以外を返す) だけ。
+    古いログの掃除 (prune_dir) は検査に通ったあとにだけ行い、その失敗は無視する:
+    掃除できなくてもログは書けるので、詳細ログは止めない。
+    """
+    problem = ensure_private_dir(log_dir, root=root)
+    if problem:
+        return problem
+    with contextlib.suppress(OSError):
+        prune_dir(log_dir)
+    return None
 
 
 def _open_private(path: str, flags: int) -> int:
-    return os.open(path, flags, _PRIVATE_FILE_MODE)
+    # O_NOFOLLOW: 末尾が symlink に差し替えられていても、その先へは書かない (ELOOP)。
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), _PRIVATE_FILE_MODE)
 
 
 def write_detail_log(
@@ -4592,3 +4754,96 @@ def write_detail_log(
             f.write(f"Tool Input: {json.dumps(tool_input, ensure_ascii=False)}\n")
         for key, value in entries.items():
             f.write(f"{key}: {value}\n")
+
+
+# ログの書き込みは「記録」であって「判定」ではない。ディスクが読み取り専用・他人所有の
+# ディレクトリ・壊れた symlink といった環境の事情で書けないとき、その失敗が判定を
+# 変えてはならない (両エントリポイントの catch-all は例外を ask / exit 2 に変換する)。
+# 以下の try_* は I/O の失敗 (OSError と、UTF-8 にできない文字による UnicodeError)
+# だけを握りつぶして成否を返す。握りつぶすのはログの書き込みに限り、コマンドの解析・
+# 秘密スキャン・レビューの例外は従来どおり呼び出し側の catch-all に落とす
+# (フェイルクローズのまま)。
+def try_write_detail_log(
+    log_file: str | None,
+    tool_name: str,
+    tool_input,
+    entries: dict,
+    *,
+    redact_input: bool = False,
+) -> bool:
+    """write_detail_log が失敗しても例外を投げない版。書けたら True。
+
+    log_file が None のとき (prepare_detail_log_dir がこの実行の詳細ログを止めた) は
+    何もせず False を返す。
+    """
+    if log_file is None:
+        return False
+    try:
+        write_detail_log(
+            log_file, tool_name, tool_input, entries, redact_input=redact_input
+        )
+    except (OSError, UnicodeError):
+        return False
+    return True
+
+
+def try_log_summary(
+    summary_log: str,
+    command: str,
+    decision: str,
+    stage: str,
+    reason: str,
+    *,
+    redact_command: bool = False,
+) -> bool:
+    """サマリーログのディレクトリ作成と追記・ローテーションを、失敗しても投げない版。"""
+    try:
+        os.makedirs(os.path.dirname(summary_log), exist_ok=True)
+        log_summary(
+            summary_log,
+            command,
+            decision,
+            stage,
+            reason,
+            redact_command=redact_command,
+        )
+    except (OSError, UnicodeError):
+        return False
+    return True
+
+
+# 詳細ログが止まっている間の「NOTE」行は、毎回書くと 500 行のサマリーの約半分を NOTE が
+# 占め、残る判定が半分になる。直近 _NOTE_RECENT_LINES 行に NOTE があれば書かない。
+# 読むのは末尾 _NOTE_TAIL_BYTES バイトだけ (有界): 1 行が長い (数百〜数 KB) ログでは
+# 窓に入る行が 100 行に満たず、そのぶん NOTE が早めに再び書かれるが、書かれないほうへは
+# ずれない。
+_NOTE_RECENT_LINES = 100
+_NOTE_TAIL_BYTES = 64 * 1024
+_NOTE_LINE = re.compile(r"^\[[^\]]*\] NOTE\s*\| logging\s*\|")
+
+
+def _recent_lines(path: str, count: int = _NOTE_RECENT_LINES) -> list[str]:
+    """path の末尾 _NOTE_TAIL_BYTES バイトから、最後の count 行 (読めなければ空)。"""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - _NOTE_TAIL_BYTES))
+            tail = f.read()
+    except OSError:
+        return []
+    return tail.decode("utf-8", errors="replace").splitlines()[-count:]
+
+
+def note_detail_log_disabled(summary_log: str, problem: str) -> bool:
+    """詳細ログを止めたことをサマリーに 1 行残す (直近に残していれば残さない)。
+
+    bash-review-log mod は 80 字で切られたコマンドの全文を詳細ログから引く。黙って止まると
+    全文の照合が無言で外れるので、サマリーに `NOTE | logging | - | …` を書く。この時点では
+    秘密スキャン前なのでコマンドは載せない (理由 `problem` は固定語彙とパスだけ)。
+    書けたら True。失敗しても投げない (try_log_summary)。
+    """
+    if any(_NOTE_LINE.match(line) for line in _recent_lines(summary_log)):
+        return False
+    return try_log_summary(
+        summary_log, "-", "NOTE", "logging", f"detail logging disabled: {problem}"
+    )

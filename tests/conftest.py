@@ -10,7 +10,10 @@ private globals dict so that:
 - network (urllib.request.urlopen) and subprocess.run raise unless a
   test provides an explicit fake
 - the hardcoded /tmp/claude_hooks log dir and ~ are remapped under
-  tmp_path by wrapping the filesystem boundary (open/makedirs/...)
+  tmp_path by wrapping the filesystem boundary (open/makedirs/mkdir/lstat/
+  chmod/...). The hooks verify that dir from its root down (lstat, owner,
+  chmod 0700), so those calls must land in the sandbox too, not on the real
+  /tmp of whoever runs the suite
 - SystemExit is caught; the globals dict stays available so pure
   functions (_parse_verdict, _split_commands, ...) can be unit-tested
 
@@ -159,12 +162,19 @@ def run_hook(tmp_path, capsys):
 
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
+    # Stands in for /tmp itself. It exists up front because the hooks verify the
+    # managed root /tmp/claude_hooks and never create anything ABOVE it (on macOS
+    # /tmp is a symlink, so the root's parent is only ever expected to exist).
     fake_tmp = tmp_path / "fake-tmp"
+    fake_tmp.mkdir(exist_ok=True)
 
     real_open = open
     real_makedirs = os.makedirs
+    real_mkdir = os.mkdir
     real_listdir = os.listdir
     real_remove = os.remove
+    real_lstat = os.lstat
+    real_chmod = os.chmod
 
     def remap(path):
         try:
@@ -173,9 +183,10 @@ def run_hook(tmp_path, capsys):
             return path
         # Matches the literal log dirs hardcoded in the hooks so writes are
         # redirected INTO tmp_path (never actually touching /tmp).
-        # NOTE: only open/os.makedirs/os.listdir/os.remove/os.path.expanduser
-        # are wrapped. If a hook is ever refactored to use pathlib.Path I/O or
-        # shutil, extend this sandbox accordingly or it will write for real.
+        # NOTE: only open/os.makedirs/os.mkdir/os.lstat/os.chmod/os.listdir/
+        # os.remove/os.path.expanduser are wrapped. If a hook is ever
+        # refactored to use pathlib.Path I/O or shutil, extend this sandbox
+        # accordingly or it will write for real.
         if isinstance(s, str) and (
             s.startswith("/tmp/claude_hooks")  # nosec B108
             or s.startswith("/tmp/codex_hooks")  # nosec B108
@@ -212,8 +223,11 @@ def run_hook(tmp_path, capsys):
             mp.setattr(subprocess, "run", run or deny_run)
             mp.setattr(os.path, "expanduser", fake_expanduser)
             mp.setattr(os, "makedirs", lambda p, **kw: real_makedirs(remap(p), **kw))
+            mp.setattr(os, "mkdir", lambda p, *a, **kw: real_mkdir(remap(p), *a, **kw))
             mp.setattr(os, "listdir", lambda p=".": real_listdir(remap(p)))
             mp.setattr(os, "remove", lambda p: real_remove(remap(p)))
+            mp.setattr(os, "lstat", lambda p, **kw: real_lstat(remap(p), **kw))
+            mp.setattr(os, "chmod", lambda p, *a, **kw: real_chmod(remap(p), *a, **kw))
             mp.setattr(
                 "builtins.open",
                 lambda file, *a, **kw: real_open(remap(file), *a, **kw),

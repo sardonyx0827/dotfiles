@@ -149,6 +149,28 @@ class TestLint:
         log = _log_file(shell_env, LINT, "lint.log")
         assert "FAILED: x.py" in log.read_text(encoding="utf-8")
 
+    def test_escape_sequences_in_linter_output_reach_the_model_verbatim(
+        self, LINT, shell_env, tmp_path
+    ):
+        # The report used to be joined with the two characters `\n` and every
+        # `\n` was turned into a newline at the end, so a linter quoting source
+        # such as `print("x\ny")` or a Windows path `C:\new` arrived broken
+        # (`print("x` / `y")`, `C:` / `ew`).
+        quoted = r'print("x\ny")  # C:\new'
+        shell_env.stub(
+            "ruff", body=f"printf '%s\\n' 'x.py:1:1: E501 {quoted}'", exit_code=1
+        )
+        shell_env.stub("bandit")
+        target = tmp_path / "x.py"
+        target.write_text("import os\n", encoding="utf-8")
+
+        res = shell_env.run(LINT, stdin=payload(target))
+
+        assert res.returncode == 2
+        assert quoted in res.stderr, res.stderr
+        log = _log_file(shell_env, LINT, "lint.log")
+        assert quoted in log.read_text(encoding="utf-8")
+
     def test_python_lint_clean_passes(self, LINT, shell_env, tmp_path):
         shell_env.stub("ruff")
         shell_env.stub("bandit")
@@ -1595,11 +1617,16 @@ class TestAutoFormat:
         target.write_text("import os\n", encoding="utf-8")
         res = shell_env.run(FORMAT, stdin=payload(target))
         assert res.returncode == 0
-        assert any(
-            c.startswith(f"ruff check --select I --fix {target}")
+        # --force-exclude sits between the options and the path (see
+        # TestRuffForceExclude), so match on tokens rather than one prefix.
+        sort_calls = [
+            c.split()
             for c in shell_env.calls
-        )
-        assert any(c.startswith(f"ruff format {target}") for c in shell_env.calls)
+            if c.startswith("ruff check --select I --fix ")
+        ]
+        assert sort_calls and all(c[-1] == str(target) for c in sort_calls)
+        fmt_calls = [c.split() for c in shell_env.calls if c.startswith("ruff format ")]
+        assert fmt_calls and all(c[-1] == str(target) for c in fmt_calls)
         assert not any(c.startswith(f"isort {target}") for c in shell_env.calls)
         notified = [c for c in shell_env.calls if "Format Done" in c]
         assert notified, "expected a Format Done notification"
@@ -1837,6 +1864,7 @@ class TestLintHelperOutputVarGuard:
             "tsc_line",
             "tsc_sep",
             "tsc_path",
+            "nl",
         ],
     )
     def test_a_colliding_output_variable_is_rejected(self, shell_env, tmp_path, name):
@@ -1916,3 +1944,227 @@ class TestLintBeforeFormatSkipsFormatterOwnedFindings:
         calls = [c for c in shell_env.calls if c.startswith(f"{tool} ")]
         assert calls, f"{tool} was never invoked: {shell_env.calls}"
         assert not any(flag in c for c in calls), calls
+
+
+class TestRuffForceExclude:
+    """ruff skips `exclude` / `extend-exclude` for a path it is handed explicitly.
+
+    The hooks always hand ruff one explicit file, so without `--force-exclude`
+    a project with `[tool.ruff] exclude = ["gen"]` gets gen/a.py reformatted and
+    blocked by lint, while `ruff check .` in the same project passes. These
+    stub-based cases pin the flag on every invocation (they run anywhere, the
+    CI pytest job installs no linters); TestRuffForceExcludeRealRuff below
+    proves the behaviour against the real tool.
+    """
+
+    @staticmethod
+    def _ruff_argv(shell_env, subcommand_prefix: str) -> list[list[str]]:
+        return [c.split() for c in shell_env.calls if c.startswith(subcommand_prefix)]
+
+    @pytest.mark.parametrize("LINT", LINT_HOOKS, ids=["claude", "codex"])
+    def test_lint_passes_force_exclude_with_the_file_last(
+        self, LINT, shell_env, tmp_path
+    ):
+        shell_env.stub("ruff")
+        shell_env.stub("bandit")
+        target = tmp_path / "x.py"
+        target.write_text("import os\n", encoding="utf-8")
+
+        res = shell_env.run(LINT, stdin=payload(target))
+
+        assert res.returncode == 0, res.stderr
+        calls = self._ruff_argv(shell_env, "ruff check ")
+        assert calls, f"ruff check was never invoked: {shell_env.calls}"
+        for argv in calls:
+            assert "--force-exclude" in argv, argv
+            assert argv[-1] == str(target), f"the file must stay last: {argv}"
+
+    def test_claude_format_passes_force_exclude_to_both_ruff_calls(
+        self, shell_env, tmp_path
+    ):
+        shell_env.stub("ruff")
+        target = tmp_path / "x.py"
+        target.write_text("import os\n", encoding="utf-8")
+
+        res = shell_env.run(CLAUDE_FORMAT, stdin=payload(target))
+
+        assert res.returncode == 0, res.stderr
+        sort_calls = self._ruff_argv(shell_env, "ruff check --select I --fix ")
+        fmt_calls = self._ruff_argv(shell_env, "ruff format ")
+        assert sort_calls and fmt_calls, shell_env.calls
+        for argv in sort_calls + fmt_calls:
+            assert "--force-exclude" in argv, argv
+            assert argv[-1] == str(target), f"the file must stay last: {argv}"
+
+    def test_codex_format_passes_force_exclude_to_both_ruff_calls(
+        self, shell_env, git_repo
+    ):
+        shell_env.stub("ruff")
+        (git_repo / "x.py").write_text("import os\n", encoding="utf-8")
+
+        res = shell_env.run(CODEX_FORMAT, stdin="{}", cwd=git_repo)
+
+        assert res.returncode == 0, res.stderr
+        sort_calls = self._ruff_argv(shell_env, "ruff check --select I --fix ")
+        fmt_calls = self._ruff_argv(shell_env, "ruff format ")
+        assert sort_calls and fmt_calls, shell_env.calls
+        for argv in sort_calls + fmt_calls:
+            assert "--force-exclude" in argv, argv
+            assert argv[-1].endswith("/x.py"), f"the file must stay last: {argv}"
+
+    def test_codex_lint_keeps_ignore_i_and_adds_force_exclude(
+        self, shell_env, tmp_path
+    ):
+        # `ruff_args=(--ignore I)` and the new flag share one command line; the
+        # flag must not displace the before-format exclusion (or vice versa).
+        shell_env.stub("ruff")
+        shell_env.stub("bandit")
+        target = tmp_path / "x.py"
+        target.write_text("import os\n", encoding="utf-8")
+
+        res = shell_env.run(CODEX_LINT, stdin=payload(target))
+
+        assert res.returncode == 0, res.stderr
+        (argv,) = self._ruff_argv(shell_env, "ruff check ")
+        assert argv[argv.index("--ignore") + 1] == "I", argv
+        assert "--force-exclude" in argv, argv
+
+
+# Unformatted AND unused import: a file ruff actually processes is both rewritten
+# by the formatter and rejected by the linter, so "left alone" cannot be confused
+# with "already clean".
+_RUFF_DIRTY = "import os\nx=1\n"
+
+needs_real_ruff = pytest.mark.skipif(
+    shutil.which("ruff") is None,
+    reason="real ruff not installed (the stub-based cases above still run)",
+)
+
+
+@needs_real_ruff
+class TestRuffForceExcludeRealRuff:
+    """The same project, a file ruff's own config excludes, the real binary."""
+
+    @pytest.fixture
+    def project(self, shell_env, git_repo):
+        shell_env.stub("bandit")  # keep the host's bandit out of the verdict
+        (git_repo / "pyproject.toml").write_text(
+            '[tool.ruff]\nexclude = ["gen"]\n', encoding="utf-8"
+        )
+        (git_repo / "gen").mkdir()
+        (git_repo / "gen" / "a.py").write_text(_RUFF_DIRTY, encoding="utf-8")
+        (git_repo / "b.py").write_text(_RUFF_DIRTY, encoding="utf-8")
+        return git_repo
+
+    def test_claude_format_leaves_an_excluded_file_untouched(self, shell_env, project):
+        res = shell_env.run(
+            CLAUDE_FORMAT, stdin=payload(project / "gen" / "a.py"), cwd=project
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert (project / "gen" / "a.py").read_text(encoding="utf-8") == _RUFF_DIRTY
+
+    def test_codex_format_skips_the_excluded_file_but_formats_the_rest(
+        self, shell_env, project
+    ):
+        res = shell_env.run(CODEX_FORMAT, stdin="{}", cwd=project)
+
+        assert res.returncode == 0, res.stderr
+        assert (project / "gen" / "a.py").read_text(encoding="utf-8") == _RUFF_DIRTY
+        # Anti-vacuity: real ruff ran against this config and does rewrite a
+        # file that is not excluded.
+        assert (project / "b.py").read_text(encoding="utf-8") != _RUFF_DIRTY
+
+    @pytest.mark.parametrize("LINT", LINT_HOOKS, ids=["claude", "codex"])
+    def test_lint_treats_an_excluded_file_as_passed(self, LINT, shell_env, project):
+        res = shell_env.run(LINT, stdin=payload(project / "gen" / "a.py"), cwd=project)
+
+        assert res.returncode == 0, (
+            f"an excluded file must read as 'nothing to do', not an error:\n"
+            f"{res.stdout}\n{res.stderr}"
+        )
+
+    @pytest.mark.parametrize("LINT", LINT_HOOKS, ids=["claude", "codex"])
+    def test_lint_still_blocks_a_file_that_is_not_excluded(
+        self, LINT, shell_env, project
+    ):
+        res = shell_env.run(LINT, stdin=payload(project / "b.py"), cwd=project)
+
+        assert res.returncode == 2, res.stderr
+        assert "F401" in res.stderr, res.stderr
+
+
+def _init_unborn_repo(path: Path) -> Path:
+    """`git init` with no commit yet: HEAD does not resolve."""
+    path.mkdir()
+    run_git(path, "init", "-q", "-b", "main")
+    run_git(path, "config", "user.email", "test@example.com")
+    run_git(path, "config", "user.name", "Test User")
+    run_git(path, "config", "commit.gpgsign", "false")
+    return path
+
+
+class TestCodexSelectsStagedFilesBeforeTheFirstCommit:
+    """A fresh `git init` repo: files staged, nothing committed yet.
+
+    `git diff --name-only -z HEAD` fails there (HEAD does not resolve) and a
+    staged file is not in `ls-files --others` either, so both Codex hooks used
+    to skip it with no error anywhere. The selection now lives in one shared
+    helper (hook_git_changed_files, _hook_common.sh); these pin that each
+    consumer picks up the staged file AND the untracked one.
+    """
+
+    def test_auto_format_formats_staged_and_untracked(self, shell_env, tmp_path):
+        shell_env.stub("shfmt")
+        repo = _init_unborn_repo(tmp_path / "repo")
+        (repo / "staged.sh").write_text("echo   1\n", encoding="utf-8")
+        run_git(repo, "add", "staged.sh")
+        (repo / "untracked.sh").write_text("echo   2\n", encoding="utf-8")
+
+        res = shell_env.run(CODEX_FORMAT, stdin="{}", cwd=repo)
+
+        assert res.returncode == 0, res.stderr
+        formatted = [c for c in shell_env.calls if c.startswith("shfmt -i 2 -w")]
+        assert any(c.endswith("/staged.sh") for c in formatted), formatted
+        assert any(c.endswith("/untracked.sh") for c in formatted), formatted
+        assert len(formatted) == 2, formatted
+
+    def test_lint_git_fallback_covers_staged_and_untracked(self, shell_env, tmp_path):
+        # No file_path and no apply_patch markers = an unknown payload shape,
+        # the only route into lint.sh's git-diff fallback.
+        shell_env.stub("shellcheck")
+        repo = _init_unborn_repo(tmp_path / "repo")
+        (repo / "staged.sh").write_text("echo 1\n", encoding="utf-8")
+        run_git(repo, "add", "staged.sh")
+        (repo / "untracked.sh").write_text("echo 2\n", encoding="utf-8")
+
+        res = shell_env.run(
+            CODEX_LINT,
+            stdin=json.dumps({"tool_name": "Unknown", "tool_input": {}}),
+            cwd=repo,
+        )
+
+        assert res.returncode == 0, res.stderr
+        linted = [c for c in shell_env.calls if c.startswith("shellcheck ")]
+        assert any(c.endswith("/staged.sh") for c in linted), linted
+        assert any(c.endswith("/untracked.sh") for c in linted), linted
+        assert len(linted) == 2, linted
+
+    def test_lint_git_fallback_still_blocks_a_staged_file_with_findings(
+        self, shell_env, tmp_path
+    ):
+        # Selecting the file is only half of it: its finding must still reach
+        # the agent as exit 2 rather than being dropped on the way.
+        shell_env.stub("shellcheck", body='echo "SC2086: quote this"', exit_code=1)
+        repo = _init_unborn_repo(tmp_path / "repo")
+        (repo / "staged.sh").write_text("echo $1\n", encoding="utf-8")
+        run_git(repo, "add", "staged.sh")
+
+        res = shell_env.run(
+            CODEX_LINT,
+            stdin=json.dumps({"tool_name": "Unknown", "tool_input": {}}),
+            cwd=repo,
+        )
+
+        assert res.returncode == 2, res.stderr
+        assert "SC2086" in res.stderr

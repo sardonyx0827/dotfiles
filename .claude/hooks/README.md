@@ -17,7 +17,9 @@
   carrying raw credentials to any LLM, a parallel Gemini+Codex AND-gate for
   high-risk commands, and a Gemini→Codex cascade for the low-risk majority.
   Logs to `~/.claude/logs/bash-review.log` and `/tmp/claude_hooks/logs/`
-  (directory 0700, files 0600). The summary log holds one decision per
+  (directory 0700, files 0600; the Codex entry uses `~/.codex/logs/` and
+  `/tmp/codex_hooks/logs/`). Logging is best-effort and never decides a
+  verdict — see **Log handling** below. The summary log holds one decision per
   physical line: a newline in the command or the reason is written as `⏎`,
   and a `|` in the reason as `/`, so a multi-line command cannot plant a
   line that reads as a second decision (the `bash-review-log` mod applies the
@@ -33,15 +35,28 @@
 - **git-push-review** (`hooks/git-push-review.sh`, matcher: `Bash`,
   no `if` filter — deliberately unconditional):
   Detects `git push` commands and forces a confirmation prompt
-  (permissionDecision: ask) with a summary of the branch, commits,
-  and diffstat about to be pushed. Enforces the pre-push review step
-  of `rules/git-workflow.md`.
+  (permissionDecision: ask) with a summary of the branch and an estimate of
+  the commits and diffstat the push would send. The estimate follows the push
+  target (the named remote and refspec, or `@{push}` /
+  `branch.<b>.pushRemote` / `remote.pushDefault` for a bare `git push`) and is
+  computed from local remote-tracking refs as of the last fetch; the hook
+  never touches the network. A target with no tracking ref is listed as
+  "commits not on any <remote> ref known locally (approximate)", never as
+  "(none)", and a list longer than 10 commits ends with "(+N more)".
+  Only the first five pushes of a chained command get their own target line
+  and commit section; the rest are counted in one line, and any force /
+  delete option among them is still called out.
+  Enforces the pre-push review step of `rules/git-workflow.md`.
+  The detection and the summary logic live in `_push_review_common.sh`, shared
+  with the Codex copy (see **Shared libraries** below); `git-push-review.sh`
+  only reads the input and shapes the output (a JSON `ask`, exit 0).
   The summary is taken from the repository the push will actually run in:
   `git -C <dir>` and a literal `cd <dir>` ahead of the push both retarget it.
   When that directory cannot be determined for certain (a variable, `cd -`,
   `~user`, `pushd` / `popd`, a subshell, a heredoc (`<<`) or comment (`#`)
   in a command that also has a `cd`, several `cd`s, a `cd` with options or
-  extra operands, a `..` component, a quoted `~`, a target that is not an
+  extra operands, more than one push with a `cd` / `pushd` / `popd` (or a
+  different `-C`) between them, a `..` component, a quoted `~`, a target that is not an
   existing directory, a control character in the command other than tab /
   newline (DEL included) or any control character in the `cd` target or the
   `-C` value, `--git-dir` /
@@ -156,7 +171,10 @@ feeds both, and lets lint's exit code be the hook's.
   `debugger` in JS/TS, `breakpoint()` / `pdb.set_trace()` in Python)
   and blocks once with the findings so Claude removes them. Before the
   first commit (no `HEAD` yet) it scans the staged files instead of the
-  diff against `HEAD`.
+  diff against `HEAD`. The selection itself comes from
+  `hook_git_changed_files` in `_hook_common.sh`; if that library cannot be
+  loaded the audit stands down (exit 0, message on stderr), like the
+  missing-`jq` case.
   The report is bounded — 5 matches per file, 200 bytes per matched line
   (cut on a character boundary), 20 files and a count of the rest — because a
   single minified line used to stall the hook for minutes under macOS's
@@ -173,9 +191,9 @@ feeds both, and lets lint's exit code be the hook's.
 
 ## Shared libraries (`_`-prefixed, not hooks themselves)
 
-These four files hold the per-file logic shared between the two sides — the
-lint/format matrices and bash-review's verdict logic. They live here as the
-_only_ copies: `.codex/hooks/` carries neither a duplicate nor a link, and its
+These five files hold the logic shared between the two sides — the
+lint/format matrices, bash-review's verdict logic and git-push-review's
+detection and summary. They live here as the _only_ copies: `.codex/hooks/` carries neither a duplicate nor a link, and its
 entry points resolve `../../.claude/hooks` from their own **physical** location
 (`os.path.realpath(__file__)` in Python, `cd -P` in shell) and load these files
 from there. One file means the shared logic cannot drift apart, and a
@@ -192,15 +210,27 @@ would land on `~/.claude/hooks` and resolve only by the coincidence that
 The hooks that consume this logic (`lint.sh`, `auto-format.sh`,
 `bash-review.py`, …) are _not_ shared: each side keeps its own copy, because
 Claude and Codex differ in how they receive targets, report verdicts, and place
-hooks on events. See `.codex/hooks/README.md` for the full table and those
+hooks on events. `git-push-review.sh` is the one that is kept deliberately thin:
+each side's copy is only an adapter (read the input, drop commands that cannot
+be a push, load `_push_review_common.sh`, shape the result), and everything else
+is in the library. See `.codex/hooks/README.md` for the full table and those
 differences.
 
 - **`_hook_common.sh`**: `hook_log` (timestamped, size-capped),
   `hook_notify` (terminal-notifier / osascript / notify-send), and
   `hook_find_nearest_bin` (nearest `node_modules/.bin` lookup used by lint and
-  format).
+  format), and `hook_git_changed_files <repo_root>` (the git-derived list of
+  changed files: the diff against `HEAD` -- or against the index before the
+  first commit -- then untracked files; repo-relative, NUL-separated; shared by
+  both `stop-audit.sh` copies and the Codex `auto-format.sh` / `lint.sh` git
+  fallback).
 - **`_lint_common.sh`**: `hook_lint_file` — the per-language lint matrix.
 - **`_format_common.sh`**: `hook_format_file` — the per-language formatter matrix.
+- **`_push_review_common.sh`**: git-push-review's push detection and its
+  confirmation text (push target, `WARNING` lines, branch / commit summary).
+  One entry point, `hook_push_review_run <raw stdin> <command>`, which returns
+  `0` (a body is in the global `push_review_body`), `1` (not a push) or
+  anything else (unexpected). It must stay the last function in the file.
 - **`_bash_review_common.py`**: bash-review's verdict logic and review calls.
 
 Contract for the shell ones: they define functions and nothing else. Sourcing
@@ -210,6 +240,28 @@ in the structured-output channel Codex parses and fail the hook. Function names
 are namespaced `hook_` because bash is dynamically scoped and a collision with a
 caller's local fails silently. Variables inside them are not prefixed
 (`FILE_PATH`, `EXTENSION`, …), so callers must not rely on names they share.
+
+`_push_review_common.sh` is a **private library**, an exception to the `hook_`
+naming rule: its one public name is the entry point `hook_push_review_run`, and
+the helpers behind it (`strip_quoted_ranges`, `git_c_dir_from_words`,
+`build_push_report`, …) keep the plain names they had when they sat in the hook.
+They were moved verbatim, and renaming them would defeat reviewing that move as a
+plain `diff`. The `gp_*` / `push_report` / `hd_*` variables are intentional
+globals that carry results between those functions (a `$(…)` between them would
+strip a trailing newline).
+
+`git-push-review.sh` does **not** fail open when it cannot load this library, in
+contrast to `lint.sh` / `auto-format.sh`: it is the gate in front of `git push`,
+and "could not load" is not evidence that the command is not a push. The load is
+guarded by a cheap "no `push` / `send-pack` in the command" check that runs
+first, so ordinary Bash calls never parse the library; a command that passes
+the check and then meets a missing, empty, truncated or syntactically broken
+library, a missing required function, or an entry point that returns anything
+but `0` / `1`, degrades to a fixed-text confirmation (Claude: a JSON `ask`,
+exit 0; Codex: stderr, exit 2) saying the library could not be loaded and the
+push must be reviewed manually, plus a `could not load _push_review_common.sh
+from <dir>` line on stderr. That is why the entry point must be the last
+function: the adapters take "it is defined" to mean "the whole file was read".
 
 ## bash-review — design rationale & threat model
 
@@ -347,6 +399,13 @@ latency low for the common case:
    (`sh -c`, `eval`, `bash <<EOF`, `source <<EOF`); and a protected path in an
    awk program. A target that expands (glob, brace, `$VAR`) counts when the
    expansion could land on a protected path (`.claude/sett*`, `$D/settings.json`).
+   A target is matched as written **and** in a lexically collapsed spelling (`//`
+   squeezed, `/./` dropped, `x/..` resolved), so `.claude//settings.json`,
+   `.claude/./settings.json` and `.claude/x/../settings.json` ask like the plain
+   one. The written form is always checked too: collapsing can change the
+   meaning once a symlink, variable or glob is involved. The two places that
+   match free text rather than a token (a redirect line the shell parser gave up
+   on, an awk program) collapse each word that contains a `/` the same way.
    Heredoc bodies, multi-line quoted strings and comments are not read, as for
    denial. Code in another language (`python -c`, `node -e`, `python3 - <<EOF`)
    is deliberately left to the high-risk gate: whether it reads or writes cannot
@@ -513,8 +572,9 @@ latency low for the common case:
    32 KiB of JSON, or more than 32 command substitutions (`$(`, `<(`, `>(`, a
    backtick pair), resolves to `ask` (Codex: block) before step 1, with no
    external review and never `deny`. That bounds the quadratic cost of nested
-   `$(`. `git-push-review.sh` stays fail-open (no `onFailure`), backed by
-   `Bash(git push:*)` in `ask`.
+   `$(`. `git-push-review.sh` stays fail-open (no `onFailure`) for a timeout or a
+   crash, backed by `Bash(git push:*)` in `ask`; a library it cannot load is
+   not a crash but an explicit `ask` (see **Shared libraries**).
    Should the hook layer be disabled altogether, `permissions.deny` still
    mirrors the hook's context-free hard-deny set — `sudo`/`su`/`doas`/`pkexec`,
    `ssh`/`slogin`/`scp`/`sftp`/`telnet`/`socat`/`ftp`/`curl`/`wget`/`nc`/`netcat`/`ncat`,
@@ -530,6 +590,49 @@ latency low for the common case:
 `permissions.deny` plus these hooks. While disabled, sibling keys under
 `sandbox` (`network.allowedDomains`, `excludedCommands`) are never consulted —
 they are inert, not an active allowlist, so don't read them as protection.
+
+**Log handling.** The detail log holds the full command and the reviewers'
+answers, and `/tmp` is shared, so the entry points treat its tree as untrusted
+input and never let logging decide a verdict:
+
+- Before any decision, `prepare_detail_log_dir` walks from the managed root
+  (`/tmp/claude_hooks`, Codex: `/tmp/codex_hooks`) down to the leaf, one level
+  at a time (`mkdir`, then `lstat`, then `chmod`). Every level must be a real
+  directory (not a symlink), owned by the effective uid, and exactly `0700`. The
+  walk never looks above the root (on macOS `/tmp` is itself a symlink), and
+  stops at the first level that fails, so nothing is created below it. A
+  failure — a root made by another uid (`sudo claude`, a container), a symlink
+  planted in advance, a `chmod` that does not stick — disables **detail**
+  logging for that run only; the verdict is computed as usual. The summary log
+  then gets an extra line, `NOTE | logging | - | detail logging disabled:
+<why>`, so the `bash-review-log` mod's full-command lookup does not stop
+  silently. It is written only when none of the last 100 lines of the summary
+  log is already such a note (only the tail of the file is read), so a tree
+  that stays unusable costs one line per ~100 decisions instead of halving the
+  500-line summary. It carries no command text: the secret scan has not run
+  yet. `NOTE` is not an allow / ask / deny, so a reader that counts decisions
+  files it under "other".
+- Pruning (the oldest files beyond 1000) runs only after that check passes, and
+  counts and deletes only the hook's own names, `bash_cmd_*.log`. An entry that
+  cannot be deleted (a directory with such a name, an immutable file) is skipped
+  and pruning goes on to the next one, so it cannot halt the clean-up for good.
+  A failure to list the directory is ignored: the logs can still be written.
+- Every logging write is best-effort — the detail log (also in the size-limit
+  branch), the summary log's directory creation, append and rotation. An
+  `OSError` (or a character that cannot be encoded to UTF-8) there is swallowed
+  and nothing else is: an exception from parsing, the secret scan or a review
+  still fails closed (ask; Codex: exit 2). The decision is also settled before
+  the logging runs in every branch, so a logging bug cannot flip an allow into
+  a block or replace a block's reason with "hook error".
+- The detail file is opened `O_NOFOLLOW` with mode 0600.
+
+Residual risk: the checks are path-based, not directory-fd based
+(`lstat` then `chmod` / `open` by path), so a swap between the check and the
+use is a TOCTOU window. It is narrow in practice — a level that passes is a
+directory we own, inside a root we own that is `0700`, and `/tmp` is sticky, so
+only the same uid can replace it — but it is not closed. Closing it would mean
+opening each level with `O_DIRECTORY | O_NOFOLLOW` and working through
+`fstat` / `fchmod` / `*at` calls.
 
 **Accepted tradeoffs (chosen, not overlooked):**
 
@@ -547,7 +650,15 @@ they are inert, not an active allowlist, so don't read them as protection.
   long flags) or short-flag secrets (`-p<pw>`, which collide with `mkdir -p` etc.),
   and leaves sensitive _paths_ to normal review. A miss falls through to the
   usual AI review, not to a silent send of an unreviewed secret; a false
-  positive only costs an `ask`.
+  positive only costs an `ask`. A known-format token ends at the first ASCII
+  word character that cannot belong to it, so one glued to Japanese prose
+  (`AKIA…です`) is still caught; kana / kanji are not word characters here
+  (a regex `\b` would count them as such and miss the token). Nothing the old
+  `\b` matched is lost: the two formats whose body may contain `-` keep it.
+  `sk-…` is greedy, so a trailing `-` is simply part of its body; `AIza` + 35
+  characters accepts either end condition (no ASCII word character follows, or
+  the old `\b`), so `AIza<35>-prod`, `…-`, `…--` and `?key=AIza<35>-1` are still
+  caught, as is a key whose last character is `-` followed by a space.
 - Safe-skipped `git status` / `git log` / `git diff` / … assume a **trusted** repository. Config-driven
   execution (`.git/config` `core.pager`, `[alias]`, `diff.external`) is out of
   scope — verifying it on every call would defeat the point of the skip. See the

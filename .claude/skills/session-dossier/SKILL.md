@@ -72,16 +72,23 @@ artifact` implies `--mode share` and requires `--session`:
    What share mode does:
    - **Left out** (an allow-list; counted, never rendered): thinking, every
      user-side message that is not the person's own prompt (injected text,
-     summaries, agent-to-agent messages, command output, subagent task
-     prompts), attachments, API request records, session metadata and system
-     records, images, raw unknown records.
+     summaries, agent-to-agent messages, command output, and the subagent's
+     own copy of its task), attachments, API request records, session metadata
+     and system records, images, raw unknown records.
+   - **Shown, scrubbed**: tool calls with their inputs and results (command
+     output, file contents read, subagent reports), so the task a subagent
+     was given stays visible once, as the `prompt` of the Agent call that
+     started it (scrubbed like every other string).
    - **git**: only the diff of files the session edited; no other working-tree
-     changes and no untracked file names.
+     changes, and untracked file names only for files the session edited.
    - **Scrubbed** in every remaining string, before it is escaped:
      system-reminder blocks and private-key blocks (whole, also an END line
      whose BEGIN is elsewhere); secrets (the bash-review hook's
      `_SECRET_SCANNERS` plus share-only rules for key=value secrets,
-     Authorization and Cookie headers, name/value pairs, escaped forms);
+     Authorization and Cookie headers, name/value pairs, escaped forms, URL
+     passwords up to the last `@` (also when the password holds a `/`; a URL
+     like `host:443/@scope` is over-redacted), and passwords given as flags
+     of `curl -u`, `mysql -p`, `sshpass -p`, `redis-cli -a` and `docker login`);
      e-mail addresses; this and any other home directory, the home-derived
      project slug and the bare user name; Claude's temp directory; git author,
      committer, co-author and configured user names. JSON is scrubbed leaf by

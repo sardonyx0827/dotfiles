@@ -132,8 +132,12 @@
     "command": "workbench.action.closeActiveEditor"
   },
   {
+    // macOS counterpart of alt+x. Only in Vim normal mode (gated like
+    // VSCodeVim's own bindings): unconditionally it replaced Cut everywhere
+    // (editor, find widget, chat input, explorer).
     "key": "cmd+x",
-    "command": "workbench.action.closeActiveEditor"
+    "command": "workbench.action.closeActiveEditor",
+    "when": "editorTextFocus && vim.active && !inDebugRepl && vim.mode == 'Normal'"
   }, // explorer actions
   {
     // create new file

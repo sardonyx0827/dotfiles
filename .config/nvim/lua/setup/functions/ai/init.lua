@@ -12,6 +12,7 @@ local backend = require("setup.functions.ai.backend")
 local context = require("setup.functions.ai.context")
 local prompt = require("setup.functions.ai.prompt")
 local sensitive = require("setup.functions.ai.sensitive")
+local focus_trap = require("setup.functions.ai.focus_trap")
 local ui = require("setup.functions.ai.ui")
 
 local map = vim.keymap.set
@@ -630,23 +631,16 @@ local function ask_ai_and_replace(start_line, end_line, tool)
   vim.cmd("startinsert")
 
   -- Trap focus inside the prompt window: snap back if the user moves away.
+  -- One cluster of one window in the registry shared with ui.run_multi (see
+  -- ai.focus_trap): a trap of its own would ping-pong with an open popup's.
+  local prompt_trap = focus_trap.register({ prompt_win })
   local pgroup = vim.api.nvim_create_augroup("AskAiPrompt_" .. prompt_win, { clear = true })
   vim.api.nvim_create_autocmd("WinClosed", {
     group = pgroup,
     pattern = tostring(prompt_win),
-    callback = function() pcall(vim.api.nvim_del_augroup_by_id, pgroup) end,
-  })
-  vim.api.nvim_create_autocmd("WinEnter", {
-    group = pgroup,
     callback = function()
-      if vim.api.nvim_get_current_win() ~= prompt_win
-        and vim.api.nvim_win_is_valid(prompt_win) then
-        vim.schedule(function()
-          if vim.api.nvim_win_is_valid(prompt_win) then
-            vim.api.nvim_set_current_win(prompt_win)
-          end
-        end)
-      end
+      focus_trap.unregister(prompt_trap)
+      pcall(vim.api.nvim_del_augroup_by_id, pgroup)
     end,
   })
 

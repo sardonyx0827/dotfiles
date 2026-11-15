@@ -56,7 +56,7 @@ CODEX_AGENTS_DIR = REPO_ROOT / ".codex/agents"
 # Agents whose Codex body genuinely diverges in meaning (not just wording) and
 # so stay hand-written. Keep this list as short as the evidence demands: today
 # only codex-delegator qualifies, because the Claude copy documents the
-# advisor-first escalation tier, which has no counterpart under Codex.
+# advisor + Codex second-opinion pairing, which has no counterpart under Codex.
 # A second entry is the signal to build a real block-level mechanism instead.
 HAND_MAINTAINED = frozenset({"codex-delegator"})
 

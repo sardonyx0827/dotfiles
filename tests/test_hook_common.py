@@ -1,14 +1,15 @@
-"""Tests for _hook_common.sh (hook_log / hook_notify).
+"""Tests for _hook_common.sh (hook_log / hook_notify / hook_git_changed_files).
 
 These run against the .claude copy; .codex holds no copy or symlink of it and
 instead resolves ../../.claude/hooks by physical path at runtime, which
 test_hook_sync.py pins.
 """
 
+import os
 import re
 import subprocess
 
-from conftest import REPO_ROOT
+from conftest import REPO_ROOT, run_git
 
 HOOK_COMMON = REPO_ROOT / ".claude/hooks/_hook_common.sh"
 
@@ -98,3 +99,116 @@ class TestHookLog:
         assert not any(p.name.startswith("race.log.") for p in tmp_path.iterdir()), (
             "concurrent rotation left temp files behind"
         )
+
+
+def _init_unborn_repo(path):
+    """`git init` with no commit yet: HEAD does not resolve."""
+    path.mkdir()
+    run_git(path, "init", "-q", "-b", "main")
+    run_git(path, "config", "user.email", "test@example.com")
+    run_git(path, "config", "user.name", "Test User")
+    run_git(path, "config", "commit.gpgsign", "false")
+    return path
+
+
+def _changed_files(repo, *, cwd=None) -> list[str]:
+    """What hook_git_changed_files prints, split on NUL.
+
+    Read as bytes: the contract is NUL separation, which text mode with
+    universal newlines and a command substitution would both blur. A correct
+    run ends in a NUL, so the empty tail the split leaves is asserted, not
+    silently dropped.
+    """
+    res = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'. "{HOOK_COMMON}"\nhook_git_changed_files "$1"; echo "rc=$?" >&2',
+            "bash",
+            str(repo),
+        ],
+        capture_output=True,
+        env={
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+        },
+        cwd=cwd,
+        timeout=60,
+    )
+    assert res.stderr == b"rc=0\n", res.stderr
+    if not res.stdout:
+        return []
+    assert res.stdout.endswith(b"\0"), f"not NUL-terminated: {res.stdout!r}"
+    return [p.decode("utf-8") for p in res.stdout.split(b"\0")[:-1]]
+
+
+class TestHookGitChangedFiles:
+    """The "which files did this turn touch" selection the Stop hooks share.
+
+    Repo-root-relative, NUL-separated: tracked changes against HEAD first, then
+    untracked files. Before the first commit HEAD does not resolve, so the first
+    half has to come from the index instead -- otherwise a file staged for that
+    first commit is in neither half and every consumer silently skips it.
+    """
+
+    def test_born_repo_lists_modified_staged_and_untracked(self, git_repo):
+        (git_repo / "README.md").write_text("changed\n", encoding="utf-8")
+        (git_repo / "staged.sh").write_text("echo 1\n", encoding="utf-8")
+        run_git(git_repo, "add", "staged.sh")
+        (git_repo / "new.sh").write_text("echo 2\n", encoding="utf-8")
+
+        assert _changed_files(git_repo) == ["README.md", "staged.sh", "new.sh"]
+
+    def test_unborn_repo_lists_staged_and_untracked(self, tmp_path):
+        repo = _init_unborn_repo(tmp_path / "repo")
+        (repo / "staged.sh").write_text("echo 1\n", encoding="utf-8")
+        run_git(repo, "add", "staged.sh")
+        (repo / "untracked.sh").write_text("echo 2\n", encoding="utf-8")
+
+        assert _changed_files(repo) == ["staged.sh", "untracked.sh"]
+
+    def test_unborn_repo_without_changes_lists_nothing(self, tmp_path):
+        repo = _init_unborn_repo(tmp_path / "repo")
+
+        assert _changed_files(repo) == []
+
+    def test_clean_born_repo_lists_nothing(self, git_repo):
+        assert _changed_files(git_repo) == []
+
+    def test_unborn_unstaged_edit_of_a_staged_file_is_listed_once(self, tmp_path):
+        # Staged, then edited again: the index holds one version and the tree
+        # another, but it is still one path. A duplicate would double-process it.
+        repo = _init_unborn_repo(tmp_path / "repo")
+        (repo / "a.sh").write_text("echo 1\n", encoding="utf-8")
+        run_git(repo, "add", "a.sh")
+        (repo / "a.sh").write_text("echo 2\n", encoding="utf-8")
+
+        assert _changed_files(repo) == ["a.sh"]
+
+    def test_paths_survive_newlines_quotes_and_non_ascii(self, tmp_path):
+        # core.quotePath would hand back `"evil\".sh"` / `"\346..."`, which cannot
+        # be opened; a newline would split one path in two. -z plus NUL output
+        # keeps every one of them intact.
+        repo = _init_unborn_repo(tmp_path / "repo")
+        names = ["a\nb.sh", 'evil".sh', "日本語.sh"]
+        for name in names:
+            (repo / name).write_text("echo 1\n", encoding="utf-8")
+        run_git(repo, "add", "-A")
+
+        assert sorted(_changed_files(repo)) == sorted(names)
+
+    def test_is_independent_of_the_callers_cwd(self, git_repo, tmp_path):
+        # Paths are relative to the repo root however deep the hook was started.
+        (git_repo / "sub").mkdir()
+        (git_repo / "sub" / "x.sh").write_text("echo 1\n", encoding="utf-8")
+
+        assert _changed_files(git_repo, cwd=git_repo / "sub") == ["sub/x.sh"]
+        assert _changed_files(git_repo, cwd=tmp_path) == ["sub/x.sh"]
+
+    def test_a_directory_that_is_not_a_repo_lists_nothing_and_succeeds(self, tmp_path):
+        outside = tmp_path / "plain"
+        outside.mkdir()
+        (outside / "x.sh").write_text("echo 1\n", encoding="utf-8")
+
+        assert _changed_files(outside) == []

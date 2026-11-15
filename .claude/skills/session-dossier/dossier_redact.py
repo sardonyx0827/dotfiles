@@ -16,8 +16,13 @@ Secret detection starts from the bash-review hook's ``_SECRET_SCANNERS`` so
 the two lists cannot drift, then adds share-only rules. The hook's list is
 tuned for precision (a false hit blocks a command); a shared page needs
 recall instead, so the extra rules redact key=value secrets, Authorization and
-Cookie headers in escaped forms, and name/value secret pairs. If the hook's
-list cannot be loaded, share mode refuses to run.
+Cookie headers in escaped forms, and name/value secret pairs. Two more rules
+cover what the hook's list leaves out on purpose: a URL password that holds an
+"@" (the hook stops at the first one) or a "/" (it stops at that) and a
+password given as a flag of
+curl, mysql, sshpass, redis-cli or docker login (`-u`, `-p`, `-a`); these run
+before the hook's scanners. If the hook's list cannot be loaded, share mode
+refuses to run.
 
 Every pattern applied to transcript text starts at a literal and bounds its
 repeats: tool outputs run to megabytes, and one unbounded pattern took 9 s on
@@ -247,6 +252,172 @@ _SHARE_SECRETS = [
         + _VALUE
     ),
 ]
+
+
+# Credentials that arrive as a URL's userinfo or as a command-line flag. These
+# run BEFORE the hook's scanners (see scrub): the hook's URL regex stops at the
+# first "@" and would take only the front of a password that holds one, leaving
+# "Secret99@host" for nothing to match; and it knows no short flag, because a
+# false hit there blocks a command.
+#
+# URL: everything between "://user:" and the last "@" before the host. The
+# user may be empty (redis://:pw@host) or an e-mail address, so it may hold an
+# "@". A "$VAR" or "${VAR}" is a reference, not the secret. Two readings, the
+# standard one first:
+# * the authority ends at the first "/", "?" or "#", so the password is what
+#   precedes the last "@" in that run (`u:pw@host/users/a@b` keeps its host);
+# * failing that, a password may hold a "/" (a cloud secret key is base64:
+#   `key-id:wJalr/K7MDENG/bPx@bucket`, mongodb://u:pa/ss@h/db), and then it runs
+#   to the last "@" that comes before whitespace, a quote, a "?" or "#", or
+#   another "://", so a second URL or a JSON string boundary is never crossed.
+#   `host:443/@scope` reads the same way and is over-redacted; a shared page
+#   takes that over a password half left behind.
+_URL_USERINFO = re.compile(
+    r"(?P<k>://[^/?#\s\"'\\:]{0,256}:)"
+    r"(?P<v>(?!\[REDACTED\])(?!\$)"
+    r"(?:[^/?#\s\"'\\]{1,4096}(?=@)"
+    r"|(?:(?!://)[^?#\s\"'\\]){1,4096}(?=@)))"
+)
+# Flags. `-p` is a password for mysql and sshpass and a port for ssh and
+# redis-cli; `-u` is a login for curl and a user for sudo and docker. So each
+# rule starts at its own command and reaches the flag through a gap that stops
+# at the next command (`|`, `;`, `&&`, a newline, a JSON-escaped newline).
+_CLI_GAP = r"(?:(?!&&|\\[nr])[^\n|;]){0,240}?"
+# A value that is not the secret itself: one already redacted (the renderer
+# scrubs a string up to three times) or a variable reference.
+_CLI_NOT_VALUE = r"(?!\[REDACTED\])(?!\$)"
+# A quote that opens the value belongs to the key, so the value can run to the
+# matching one (a password may hold spaces); an unquoted value is one shell
+# word. An unterminated quote runs to the end of the line, which errs toward
+# redacting too much. Flag letters are case-sensitive: mysql -P is a port.
+_CLI_QUOTE = r"(?P<q>\\?[\"'])?"
+_CLI_VALUE = (
+    r"(?P<v>"
+    + _CLI_NOT_VALUE
+    + r"(?(q)(?:(?!(?P=q))[^\n]){1,4096}|[^\s\"'\\;&|<>()`]{1,4096}))"
+)
+_CLI_COMMAND_END = r"(?![A-Za-z0-9_-])"
+_CLI_COMMAND_START = r"(?<![A-Za-z0-9_.-])"
+# Runs of blanks are bounded, not capped at a few: `curl -u    admin:pw` is as
+# much a credential as the single-space form.
+_SP = r"[ \t]{1,256}"
+_SP0 = r"[ \t]{0,256}"
+# What may stand between `sshpass` and its `-p`: sshpass's own options, with
+# the arity it has (-f, -d and -P take a value; -e, -v, -h, -V do not). A looser
+# gap would take the ssh port in `sshpass -e ssh -p 2222` for the password.
+_SSHPASS_OPTIONS = (
+    r"(?:" + _SP + r"(?:-[fdP]" + _SP0 + r"\S{1,256}|-[A-Za-z][A-Za-z0-9]{0,8})){0,6}?"
+)
+# What may stand between `docker` (podman, nerdctl, ...) and `login`: global
+# options, each with at most one value word (`--config /x`, `-H tcp://h`). A
+# value word that is a subcommand ends the gap, so the container in
+# `docker --debug run --name login -p 8080:80` is not a login.
+_DOCKER_SUBCOMMAND = (
+    r"(?:run|exec|create|start|stop|restart|kill|rm|rmi|ps|images|pull|push"
+    r"|build|buildx|compose|tag|inspect|logs|cp|network|volume|container|image"
+    r"|system|stack|service|swarm|node|secret|config|context|plugin|manifest"
+    r"|trust|version|info|events|export|import|save|load|commit|diff|pause"
+    r"|unpause|port|rename|stats|top|update|wait|attach|history|search|logout"
+    r"|pod|machine|generate|play|kube)(?![A-Za-z0-9_-])"
+)
+_DOCKER_OPTIONS = (
+    r"(?:"
+    + _SP
+    + r"-{1,2}[A-Za-z][^\s]{0,128}(?:"
+    + _SP
+    + r"(?!-)(?!"
+    + _DOCKER_SUBCOMMAND
+    + r")\S{1,256})?){0,6}?"
+)
+_CLI_RULES = [
+    # curl -u user:pw, -uuser:pw, --user user:pw, --user=user:pw, -sSu user:pw,
+    # --proxy-user. Only what follows the first colon is the secret: `-u user`
+    # makes curl ask, and `-u https://x` is not a login.
+    re.compile(
+        r"(?P<k>"
+        + _CLI_COMMAND_START
+        + r"curl"
+        + _CLI_COMMAND_END
+        + _CLI_GAP
+        + r"(?<=\s)(?:--(?:proxy-)?user(?:=|"
+        + _SP
+        + r")|-[A-Za-z]{0,8}[uU]"
+        + _SP0
+        + r")"
+        + _CLI_QUOTE
+        + r"[^\s:\"'\\]{0,256}:)"
+        + r"(?P<v>(?!//)(?!\[REDACTED\])(?!\$)"
+        + r"(?(q)(?:(?!(?P=q))[^\n]){1,4096}|[^\s\"'\\;&|<>()`]{1,4096}))"
+    ),
+    # mysql -pPW, -p'PW', mysqldump, mariadb. Only an attached value is a
+    # password: a bare `-p` makes mysql ask, and the next word is the database.
+    re.compile(
+        r"(?P<k>"
+        + _CLI_COMMAND_START
+        + r"(?:mysql(?:dump|admin|show|import|check|pump|slap)?"
+        + r"|mariadb(?:-(?:dump|admin|show|import|check|slap))?)"
+        + _CLI_COMMAND_END
+        + _CLI_GAP
+        + r"(?<=\s)-p"
+        + _CLI_QUOTE
+        + r")"
+        + _CLI_VALUE
+    ),
+    # sshpass -p PW (also -pPW, -p 'PW', -P assword -p PW). sshpass's own
+    # options come before the command it wraps, so only those may stand in
+    # between: the ssh port in `sshpass -e ssh -p 2222` is a port, not a password.
+    re.compile(
+        r"(?P<k>"
+        + _CLI_COMMAND_START
+        + r"sshpass"
+        + _CLI_COMMAND_END
+        + _SSHPASS_OPTIONS
+        + _SP
+        + r"-p"
+        + _SP0
+        + _CLI_QUOTE
+        + r")"
+        + _CLI_VALUE
+    ),
+    # redis-cli -a PW, --pass PW. `-p` is the port here.
+    re.compile(
+        r"(?P<k>"
+        + _CLI_COMMAND_START
+        + r"redis-cli"
+        + _CLI_COMMAND_END
+        + _CLI_GAP
+        + r"(?<=\s)(?:-a|--pass)"
+        + _SP
+        + _CLI_QUOTE
+        + r")"
+        + _CLI_VALUE
+    ),
+    # docker login -p PW, -pPW, --password PW, --password=PW (also podman,
+    # nerdctl, buildah, skopeo, helm registry), with global options before
+    # `login` (`docker --config /x login -p PW`). `--password-stdin` takes none.
+    re.compile(
+        r"(?P<k>"
+        + _CLI_COMMAND_START
+        + r"(?:docker|podman|nerdctl|buildah|skopeo|helm"
+        + _SP
+        + r"registry)"
+        + _CLI_COMMAND_END
+        + _DOCKER_OPTIONS
+        + _SP
+        + r"login"
+        + _CLI_COMMAND_END
+        + _CLI_GAP
+        + r"(?<=\s)(?:--password(?:=|"
+        + _SP
+        + r")|-p"
+        + _SP0
+        + r")"
+        + _CLI_QUOTE
+        + r")"
+        + _CLI_VALUE
+    ),
+]
+_SHARE_EARLY_RULES = [_URL_USERINFO, *_CLI_RULES]
 
 
 class RedactionUnavailable(RuntimeError):
@@ -489,6 +660,10 @@ class Redactor:
             text, n = walk(text)
             if count and n:
                 self.replaced["secret"] += n
+        # Before the hook's scanners, which would otherwise take the front of
+        # a URL password that holds an "@" and hide the rest from these rules.
+        for pattern in _SHARE_EARLY_RULES:
+            text = self._share_secret(pattern, text, count)
         for _label, pattern in self.scanners:
             text = self._sub("secret", pattern, REDACTED, text, count)
         for pattern in _SHARE_SECRETS:

@@ -29,6 +29,8 @@ bash-review フック（Bash コマンドを実行前に審査する PreToolUse 
 
 種別の ERROR は判定ではありません。Gemini か Codex が応答できなかったもので、reason に `gemini=ERROR` / `codex=ERROR` と出ます。
 
+詳細ログのディレクトリが使えない実行 (`/tmp/claude_hooks` が他人所有・symlink・0700 に絞れない等) では、フックは詳細ログを止めてサマリーに `NOTE | logging | - | detail logging disabled: <理由>` を書きます (直近 100 行に既にあれば書かないので、続いても 100 行に 1 回程度)。これは判定ではないので、集計では ALLOW〜ERROR のどれにも入らず「その他」に数えます。この間のエントリは全文を引けません。
+
 ### ペインの操作
 
 | キー     | 動作                                                 |

@@ -53,6 +53,74 @@ def test_fixwhitespace_command_uses_the_wrapped_trim():
     )
 
 
+# In a few filetypes trailing whitespace is content, not noise: Markdown's two-space
+# hard line break, the lone-space context lines of a diff / patch (a trimmed `.patch`
+# no longer applies), and a commit message, which `git commit -v` fills with a diff.
+# The save-time trim (Neovim: setup/init.lua, Vim: 80-custom.vim) must leave those
+# alone and keep trimming everything else. The explicit :FixWhitespace stays
+# unconditional: asking for it is the user's call.
+_TRIM_PROBE_LINES = ["hard break  ", " ", "end"]
+_TRIM_TRIMMED_LINES = ["hard break", "", "end"]
+_TRIM_CASES = [
+    ("markdown", True),
+    ("diff", True),
+    ("gitcommit", True),
+    ("lua", False),
+    ("text", False),
+]
+
+
+class TestVimSaveTimeTrimKeepsSignificantWhitespace:
+    @pytest.fixture(scope="class")
+    def vim(self):
+        return _real_vim_or_skip()
+
+    @pytest.mark.parametrize(("filetype", "kept"), _TRIM_CASES)
+    def test_save_time_trim_by_filetype(self, vim, tmp_path, filetype, kept):
+        target = tmp_path / f"probe.{filetype}"
+        script = (
+            f"source {VIM_CUSTOM_RC}\n"
+            f"call setline(1, {json.dumps(_TRIM_PROBE_LINES)})\n"
+            f"setlocal filetype={filetype}\n"
+            f"execute 'write ' . fnameescape({json.dumps(str(target))})\n"
+            "call writefile(['done'], $PROBE_OUT)\nqa!\n"
+        )
+        assert _run_vim_script(vim, script, extra_source=None).strip() == "done"
+        want = _TRIM_PROBE_LINES if kept else _TRIM_TRIMMED_LINES
+        assert target.read_text(encoding="utf-8").splitlines() == want
+
+    def test_fixwhitespace_still_trims_a_markdown_buffer(self, vim):
+        script = (
+            f"source {VIM_CUSTOM_RC}\n"
+            f"call setline(1, {json.dumps(_TRIM_PROBE_LINES)})\n"
+            "setlocal filetype=markdown\n"
+            "FixWhitespace\n"
+            "call writefile(getline(1, '$'), $PROBE_OUT)\nqa!\n"
+        )
+        got = _run_vim_script(vim, script, extra_source=None).splitlines()
+        assert got == _TRIM_TRIMMED_LINES
+
+
+@pytest.mark.parametrize(("filetype", "kept"), _TRIM_CASES)
+def test_nvim_save_time_trim_by_filetype(tmp_path, filetype, kept):
+    target = tmp_path / f"probe.{filetype}"
+    lines = "{" + ", ".join(json.dumps(line) for line in _TRIM_PROBE_LINES) + "}"
+    got = _nvim_headless(
+        tmp_path,
+        _STUB_SETUP_MODULES
+        + f"""
+dofile({str(NVIM_INIT_LUA)!r})
+vim.api.nvim_buf_set_lines(0, 0, -1, false, {lines})
+vim.bo.filetype = {json.dumps(filetype)}
+vim.cmd("write " .. vim.fn.fnameescape({json.dumps(str(target))}))
+emit({{ lines = vim.fn.readfile({json.dumps(str(target))}) }})
+vim.cmd("qa!")
+""",
+    )
+    want = _TRIM_PROBE_LINES if kept else _TRIM_TRIMMED_LINES
+    assert got["lines"] == want
+
+
 # `:ToggleTerm 2direction=horizontal` parses as an unrecognized "2direction" key, not a
 # count plus a `direction` option. See toggleterm.lua's own comment for why. Verified
 # against the real module: parse("2direction=horizontal").direction == nil.
@@ -1076,6 +1144,68 @@ emit({ names = names, bad = bad })
     )
     assert got["names"], "telescope.setup no longer receives any pickers"
     assert got["bad"] == [], f"not picker option tables: {got['bad']}"
+
+
+# telescope tests every `file_ignore_patterns` entry with string.find (Lua patterns)
+# against the path relative to the cwd. A bare "build" therefore hid every path that
+# merely CONTAINS the word -- in this repo .claude/agents/build-error-resolver.md and
+# .claude/commands/build-fix.md never showed up in find_files / live_grep.
+_TELESCOPE_IGNORED = [
+    "node_modules/pkg/index.js",
+    "web/node_modules/pkg/index.js",
+    "vendor/lib/x.go",
+    "pkg/vendor/x.go",
+    "dist/app.js",
+    "web/dist/app.js",
+    "build/out.o",
+    "packages/app/build/out.js",
+    ".git/HEAD",
+]
+_TELESCOPE_SHOWN = [
+    ".claude/agents/build-error-resolver.md",
+    ".claude/commands/build-fix.md",
+    ".codex/agents/go-build-resolver.toml",
+    "docs/distribution.md",
+    "src/rebuild.sh",
+    "vendored/notes.md",
+    "app/vendor.go",
+    "x.gitignore",
+    "agit/notes.md",
+]
+
+
+def test_telescope_ignore_patterns_match_directories_not_substrings(tmp_path):
+    got = _nvim_probe(
+        tmp_path,
+        f"""
+local captured
+package.loaded["telescope"] = {{
+  setup = function(opts) captured = opts end,
+  load_extension = function() end,
+}}
+require("setup.plugins.utilities.telescope").config()
+local patterns = ((captured or {{}}).defaults or {{}}).file_ignore_patterns or {{}}
+local function ignored(path)
+  for _, pattern in ipairs(patterns) do
+    if path:find(pattern) then return true end
+  end
+  return false
+end
+local result = {{ patterns = patterns, ignored = {{}}, shown = {{}} }}
+for _, path in ipairs({json.dumps(_TELESCOPE_IGNORED).replace("[", "{").replace("]", "}")}) do
+  result.ignored[path] = ignored(path)
+end
+for _, path in ipairs({json.dumps(_TELESCOPE_SHOWN).replace("[", "{").replace("]", "}")}) do
+  result.shown[path] = ignored(path)
+end
+emit(result)
+""",
+    )
+    assert got["patterns"], "telescope.setup no longer receives file_ignore_patterns"
+    not_hidden = [p for p, hit in got["ignored"].items() if not hit]
+    wrongly_hidden = [p for p, hit in got["shown"].items() if hit]
+    assert not_hidden == [], f"should be ignored: {not_hidden}"
+    assert wrongly_hidden == [], f"hidden by a substring match: {wrongly_hidden}"
 
 
 def test_eager_plugin_specs_declare_no_lazy_load_triggers(tmp_path):

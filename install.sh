@@ -93,9 +93,9 @@ OHMYZSH_INSTALL_REF="98fe9b81a62ed75baf25cf23aa41e338a83bec6d"
 VIM_PLUG_REF="88e31471818e9a29a8a20a0ee61360cfd7bdc1cd"
 
 # --- Neovim: installed from the upstream release tarball, never from APT -----
-# .config/nvim targets the modern API surface (`vim.lsp.config`, `vim.hl`,
-# 0.11+ treesitter behaviour), so an APT `neovim` is not merely old -- it is
-# broken against this repo's config. Debian 13 (trixie) ships 0.10.4 and
+# .config/nvim targets the modern API surface (0.12's `buf` option of
+# vim.keymap.set, `vim.lsp.config`, `vim.hl`), so an APT `neovim` is not
+# merely old -- it is broken against this repo's config. Debian 13 (trixie) ships 0.10.4 and
 # Debian 12 ships 0.7.2, which is what an Android AVF / Debian VM install
 # lands on; the config errors out on first launch there. Upstream publishes a
 # self-contained tarball for exactly the two Linux architectures below, so the
@@ -110,7 +110,9 @@ VIM_PLUG_REF="88e31471818e9a29a8a20a0ee61360cfd7bdc1cd"
 # digest fails closed (nothing is installed, the mismatch is printed).
 #
 # NEOVIM_MIN_VERSION is a separate knob: it is what .config/nvim needs, not
-# what we install. An nvim already on PATH at or above it is left alone.
+# what we install. An nvim already on PATH at or above it is left alone. It is
+# assigned once, next to check_neovim_version further down (a second
+# assignment here would silently lose to that one).
 #
 # To refresh the pin (do this deliberately):
 #   gh release view --repo neovim/neovim --json tagName --jq .tagName
@@ -118,7 +120,6 @@ VIM_PLUG_REF="88e31471818e9a29a8a20a0ee61360cfd7bdc1cd"
 #     curl -fsSL "https://github.com/neovim/neovim/releases/download/<tag>/$a.tar.gz" | sha256sum
 #   done
 NEOVIM_VERSION="v0.12.5"
-NEOVIM_MIN_VERSION="0.11.0"
 NEOVIM_SHA256_X86_64="bce0f56eda1f1b1db6eee8f4133d7a38813ea07933837dd1777411ca384c6875"
 NEOVIM_SHA256_ARM64="1aa5ca085249580ae0f91eb14f27ec0919773ff2d99a163d03f3d6c21ac29725"
 
@@ -136,6 +137,53 @@ print_warning() {
 
 print_error() {
   echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# --- Install-failure bookkeeping ---------------------------------------------
+# Every optional step warns and carries on (one flaky formula or a dropped
+# connection must not stop the rest of the run), which used to leave the run
+# ending in an unconditional "Installation completed!" however many steps had
+# failed. record_failure notes a step that did not install; main() prints the
+# list at the end and exits 1 when it is non-empty.
+#
+# A plain global indexed array, bash 3.2 safe (macOS /bin/bash): `+=`,
+# `${#a[@]}` and `"${a[@]}"` only -- no negative subscripts, associative
+# arrays, mapfile or `declare -g`. It must be assigned at the top level so it
+# stays global when this file is sourced.
+#
+# record_failure appends in the CURRENT shell, so never call it, try_install or
+# pip_install_user inside `$(...)`, a pipeline or a background job: that runs
+# in a subshell and the entry is silently lost. tests/test_install.py checks
+# the source for exactly that.
+INSTALL_FAILURES=()
+
+# Record that the step called LABEL did not install. Always returns 0: callers
+# call it bare under `set -e`, and a non-zero status here would abort the run
+# it is only meant to describe. An identical consecutive label is dropped, so
+# one failure path that reports itself twice reads as one step; independent
+# failures that happen to share a label further apart are kept.
+record_failure() {
+  local label="$1" count=${#INSTALL_FAILURES[@]}
+  if [ "$count" -gt 0 ] && [ "${INSTALL_FAILURES[$((count - 1))]}" = "$label" ]; then
+    return 0
+  fi
+  INSTALL_FAILURES+=("$label")
+  return 0
+}
+
+# Print the failure summary, or nothing when no step failed. Labels go through
+# printf %s, not print_*/echo -e, so a backslash in one is never interpreted.
+report_install_failures() {
+  local count=${#INSTALL_FAILURES[@]} label
+  if [ "$count" -eq 0 ]; then
+    return 0
+  fi
+  print_error "Installation finished with $count failed step(s):"
+  for label in "${INSTALL_FAILURES[@]}"; do
+    printf '  - %s\n' "$label"
+  done
+  print_info "Reasons are printed above as [WARNING] or [ERROR]. Fix the cause and re-run ./install.sh (finished steps are skipped)."
+  return 0
 }
 
 # Help text. Dry-run previews only the steps that modify the user's own files;
@@ -159,6 +207,17 @@ Options:
 With no options install.sh symlinks the dotfiles into $HOME (backing up any
 real files it replaces), installs packages for the detected OS
 (macOS / Ubuntu / WSL), and switches the default shell to zsh.
+
+An install step that fails prints a warning and the run carries on. The failed
+steps are listed at the end instead of "Installation completed!"; fix the cause
+and re-run (steps that already finished are skipped).
+
+Exit status:
+  0  success, including a completed --dry-run preview and --help.
+  1  one or more install steps failed (listed at the end of the run). Also
+     exits 1 when run outside a dotfiles checkout or on an unsupported OS.
+  2  usage error: an unknown option or unexpected argument (also a DRY_RUN
+     environment value other than 0 or 1).
 EOF
 }
 
@@ -264,6 +323,7 @@ install_homebrew() {
     # skip the brew packages. Bail before the Apple-Silicon PATH block
     # (pointless with no brew to source) and before print_success (a lie).
     if ! fetch_and_run "https://raw.githubusercontent.com/Homebrew/install/$HOMEBREW_INSTALL_REF/install.sh" /bin/bash; then
+      record_failure "Homebrew"
       print_warning "Homebrew bootstrap failed; skipping Homebrew packages"
       return 1
     fi
@@ -316,8 +376,10 @@ install_apt_packages() {
     libreadline-dev \
     libsqlite3-dev \
     libffi-dev \
-    liblzma-dev ||
+    liblzma-dev || {
+    record_failure "APT packages"
     print_warning "Some APT packages failed to install (continuing)"
+  }
 
   # On Debian/Ubuntu the binaries are named `batcat` and `fdfind`, but the
   # configs (.zshrc vf(), nvim telescope) invoke `bat` and `fd`. Provide
@@ -339,7 +401,13 @@ install_apt_packages() {
     ln -sf "$(command -v "$source_cmd")" "$alias_path"
   }
 
-  mkdir -p "$HOME/.local/bin"
+  # ensure_dir, not a bare `mkdir -p`: a dangling symlink at ~/.local (or
+  # ~/.local/bin) makes mkdir fail, and under `set -e` that ends the whole run
+  # with no [ERROR] line and no failure summary -- before Node.js, the shell
+  # setup or anything else after the package step. The parent is cleared first
+  # for the same reason as ~/.config / ~/.config/git in _render_git_local_config.
+  ensure_dir "$HOME/.local"
+  ensure_dir "$HOME/.local/bin"
   link_debian_alias batcat bat
   link_debian_alias fdfind fd
 
@@ -358,7 +426,7 @@ install_brew_packages() {
     tmux
     curl
     wget
-    fzf             # fuzzy finder (.zshrc `eval "$(fzf --zsh)"`, sshs/cf/vf)
+    fzf             # fuzzy finder (.zshrc shell integration via `fzf --zsh`, sshs/cf/vf)
     jq              # JSON processor (.claude/statusline-command.sh)
     ripgrep         # rg: vim :Find / nvim telescope live_grep
     bat             # vf() fzf preview
@@ -466,6 +534,14 @@ install_neovim() {
     else
       print_warning "A previous Neovim is stranded at $prefix.old; move it back by hand"
     fi
+  fi
+
+  # check_neovim_version runs right after this step and reads PATH. Whenever a
+  # managed nvim exists -- whether this run keeps it, upgrades it, or fails to
+  # -- the check must see it rather than an older one earlier on the
+  # installer's PATH. (The fresh-install path exports at its end.)
+  if [ -e "$prefix/bin/nvim" ]; then
+    export PATH="$HOME/.local/bin:$PATH"
   fi
 
   # Already at the pinned version under our own prefix: nothing to fetch. The
@@ -644,11 +720,18 @@ install_wezterm() {
       print_info "Installing WezTerm..."
       if curl -fsSL https://apt.fury.io/wez/gpg.key | sudo gpg --yes --dearmor -o /usr/share/keyrings/wezterm-fury.gpg; then
         echo 'deb [signed-by=/usr/share/keyrings/wezterm-fury.gpg] https://apt.fury.io/wez/ * *' |
-          sudo tee /etc/apt/sources.list.d/wezterm.list >/dev/null ||
+          sudo tee /etc/apt/sources.list.d/wezterm.list >/dev/null || {
+          # Same label as the try_install below, so a repository that could not
+          # be added and the install that then fails with it read as ONE failed
+          # step: apt-get update records nothing in between, and an identical
+          # consecutive label is dropped.
+          record_failure "WezTerm"
           print_warning "Failed to add WezTerm apt repository"
+        }
         sudo apt-get update || print_warning "apt-get update failed"
         try_install WezTerm sudo apt-get install -y wezterm
       else
+        record_failure "WezTerm"
         print_warning "Failed to fetch WezTerm GPG key; skipping WezTerm"
       fi
       if command_exists wezterm; then
@@ -670,11 +753,13 @@ install_fonts() {
     brew install --cask font-ubuntu-mono ||
       {
         fonts_ok=false
+        record_failure "font-ubuntu-mono"
         print_warning "Failed to install font-ubuntu-mono"
       }
     brew install --cask font-hack-nerd-font ||
       {
         fonts_ok=false
+        record_failure "font-hack-nerd-font"
         print_warning "Failed to install font-hack-nerd-font"
       }
     if [[ "$fonts_ok" == true ]]; then
@@ -685,6 +770,7 @@ install_fonts() {
     if sudo apt-get install -y fonts-ubuntu fonts-hack; then
       print_success "Fonts installed"
     else
+      record_failure "fonts-ubuntu fonts-hack"
       print_warning "Failed to install fonts"
     fi
   fi
@@ -729,14 +815,22 @@ install_gh() {
     # keyring/apt step must warn and continue, not abort the installer.
     if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg |
       sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg; then
-      sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg ||
+      # Record a half-done repository setup even when the apt install below
+      # then succeeds (e.g. from the distro's own package), as install_wezterm
+      # does: a broken keyring or sources entry is the user's to fix.
+      sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg || {
+        record_failure "gh"
         print_warning "Failed to chmod gh keyring"
+      }
       echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" |
-        sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null ||
+        sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null || {
+        record_failure "gh"
         print_warning "Failed to add gh apt repository"
+      }
       sudo apt-get update || print_warning "apt-get update failed"
       try_install gh sudo apt-get install -y gh
     else
+      record_failure "gh"
       print_warning "Failed to fetch gh keyring; skipping gh"
     fi
   fi
@@ -755,8 +849,10 @@ install_uv() {
     return
   fi
   print_info "Installing uv (Astral)..."
-  fetch_and_run https://astral.sh/uv/install.sh sh ||
+  fetch_and_run https://astral.sh/uv/install.sh sh || {
+    record_failure "uv"
     print_warning "Failed to install uv"
+  }
   # uv installs to ~/.local/bin; make it visible for the rest of this script.
   export PATH="$HOME/.local/bin:$PATH"
   if command_exists uv; then
@@ -772,8 +868,10 @@ install_pyenv() {
   fi
   if [[ "$OS" == "ubuntu" ]]; then
     print_info "Installing pyenv..."
-    fetch_and_run https://pyenv.run bash ||
+    fetch_and_run https://pyenv.run bash || {
+      record_failure "pyenv"
       print_warning "Failed to install pyenv"
+    }
     if command_exists pyenv || [ -d "$HOME/.pyenv" ]; then
       print_success "pyenv installed"
     fi
@@ -816,8 +914,10 @@ install_lazydocker() {
   if [[ "$OS" == "macos" ]]; then
     try_install lazydocker brew install lazydocker
   elif [[ "$OS" == "ubuntu" ]]; then
-    fetch_and_run "https://raw.githubusercontent.com/jesseduffield/lazydocker/$LAZYDOCKER_INSTALL_REF/scripts/install_update_linux.sh" bash ||
+    fetch_and_run "https://raw.githubusercontent.com/jesseduffield/lazydocker/$LAZYDOCKER_INSTALL_REF/scripts/install_update_linux.sh" bash || {
+      record_failure "lazydocker"
       print_warning "Failed to install lazydocker"
+    }
   fi
   if command_exists lazydocker; then
     print_success "lazydocker installed"
@@ -839,8 +939,10 @@ install_docker() {
     # happy path. Keep it an `if` (no else returns 0), not `&&`, so `set -e`
     # never aborts the installer.
   elif [[ "$OS" == "ubuntu" ]]; then
-    fetch_and_run https://get.docker.com sudo sh ||
+    fetch_and_run https://get.docker.com sudo sh || {
+      record_failure "Docker engine"
       print_warning "Failed to install Docker engine"
+    }
     sudo usermod -aG docker "$USER" 2>/dev/null || true
     print_info "Log out/in (or 'newgrp docker') for group membership to take effect."
   fi
@@ -926,6 +1028,57 @@ install_tree_sitter_cli() {
   fi
 }
 
+# This config needs Neovim 0.12 or later (INSTALL_PLATFORM.md: the `buf` option
+# of vim.keymap.set, vim.lsp.config, ...). install_neovim leaves an nvim at or
+# above this alone and replaces anything older; check_neovim_version then
+# reports what actually ended up on PATH, since otherwise the install finishes
+# "successfully" and the editor only fails when first opened.
+NEOVIM_MIN_VERSION="0.12"
+
+# Print the version of the nvim on PATH (e.g. 0.12.4 from `NVIM v0.12.4`).
+# Prints nothing when nvim is missing, cannot run, or prints no version line.
+neovim_version() {
+  command_exists nvim || return 0
+  # Same trap as tree_sitter_cli_version: a broken nvim fails the pipeline, and
+  # under `set -eo pipefail` that would abort the caller's `have=$(...)`.
+  nvim --version 2>/dev/null | awk 'NR == 1 { v = $2; sub(/^v/, "", v); print v }' || true
+}
+
+# Warn when the nvim on PATH is older than NEOVIM_MIN_VERSION. main() calls it
+# right after install_neovim, the step that is supposed to have provided one:
+# an unsupported arch, a failed download or an older nvim earlier on PATH can
+# still leave the editor unable to run this config.
+#
+# WARNING ONLY, deliberately: no record_failure. What leaves an old nvim behind
+# is either already reported by install_neovim (no build for this arch, a
+# failed download or checksum) or out of the installer's reach (an older nvim
+# earlier on PATH, a real file at ~/.local/bin/nvim); recording it would make
+# every such run exit 1 whatever the user does -- the failure summary would
+# stop meaning "something you can fix by re-running".
+# A missing nvim or an unreadable version warns too and carries on; this must
+# never abort the installer, so it always returns 0 (main() calls it bare, and
+# a non-zero status there would trip `set -e`).
+check_neovim_version() {
+  local have
+  local doc="INSTALL_PLATFORM.md#neovimのバージョンが古い"
+  # Must look like a version before it reaches version_at_least, which turns
+  # any non-numeric field into 0: `nvim` printing garbage would otherwise be
+  # reported as "older than 0.12". The pattern sits in a variable because
+  # bash 3.2 (macOS /bin/bash) and 5 disagree on quoting inside `=~`.
+  local version_re='^[0-9]+\.[0-9]+'
+  have="$(neovim_version)"
+  if ! command_exists nvim; then
+    print_warning "nvim not found; this config needs Neovim $NEOVIM_MIN_VERSION or later (see $doc)"
+  elif [[ ! "$have" =~ $version_re ]]; then
+    print_warning "Could not read the version from \`nvim --version\`; this config needs Neovim $NEOVIM_MIN_VERSION or later (see $doc)"
+  elif version_at_least "$have" "$NEOVIM_MIN_VERSION"; then
+    print_success "Neovim $have is new enough (needs $NEOVIM_MIN_VERSION or later)"
+  else
+    print_warning "Neovim $have is older than $NEOVIM_MIN_VERSION, which this config needs; see $doc"
+  fi
+  return 0
+}
+
 # Clear the way for a re-clone into a directory an INTERRUPTED `git clone`
 # left behind, and report whether cloning may proceed (0 = go, 1 = skip).
 #
@@ -970,6 +1123,7 @@ reclaim_aborted_clone() {
   # -- 物理パスで検査したところで同じものを消す。この行に期待してよいのは
   # 「取り違えに気付く」ところまでで、境界を張っているのは下の検査である。
   if [ -z "$HOME" ] || [ "${dir#"$HOME"/}" = "$dir" ]; then
+    record_failure "$label"
     print_warning "Refusing to reclaim $label: $dir is not under \$HOME"
     return 1
   fi
@@ -978,6 +1132,7 @@ reclaim_aborted_clone() {
   # symlink を「通して」true になるので、無防備な修理はリンク先の中身を空に
   # してしまう -- プラグインパスの外側を壊す唯一の経路。決して辿らない。
   if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    record_failure "$label"
     print_warning "Skipping $label: $dir exists but is not a plain directory; remove it by hand and re-run ./install.sh"
     return 1
   fi
@@ -995,6 +1150,7 @@ reclaim_aborted_clone() {
   # submodule のポインタを rm -rf する筋合いは無い。
   if [ -n "$(find "$dir" -mindepth 1 -maxdepth 1 ! -name '.git')" ] ||
     [ -L "$dir/.git" ] || [ ! -d "$dir/.git" ]; then
+    record_failure "$label"
     print_warning "$label at $dir looks incomplete but is not an interrupted clone; inspect it, remove it by hand, then re-run ./install.sh"
     return 1
   fi
@@ -1015,6 +1171,7 @@ reclaim_aborted_clone() {
   # 実際に起こりうる: sudo 配下で中断された clone や、復元したバックアップが
   # 残した root 所有・書き込み不可の .git。
   if ! rm -rf "${dir:?}/.git"; then
+    record_failure "$label"
     print_warning "Could not remove $dir/.git; remove it by hand and re-run ./install.sh"
     return 1
   fi
@@ -1053,9 +1210,9 @@ install_tmux_plugins() {
 # captured (fd shuttle: 3>&1 1>/dev/null 2>&3) instead of `2>/dev/null`-
 # discarded, so a genuine failure (bad package, no network) prints its reason
 # rather than a bare "Failed to install"; pip's own progress (stdout) stays
-# quiet on success. Non-fatal by contract (warns, returns 0) to match the
-# optional-tool `|| print_warning` idiom the rest of the script uses under
-# `set -e`. --user keeps installs in ~/.local, never system site-packages;
+# quiet on success. Non-fatal by contract (warns, records the failure, returns
+# 0) to match the optional-tool `|| print_warning` idiom the rest of the script
+# uses under `set -e`. A retry that succeeds records nothing. --user keeps installs in ~/.local, never system site-packages;
 # pipx would be the heavier "correct" route for CLI tools but needs its own
 # bootstrap, out of scope here.
 pip_install_user() {
@@ -1070,6 +1227,7 @@ pip_install_user() {
     fi
   fi
   print_warning "Failed to install $pkg"
+  record_failure "$pkg"
   if [ -n "$err" ]; then
     printf '%s\n' "$err" | sed 's/^/    /'
   fi
@@ -1077,7 +1235,9 @@ pip_install_user() {
 }
 
 # Run a tool-install command, keeping success quiet but surfacing the reason on
-# failure (non-fatal, warns and returns 0), so a failed toolchain/network
+# failure (non-fatal: warns, records the failure for main()'s end-of-run
+# summary, and returns 0 -- never 1, or a bare caller would abort under
+# `set -e`), so a failed toolchain/network
 # install reports the installer's own error (npm ERR!, go's module error,
 # apt's message, ...) instead of a bare "Failed to install". stderr is captured
 # via the same fd shuttle as pip_install_user; the installer's stdout progress
@@ -1094,6 +1254,7 @@ try_install() {
     return 0
   fi
   print_warning "Failed to install $label"
+  record_failure "$label"
   if [ -n "$err" ]; then
     printf '%s\n' "$err" | sed 's/^/    /'
   fi
@@ -1140,8 +1301,10 @@ register_claude_mcp_servers() {
       print_info "MCP server '$name' already registered"
     else
       print_info "Registering MCP server '$name'..."
-      claude mcp add --scope user "$name" "$@" ||
+      claude mcp add --scope user "$name" "$@" || {
+        record_failure "MCP server $name"
         print_warning "Failed to register MCP server '$name'"
+      }
     fi
   }
 
@@ -1150,9 +1313,46 @@ register_claude_mcp_servers() {
 
   # Bare `python` does not exist on stock Ubuntu or Homebrew installs
   # (only `python3`); resolve a concrete interpreter instead.
-  local python_cmd
+  local python_cmd python_exe
   python_cmd="$(command -v python3 || command -v python || true)"
+  # Pin the concrete interpreter, not a version-manager shim. Under pyenv
+  # `command -v python3` is ~/.pyenv/shims/python3, which picks the version
+  # from the cwd's .python-version every time Claude Code starts the server:
+  # in a project pinned to another version `mcp` is not installed there and
+  # the server never starts. sys.executable is what the shim resolves to now,
+  # the same interpreter install_mcp_server_deps' pip installed into. Fall back
+  # to the resolved command when that cannot be read.
   if [ -n "$python_cmd" ]; then
+    python_exe="$("$python_cmd" -c 'import sys; print(sys.executable)' 2>/dev/null || true)"
+    case "$python_exe" in
+    /*)
+      if [ -f "$python_exe" ] && [ -x "$python_exe" ]; then
+        python_cmd="$python_exe"
+      fi
+      ;;
+    esac
+  fi
+  if [ -n "$python_cmd" ]; then
+    # add_mcp keeps an existing registration, so one made by an older run with
+    # the pyenv shim (or a since-removed version) stays as it was. Only check
+    # `mcp` on the interpreter the registration will actually use: a working
+    # registration with another interpreter is not this python's problem.
+    local registered check_mcp=1
+    if registered="$(claude mcp get gemini-consultant 2>/dev/null)"; then
+      case "$registered" in
+      *"$python_cmd"*) ;;
+      *)
+        check_mcp=0
+        print_warning "MCP server 'gemini-consultant' is registered with another interpreter than $python_cmd; to re-pin it run: claude mcp remove --scope user gemini-consultant && ./install.sh"
+        ;;
+      esac
+    fi
+    # install_mcp_server_deps resolves pip on its own, so it can have installed
+    # `mcp` for a different interpreter; check the one being registered.
+    if [ "$check_mcp" -eq 1 ] && ! "$python_cmd" -c 'import mcp.server.fastmcp' &>/dev/null; then
+      print_warning "$python_cmd cannot import the 'mcp' package; gemini-consultant will not start until it is installed for that interpreter (e.g. $python_cmd -m pip install --user mcp)"
+      record_failure "gemini-consultant (mcp not importable)"
+    fi
     add_mcp gemini-consultant -- "$python_cmd" "$HOME/.claude/mcp-servers/gemini-consultant/server.py"
   else
     print_warning "python3/python not found; skipping gemini-consultant MCP server registration"
@@ -1172,6 +1372,7 @@ install_nodejs() {
       if fetch_and_run https://deb.nodesource.com/setup_lts.x sudo -E bash; then
         try_install "Node.js" sudo apt-get install -y nodejs
       else
+        record_failure "Node.js"
         print_warning "NodeSource setup failed; skipping Node.js (continuing)"
       fi
     fi
@@ -1186,7 +1387,12 @@ install_nodejs() {
   # set` exits 127 and `set -e` aborts the whole run, skipping every step
   # after this one (e.g. gh, pyenv, docker, linters, oh-my-zsh).
   if command_exists npm; then
-    mkdir -p "$HOME/.npm-global"
+    # ensure_dir, not a bare `mkdir -p`: a dangling symlink at ~/.npm-global
+    # (an unmounted volume, a moved directory) fails mkdir, and under `set -e`
+    # that ends the whole run with no [ERROR] line and no failure summary. A
+    # symlink that resolves to a real directory is the user's redirect and is
+    # kept.
+    ensure_dir "$HOME/.npm-global"
     npm config set prefix "$HOME/.npm-global"
     # Ensure the npm-global bin is visible to the rest of this script so subsequent
     # `command_exists` checks and direct invocations of globally installed tools
@@ -1231,6 +1437,7 @@ install_oh_my_zsh() {
     if fetch_and_run "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/$OHMYZSH_INSTALL_REF/tools/install.sh" sh -- --unattended --keep-zshrc; then
       print_success "Oh My Zsh installed"
     else
+      record_failure "Oh My Zsh"
       print_warning "Failed to install Oh My Zsh (continuing; the zsh plugins and theme below are skipped, not partially applied)"
     fi
   else
@@ -1290,15 +1497,19 @@ install_oh_my_zsh() {
   # zsh-autosuggestions
   if [ ! -f "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ] &&
     reclaim_aborted_clone "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" zsh-autosuggestions; then
-    git clone https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ||
+    git clone https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" || {
+      record_failure "zsh-autosuggestions"
       print_warning "Failed to clone zsh-autosuggestions (continuing)"
+    }
   fi
 
   # zsh-syntax-highlighting
   if [ ! -f "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ] &&
     reclaim_aborted_clone "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" zsh-syntax-highlighting; then
-    git clone https://github.com/zsh-users/zsh-syntax-highlighting "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ||
+    git clone https://github.com/zsh-users/zsh-syntax-highlighting "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" || {
+      record_failure "zsh-syntax-highlighting"
       print_warning "Failed to clone zsh-syntax-highlighting (continuing)"
+    }
   fi
 
   print_success "zsh plugins installed"
@@ -1383,6 +1594,7 @@ install_vim_plug() {
     curl -fLo "$HOME/.vim/autoload/plug.vim" --create-dirs \
       "https://raw.githubusercontent.com/junegunn/vim-plug/$VIM_PLUG_REF/plug.vim" || {
       rm -f "$HOME/.vim/autoload/plug.vim"
+      record_failure "vim-plug"
       print_warning "Failed to download vim-plug (continuing)"
     }
   fi
@@ -1600,17 +1812,28 @@ _render_git_local_config() {
   fi
 
   # os.gitconfig is generated and rewritten on every run, so a symlink there
-  # -- even a broken one -- is ours to replace (backup_if_real's rule). The
+  # -- live or broken -- is ours to replace (backup_if_real's rule). The
   # dangling ~/.zsh_secrets / user.gitconfig redirects are left alone because
   # they hold the user's own keys and identity; nothing of the user's lives
-  # in this file. Writing THROUGH the stale link is the one thing not to do:
-  # with its target's directory gone the redirect below failed, and with it
-  # present the render landed wherever the link happened to point.
-  if [ -L "$os_gitconfig" ] && [ ! -e "$os_gitconfig" ]; then
+  # in this file. Writing THROUGH the link is the one thing not to do, whether
+  # it is stale or not: with its target's directory gone the redirect below
+  # failed, and with the target present the render overwrote whatever the link
+  # pointed at, with no backup. `rm -f` on a symlink removes the link itself
+  # and never follows it, so the target is left exactly as it was.
+  #
+  # The `-e` test only picks the wording: it follows the link, so it is false
+  # exactly when the link is dangling. It must not gate the replacement, which
+  # is what used to let a live link through.
+  if [ -L "$os_gitconfig" ]; then
+    local link_kind="symlink" link_dest
+    [ -e "$os_gitconfig" ] || link_kind="dangling symlink"
+    # `|| true`: the assignment's status is readlink's, and this is a message,
+    # not a decision -- it must not abort the installer under `set -e`.
+    link_dest="$(readlink "$os_gitconfig" || true)"
     if [ "$DRY_RUN" -eq 1 ]; then
-      print_warning "[DRY-RUN] would replace dangling symlink $os_gitconfig with the generated file"
+      print_warning "[DRY-RUN] would replace $link_kind $os_gitconfig (-> $link_dest) with the generated file; the link's target is not written to"
     else
-      print_warning "Replacing dangling symlink $os_gitconfig with the generated file"
+      print_warning "Replacing $link_kind $os_gitconfig (-> $link_dest) with the generated file; the link's target is not written to"
       rm -f "$os_gitconfig"
     fi
   fi
@@ -1637,8 +1860,17 @@ _render_git_local_config() {
     # ~/.config itself may be a dangling symlink (see ensure_dir); this is the
     # first write under it, ahead of _link_editor_configs. So may ~/.config/git,
     # where a bare `mkdir -p` would die with no [ERROR] line.
-    ensure_dir "$HOME/.config"
-    ensure_dir "$HOME/.config/git"
+    #
+    # Failures here are recorded, not fatal: create_symlinks calls this bare
+    # under `set -e`, and a non-zero return used to stop the whole run half-way
+    # (the editor / Claude / Codex / Gemini links and every package step
+    # skipped) over one unwritable file -- against main()'s "symlinks first".
+    # main's failure summary and exit status still carry it.
+    if ! ensure_dir "$HOME/.config" || ! ensure_dir "$HOME/.config/git"; then
+      print_error "Could not create $HOME/.config/git: git has no credential helper or identity file until it is fixed and ./install.sh is re-run"
+      record_failure "git config (os.gitconfig)"
+      return 0
+    fi
     # The github blocks are emitted BEFORE the generic one, and the order is
     # behaviour rather than taste: their `helper =` resets the helper list
     # accumulated so far, so a generic helper written above them would be
@@ -1666,7 +1898,7 @@ _render_git_local_config() {
       fi
     else
       print_error "Could not write $os_gitconfig: git has no credential helper until it is fixed and ./install.sh is re-run"
-      return 1
+      record_failure "git config (os.gitconfig)"
     fi
 
     if [ -e "$git_user_config" ]; then
@@ -1692,22 +1924,43 @@ _render_git_local_config() {
         # `#` / `;` (comment start), `"` (swallowed) or a trailing backslash
         # (line continuation -- the name then absorbed the email line and
         # user.email was left unset, so git refused to commit).
-        git config --file "$git_user_config" user.name "$git_name"
-        git config --file "$git_user_config" user.email "$git_email"
-        print_success "Rendered user.gitconfig ($git_name <$git_email>)"
+        #
+        # Checked like the os.gitconfig write above: a read-only ~/.config/git
+        # fails both, and a bare failure here would abort the run under set -e.
+        if git config --file "$git_user_config" user.name "$git_name" &&
+          git config --file "$git_user_config" user.email "$git_email"; then
+          print_success "Rendered user.gitconfig ($git_name <$git_email>)"
+        else
+          # A name without an email would be kept as "existing identity" by
+          # every later run; drop the partial file so the re-run writes it.
+          rm -f "$git_user_config"
+          print_error "Could not write $git_user_config: git has no identity until it is fixed and ./install.sh is re-run"
+          record_failure "git config (user.gitconfig)"
+        fi
       else
         # Commented-out keys, not empty ones: an empty `name =` makes git report
         # a configured-but-blank identity instead of prompting the user to set it.
-        printf '# Fill in before committing:\n#[user]\n#\tname = Your Name\n#\temail = you@example.com\n' \
-          >"$git_user_config"
-        print_warning "No git identity configured. Edit $git_user_config before committing."
+        if printf '# Fill in before committing:\n#[user]\n#\tname = Your Name\n#\temail = you@example.com\n' \
+          >"$git_user_config"; then
+          print_warning "No git identity configured. Edit $git_user_config before committing."
+        else
+          rm -f "$git_user_config"
+          print_error "Could not write $git_user_config"
+          record_failure "git config (user.gitconfig)"
+        fi
       fi
     fi
   fi
 }
 
 _link_editor_configs() {
-  ensure_dir "$HOME/.config"
+  # Recorded, not fatal (see _render_git_local_config): an unusable ~/.config
+  # would otherwise abort the run here, before the Claude / Codex / Gemini links.
+  if ! ensure_dir "$HOME/.config"; then
+    print_error "Could not create $HOME/.config: the Neovim and VS Code links are skipped until it is fixed"
+    record_failure "editor configs"
+    return 0
+  fi
 
   link_entry "$DOTFILES_DIR/.config/nvim" "$HOME/.config/nvim"
 
@@ -1939,14 +2192,137 @@ _link_codex_config() {
 
 _link_gemini_config() {
   ensure_dir "$HOME/.gemini"
-  local gemini_entries=(
-    "GEMINI.md"
-    "settings.json"
-  )
   # `[ -e ] && link_entry` ではなく if/fi な理由は _link_claude_config を参照。
-  for entry in "${gemini_entries[@]}"; do
-    if [ -e "$DOTFILES_DIR/.gemini/$entry" ]; then
-      link_entry "$DOTFILES_DIR/.gemini/$entry" "$HOME/.gemini/$entry"
+  if [ -e "$DOTFILES_DIR/.gemini/GEMINI.md" ]; then
+    link_entry "$DOTFILES_DIR/.gemini/GEMINI.md" "$HOME/.gemini/GEMINI.md"
+  fi
+  _seed_gemini_settings
+}
+
+# ~/.gemini/settings.json is deliberately NOT symlinked -- the same reasoning as
+# ~/.codex/config.toml in _link_codex_config. Gemini CLI owns this file at
+# runtime: `gemini mcp add`, /auth and /theme rewrite it with ${VAR} references
+# (the tracked file's ${GITHUB_ACCESS_TOKEN} header) expanded to their values.
+# The rewrite writes a temp file at the default mode (0644 under umask 022) and
+# renames it over settings.json, so a symlink turns into a world-readable file
+# holding the token, silently detached from the checkout -- and link_entry's
+# backup_if_real would then move that file into ~/.dotfiles_backup_* on the
+# next run.
+#
+# So: seed the tracked baseline once, owner-only; leave an existing real file's
+# content alone (no backup, no replace) but restrict it to 0600; replace a
+# symlink left by older installs with a real copy. Every Gemini rewrite resets
+# the file to 0644 again, so the ~/.gemini directory is restricted to 0700 as
+# well: that is what actually keeps other users out between install runs.
+_seed_gemini_settings() {
+  local src="$DOTFILES_DIR/.gemini/settings.json"
+  local gemini_dir="$HOME/.gemini"
+  local dest="$gemini_dir/settings.json"
+  [ -f "$src" ] || return 0
+  # A ~/.gemini that resolves into the checkout would make dest the tracked
+  # file itself (see the guard in link_entry and _link_codex_config). Nothing
+  # here can fix that layout: Gemini's own rewrites land in the working tree.
+  # The backups live under $HOME whatever ~/.gemini points at.
+  _restrict_gemini_backups
+  if [ "$gemini_dir" -ef "$DOTFILES_DIR/.gemini" ]; then
+    print_warning "Skipping settings.json: $gemini_dir resolves into the checkout, so Gemini CLI writes expanded tokens into the working tree; make ~/.gemini a real directory"
+    return 0
+  fi
+  # A ~/.gemini the user redirected elsewhere is not chmodded through the link
+  # (that would change a directory this installer does not own); say so, since
+  # nothing else then keeps Gemini's 0644 rewrites away from other users.
+  if [ -L "$gemini_dir" ]; then
+    local dry_prefix=""
+    if [ "$DRY_RUN" -eq 1 ]; then
+      dry_prefix="[DRY-RUN] "
+    fi
+    print_warning "${dry_prefix}Not restricting ~/.gemini to mode 0700: it is a symlink; restrict the directory it points to yourself"
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    # Also on a fresh HOME: the real run creates ~/.gemini (ensure_dir) first.
+    print_info "[DRY-RUN] would restrict ~/.gemini to mode 0700"
+  elif [ -d "$gemini_dir" ] && ! chmod 700 "$gemini_dir"; then
+    print_error "Could not restrict $gemini_dir to mode 0700"
+    record_failure "Gemini settings.json"
+  fi
+  # Not moved aside: it is the user's, and older installs never made one. But
+  # Gemini has no usable settings file this way, so it is a failed step.
+  if [ -d "$dest" ] && [ ! -L "$dest" ]; then
+    print_warning "Skipping settings.json: $dest is a directory"
+    record_failure "Gemini settings.json"
+    return 0
+  fi
+  # Decided up front so dry-run reports the same plan as the real run (the
+  # trap described in _link_codex_config).
+  local seed=0
+  if [ -L "$dest" ] || [ ! -e "$dest" ]; then
+    seed=1
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    if [ -L "$dest" ]; then
+      print_info "[DRY-RUN] would replace the ~/.gemini/settings.json symlink with a real file"
+    fi
+    if [ "$seed" -eq 1 ]; then
+      print_info "[DRY-RUN] would seed ~/.gemini/settings.json from .gemini/settings.json (mode 0600)"
+    else
+      print_info "[DRY-RUN] would keep existing ~/.gemini/settings.json (Gemini CLI owns it) and restrict it to mode 0600"
+    fi
+    return 0
+  fi
+  if [ "$seed" -eq 1 ]; then
+    if [ -L "$dest" ]; then
+      print_warning "Replacing the ~/.gemini/settings.json symlink with a real file"
+    fi
+    # Copy into an owner-only temp file next to dest, then rename it into
+    # place, so a copy that fails half-way never lands at dest (a truncated
+    # file there would be kept forever by the "existing file" branch on later
+    # runs). An old link at dest is dropped only once the copy is complete, and
+    # dropped rather than renamed over: `mv` onto a link to a directory moves
+    # the file INTO that directory and leaves the link. The final test makes
+    # success mean "a real file is at dest", not "mv returned 0".
+    local tmp=""
+    if tmp="$(umask 077 && mktemp "$gemini_dir/.settings.json.XXXXXX")" &&
+      cp "$src" "$tmp" && chmod 600 "$tmp" &&
+      { [ ! -L "$dest" ] || rm -f "$dest"; } &&
+      mv -f "$tmp" "$dest" && [ -f "$dest" ] && [ ! -L "$dest" ]; then
+      print_success "Seeded ~/.gemini/settings.json (mode 0600)"
+    else
+      if [ -n "$tmp" ]; then
+        rm -f "$tmp"
+      fi
+      print_error "Could not seed $dest"
+      record_failure "Gemini settings.json"
+    fi
+  elif chmod 600 "$dest"; then
+    print_info "Keeping existing ~/.gemini/settings.json (Gemini CLI owns it; baseline lives in .gemini/settings.json); mode 0600"
+  else
+    print_error "Could not restrict $dest to mode 0600"
+    record_failure "Gemini settings.json"
+  fi
+}
+
+# Older installs linked ~/.gemini/settings.json. Once Gemini CLI had replaced
+# that link with a token-bearing 0644 file, the next run's backup_if_real moved
+# the file (mode and all) into ~/.dotfiles_backup_<stamp>/.gemini/. Restrict
+# any such copy that others can still read; the user decides whether to delete
+# it or rotate the token.
+_restrict_gemini_backups() {
+  local f
+  for f in "$HOME"/.dotfiles_backup_*/.gemini/settings.json; do
+    if [ ! -f "$f" ] || [ -L "$f" ]; then
+      continue
+    fi
+    # `-perm -040` = group-read set, `-perm -004` = other-read set; the same
+    # spelling works in BSD and GNU find.
+    if [ -z "$(find "$f" \( -perm -040 -o -perm -004 \) -print 2>/dev/null)" ]; then
+      continue
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would restrict $f to mode 0600 (an older run backed it up readable by others)"
+    elif chmod 600 "$f"; then
+      print_warning "Restricted $f to mode 0600: an older run backed it up readable by others. If it holds a token, consider deleting it and rotating the token"
+    else
+      print_error "Could not restrict $f to mode 0600"
+      record_failure "Gemini settings.json"
     fi
   done
 }
@@ -2051,6 +2427,7 @@ install_vim_plugins() {
   if vim +PlugInstall +qall; then
     print_success "Vim plugins installed"
   else
+    record_failure "vim +PlugInstall"
     print_warning "vim +PlugInstall failed (continuing)"
   fi
 }
@@ -2164,14 +2541,16 @@ install_linters_formatters() {
   # --- Platform-specific tools ---
   case "$OS" in
   macos)
-    # Note: clang-format ships with llvm (brew has no standalone formula).
+    # Note: use the standalone clang-format formula, not llvm. llvm is
+    # keg-only (macOS ships its own clang), so brew never links its
+    # clang-format into PATH and the format hook would report it missing.
     # checkstyle has no brew formula; install manually from
     # https://checkstyle.sourceforge.io/ if needed.
     local brew_tools=(
       shellcheck   # Shell script linter
       shfmt        # Shell script formatter
       cppcheck     # C/C++ linter
-      llvm         # Provides clang-format for C/C++
+      clang-format # C/C++ formatter
       staticcheck  # Go advanced linter
       php-cs-fixer # PHP formatter
     )
@@ -2312,6 +2691,7 @@ change_shell() {
       if chsh -s "$(which zsh)"; then
         print_success "Default shell changed to zsh (restart terminal to apply)"
       else
+        record_failure "chsh"
         print_warning "chsh failed; add $(command -v zsh) to /etc/shells and re-run chsh"
       fi
     else
@@ -2351,6 +2731,10 @@ install_os_packages() {
 }
 
 main() {
+  # A run reports only its own failures: start from an empty list rather than
+  # whatever a previous call in the same shell (or a test) left behind.
+  INSTALL_FAILURES=()
+
   # Parse options first, before the banner and the checkout guard, so `--help`
   # works from anywhere and `--dry-run` is set before the first side effect.
   # This script accepts no positional arguments.
@@ -2427,6 +2811,12 @@ main() {
     # Placed right after the package step because it needs curl and tar from
     # it, and before the editor setup further down.
     install_neovim
+    # Right after install_neovim, never at the end of the APT step: APT
+    # installs no Neovim here, so checking there would warn about the nvim the
+    # very next step replaces. On every OS on purpose: a missing or old nvim
+    # breaks .config/nvim wherever it happens (on macOS a healthy Homebrew
+    # nvim just prints a success line). Warning only -- see check_neovim_version.
+    check_neovim_version
 
     # Common installations
     install_wezterm
@@ -2473,7 +2863,13 @@ main() {
     echo
     return 0
   fi
-  print_success "Installation completed!"
+  # Failed steps only warned and the run carried on; say so here rather than
+  # claiming success, and let the exit status carry it to a calling script.
+  if [ "${#INSTALL_FAILURES[@]}" -gt 0 ]; then
+    report_install_failures
+  else
+    print_success "Installation completed!"
+  fi
   echo
   print_info "Next steps:"
   echo "  1. Restart your terminal"
@@ -2497,6 +2893,10 @@ main() {
   echo "  - ./scripts/new_project.sh : Scaffold a new project (docs/, assets/, README.md, git init; 'np' in zsh)"
   echo "  - ./scripts/tmux_send_to_all_except_nvim.sh : Send commands to tmux panes"
   echo
+  if [ "${#INSTALL_FAILURES[@]}" -gt 0 ]; then
+    return 1
+  fi
+  return 0
 }
 
 # Run main function only when executed directly (not when sourced by tests).

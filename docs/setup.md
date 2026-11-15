@@ -263,9 +263,21 @@ sed "s|__HOME__|$HOME|g" ~/dotfiles/.codex/hooks.json.template > ~/.codex/hooks.
 
 # Gemini設定
 mkdir -p ~/.gemini
-for e in GEMINI.md settings.json; do
-  ln -sf ~/dotfiles/.gemini/$e ~/.gemini/$e
-done
+ln -sf ~/dotfiles/.gemini/GEMINI.md ~/.gemini/GEMINI.md
+# settings.json は symlink にせず「初回のみ」複製する。Gemini CLI は
+# `gemini mcp add` などでこのファイルを書き戻す際に ${GITHUB_ACCESS_TOKEN} を
+# 実際の値へ展開し、一時ファイル (0644) の rename で置き換える (symlink も
+# 実ファイルに化ける)。書き戻しのたびにファイルの権限は 0644 に戻るので、
+# 他ユーザーを締め出すのは ~/.gemini ディレクトリの 0700 の方。
+# 以前の手順で作った symlink は先に消す ([ -e ] はリンク先を見て真になり、
+# chmod もリンク先 = リポジトリ側のファイルを変えてしまうため)。
+# 既存の実ファイルは Gemini の書き込み内容を消さないよう中身に触れない。
+# ~/.gemini 自体が symlink の場合は chmod がリンク先を変えてしまうので触らない
+# (リンク先のディレクトリは自分で 0700 に絞る。install.sh も同じく警告だけ出す)。
+[ -L ~/.gemini ] || chmod 700 ~/.gemini
+if [ -L ~/.gemini/settings.json ]; then rm ~/.gemini/settings.json; fi
+[ -e ~/.gemini/settings.json ] || (umask 077 && cp ~/dotfiles/.gemini/settings.json ~/.gemini/settings.json)
+chmod 600 ~/.gemini/settings.json
 
 # Oh My Zsh カスタムテーマ (custom/ は実ディレクトリのまま themes 配下だけリンクする。
 # custom/ 全体を symlink すると、上の手順5で clone した custom/plugins/ を隠したり、

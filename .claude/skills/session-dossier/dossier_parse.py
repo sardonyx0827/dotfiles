@@ -15,6 +15,7 @@ two disagree the ledger can say so instead of agreeing with itself.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,17 @@ from typing import Any
 # These records carry a copy of the whole conversation sent to the API; every
 # tool_use in them is a duplicate of one already counted in its own record.
 API_REQUEST_TYPES = frozenset({"api-request", "api-request-blob", "api-request-shape"})
+
+# A string cut in the middle of an emoji (a UTF-16 slice of a pair) is written
+# as a lone "\ud83d" escape. json.loads accepts it and returns a str that
+# cannot be encoded as UTF-8, so the page could not be written at all.
+# json.loads already joins a properly paired "😀" into one character,
+# so any surrogate left in a decoded string is unpaired. The escape pattern is a
+# cheap test on the raw line, so a record without one is never walked; a false
+# hit (an escaped backslash before "ud83d") costs one walk and changes nothing.
+_SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F][0-9a-fA-F]{2}")
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+REPLACEMENT_CHAR = "�"
 
 
 @dataclass(frozen=True)
@@ -67,11 +79,44 @@ def count_tool_blocks(data: dict[str, Any]) -> int:
     return count
 
 
+def replace_lone_surrogates(data: dict[str, Any]) -> None:
+    """Replace each lone surrogate with U+FFFD, in place, in every string value
+    and dict key anywhere under ``data``.
+
+    Walks with an explicit stack: json.loads nests deeper than Python recursion
+    allows, so a recursive walk would turn a line that parsed into a crash. A
+    dict with a changed key is refilled in place so its key order is kept; two
+    keys that become the same name collapse into one, the later value winning.
+    """
+    stack: list[Any] = [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if any(_LONE_SURROGATE.search(key) for key in node):
+                renamed = [
+                    (_LONE_SURROGATE.sub(REPLACEMENT_CHAR, key), value)
+                    for key, value in node.items()
+                ]
+                node.clear()
+                node.update(renamed)
+            children: Any = node.items()
+        else:
+            children = enumerate(node)
+        for slot, value in children:
+            if isinstance(value, str):
+                if _LONE_SURROGATE.search(value):
+                    node[slot] = _LONE_SURROGATE.sub(REPLACEMENT_CHAR, value)
+            elif isinstance(value, (dict, list)):
+                stack.append(value)
+
+
 def read_jsonl(path: Path, source: str) -> ParseResult:
     """Parse every line of ``path``; malformed lines become ParseErrors.
 
     Reads line by line rather than slurping, and decodes with errors="replace"
-    so a stray invalid byte costs one character, not the whole file. A missing
+    so a stray invalid byte costs one character, not the whole file. A lone
+    surrogate escape (``"\\ud83d"``) is replaced with U+FFFD for the same
+    reason: one character lost, not a page that cannot be written. A missing
     file is the caller's problem and raises OSError as usual.
     """
     result = ParseResult(source=source)
@@ -85,6 +130,8 @@ def read_jsonl(path: Path, source: str) -> ParseResult:
             except (ValueError, RecursionError):
                 data = None
             if isinstance(data, dict):
+                if _SURROGATE_ESCAPE.search(stripped):
+                    replace_lone_surrogates(data)
                 result.records.append(
                     RawRecord(source, line_no, data, count_tool_blocks(data))
                 )

@@ -2,9 +2,11 @@
 
 import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 from typing import ClassVar
@@ -26,6 +28,33 @@ def run_sourced(snippet: str, env: dict, cwd=None):
         timeout=120,
         check=False,
     )
+
+
+# Appended to a snippet to read INSTALL_FAILURES back out of the shell: an `N=`
+# line with the count and one `F=` line per label, in order. Indexing in a loop
+# (not `printf '%s\n' "${a[@]}"`) so an empty array prints nothing instead of a
+# blank line, and a label with spaces or quotes survives as one entry.
+_DUMP_FAILURES = (
+    'echo "N=${#INSTALL_FAILURES[@]}"; i=0; '
+    'while [ "$i" -lt "${#INSTALL_FAILURES[@]}" ]; do '
+    'echo "F=${INSTALL_FAILURES[$i]}"; i=$((i + 1)); done'
+)
+
+
+def run_recording(snippet: str, env: dict, cwd=None):
+    """Run `snippet`, then dump INSTALL_FAILURES; return (result, labels).
+
+    Fails loudly when the dump never ran (the snippet aborted under `set -e`):
+    an empty `labels` must mean "nothing was recorded", not "we never got to
+    look".
+    """
+    res = run_sourced(f"{snippet}\n{_DUMP_FAILURES}", env, cwd=cwd)
+    lines = res.stdout.splitlines()
+    counts = [ln for ln in lines if ln.startswith("N=")]
+    assert counts, f"the snippet aborted before the dump:\n{res.stdout}\n{res.stderr}"
+    labels = [ln[2:] for ln in lines if ln.startswith("F=")]
+    assert counts[-1] == f"N={len(labels)}", (counts, labels)
+    return res, labels
 
 
 # Never stripped by _without_commands: these carry core utilities
@@ -490,7 +519,10 @@ class TestCreateSymlinks:
         assert (home / ".claude/mods").resolve() == (
             REPO_ROOT / ".claude/mods"
         ).resolve()
-        assert (home / ".gemini/settings.json").is_symlink()
+        # ~/.gemini/settings.json is seeded, not linked (see the Gemini tests
+        # below); GEMINI.md stays a link.
+        assert (home / ".gemini/GEMINI.md").is_symlink()
+        assert not (home / ".gemini/settings.json").is_symlink()
         assert (home / ".config/nvim").resolve() == (
             REPO_ROOT / ".config/nvim"
         ).resolve()
@@ -599,6 +631,229 @@ class TestCreateSymlinks:
         config = home / ".codex/config.toml"
         assert config.is_file()
         assert not config.is_symlink()
+
+    # --- Gemini settings.json: seeded owner-only, never linked ---------------
+    # Gemini CLI rewrites ~/.gemini/settings.json (`gemini mcp add`, /auth,
+    # /theme) with ${VAR} references such as ${GITHUB_ACCESS_TOKEN} expanded.
+    # It writes a temp file at the default mode (0644 under umask 022) and
+    # renames it over settings.json, so a symlink becomes a plain world-readable
+    # file holding the token, and backup_if_real would then move that file into
+    # ~/.dotfiles_backup_*. Because every rewrite resets the file mode, the
+    # ~/.gemini directory itself is what keeps others out.
+
+    @staticmethod
+    def _mode(path):
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_gemini_settings_is_seeded_as_an_owner_only_real_file(self, shell_env):
+        home = shell_env.home
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        settings = home / ".gemini/settings.json"
+        assert settings.is_file()
+        assert not settings.is_symlink(), (
+            "settings.json must not be a symlink: Gemini CLI replaces it with "
+            "a plain file holding expanded tokens"
+        )
+        assert settings.read_text(encoding="utf-8") == (
+            REPO_ROOT / ".gemini/settings.json"
+        ).read_text(encoding="utf-8")
+        assert self._mode(settings) == 0o600
+        assert self._mode(home / ".gemini") == 0o700, (
+            "Gemini's rewrites reset the file to 0644; only the directory mode "
+            "keeps other users out"
+        )
+        assert not list((home / ".gemini").glob(".settings.json.*")), (
+            "the seed's temp file was left behind"
+        )
+
+    def test_gemini_settings_written_by_gemini_is_kept_tightened_not_backed_up(
+        self, shell_env
+    ):
+        home = shell_env.home
+        (home / ".gemini").mkdir(parents=True)
+        (home / ".gemini").chmod(0o755)
+        live = home / ".gemini/settings.json"
+        live.write_text('{"headers": {"Authorization": "Bearer secret"}}\n')
+        live.chmod(0o644)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert not live.is_symlink()
+        assert "Bearer secret" in live.read_text(encoding="utf-8")
+        assert self._mode(live) == 0o600
+        assert self._mode(home / ".gemini") == 0o700
+        for backup in home.glob(".dotfiles_backup_*"):
+            assert not (backup / ".gemini/settings.json").exists(), (
+                f"a live Gemini settings.json (expanded tokens) was moved into {backup}"
+            )
+
+    def test_gemini_settings_symlink_is_replaced_with_a_real_file(
+        self, shell_env, tmp_path
+    ):
+        """Self-heal the older install that linked it into the checkout."""
+        home = shell_env.home
+        # Link to a copy, not the real checkout: a regression that writes or
+        # chmods through the link must not touch the developer's tree.
+        old = tmp_path / "old-checkout-settings.json"
+        old.write_text('{"old": true}\n', encoding="utf-8")
+        old.chmod(0o644)
+        (home / ".gemini").mkdir(parents=True)
+        (home / ".gemini/settings.json").symlink_to(old)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        settings = home / ".gemini/settings.json"
+        assert settings.is_file()
+        assert not settings.is_symlink()
+        assert self._mode(settings) == 0o600
+        assert settings.read_text(encoding="utf-8") == (
+            REPO_ROOT / ".gemini/settings.json"
+        ).read_text(encoding="utf-8")
+        assert old.read_text(encoding="utf-8") == '{"old": true}\n'
+        assert self._mode(old) == 0o644, "the link target was chmodded"
+
+    def test_gemini_settings_dry_run_keeps_a_live_file_untouched(self, shell_env):
+        home = shell_env.home
+        (home / ".gemini").mkdir(parents=True)
+        (home / ".gemini").chmod(0o755)
+        live = home / ".gemini/settings.json"
+        live.write_text("{}\n", encoding="utf-8")
+        live.chmod(0o644)
+
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+        assert res.returncode == 0, res.stderr
+
+        assert live.read_text(encoding="utf-8") == "{}\n"
+        assert self._mode(live) == 0o644
+        assert self._mode(home / ".gemini") == 0o755
+        assert not list(home.glob(".dotfiles_backup_*"))
+        plan = [
+            ln
+            for ln in res.stdout.splitlines()
+            if "[DRY-RUN]" in ln and ".gemini" in ln
+        ]
+        assert any("would keep existing" in ln and "0600" in ln for ln in plan), (
+            res.stdout
+        )
+        assert any("0700" in ln for ln in plan), res.stdout
+
+    def test_gemini_settings_symlink_preview_matches_the_real_seed(
+        self, shell_env, tmp_path
+    ):
+        old = tmp_path / "old-checkout-settings.json"
+        old.write_text("{}\n", encoding="utf-8")
+        dry_home = tmp_path / "dry-home"
+        real_home = tmp_path / "real-home"
+        for home in (dry_home, real_home):
+            (home / ".gemini").mkdir(parents=True)
+            (home / ".gemini/settings.json").symlink_to(old)
+
+        dry = run_sourced(
+            "create_symlinks", {**shell_env.env, "HOME": str(dry_home), "DRY_RUN": "1"}
+        )
+        real = run_sourced("create_symlinks", {**shell_env.env, "HOME": str(real_home)})
+        assert dry.returncode == 0, dry.stderr
+        assert real.returncode == 0, real.stderr
+
+        dry_plan = [ln for ln in dry.stdout.splitlines() if ".gemini/settings" in ln]
+        assert any("would replace" in ln for ln in dry_plan), dry.stdout
+        assert any("would seed" in ln for ln in dry_plan), dry.stdout
+        assert not any("would keep existing" in ln for ln in dry_plan), dry.stdout
+        assert (dry_home / ".gemini/settings.json").readlink() == old
+        assert "Seeded ~/.gemini/settings.json" in real.stdout
+        assert not (real_home / ".gemini/settings.json").is_symlink()
+
+    def test_gemini_settings_directory_at_dest_is_left_alone(self, shell_env):
+        home = shell_env.home
+        (home / ".gemini/settings.json").mkdir(parents=True)
+
+        res, failures = run_recording("create_symlinks", shell_env.env)
+
+        assert (home / ".gemini/settings.json").is_dir()
+        assert "is a directory" in res.stdout + res.stderr
+        # Gemini has no usable settings file, so the run must not end with
+        # "Installation completed!".
+        assert failures == ["Gemini settings.json"], failures
+
+    def test_gemini_settings_left_in_old_backups_is_restricted(self, shell_env):
+        """Older runs moved a token-bearing 0644 copy into the backup dirs."""
+        home = shell_env.home
+        stale = home / ".dotfiles_backup_20200101_000000/.gemini/settings.json"
+        stale.parent.mkdir(parents=True)
+        stale.write_text('{"Authorization": "Bearer old"}\n', encoding="utf-8")
+        stale.chmod(0o644)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert self._mode(stale) == 0o600
+        assert str(stale) in res.stdout + res.stderr
+
+    def test_gemini_settings_symlink_to_a_directory_is_replaced(
+        self, shell_env, tmp_path
+    ):
+        # `mv -f tmp dest` with dest a link to a directory moves the file INTO
+        # that directory and leaves the link: the seed must not report success
+        # for a file that is not at dest.
+        home = shell_env.home
+        elsewhere = tmp_path / "some-dir"
+        elsewhere.mkdir()
+        (home / ".gemini").mkdir(parents=True)
+        (home / ".gemini/settings.json").symlink_to(elsewhere)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        settings = home / ".gemini/settings.json"
+        assert settings.is_file() and not settings.is_symlink()
+        assert list(elsewhere.iterdir()) == [], "the seed landed in the link target"
+
+    def test_gemini_settings_failed_copy_never_lands_and_is_recorded(self, shell_env):
+        home = shell_env.home
+        (home / ".gemini").mkdir(parents=True)
+        shell_env.stub("cp", exit_code=1)
+
+        res, failures = run_recording("_seed_gemini_settings", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert failures == ["Gemini settings.json"]
+        assert not (home / ".gemini/settings.json").exists()
+        assert not list((home / ".gemini").glob(".settings.json.*")), (
+            "the failed seed left its temp file behind"
+        )
+
+    def test_gemini_dry_run_on_a_fresh_home_previews_the_0700_step(self, shell_env):
+        # The real run creates ~/.gemini (ensure_dir) and then restricts it, so
+        # the preview must announce that even though the dir does not exist yet.
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+        assert res.returncode == 0, res.stderr
+        assert any(
+            "[DRY-RUN]" in ln and "~/.gemini" in ln and "0700" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+
+    def test_gemini_dir_linked_elsewhere_warns_that_it_is_not_restricted(
+        self, shell_env, tmp_path
+    ):
+        # A user-redirected ~/.gemini (a link to a real dir outside the
+        # checkout) is not chmodded through the link; say so instead of
+        # silently leaving every Gemini rewrite at 0644.
+        home = shell_env.home
+        elsewhere = tmp_path / "gemini-elsewhere"
+        elsewhere.mkdir()
+        elsewhere.chmod(0o755)
+        (home / ".gemini").symlink_to(elsewhere)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert self._mode(elsewhere) == 0o755
+        out = res.stdout + res.stderr
+        assert any("0700" in ln and "symlink" in ln for ln in out.splitlines()), out
 
     # --- ~/.zsh_secrets: seeded in $HOME, never in the checkout -------------
     # ~/.zshrc is a symlink into the repo, so an `export API_KEY=...` added to
@@ -1137,7 +1392,7 @@ class TestInstallVimPlug:
 # --- Neovim from the upstream tarball ---------------------------------------
 # Debian/Ubuntu's `neovim` package is older than .config/nvim can run on
 # (trixie ships 0.10.4, bookworm 0.7.2), so `nvim` on an Android AVF / Debian
-# VM errored out on the config's 0.11+ API use. install_neovim replaces that
+# VM errored out on the config's 0.12+ API use. install_neovim replaces that
 # APT dependency with the upstream release tarball unpacked into ~/.local.
 
 _FAKE_NVIM = """#!/bin/bash
@@ -1397,7 +1652,8 @@ class TestInstallNeovim:
 
     def test_an_existing_new_enough_nvim_is_left_alone(self, shell_env, tmp_path):
         """A Homebrew / self-built nvim must not be shadowed from ~/.local/bin."""
-        shell_env.stub("nvim", body='[ "$1" = "--version" ] && echo "NVIM v0.11.9"')
+        # 0.12.0: the minimum itself, below the pin -- new enough is enough.
+        shell_env.stub("nvim", body='[ "$1" = "--version" ] && echo "NVIM v0.12.0"')
         shell_env.stub("curl", exit_code=1)
 
         res = _install_neovim(shell_env, "0" * 64)
@@ -1419,6 +1675,24 @@ class TestInstallNeovim:
         assert "older than" in res.stdout
         assert (shell_env.home / ".local/nvim/bin/nvim").is_file()
         assert (shell_env.home / ".local/bin/nvim").is_symlink()
+
+    def test_an_nvim_just_below_the_minimum_is_superseded(self, shell_env, tmp_path):
+        """The lower boundary of NEOVIM_MIN_VERSION (0.12): 0.11.9 is replaced."""
+        shell_env.stub("nvim", body='[ "$1" = "--version" ] && echo "NVIM v0.11.9"')
+        tarball, digest = _fake_release_tarball(tmp_path)
+        _stub_curl_serving(shell_env, tarball)
+
+        res = _install_neovim(shell_env, digest)
+
+        assert res.returncode == 0, res.stderr
+        assert "older than" in res.stdout
+        assert (shell_env.home / ".local/nvim/bin/nvim").is_file()
+
+    def test_neovim_min_version_is_assigned_exactly_once(self):
+        # The merge of main's version check once left two top-level
+        # assignments; the later one silently won for install_neovim too.
+        text = INSTALL.read_text(encoding="utf-8")
+        assert len(re.findall(r"^NEOVIM_MIN_VERSION=", text, re.MULTILINE)) == 1
 
     def test_rerun_at_the_pinned_version_downloads_nothing(self, shell_env, tmp_path):
         shell_env.hide("nvim")
@@ -1520,8 +1794,8 @@ class TestInstallNeovim:
         res = _install_neovim(shell_env, "0" * 64)
 
         assert res.returncode == 0, res.stderr
-        # 0.11.5 is below the pin but at or above the minimum, so the restored
-        # tree is kept as-is and the user still has a working editor.
+        # The download fails, so the restored 0.11.5 tree is kept as-is
+        # rather than deleted: an outdated editor beats none at all.
         assert (shell_env.home / ".local/nvim/bin/nvim").is_file()
         assert "0.11.5" in (shell_env.home / ".local/nvim/bin/nvim").read_text(
             encoding="utf-8"
@@ -1625,7 +1899,7 @@ class TestNeovimPin:
         """The regression this whole path exists for.
 
         `apt-get install neovim` on Debian 13 lands 0.10.4, and .config/nvim
-        needs 0.11+ (vim.lsp.config, vim.hl) -- so an APT Neovim is not an old
+        needs 0.12+ (vim.keymap.set's `buf`, vim.lsp.config) -- so an APT Neovim is not an old
         Neovim, it is a broken one.
         """
         text = INSTALL.read_text(encoding="utf-8")
@@ -2455,6 +2729,138 @@ class TestRegisterClaudeMcpServers:
         python3_path = str(shell_env.stub_bin / "python3")
         assert f"-- {python3_path} " in gemini_calls[0]
 
+    def test_gemini_consultant_is_pinned_to_the_concrete_interpreter(self, shell_env):
+        # Under pyenv `command -v python3` is the shim, which picks the
+        # interpreter from the cwd's .python-version when Claude Code starts
+        # the server -- a project pinned to another version has no `mcp`
+        # there and the server never starts. Register the interpreter the shim
+        # resolves to right now (sys.executable), the one pip installed into.
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        gemini_calls = [
+            c
+            for c in shell_env.calls
+            if c.startswith("claude mcp add") and "gemini-consultant" in c
+        ]
+        assert len(gemini_calls) == 1, shell_env.calls
+        assert f"-- {real} " in gemini_calls[0], gemini_calls[0]
+
+    def test_a_non_executable_sys_executable_falls_back(self, shell_env, tmp_path):
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        ghost = tmp_path / "no-such-python"
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{ghost}"')
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        gemini = [c for c in shell_env.calls if "mcp add" in c and "gemini" in c]
+        assert len(gemini) == 1, shell_env.calls
+        assert f"-- {shell_env.stub_bin / 'python3'} " in gemini[0], gemini[0]
+
+    def test_an_interpreter_that_cannot_import_mcp_is_warned_about(self, shell_env):
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        real = shell_env.stub(
+            "python3.13-real",
+            body='case "$2" in *"import mcp"*) exit 1 ;; esac',
+        )
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert any(
+            "[WARNING]" in ln and "mcp" in ln and str(real) in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+        # Recorded, so main() does not end with "Installation completed!" while
+        # the server cannot start.
+        assert failures == ["gemini-consultant (mcp not importable)"], failures
+
+    def test_an_interpreter_that_imports_mcp_gets_no_warning(self, shell_env):
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert "cannot import" not in res.stdout, res.stdout
+        assert failures == [], failures
+
+    def test_a_registration_with_another_interpreter_gets_a_re_pin_hint(
+        self, shell_env
+    ):
+        # add_mcp leaves an existing registration alone, so a machine registered
+        # with the pyenv shim by an older run stays on it; say how to re-pin.
+        shell_env.stub(
+            "claude",
+            body=(
+                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
+                '  [ "$3" = gemini-consultant ] && { echo "  Command: /old/shims/python3"; exit 0; }\n'
+                "  exit 1\n"
+                "fi"
+            ),
+        )
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert not [c for c in shell_env.calls if "mcp add" in c and "gemini" in c]
+        assert "claude mcp remove --scope user gemini-consultant" in res.stdout, (
+            res.stdout
+        )
+
+    def test_mcp_is_not_checked_on_an_interpreter_the_registration_does_not_use(
+        self, shell_env
+    ):
+        # Registered with another interpreter: only the re-pin hint applies. The
+        # current python lacking mcp says nothing about the registered one.
+        shell_env.stub(
+            "claude",
+            body=(
+                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
+                '  [ "$3" = gemini-consultant ] && { echo "  Command: /other/python3"; exit 0; }\n'
+                "  exit 1\n"
+                "fi"
+            ),
+        )
+        real = shell_env.stub(
+            "python3.13-real", body='case "$2" in *"import mcp"*) exit 1 ;; esac'
+        )
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert "claude mcp remove --scope user gemini-consultant" in res.stdout
+        assert "cannot import" not in res.stdout, res.stdout
+        assert failures == [], failures
+
+    def test_a_registration_with_the_same_interpreter_gets_no_hint(self, shell_env):
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub(
+            "claude",
+            body=(
+                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
+                f'  [ "$3" = gemini-consultant ] && {{ echo "  Command: {real}"; exit 0; }}\n'
+                "  exit 1\n"
+                "fi"
+            ),
+        )
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert "claude mcp remove" not in res.stdout, res.stdout
+
     def test_codex_is_not_registered_as_an_mcp_server(self, shell_env):
         # Codex CLI 0.154 removed its MCP-server mode: the registration only
         # produced a server that fails with CONNECTION_CLOSED on every start.
@@ -2577,7 +2983,12 @@ class TestAptAliasSymlinks:
         assert res.returncode == 0, res.stderr
         assert not mine.is_symlink(), "a real user binary must not become a symlink"
         assert "MINE" in mine.read_text(encoding="utf-8")
-        assert "[WARNING]" in res.stdout
+        # The guard's OWN warning, by name: a bare "[WARNING]" would also be
+        # satisfied by any unrelated warning the step prints.
+        assert any(
+            "[WARNING]" in ln and "is not a symlink" in ln and "fd" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
 
     def test_alias_is_created_when_nothing_is_in_the_way(self, shell_env):
         local_bin = self._prepare(shell_env)
@@ -2849,6 +3260,41 @@ class TestGoInstallPathExport:
         )
         assert res.returncode == 0, res.stdout + res.stderr
         assert "GOIMPORTS_ON_PATH" in res.stdout, res.stdout
+
+
+class TestMacosClangFormatFormula:
+    """macOS must install the standalone `clang-format` formula, not `llvm`.
+
+    `llvm` is keg-only (Homebrew never links it into /opt/homebrew/bin because
+    macOS ships its own clang), so installing it leaves `clang-format` off PATH
+    and the format hook's C/C++ branch reports it missing. The `brew list` guard
+    then reports llvm "already installed" on every re-run, so the gap never
+    repairs itself. `clang-format` is a regular, linked formula.
+    """
+
+    def test_installs_clang_format_formula_not_llvm(self, shell_env):
+        env = _without_commands(shell_env.env, "goimports", "npm", "pip", "php")
+        shell_env.stub("go", body=_GO_INSTALL_STUB)
+        # Nothing is installed yet: `brew list X` fails, `brew install X` works.
+        shell_env.stub("brew", body='[ "$1" = list ] && exit 1')
+        # GitHub's Ubuntu runner ships php + composer under /usr/bin, which
+        # _without_commands never strips. Model that host here so the test
+        # proves it stays hermetic there: without php|composer in the override
+        # below, the run would reach a real `composer global require`.
+        shell_env.stub("php")
+        shell_env.stub("composer")
+        res = run_sourced(
+            'command_exists() { case "$1" in gem|pip3|php|composer) return 1 ;; '
+            '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+            "OS=macos install_linters_formatters",
+            env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "brew install clang-format" in shell_env.calls, shell_env.calls
+        assert "brew install llvm" not in shell_env.calls, shell_env.calls
+        assert not [c for c in shell_env.calls if c.startswith("composer")], (
+            shell_env.calls
+        )
 
 
 class TestChangeShell:
@@ -3512,6 +3958,40 @@ class TestPipInstallUser:
         # exactly one install attempt (no retry)
         assert sum(c.startswith("pip3 install") for c in shell_env.calls) == 1
 
+    def test_hard_failure_records_the_package(self, shell_env):
+        shell_env.stub("pip3", body=_PIP_HARD_FAIL_STUB)
+        res, failures = run_recording("pip_install_user pip3 boguspkg", shell_env.env)
+        assert res.returncode == 0, res.stderr  # still non-fatal
+        assert failures == ["boguspkg"]
+
+    def test_plain_success_records_nothing(self, shell_env):
+        shell_env.stub("pip3")
+        res, failures = run_recording("pip_install_user pip3 somepkg", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert failures == []
+
+    def test_pep668_retry_that_succeeds_records_nothing(self, shell_env):
+        shell_env.stub("pip3", body=_PIP_PEP668_STUB)
+        res, failures = run_recording("pip_install_user pip3 mypkg", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert any("--break-system-packages mypkg" in c for c in shell_env.calls)
+        assert failures == []
+
+    def test_pep668_retry_that_also_fails_records_the_package_once(self, shell_env):
+        # First call reports the managed-environment guard, the retry then
+        # fails for a real reason: one failed step, one entry.
+        body = (
+            'case "$*" in\n'
+            '  *--break-system-packages*) echo "ERROR: no matching dist" >&2; exit 1 ;;\n'
+            "esac\n"
+            'echo "error: externally-managed-environment" >&2\n'
+            "exit 1\n"
+        )
+        shell_env.stub("pip3", body=body)
+        res, failures = run_recording("pip_install_user pip3 mypkg", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert failures == ["mypkg"]
+
     def test_mcp_deps_install_routes_through_helper_under_pep668(self, shell_env):
         # The real caller (install_mcp_server_deps) must reach the PEP 668
         # recovery: `pip show` reports mcp absent, then the install succeeds
@@ -3535,6 +4015,72 @@ class TestPipInstallUser:
         assert text.count('pip_install_user "$pip_cmd"') == 2
         assert "--break-system-packages" in text
         assert "externally-managed-environment" in text
+
+
+class TestRecordFailureHelpers:
+    """The bookkeeping itself: a global list, an append that can never abort a
+    bare caller under `set -e`, and the end-of-run summary."""
+
+    def test_the_list_starts_empty(self, shell_env):
+        res, failures = run_recording(":", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert failures == []
+
+    def test_record_failure_appends_in_order(self, shell_env):
+        res, failures = run_recording(
+            'record_failure alpha; record_failure "beta gamma"', shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == ["alpha", "beta gamma"]
+
+    def test_an_identical_consecutive_label_is_recorded_once(self, shell_env):
+        # The same failure path reporting itself twice must read as one step.
+        res, failures = run_recording(
+            'record_failure alpha; record_failure alpha; echo "AFTER_DUPLICATE"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_DUPLICATE" in res.stdout  # the skip path returns 0 too
+        assert failures == ["alpha"]
+
+    def test_the_same_label_separated_by_another_step_is_kept(self, shell_env):
+        # Independent failures may legitimately share a label.
+        res, failures = run_recording(
+            "record_failure alpha; record_failure beta; record_failure alpha",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == ["alpha", "beta", "alpha"]
+
+    def test_record_failure_never_aborts_a_bare_caller(self, shell_env):
+        res = run_sourced(
+            'record_failure alpha; echo "AFTER_RECORD"; '
+            'record_failure alpha; echo "AFTER_SKIP"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert "AFTER_RECORD" in res.stdout
+        assert "AFTER_SKIP" in res.stdout
+
+    def test_report_lists_every_label_under_a_count(self, shell_env):
+        res = run_sourced(
+            'INSTALL_FAILURES=(alpha "beta gamma"); report_install_failures; '
+            'echo "AFTER_REPORT"',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        out = res.stdout
+        assert "[ERROR]" in out
+        assert "Installation finished with 2 failed step(s):" in out
+        assert out.index("  - alpha\n") < out.index("  - beta gamma\n")
+        assert "Reasons are printed above as [WARNING]" in out
+        assert "re-run ./install.sh" in out
+        assert "AFTER_REPORT" in out
+
+    def test_report_is_silent_when_nothing_failed(self, shell_env):
+        res = run_sourced("report_install_failures", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert res.stdout == ""
 
 
 class TestTryInstall:
@@ -3565,6 +4111,40 @@ class TestTryInstall:
         res = run_sourced("try_install widget faketool install widget", shell_env.env)
         assert res.returncode == 0, res.stderr
         assert "downloading 100%" not in res.stdout
+
+    def test_failure_records_exactly_its_label(self, shell_env):
+        shell_env.stub("faketool", body='echo "E: nope" >&2\nexit 1')
+        res, failures = run_recording(
+            "try_install widget faketool install widget", shell_env.env
+        )
+        assert res.returncode == 0, res.stderr  # still non-fatal
+        assert failures == ["widget"]
+
+    def test_success_records_nothing(self, shell_env):
+        shell_env.stub("faketool")
+        res, failures = run_recording(
+            "try_install widget faketool install widget", shell_env.env
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == []
+
+    def test_a_label_with_spaces_and_quotes_is_recorded_verbatim(self, shell_env):
+        shell_env.stub("faketool", exit_code=1)
+        res, failures = run_recording(
+            "try_install \"Docker 'Desktop' (cask)\" faketool install x",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == ["Docker 'Desktop' (cask)"]
+
+    def test_failures_accumulate_in_call_order(self, shell_env):
+        shell_env.stub("faketool", exit_code=1)
+        res, failures = run_recording(
+            "try_install first faketool a; try_install second faketool b",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stderr
+        assert failures == ["first", "second"]
 
     def test_tree_sitter_install_surfaces_brew_failure(self, shell_env):
         # A real caller (install_tree_sitter_cli) must report why brew failed
@@ -3610,6 +4190,840 @@ class TestTryInstall:
         # and must NOT be captured by try_install.
         assert re.search(r"fetch_and_run https://astral\.sh/uv", text)
         assert text.count("try_install ") >= 30
+
+
+def _absent(*names: str) -> str:
+    """Snippet prefix: `command_exists` reports each of `names` as missing.
+
+    The dev machine (and CI image) may really have uv, pyenv, docker, node, gh
+    on PATH; without this the "already installed" branch is taken and a test
+    premised on a failed install passes vacuously.
+    """
+    pattern = "|".join(names)
+    return (
+        f'command_exists() {{ case "$1" in {pattern}) return 1 ;; '
+        '*) command -v "$1" >/dev/null 2>&1 ;; esac; }; '
+    )
+
+
+def _fails_on(*patterns: str) -> str:
+    """Stub body that exits 1 when "$*" matches any of the shell globs."""
+    return f'case "$*" in {"|".join(patterns)}) exit 1 ;; esac'
+
+
+_APT_INSTALL = '*"apt-get install"*'
+_APT_UPDATE = '*"apt-get update"*'
+# Stub prefix: `sudo tee ...` drains stdin like the real tee. A stub that exits
+# without reading lets the writer of `echo ... | sudo tee` die of SIGPIPE, and
+# under pipefail that reads as a failed tee -- a race the gh repository line
+# (whose echo first runs $(dpkg ...)) loses every time.
+_DRAIN_TEE = 'case "$*" in "tee "*) cat >/dev/null ;; esac\n'
+_NOT_YET_INSTALLED = 'case "$*" in "list "*) exit 1 ;; esac'
+
+
+class TestInstallFailureRecording:
+    """Each install step that FAILS leaves exactly one entry in
+    INSTALL_FAILURES; skips and steps whose outcome a later step reports leave
+    none. main() turns the list into the end-of-run summary and exit status.
+
+    The positive cases force the "missing" premise (see _absent) and the
+    negative cases assert the skip's own warning appeared, so an early return
+    cannot make "nothing recorded" pass by never reaching the branch.
+    """
+
+    # --- steps that fail: exactly one entry --------------------------------
+
+    @pytest.mark.parametrize(
+        ("stubs", "snippet", "expected", "also_in_stdout"),
+        [
+            pytest.param(
+                {},
+                _absent("brew") + "fetch_and_run() { return 1; }; "
+                "OS=macos install_os_packages",
+                ["Homebrew"],
+                ["Homebrew bootstrap failed"],
+                id="homebrew-bootstrap-skips-the-brew-packages-with-one-entry",
+            ),
+            pytest.param(
+                {"sudo": _fails_on(_APT_INSTALL)},
+                "OS=ubuntu install_apt_packages",
+                ["APT packages"],
+                ["Some APT packages failed"],
+                id="apt-package-batch",
+            ),
+            pytest.param(
+                {"brew": _fails_on('"list "*', '"install neovim"')},
+                "install_brew_packages",
+                ["neovim"],
+                ["Failed to install neovim"],
+                id="brew-package-through-try_install",
+            ),
+            pytest.param(
+                {"curl": "exit 1", "sudo": ""},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                ["WezTerm"],
+                ["Failed to fetch WezTerm GPG key"],
+                id="wezterm-gpg-key",
+            ),
+            pytest.param(
+                {"curl": "", "sudo": _fails_on(_APT_INSTALL)},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                ["WezTerm"],
+                [],
+                id="wezterm-key-ok-apt-install-fails",
+            ),
+            pytest.param(
+                {"curl": "", "sudo": _fails_on("*tee*", _APT_INSTALL)},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                ["WezTerm"],
+                ["Failed to add WezTerm apt repository"],
+                id="wezterm-repo-add-and-install-both-fail-is-one-entry",
+            ),
+            pytest.param(
+                {"curl": "", "sudo": _fails_on("*tee*")},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                ["WezTerm"],
+                ["Failed to add WezTerm apt repository"],
+                id="wezterm-repo-add-fails-but-apt-install-succeeds",
+            ),
+            pytest.param(
+                {"brew": _fails_on('"list "*', '"install --cask wezterm"')},
+                "OS=macos install_wezterm",
+                ["WezTerm"],
+                [],
+                id="wezterm-macos-cask",
+            ),
+            pytest.param(
+                {"brew": _fails_on("*font-ubuntu-mono*")},
+                "OS=macos install_fonts",
+                ["font-ubuntu-mono"],
+                ["Failed to install font-ubuntu-mono"],
+                id="font-cask-first-only",
+            ),
+            pytest.param(
+                {"brew": _fails_on("*font-hack-nerd-font*")},
+                "OS=macos install_fonts",
+                ["font-hack-nerd-font"],
+                [],
+                id="font-cask-second-only",
+            ),
+            pytest.param(
+                {"brew": "exit 1"},
+                "OS=macos install_fonts",
+                ["font-ubuntu-mono", "font-hack-nerd-font"],
+                [],
+                id="font-casks-both-in-order",
+            ),
+            pytest.param(
+                {"sudo": "exit 1"},
+                "OS=ubuntu install_fonts",
+                ["fonts-ubuntu fonts-hack"],
+                ["Failed to install fonts"],
+                id="apt-fonts",
+            ),
+            pytest.param(
+                {"curl": "exit 1", "sudo": "", "dpkg": "echo amd64"},
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                ["Failed to fetch gh keyring"],
+                id="gh-keyring-download",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _DRAIN_TEE + _fails_on(_APT_INSTALL),
+                    "dpkg": "echo amd64",
+                },
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                [],
+                id="gh-keyring-ok-apt-install-fails-is-one-entry",
+            ),
+            # Same rule as WezTerm: a half-written apt source is a failure the
+            # user must know about even when `apt-get install gh` then works
+            # (e.g. from the distro's own, older package).
+            pytest.param(
+                {"curl": "", "sudo": _fails_on("*tee*"), "dpkg": "echo amd64"},
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                ["Failed to add gh apt repository"],
+                id="gh-repo-add-fails-but-apt-install-succeeds",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _DRAIN_TEE + _fails_on("chmod*"),
+                    "dpkg": "echo amd64",
+                },
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                ["Failed to chmod gh keyring"],
+                id="gh-keyring-chmod-fails-but-apt-install-succeeds",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _fails_on("*tee*", _APT_INSTALL),
+                    "dpkg": "echo amd64",
+                },
+                _absent("gh") + "OS=ubuntu install_gh",
+                ["gh"],
+                ["Failed to add gh apt repository"],
+                id="gh-repo-add-and-install-both-fail-is-one-entry",
+            ),
+            pytest.param(
+                {"brew": "exit 1"},
+                _absent("gh") + "OS=macos install_gh",
+                ["gh"],
+                [],
+                id="gh-macos-brew",
+            ),
+            pytest.param(
+                {},
+                _absent("uv") + "fetch_and_run() { return 1; }; install_uv",
+                ["uv"],
+                ["Failed to install uv"],
+                id="uv",
+            ),
+            pytest.param(
+                {},
+                _absent("pyenv")
+                + "fetch_and_run() { return 1; }; OS=ubuntu install_pyenv",
+                ["pyenv"],
+                ["Failed to install pyenv"],
+                id="pyenv-ubuntu",
+            ),
+            pytest.param(
+                {},
+                _absent("lazydocker")
+                + "fetch_and_run() { return 1; }; OS=ubuntu install_lazydocker",
+                ["lazydocker"],
+                ["Failed to install lazydocker"],
+                id="lazydocker-ubuntu",
+            ),
+            pytest.param(
+                {"brew": "exit 1"},
+                _absent("lazydocker") + "OS=macos install_lazydocker",
+                ["lazydocker"],
+                [],
+                id="lazydocker-macos-brew",
+            ),
+            pytest.param(
+                {"sudo": ""},
+                _absent("docker")
+                + "fetch_and_run() { return 1; }; OS=ubuntu install_docker",
+                ["Docker engine"],
+                ["Failed to install Docker engine"],
+                id="docker-engine-ubuntu",
+            ),
+            pytest.param(
+                {"brew": "exit 1"},
+                _absent("docker") + "OS=macos install_docker",
+                ["Docker Desktop"],
+                [],
+                id="docker-desktop-macos",
+            ),
+            pytest.param(
+                {},
+                _absent("node")
+                + "fetch_and_run() { return 1; }; OS=ubuntu install_nodejs",
+                ["Node.js"],
+                ["NodeSource setup failed"],
+                id="nodesource-setup",
+            ),
+            pytest.param(
+                {"sudo": _fails_on(_APT_INSTALL)},
+                _absent("node") + "fetch_and_run() { return 0; }; "
+                "OS=ubuntu install_nodejs",
+                ["Node.js"],
+                [],
+                id="nodesource-ok-apt-install-fails-is-one-entry",
+            ),
+            pytest.param(
+                {},
+                "fetch_and_run() { return 1; }; "
+                "install_oh_my_zsh; link_oh_my_zsh_theme",
+                ["Oh My Zsh"],
+                [
+                    "Failed to install Oh My Zsh",
+                    "skipping the zsh plugins",
+                    "Skipping the Oh My Zsh theme link",
+                ],
+                id="oh-my-zsh-fetch-is-one-entry-not-three",
+            ),
+            pytest.param(
+                {"pip3": 'case "$1" in show) exit 1 ;; esac\nexit 1'},
+                "install_mcp_server_deps",
+                ["mcp"],
+                ["Failed to install mcp"],
+                id="pip-package-through-pip_install_user",
+            ),
+        ],
+    )
+    def test_failed_step_records_one_entry(
+        self, shell_env, stubs, snippet, expected, also_in_stdout
+    ):
+        for name, body in stubs.items():
+            shell_env.stub(name, body=body)
+        res, failures = run_recording(snippet, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == expected, res.stdout
+        for text in also_in_stdout:
+            assert text in res.stdout, (text, res.stdout)
+
+    def _omz_installed(self, home):
+        omz = home / ".oh-my-zsh"
+        omz.mkdir(exist_ok=True)
+        (omz / "oh-my-zsh.sh").write_text("# stub entry point\n", encoding="utf-8")
+
+    def test_each_failed_zsh_plugin_clone_is_recorded_by_name(self, shell_env):
+        self._omz_installed(shell_env.home)
+        shell_env.stub("git", exit_code=1)
+        res, failures = run_recording("install_oh_my_zsh", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == ["zsh-autosuggestions", "zsh-syntax-highlighting"]
+
+    def test_only_the_failing_zsh_plugin_clone_is_recorded(self, shell_env):
+        self._omz_installed(shell_env.home)
+        shell_env.stub("git", body=_fails_on("*zsh-syntax-highlighting*"))
+        res, failures = run_recording("install_oh_my_zsh", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == ["zsh-syntax-highlighting"]
+
+    def test_a_failed_tpm_clone_is_recorded(self, shell_env):
+        shell_env.stub("git", exit_code=1)
+        res, failures = run_recording("install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == ["tpm"]
+
+    def test_a_failed_vim_plug_download_is_recorded(self, shell_env):
+        shell_env.stub("curl", body=_CURL_TRUNCATED)
+        res, failures = run_recording("install_vim_plug", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == ["vim-plug"]
+
+    def test_a_vim_plug_that_is_already_there_records_nothing(self, shell_env):
+        plug = shell_env.home / ".vim/autoload/plug.vim"
+        plug.parent.mkdir(parents=True)
+        plug.write_text('" already here\n', encoding="utf-8")
+        shell_env.stub("curl", exit_code=1)
+        res, failures = run_recording("install_vim_plug", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+
+    def test_a_failed_plug_install_is_recorded(self, shell_env):
+        shell_env.stub("vim", exit_code=1)
+        res, failures = run_recording("install_vim_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "vim +PlugInstall failed" in res.stdout
+        assert failures == ["vim +PlugInstall"]
+
+    def test_a_successful_plug_install_records_nothing(self, shell_env):
+        shell_env.stub("vim")
+        res, failures = run_recording("install_vim_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Vim plugins installed" in res.stdout
+        assert failures == []
+
+    @pytest.mark.parametrize(
+        ("add_fails_for", "expected"),
+        [
+            ("serena", ["MCP server serena"]),
+            (
+                "context7|serena|gemini-consultant",
+                [
+                    "MCP server context7",
+                    "MCP server serena",
+                    "MCP server gemini-consultant",
+                ],
+            ),
+        ],
+    )
+    def test_a_failed_mcp_registration_is_recorded_per_server(
+        self, shell_env, add_fails_for, expected
+    ):
+        # `mcp get` fails so add_mcp proceeds to `mcp add`, which fails for the
+        # named servers only.
+        shell_env.stub(
+            "claude",
+            body=(
+                'if [ "$1 $2" = "mcp get" ]; then exit 1; fi\n'
+                f'case "$5" in {add_fails_for}) exit 1 ;; esac'
+            ),
+        )
+        shell_env.stub("python3")
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == expected
+
+    def test_a_chsh_that_ran_and_failed_is_recorded(self, shell_env):
+        shell_env.stub("zsh")
+        shell_env.stub("chsh", exit_code=1)
+        env = {**shell_env.env, "SHELL": "/bin/bash"}
+        res, failures = run_recording("change_shell", env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "chsh failed" in res.stdout
+        assert failures == ["chsh"]
+
+    def test_a_chsh_that_succeeds_records_nothing(self, shell_env):
+        shell_env.stub("zsh")
+        env = {**shell_env.env, "SHELL": "/bin/bash"}
+        res, failures = run_recording("change_shell", env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Default shell changed to zsh" in res.stdout
+        assert failures == []
+
+    # --- reclaim_aborted_clone ---------------------------------------------
+
+    TPM = ".tmux/plugins/tpm"
+
+    def _interrupted_clone(self, path: Path) -> Path:
+        (path / ".git" / "objects").mkdir(parents=True)
+        (path / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+        return path
+
+    def test_a_cleanup_that_really_fails_is_recorded_once(self, shell_env):
+        # Shadowing `rm` is root-safe (a chmod-based failure is not).
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        self._interrupted_clone(shell_env.home / self.TPM)
+        res, failures = run_recording(
+            "rm() { return 1; }; install_tmux_plugins", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Could not remove" in res.stdout
+        assert failures == ["tpm"]
+        assert not [c for c in shell_env.calls if c.startswith("git clone")]
+
+    def test_a_repair_that_works_records_nothing(self, shell_env):
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        self._interrupted_clone(shell_env.home / self.TPM)
+        res, failures = run_recording("install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert (shell_env.home / self.TPM / "tpm").is_file()
+        assert failures == []
+
+    def test_a_refusal_that_leaves_the_plugin_uninstalled_is_recorded(self, shell_env):
+        # Populated beyond an interrupted clone: reported, never deleted, and
+        # tpm stays missing -- so the run must not end as a success.
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        target = self._interrupted_clone(shell_env.home / self.TPM)
+        (target / "notes.txt").write_text("mine\n", encoding="utf-8")
+        res, failures = run_recording("install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "looks incomplete" in res.stdout
+        assert (target / "notes.txt").is_file()
+        assert failures == ["tpm"]
+
+    def test_a_symlinked_target_refusal_is_recorded(self, shell_env, tmp_path):
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        elsewhere = self._interrupted_clone(tmp_path / "my-own-tpm")
+        (shell_env.home / ".tmux/plugins").mkdir(parents=True)
+        (shell_env.home / self.TPM).symlink_to(elsewhere)
+        res, failures = run_recording("install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "not a plain directory" in res.stdout
+        assert failures == ["tpm"]
+
+    def test_a_target_outside_home_refusal_is_recorded(self, shell_env, tmp_path):
+        outside = self._interrupted_clone(tmp_path / "outside-home")
+        res, failures = run_recording(
+            f'reclaim_aborted_clone "{outside}" demo || true', shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Refusing to reclaim demo" in res.stdout
+        assert failures == ["demo"]
+
+    def test_the_dry_run_decline_is_not_a_failure(self, shell_env):
+        shell_env.stub("git", body=_GIT_CLONE_STUB)
+        self._interrupted_clone(shell_env.home / self.TPM)
+        res, failures = run_recording("DRY_RUN=1 install_tmux_plugins", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "[DRY-RUN] would remove the interrupted clone" in res.stdout
+        assert failures == []
+
+    # --- skips and steps whose outcome a later step reports: no entry --------
+
+    @pytest.mark.parametrize(
+        ("stubs", "snippet", "warning"),
+        [
+            pytest.param(
+                {"curl": "exit 1"},
+                "fetch_and_run https://example.invalid/x.sh sh || true",
+                "Failed to download",
+                id="fetch_and_run-download-failure-the-caller-records",
+            ),
+            pytest.param(
+                {"curl": ""},
+                "fetch_and_run https://example.invalid/x.sh sh || true",
+                "Downloaded empty script",
+                id="fetch_and_run-empty-script-the-caller-records",
+            ),
+            pytest.param(
+                {"sudo": _fails_on(_APT_UPDATE)},
+                "OS=ubuntu install_apt_packages",
+                "apt-get update failed (continuing)",
+                id="apt-get-update-in-apt-packages",
+            ),
+            pytest.param(
+                {"curl": "", "sudo": _fails_on(_APT_UPDATE)},
+                _absent("wezterm") + "OS=ubuntu install_wezterm",
+                "apt-get update failed",
+                id="apt-get-update-in-wezterm",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _DRAIN_TEE + _fails_on(_APT_UPDATE),
+                    "dpkg": "echo amd64",
+                },
+                _absent("gh") + "OS=ubuntu install_gh",
+                "apt-get update failed",
+                id="apt-get-update-in-gh",
+            ),
+            pytest.param(
+                {},
+                _absent("gh") + "OS=linux install_gh",
+                "No gh install path",
+                id="gh-has-no-install-path-on-this-os",
+            ),
+            pytest.param(
+                {},
+                _absent("glow", "go") + "OS=ubuntu install_glow",
+                "go not found; skipping glow",
+                id="glow-needs-go",
+            ),
+            pytest.param(
+                {},
+                _absent("pip3", "pip") + "install_mcp_server_deps",
+                "pip not found; skipping MCP server deps",
+                id="pip-not-found",
+            ),
+            pytest.param(
+                {},
+                _absent("claude") + "register_claude_mcp_servers",
+                "claude CLI not found",
+                id="claude-not-found",
+            ),
+            pytest.param(
+                {},
+                'vim() { return 127; }; command_exists() { [ "$1" = "vim" ] && '
+                'return 1 || command -v "$1" >/dev/null 2>&1; }; '
+                "install_vim_plugins",
+                "vim not found; skipping Vim plugin installation",
+                id="vim-not-found",
+            ),
+            pytest.param(
+                {},
+                "install_ai_tools </dev/null",
+                "Non-interactive shell detected",
+                id="ai-tools-need-a-tty",
+            ),
+            pytest.param(
+                {},
+                "OS=windows install_os_packages",
+                "Windows detected",
+                id="windows-packages-are-manual",
+            ),
+            pytest.param(
+                {},
+                "OS=linux install_os_packages",
+                "Non-Debian Linux detected",
+                id="non-debian-linux-packages-are-manual",
+            ),
+            pytest.param(
+                {},
+                "link_oh_my_zsh_theme",
+                "Skipping the Oh My Zsh theme link",
+                id="theme-link-without-oh-my-zsh",
+            ),
+            pytest.param(
+                {},
+                _absent("node", "npm") + "OS=windows install_nodejs",
+                "npm not found; skipping npm global directory setup",
+                id="npm-not-found",
+            ),
+        ],
+    )
+    def test_skips_and_deferred_outcomes_record_nothing(
+        self, shell_env, stubs, snippet, warning
+    ):
+        for name, body in stubs.items():
+            shell_env.stub(name, body=body)
+        res, failures = run_recording(snippet, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert warning in res.stdout, res.stdout
+        assert failures == [], res.stdout + res.stderr
+
+    @pytest.mark.parametrize(
+        ("snippet", "login_shell", "message"),
+        [
+            (_absent("zsh") + "change_shell", "/bin/bash", "zsh not found"),
+            (_absent("chsh") + "change_shell", "/bin/bash", "chsh command not found"),
+            ("change_shell", "/bin/zsh", "already zsh"),
+        ],
+    )
+    def test_change_shell_skips_record_nothing(
+        self, shell_env, snippet, login_shell, message
+    ):
+        shell_env.stub("zsh")
+        env = {**shell_env.env, "SHELL": login_shell}
+        res, failures = run_recording(snippet, env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert message in res.stdout, res.stdout
+        assert failures == []
+
+    def test_a_tree_sitter_that_still_shadows_the_install_records_nothing(
+        self, shell_env
+    ):
+        # brew succeeds but an unrunnable shim stays first on PATH: a
+        # derivative of an install that itself worked.
+        shell_env.stub("tree-sitter", body="exit 1", exit_code=1)
+        res, failures = run_recording("OS=macos install_tree_sitter_cli", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "is still not >=" in res.stdout
+        assert failures == []
+
+    def test_tree_sitter_on_ubuntu_without_cargo_records_nothing(self, shell_env):
+        shell_env.hide("cargo")
+        res, failures = run_recording(
+            _TS_ABSENT + "OS=ubuntu install_tree_sitter_cli", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "cargo not found" in res.stdout
+        assert failures == []
+
+    def test_create_symlinks_backup_warnings_record_nothing(self, shell_env):
+        (shell_env.home / ".zshrc").write_text("# a real file\n", encoding="utf-8")
+        res, failures = run_recording("create_symlinks </dev/null", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Backing up existing .zshrc" in res.stdout, res.stdout
+        assert failures == []
+
+
+class TestInstallFailureBookkeepingInTheSource:
+    """record_failure appends to a shell array, and a subshell's copy of that
+    array is thrown away: `x=$(try_install ...)`, a pipeline stage and a `&` job
+    all lose the entry without any error. Nothing at runtime can notice that, so
+    the source is checked for the shapes that cause it.
+
+    Limits, stated rather than papered over: a helper that itself calls
+    try_install and is then invoked inside `$(...)` is invisible to a text
+    check. The runtime tests in TestInstallFailureRecording cover the real call
+    sites.
+    """
+
+    _NAMES = r"(?:try_install|pip_install_user|record_failure)"
+    # Anything that puts the call in a subshell.
+    _IN_SUBSHELL = [
+        # inside $(...) or `...`
+        re.compile(r"(?:\$\(|`)[^)`\n]*\b" + _NAMES + r"\b"),
+        # the receiving end of a single pipe, even across a line break
+        re.compile(r"(?<!\|)\|(?!\|)&?\s*\b" + _NAMES + r"\b"),
+        # the feeding end of a single pipe, on the same logical line
+        re.compile(r"\b" + _NAMES + r"\b[^;&|}\n]*\|(?!\|)"),
+        # a background job (`&&`, `&>` and `>&` are not)
+        re.compile(r"\b" + _NAMES + r"\b[^;&|}\n]*(?<![<>])&(?![&>])"),
+    ]
+
+    @classmethod
+    def _violations(cls, text: str) -> list[str]:
+        # Join `\` continuations so a wrapped call is one logical line, and
+        # drop comment-only lines (the prose above names the helpers freely).
+        text = re.sub(r"\\\n[ \t]*", " ", text)
+        text = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        found = []
+        for pattern in cls._IN_SUBSHELL:
+            found.extend(m.group(0).strip() for m in pattern.finditer(text))
+        return found
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "x=$(try_install widget brew install widget)",
+            'out="$(echo hi; record_failure widget)"',
+            "`pip_install_user pip3 widget`",
+            "echo oops | record_failure widget",
+            "echo oops |\n  record_failure widget",
+            "try_install widget brew install widget | tee log",
+            "try_install widget brew install widget &",
+            "pip_install_user pip3 widget &",
+        ],
+    )
+    def test_the_guard_flags_a_call_in_a_subshell(self, bad):
+        assert self._violations(bad + "\n"), bad
+
+    @pytest.mark.parametrize(
+        "good",
+        [
+            "try_install widget brew install widget",
+            'try_install "$tool" brew install "$tool" || true',
+            "try_install widget brew install widget && echo ok",
+            "try_install widget brew install widget &>/dev/null",
+            "try_install widget sudo tee 2>&1",
+            "fetch_and_run x sh || { record_failure x; print_warning y; }",
+            "curl -fsSL u | sudo tee f || record_failure x",
+            "curl -fsSL u | sudo dd of=f; record_failure x",
+            "# x=$(try_install widget brew install widget) in a comment",
+            "record_failure() {",
+        ],
+    )
+    def test_the_guard_accepts_the_shapes_install_sh_uses(self, good):
+        assert self._violations(good + "\n") == [], good
+
+    def test_no_call_runs_in_a_subshell(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        assert self._violations(text) == [], (
+            "record_failure / try_install / pip_install_user run in a subshell "
+            "here, so the entry they append is lost"
+        )
+
+    def test_the_list_is_declared_at_the_top_level(self):
+        # Indented would mean inside a function, where it is not global when
+        # install.sh is sourced.
+        text = INSTALL.read_text(encoding="utf-8")
+        assert re.search(r"^INSTALL_FAILURES=\(\)$", text, re.M)
+        assert not re.search(
+            r"\b(?:local|declare|typeset)\s+(?:-\S+\s+)*INSTALL_FAILURES\b", text
+        )
+
+    def test_main_resets_the_list_before_doing_anything(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        body = text[text.index("\nmain() {") :]
+        assert "\n  INSTALL_FAILURES=()\n" in body
+        reset = body.index("\n  INSTALL_FAILURES=()\n")
+        assert reset < body.index("\n  create_symlinks\n")
+
+
+# Every step main() calls between create_symlinks and the closing message. The
+# real ones install packages, so a test that runs main() replaces each with a
+# marker echo. test_every_step_main_calls_is_stubbed keeps this list honest: a
+# step added to main() and missing here would otherwise run for real.
+_MAIN_STEPS = (
+    "create_symlinks",
+    "install_os_packages",
+    "install_neovim",
+    "check_neovim_version",
+    "install_wezterm",
+    "install_fonts",
+    "install_nodejs",
+    "install_gh",
+    "install_pyenv",
+    "install_uv",
+    "install_glow",
+    "install_docker",
+    "install_lazydocker",
+    "install_tree_sitter_cli",
+    "install_mcp_server_deps",
+    "install_linters_formatters",
+    "install_oh_my_zsh",
+    "install_vim_plug",
+    "install_tmux_plugins",
+    "install_vim_plugins",
+    "setup_neovim",
+    "install_ai_tools",  # reads from a TTY: must never run for real in a test
+    "register_claude_mcp_servers",
+    "link_oh_my_zsh_theme",
+    "change_shell",
+)
+_STUB_MAIN_STEPS = "detect_os() { OS=ubuntu; }; " + "".join(
+    f"{step}() {{ echo STEP_{step}; }}; " for step in _MAIN_STEPS
+)
+
+
+class TestMainExitStatus:
+    """main() ends in a failure summary and exit status 1 when any step
+    recorded a failure, instead of an unconditional "Installation completed!".
+
+    main runs as a plain command, last in the snippet: under `set -e`, `if main`
+    would disable errexit inside it and `main; echo $?` would never reach the
+    echo, so the process exit status is the observable.
+    """
+
+    def test_every_step_main_calls_is_stubbed(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        body = text[text.index("\nmain() {") :]
+        called = set(re.findall(r"^ {2,4}([a-z_]+)$", body, re.M))
+        # Builtins and shell keywords that happen to stand alone on a line.
+        called -= {"echo", "shift", "break", "do", "done", "else", "esac", "fi"}
+        called -= {"report_install_failures"}
+        assert called <= set(_MAIN_STEPS) | {"detect_os"}, (
+            "main() calls steps this test would run for real: "
+            f"{sorted(called - set(_MAIN_STEPS) - {'detect_os'})}"
+        )
+
+    def test_a_clean_run_still_ends_in_success(self, shell_env):
+        res = run_sourced(_STUB_MAIN_STEPS + "main", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Installation completed!" in res.stdout
+        assert "failed step" not in res.stdout
+        assert "Next steps:" in res.stdout
+        for step in _MAIN_STEPS:
+            assert f"STEP_{step}" in res.stdout, step
+
+    def test_recorded_failures_are_listed_and_the_exit_status_is_1(self, shell_env):
+        res = run_sourced(
+            _STUB_MAIN_STEPS + "install_uv() { record_failure alpha; }; "
+            "install_docker() { record_failure beta; }; main",
+            shell_env.env,
+        )
+        out = res.stdout
+        assert res.returncode == 1, out + res.stderr
+        assert "Installation finished with 2 failed step(s):" in out
+        assert out.index("  - alpha\n") < out.index("  - beta\n")
+        assert "Reasons are printed above as [WARNING]" in out
+        assert "Installation completed!" not in out
+        # Failed steps never stop the steps after them...
+        assert "STEP_change_shell" in out
+        # ...and the closing guidance is still printed after the summary.
+        assert out.index("Installation finished with") < out.index("Next steps:")
+
+    def test_a_real_try_install_failure_reaches_the_summary(self, shell_env):
+        shell_env.stub("faketool", body='echo "E: nope" >&2\nexit 1')
+        res = run_sourced(
+            _STUB_MAIN_STEPS
+            + "install_uv() { try_install widget faketool install widget; }; main",
+            shell_env.env,
+        )
+        assert res.returncode == 1, res.stdout + res.stderr
+        assert "Failed to install widget" in res.stdout
+        assert "Installation finished with 1 failed step(s):" in res.stdout
+        assert "  - widget\n" in res.stdout
+
+    def test_each_run_starts_from_an_empty_list(self, shell_env):
+        res = run_sourced(
+            _STUB_MAIN_STEPS + "INSTALL_FAILURES=(stale); main", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Installation completed!" in res.stdout
+        assert "stale" not in res.stdout
+
+    def test_dry_run_still_exits_zero(self, shell_env):
+        res = run_sourced(_STUB_MAIN_STEPS + "main --dry-run", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Dry-run complete" in res.stdout
+        assert "failed step" not in res.stdout
+
+    def test_dry_run_never_turns_a_recorded_failure_into_exit_1(self, shell_env):
+        # The preview installs nothing, so there is no install result to judge.
+        res = run_sourced(
+            _STUB_MAIN_STEPS
+            + "link_oh_my_zsh_theme() { record_failure alpha; }; main --dry-run",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Dry-run complete" in res.stdout
+        assert "failed step" not in res.stdout
+
+    def test_help_documents_the_exit_status(self, shell_env):
+        res = run_sourced("main --help", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        out = res.stdout
+        assert "Exit status:" in out
+        assert re.search(r"^\s+0\s+\S", out, re.M)
+        assert re.search(r"^\s+1\s+.*install steps? failed", out, re.M)
+        assert re.search(r"^\s+2\s+usage error", out, re.M)
 
 
 class TestLinkingThroughASymlinkedParent:
@@ -3661,6 +5075,10 @@ class TestLinkingThroughASymlinkedParent:
         checkout = self._scratch_checkout(tmp_path)
         (shell_env.home / rel).symlink_to(checkout / rel)
         before = self._shape(checkout / rel)
+        modes = {
+            p: stat.S_IMODE(p.lstat().st_mode)
+            for p in [checkout / rel, *(checkout / rel).rglob("*")]
+        }
 
         res = subprocess.run(
             ["bash", "-c", f'source "{checkout / "install.sh"}"\ncreate_symlinks'],
@@ -3673,10 +5091,41 @@ class TestLinkingThroughASymlinkedParent:
 
         assert res.returncode == 0, res.stderr
         assert self._shape(checkout / rel) == before, "the checkout was modified"
+        assert {p: stat.S_IMODE(p.lstat().st_mode) for p in modes} == modes, (
+            "a file mode in the checkout was changed"
+        )
         assert not list(shell_env.home.glob(f".dotfiles_backup_*/{rel}")), (
             "the repository's own files were moved into the backup dir"
         )
         assert "resolves into the checkout" in res.stdout + res.stderr
+        if rel == ".gemini":
+            # GEMINI.md's link_entry prints "resolves into the checkout" too, so
+            # pin the settings.json guard by its own wording.
+            assert "Skipping settings.json" in res.stdout + res.stderr
+
+    def test_old_gemini_backups_are_restricted_even_when_gemini_is_in_the_checkout(
+        self, shell_env, tmp_path
+    ):
+        # The backups live under $HOME, independent of where ~/.gemini points.
+        checkout = self._scratch_checkout(tmp_path)
+        (shell_env.home / ".gemini").symlink_to(checkout / ".gemini")
+        stale = (
+            shell_env.home / ".dotfiles_backup_20200101_000000/.gemini/settings.json"
+        )
+        stale.parent.mkdir(parents=True)
+        stale.write_text("{}\n", encoding="utf-8")
+        stale.chmod(0o644)
+
+        res = subprocess.run(
+            ["bash", "-c", f'source "{checkout / "install.sh"}"\ncreate_symlinks'],
+            capture_output=True,
+            text=True,
+            env=shell_env.env,
+            timeout=120,
+        )
+
+        assert res.returncode == 0, res.stderr
+        assert stat.S_IMODE(stale.stat().st_mode) == 0o600
 
     # The -ef guard must cover the dry-run branch of _render_git_local_config
     # too, or the preview promises to render os.gitconfig / user.gitconfig that
@@ -3783,6 +5232,61 @@ class TestDanglingParentSymlinks:
         assert res.returncode == 0, res.stderr
         assert (home / ".oh-my-zsh/custom/themes/px-rose-pine.zsh-theme").is_symlink()
 
+    # The two package-install sites. They are not behind create_symlinks, so
+    # nothing else has cleared the way: a bare `mkdir -p` on a dangling link
+    # kills the run under `set -e` (and the AFTER_ marker never prints) with
+    # no [ERROR] line and no failure summary.
+    def test_a_dangling_npm_global_symlink_is_replaced(self, shell_env):
+        home = shell_env.home
+        shell_env.stub("node")
+        shell_env.stub("npm")
+        (home / ".npm-global").symlink_to("/nonexistent/gone")
+
+        res = run_sourced('OS=macos install_nodejs; echo "AFTER_NODEJS"', shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "AFTER_NODEJS" in res.stdout
+        assert (home / ".npm-global").is_dir()
+        assert not (home / ".npm-global").is_symlink()
+        assert f"npm config set prefix {home}/.npm-global" in shell_env.calls
+
+    def test_a_live_npm_global_symlink_is_the_users_redirect_and_is_kept(
+        self, shell_env, tmp_path
+    ):
+        # ensure_dir's own rule: only a DANGLING link is replaced.
+        home = shell_env.home
+        shell_env.stub("node")
+        shell_env.stub("npm")
+        real = tmp_path / "bigger-disk" / "npm-global"
+        real.mkdir(parents=True)
+        (home / ".npm-global").symlink_to(real)
+
+        res = run_sourced('OS=macos install_nodejs; echo "AFTER_NODEJS"', shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert (home / ".npm-global").is_symlink()
+        assert (home / ".npm-global").readlink() == real
+
+    # `.local` is the parent: `mkdir -p ~/.local/bin` fails just the same when
+    # the PARENT is the stale link, exactly as `.config` / `.config/git` above.
+    @pytest.mark.parametrize("rel", [".local", ".local/bin"])
+    def test_a_dangling_symlink_where_the_apt_alias_dir_belongs_is_replaced(
+        self, shell_env, rel
+    ):
+        home = shell_env.home
+        shell_env.stub("batcat")
+        shell_env.stub("fdfind")
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).symlink_to("/nonexistent/gone")
+
+        res = run_sourced('install_apt_packages; echo "AFTER_APT"', shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "AFTER_APT" in res.stdout
+        assert (home / rel).is_dir() and not (home / rel).is_symlink()
+        for name in ("bat", "fd"):
+            assert (home / ".local/bin" / name).is_symlink(), f"no {name} alias"
+
 
 class TestOsGitconfigWrite:
     """os.gitconfig's write must be checked, never assumed.
@@ -3840,24 +5344,154 @@ class TestOsGitconfigWrite:
         ), res.stdout
         assert rendered.is_symlink() and rendered.readlink() == target
 
+    # The case the dangling-only guard missed: a LIVE link. `[ -e ]` follows
+    # the link, so it is true here, the replacement was skipped, and the
+    # redirect wrote THROUGH the link -- overwriting whatever the link points
+    # at, with no backup, wherever that happens to be (another dotfiles
+    # checkout, a shared config, a file the user keeps by hand). The link is
+    # ours to replace; its target is not ours to touch.
+    @pytest.mark.parametrize("target_kind", ["file", "directory"])
+    def test_a_live_link_is_replaced_and_its_target_is_left_alone(
+        self, shell_env, tmp_path, target_kind
+    ):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        target = tmp_path / "elsewhere" / "os.gitconfig"
+        target.parent.mkdir()
+        if target_kind == "file":
+            original = "[user]\n\tname = the-users-own-file\n"
+            target.write_text(original, encoding="utf-8")
+        else:
+            target.mkdir()
+            (target / "keep.txt").write_text("keep\n", encoding="utf-8")
+        rendered = home / ".config/git/os.gitconfig"
+        rendered.symlink_to(target)
+
+        res = run_sourced("create_symlinks", shell_env.env)
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert not rendered.is_symlink() and rendered.is_file()
+        assert "helper = " in rendered.read_text(encoding="utf-8")
+        if target_kind == "file":
+            assert target.read_text(encoding="utf-8") == original, (
+                "the render was written through the live link"
+            )
+        else:
+            assert [p.name for p in target.iterdir()] == ["keep.txt"]
+        # Said out loud: a live link is not the stale-link case, and the user
+        # should be told their link was replaced.
+        assert any(
+            "Replacing symlink" in ln and "os.gitconfig" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+
+    def test_dry_run_previews_replacing_a_live_link_and_changes_nothing(
+        self, shell_env, tmp_path
+    ):
+        home = shell_env.home
+        (home / ".config/git").mkdir(parents=True)
+        target = tmp_path / "elsewhere" / "os.gitconfig"
+        target.parent.mkdir()
+        target.write_text("mine\n", encoding="utf-8")
+        rendered = home / ".config/git/os.gitconfig"
+        rendered.symlink_to(target)
+
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        # "would render" alone would also match the plain preview line; the
+        # replacement must be announced as its own decision.
+        assert any(
+            "[DRY-RUN]" in ln
+            and "would replace" in ln
+            and "symlink" in ln
+            and "os.gitconfig" in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+        assert "dangling" not in res.stdout.lower()
+        assert rendered.is_symlink() and rendered.readlink() == target
+        assert target.read_text(encoding="utf-8") == "mine\n"
+
     # A directory where the file belongs: the redirect fails with EISDIR on
-    # every bash, and a directory is not ours to delete. create_symlinks is
-    # called bare -- on the left of `&&` errexit is suspended and a non-zero
-    # return would be swallowed.
-    def test_a_failed_write_is_an_error_not_a_success(self, shell_env):
+    # every bash, and a directory is not ours to delete. The failure is an
+    # [ERROR] plus a recorded failure (main's summary and exit status carry it),
+    # not an abort: under `set -e` a non-zero return here used to stop
+    # create_symlinks half-way, leaving the editor / Claude / Codex / Gemini
+    # links unmade and skipping the whole package phase -- the opposite of
+    # main()'s "symlinks first" rationale.
+    def test_a_failed_write_is_recorded_and_linking_continues(self, shell_env):
         home = shell_env.home
         blocker = home / ".config/git/os.gitconfig"
         blocker.mkdir(parents=True)
 
-        res = run_sourced("create_symlinks", shell_env.env)
+        res, failures = run_recording("create_symlinks", shell_env.env)
 
         out = res.stdout + res.stderr
-        assert res.returncode != 0, out
         assert any(
             "[ERROR]" in ln and "os.gitconfig" in ln for ln in out.splitlines()
         ), out
         assert "Rendered os.gitconfig" not in out
         assert blocker.is_dir() and not any(blocker.iterdir())
+        assert failures == ["git config (os.gitconfig)"]
+        # The links that come after the git render still happen.
+        assert (home / ".claude/settings.json").is_symlink(), out
+        assert (home / ".gemini/GEMINI.md").is_symlink(), out
+
+    # ~/.config/git unusable (here: a plain file in its place) made the bare
+    # ensure_dir fail with only mkdir's own message and abort the run.
+    def test_an_unusable_config_git_dir_is_recorded_and_linking_continues(
+        self, shell_env
+    ):
+        home = shell_env.home
+        (home / ".config").mkdir(parents=True)
+        (home / ".config/git").write_text("not a directory\n", encoding="utf-8")
+
+        res, failures = run_recording("create_symlinks", shell_env.env)
+
+        out = res.stdout + res.stderr
+        assert any(
+            "[ERROR]" in ln and ".config/git" in ln for ln in out.splitlines()
+        ), out
+        assert failures == ["git config (os.gitconfig)"]
+        assert (home / ".config/git").read_text(encoding="utf-8") == "not a directory\n"
+        assert (home / ".claude/settings.json").is_symlink(), out
+
+    # A read-only ~/.config/git is the usual reason the os.gitconfig write
+    # fails; the identity file in the same directory then fails too, and its
+    # writes were bare under `set -e`.
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+    def test_a_read_only_config_git_dir_is_recorded_and_linking_continues(
+        self, shell_env
+    ):
+        home = shell_env.home
+        git_dir = home / ".config/git"
+        git_dir.mkdir(parents=True)
+        git_dir.chmod(0o555)
+        try:
+            res, failures = run_recording("create_symlinks", shell_env.env)
+        finally:
+            git_dir.chmod(0o755)
+
+        out = res.stdout + res.stderr
+        assert failures == [
+            "git config (os.gitconfig)",
+            "git config (user.gitconfig)",
+        ], out
+        assert (home / ".claude/settings.json").is_symlink(), out
+
+    # ~/.config itself unusable: the git render records it, and the editor
+    # links (nvim under ~/.config) must not abort the run one step later.
+    def test_an_unusable_config_dir_is_recorded_and_linking_continues(self, shell_env):
+        home = shell_env.home
+        (home / ".config").write_text("not a directory\n", encoding="utf-8")
+
+        res, failures = run_recording("create_symlinks", shell_env.env)
+
+        out = res.stdout + res.stderr
+        assert "git config (os.gitconfig)" in failures, out
+        assert "editor configs" in failures, out
+        assert (home / ".config").read_text(encoding="utf-8") == "not a directory\n"
+        assert (home / ".claude/settings.json").is_symlink(), out
 
 
 class TestBackupsAreAnnounced:
@@ -4142,3 +5776,188 @@ class TestInstallTreeSitterCli:
         assert "cargo not found" in res.stdout
         assert "tree-sitter/releases" in res.stdout
         assert not any(c.startswith("npm ") for c in shell_env.calls)
+
+
+# This config targets Neovim 0.12+ (INSTALL_PLATFORM.md). install_neovim fetches
+# a new enough one, but it can still end with an older or missing nvim on PATH
+# (an unsupported arch, a failed download, an older nvim earlier on PATH), so
+# the check right after it says so. It is a WARNING and never a recorded
+# failure: those causes are either reported by install_neovim already or out of
+# the installer's reach, and must not make every run exit 1.
+_NVIM_DOC_ANCHOR = "INSTALL_PLATFORM.md#neovimのバージョンが古い"
+
+
+class TestNeovimVersionCheck:
+    @staticmethod
+    def _nvim(shell_env, first_line):
+        # `nvim --version` prints more than one line; only the first carries
+        # the version, so the stub proves the check does not read past it.
+        shell_env.stub(
+            "nvim", body=f"echo {shlex.quote(first_line)}\necho 'Build type: Release'"
+        )
+
+    @staticmethod
+    def _run(shell_env, snippet="check_neovim_version"):
+        # run_recording fails loudly if the snippet aborted under `set -e`,
+        # and hands back INSTALL_FAILURES: [] is what "warning only" means.
+        return run_recording(f'{snippet}; echo "AFTER_CHECK"', shell_env.env)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "NVIM v0.9.5",  # Ubuntu 24.04 LTS apt
+            "NVIM v0.11.9",  # the boundary: one minor below
+            "NVIM v0.11.0-dev-1234+gabcdef0",  # a nightly BEFORE 0.12
+            "NVIM v0.4.3",
+        ],
+    )
+    def test_an_older_nvim_warns_and_points_at_the_upgrade_steps(self, shell_env, line):
+        self._nvim(shell_env, line)
+
+        res, labels = self._run(shell_env)
+
+        assert res.returncode == 0, res.stderr
+        warning = [ln for ln in res.stdout.splitlines() if "[WARNING]" in ln]
+        assert len(warning) == 1, res.stdout
+        assert "0.12" in warning[0], warning
+        assert line.split("v", 1)[1] in warning[0], warning
+        assert _NVIM_DOC_ANCHOR in warning[0], warning
+        assert labels == [], "an old nvim must not be recorded as a failed step"
+        assert "AFTER_CHECK" in res.stdout
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "NVIM v0.12.0",  # the boundary itself
+            "NVIM v0.12.4",
+            "NVIM v0.12.0-dev-1234+gabcdef0",  # a 0.12 nightly counts as 0.12
+            "NVIM v0.13.1",
+            "NVIM v0.100.0",  # numeric, not lexicographic
+            "NVIM v1.0.0",
+        ],
+    )
+    def test_a_new_enough_nvim_is_accepted_quietly(self, shell_env, line):
+        self._nvim(shell_env, line)
+
+        res, labels = self._run(shell_env)
+
+        assert res.returncode == 0, res.stderr
+        assert "[WARNING]" not in res.stdout, res.stdout
+        assert labels == []
+        assert "AFTER_CHECK" in res.stdout
+
+    def test_a_missing_nvim_warns_and_continues(self, shell_env):
+        # A stub cannot express absence, and a developer machine has a real
+        # nvim on PATH: hide() makes it genuinely absent.
+        shell_env.hide("nvim")
+
+        res, labels = self._run(shell_env)
+
+        assert res.returncode == 0, res.stderr
+        warning = [ln for ln in res.stdout.splitlines() if "[WARNING]" in ln]
+        assert len(warning) == 1, res.stdout
+        assert "nvim" in warning[0] and _NVIM_DOC_ANCHOR in warning[0], warning
+        assert labels == []
+        assert "AFTER_CHECK" in res.stdout
+
+    @pytest.mark.parametrize(
+        ("body", "exit_code"),
+        [
+            ("echo 'something that is not a version banner'", 0),
+            ("", 0),  # prints nothing at all
+            ("echo 'nvim: error while loading shared libraries' >&2", 127),
+            ("echo 'NVIM vNEXT'", 0),  # a `v` and no digits
+        ],
+    )
+    def test_a_version_that_cannot_be_read_warns_and_never_aborts(
+        self, shell_env, body, exit_code
+    ):
+        shell_env.stub("nvim", body=body, exit_code=exit_code)
+
+        res, labels = self._run(shell_env)
+
+        assert res.returncode == 0, res.stderr
+        warning = [ln for ln in res.stdout.splitlines() if "[WARNING]" in ln]
+        assert len(warning) == 1, res.stdout
+        assert _NVIM_DOC_ANCHOR in warning[0], warning
+        # Unparseable is NOT "older than 0.12": garbage must not be reported
+        # as a version it never claimed to be.
+        assert "older than" not in warning[0], warning
+        assert labels == []
+        assert "AFTER_CHECK" in res.stdout
+
+    def test_main_runs_the_check_right_after_install_neovim(self):
+        # The wiring: Neovim comes from install_neovim, not APT, so the check
+        # belongs after it. Any earlier and a fresh machine is warned about
+        # an nvim the very next step installs.
+        text = INSTALL.read_text(encoding="utf-8")
+        body = text[text.index("\nmain() {") :]
+        assert re.search(
+            r"^ {4}install_neovim\n(?: *(?:#.*)?\n)* {4}check_neovim_version$",
+            body,
+            re.MULTILINE,
+        ), "main() must call check_neovim_version right after install_neovim"
+
+    def test_the_apt_step_does_not_run_the_check(self, shell_env):
+        # APT installs no Neovim on this branch, so a check there would only
+        # ever report the nvim install_neovim is about to replace.
+        self._nvim(shell_env, "NVIM v0.9.5")
+
+        res, labels = self._run(shell_env, snippet="install_apt_packages")
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert _NVIM_DOC_ANCHOR not in res.stdout
+        assert "APT packages installed" in res.stdout
+        assert labels == []
+        assert "AFTER_CHECK" in res.stdout
+
+    def test_a_rerun_with_the_managed_nvim_passes_the_check(self, shell_env):
+        # The rerun path of install_neovim installs nothing; it must still put
+        # ~/.local/bin on PATH, or the check that follows reads an older nvim
+        # (or none) from the installer's own PATH and warns falsely.
+        shell_env.hide("nvim")
+        prefix = shell_env.home / ".local/nvim"
+        (prefix / "bin").mkdir(parents=True)
+        binary = prefix / "bin/nvim"
+        binary.write_text(_FAKE_NVIM.format(version="0.12.5"), encoding="utf-8")
+        binary.chmod(0o755)
+        shell_env.stub("curl", exit_code=1)
+
+        res, labels = self._run(
+            shell_env,
+            snippet='OS=ubuntu; NEOVIM_VERSION="v0.12.5"; '
+            "install_neovim; check_neovim_version",
+        )
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "already installed" in res.stdout
+        assert _NVIM_DOC_ANCHOR not in res.stdout
+        assert "new enough" in res.stdout
+        assert labels == []
+
+    def test_a_failed_upgrade_still_checks_the_managed_nvim(self, shell_env):
+        # An upgrade that fails (here: the download) keeps the managed nvim
+        # and its link. The check must read THAT one, not report "nvim not
+        # found" because ~/.local/bin was never put on the installer's PATH.
+        shell_env.hide("nvim")
+        prefix = shell_env.home / ".local/nvim"
+        (prefix / "bin").mkdir(parents=True)
+        binary = prefix / "bin/nvim"
+        binary.write_text(_FAKE_NVIM.format(version="0.12.4"), encoding="utf-8")
+        binary.chmod(0o755)
+        local_bin = shell_env.home / ".local/bin"
+        local_bin.mkdir(parents=True)
+        (local_bin / "nvim").symlink_to(binary)
+        shell_env.stub("curl", exit_code=1)
+
+        res, labels = self._run(
+            shell_env,
+            snippet='OS=ubuntu; uname() { echo x86_64; }; NEOVIM_VERSION="v0.12.5"; '
+            "install_neovim; check_neovim_version",
+        )
+
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Failed to download" in res.stdout
+        assert "nvim not found" not in res.stdout
+        assert "Neovim 0.12.4 is new enough" in res.stdout
+        assert labels == []

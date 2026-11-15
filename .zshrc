@@ -264,7 +264,35 @@ fi
 # rust environment
 export PATH="$HOME/.cargo/bin:$PATH"
 
-command -v fzf >/dev/null 2>&1 && eval "$(fzf --zsh)"
+# fzf のシェル統合 (Ctrl-T / Ctrl-R / Alt-C とコマンド補完)。
+# `fzf --zsh` は fzf 0.48 で入ったオプションで、それ以前のビルド (Ubuntu 22.04 /
+# 24.04 の apt 版など) は「unknown option」で失敗する。以前の
+# `command -v fzf && eval "$(fzf --zsh)"` ではその失敗が eval に呑まれ、シェルを
+# 開くたびにエラーが出たうえ、キーバインドも補完も無効のままだった。
+#   1. `fzf --zsh` の終了ステータスで分岐する。出力は一度変数に取り、成功したとき
+#      だけ eval する (失敗した fzf の出力を実行しない)。stderr は捨てる。
+#   2. 使えなければ、ディストリのパッケージが同梱する統合ファイルを source する。
+#      Debian/Ubuntu は doc の examples 配下、それ以外は /usr/share/fzf。
+# eval は関数に包まず直接実行する: fzf の出力は関数・bindkey・オプションを
+# 触るので、`eval "$(fzf --zsh)"` と同じトップレベルで評価したい。
+if command -v fzf >/dev/null 2>&1; then
+  # 代入だけの `if` にする。`local` / `typeset` を前置すると終了ステータスが
+  # それらのものに置き換わり、失敗を検出できなくなる。
+  if _fzf_zsh="$(fzf --zsh 2>/dev/null)" && [[ -n "$_fzf_zsh" ]]; then
+    eval "$_fzf_zsh"
+  else
+    for _fzf_dir in /usr/share/doc/fzf/examples /usr/share/fzf; do
+      # `-r` (存在ではなく読めること): 壊れた symlink を source すると、
+      # シェルを開くたびにエラーになる。
+      if [[ -r "$_fzf_dir/key-bindings.zsh" ]]; then
+        source "$_fzf_dir/key-bindings.zsh"
+        [[ -r "$_fzf_dir/completion.zsh" ]] && source "$_fzf_dir/completion.zsh"
+        break
+      fi
+    done
+  fi
+  unset _fzf_zsh _fzf_dir
+fi
 
 # history
 HISTFILE=~/.zsh_history
@@ -280,8 +308,13 @@ setopt hist_ignore_all_dups
 
 # display japanese character
 setopt print_eight_bit
+# Extended glob operators (`^` negation, `~` exclusion, `#` repetition). They
+# make an unquoted `HEAD^` a pattern ("no matches found"): write `HEAD~1` or
+# quote it ('HEAD^').
 setopt extended_glob
-setopt braceccl
+# braceccl is deliberately NOT set: it turns `{0}` / `{u}` into brace
+# character classes, so `stash@{0}`, `@{u}` and `HEAD@{1}` reached git
+# silently rewritten to `stash@0`, `@u` and `HEAD@1`.
 # correct command when mistyped
 setopt correct
 

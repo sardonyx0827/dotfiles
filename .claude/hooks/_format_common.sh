@@ -80,8 +80,13 @@ hook_format_file() {
       # ここで isort を併用すると `ruff format` の結果を崩し、CI の
       # `ruff format --check` が落ちるため、ruff がある場合は isort を使わない。
       echo "  Running ruff (import sort + format)..."
-      ruff check --select I --fix "$FILE_PATH" >/dev/null 2>&1 || true
-      if err=$(ruff format "$FILE_PATH" 2>&1); then
+      # --force-exclude が必須: ruff は明示的に渡したパスには `exclude` /
+      # `extend-exclude` を適用しないため、フラグ無しだとプロジェクトが除外した
+      # ファイル (生成物・vendor 等) まで書き換えてしまう。除外されたファイルは
+      # ruff が何もせず終了コード 0 で返すので、下の分岐ではそのまま「整形済み」と
+      # して扱われる (エラーにならない)。lint 側 (_lint_common.sh) と必ず揃える。
+      ruff check --select I --fix --force-exclude "$FILE_PATH" >/dev/null 2>&1 || true
+      if err=$(ruff format --force-exclude "$FILE_PATH" 2>&1); then
         echo "  ruff completed"
         FORMATTED=true
       else
