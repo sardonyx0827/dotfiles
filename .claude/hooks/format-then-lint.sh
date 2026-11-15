@@ -30,8 +30,12 @@ cat >"$payload"
 # 差し戻す側) なので、整形が転んだことを理由にゲートごと素通りさせる方が危険。
 # auto-format.sh 自身は fail-open で常に 0 を返す設計なので、ここに入るのは
 # 想定外の異常だけ。その事実は stderr に残す。
-if ! bash "$HOOK_DIR/auto-format.sh" <"$payload"; then
-  echo "format-then-lint.sh: auto-format.sh exited $? (continuing to lint)" >&2
+# 終了コードは `|| rc=$?` で受ける。`if ! cmd; then echo $?` の `$?` は否定した
+# 結果 (常に 0) で、本当の終了コードが報告されない。
+format_rc=0
+bash "$HOOK_DIR/auto-format.sh" <"$payload" || format_rc=$?
+if [ "$format_rc" -ne 0 ]; then
+  echo "format-then-lint.sh: auto-format.sh exited $format_rc (continuing to lint)" >&2
 fi
 
 # 最後に実行されるコマンドなので、lint.sh の終了コード (0 か 2) が

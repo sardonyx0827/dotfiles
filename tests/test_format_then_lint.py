@@ -14,6 +14,7 @@ stays hermetic: the CI pytest job installs pytest alone, no linters.
 """
 
 import json
+import shutil
 
 import pytest
 from conftest import REPO_ROOT
@@ -106,6 +107,27 @@ def test_lint_exit_code_is_the_hooks_exit_code(shell_env, tmp_path):
     res = shell_env.run(WRAPPER, stdin=_payload(target))
     assert res.returncode == 2, f"expected the lint gate's 2, got {res.returncode}"
     assert "F821" in res.stderr, res.stderr
+
+
+def test_a_failing_formatter_is_reported_with_its_real_exit_status(shell_env, tmp_path):
+    """auto-format.sh is fail-open by design, so a non-zero exit is unexpected.
+
+    The stderr note must name the status it really returned: `$?` read inside
+    `if ! cmd; then` is the status of the negated pipeline, which is always 0.
+    Driven against a copy of the wrapper next to stand-in hooks.
+    """
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    shutil.copy2(WRAPPER, hooks / WRAPPER.name)
+    (hooks / "auto-format.sh").write_text("cat >/dev/null\nexit 3\n", encoding="utf-8")
+    (hooks / "lint.sh").write_text("cat >/dev/null\nexit 2\n", encoding="utf-8")
+
+    res = shell_env.run(hooks / WRAPPER.name, stdin=_payload(tmp_path / "m.py"))
+
+    # 2 comes from the stand-in lint.sh: lint still ran after the formatter
+    # failed, and its verdict is the hook's exit status.
+    assert res.returncode == 2, res.stderr
+    assert "auto-format.sh exited 3" in res.stderr, res.stderr
 
 
 def test_missing_file_is_let_through(shell_env, tmp_path):
