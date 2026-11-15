@@ -175,12 +175,12 @@ fi
 # (共有側は生のエラー文字列だけを返す契約)。
 lint_file() {
   local target="$1"
-  local file_errors="" base
+  local file_errors="" base nl=$'\n'
   base=$(basename "$target")
   if hook_lint_file "$target" file_errors "$LOG_FILE" before-format; then
     return 0
   fi
-  ALL_ERRORS="${ALL_ERRORS}Lint errors found in ${base}:\n---\n${file_errors}---\n"
+  ALL_ERRORS="${ALL_ERRORS}Lint errors found in ${base}:${nl}---${nl}${file_errors}---${nl}"
   return 1
 }
 
@@ -228,10 +228,10 @@ if [ -n "$ALL_ERRORS" ]; then
   fi
 
   echo "" >&2
-  # `%b` ではなく `\n` だけを実改行へ戻す。`%b` は `\c` を「以降の出力を打ち切る」と
-  # 解釈するので、linter が引用したソース行に `\c` があると後続の指摘が Codex に
-  # 一件も届かない (exit 2 でブロックはするが、直すべき内容が渡らない)。
-  printf '%s' "${ALL_ERRORS//\\n/$'\n'}" >&2
+  # 実改行で積んだ文字列をそのまま書き出す (エスケープの解釈も置換もしない:
+  # linter が引用したソース中の `\n` / `\c` を壊さない。_lint_common.sh の出力箇所の
+  # 注記を参照)。
+  printf '%s' "$ALL_ERRORS" >&2
   echo "Please fix the above issues." >&2
   exit 2 # Codexが内容を読んで自動修正を試みる
 fi

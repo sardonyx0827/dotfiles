@@ -108,6 +108,8 @@ hook_lint_file() {
   local BASENAME
   BASENAME=$(basename "$FILE_PATH")
   local LINT_ERRORS=""
+  # 指摘の区切りは実改行で積む (下の出力箇所の注記を参照)。
+  local nl=$'\n'
   local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN TSC_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
   local GO_PKG_DIR eslint_dir eslint_root eslint_cwd tsc_line tsc_sep tsc_path
   local ruff_args=() rubocop_args=()
@@ -119,7 +121,7 @@ hook_lint_file() {
     HAS_ESLINT_CONFIG | ESLINT_BIN | TSC_BIN | CONFIG | HAS_MYPY_CONFIG | RELATED | cfg | \
     GO_PKG_DIR | eslint_dir | eslint_root | eslint_cwd | tsc_line | tsc_sep | tsc_path | \
     ruff_args | rubocop_args | \
-    hook_out_var | hook_log_file | hook_phase)
+    hook_out_var | hook_log_file | hook_phase | nl)
     echo "hook_lint_file: output variable '$hook_out_var' collides with an internal local" >&2
     return 2
     ;;
@@ -188,7 +190,7 @@ hook_lint_file() {
         [ "${f#/}" != "$f" ] || f="$PWD/$f"
         cd "$eslint_cwd" && "$ESLINT_BIN" "$f" 2>&1
       ); then
-        LINT_ERRORS="${LINT_ERRORS}[ESLint]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[ESLint]${nl}${OUTPUT}${nl}"
       else
         echo "  ESLint passed"
       fi
@@ -282,7 +284,7 @@ hook_lint_file() {
               RELATED="$OUTPUT"
             fi
             if [ -n "$RELATED" ]; then
-              LINT_ERRORS="${LINT_ERRORS}[TypeScript]\n${RELATED}\n"
+              LINT_ERRORS="${LINT_ERRORS}[TypeScript]${nl}${RELATED}${nl}"
             fi
           else
             echo "  tsc passed"
@@ -309,7 +311,7 @@ hook_lint_file() {
       # 「やることが無かった = 通過」として下の passed 分岐に落ちる (エラー扱いに
       # しない)。実 ruff での確認は tests の TestRuffForceExcludeRealRuff。
       if ! OUTPUT=$(ruff check "${ruff_args[@]}" --force-exclude "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[ruff]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[ruff]${nl}${OUTPUT}${nl}"
       else
         echo "  ruff passed"
       fi
@@ -322,7 +324,7 @@ hook_lint_file() {
       echo "  Running bandit (security)..."
       # -ll: 中程度以上の重大度のみ報告
       if ! OUTPUT=$(bandit -ll -q "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[bandit - security]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[bandit - security]${nl}${OUTPUT}${nl}"
       else
         echo "  bandit passed"
       fi
@@ -340,7 +342,7 @@ hook_lint_file() {
     if $HAS_MYPY_CONFIG && command -v mypy >/dev/null 2>&1; then
       echo "  Running mypy (type check)..."
       if ! OUTPUT=$(mypy "$FILE_PATH" --ignore-missing-imports 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[mypy]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[mypy]${nl}${OUTPUT}${nl}"
       else
         echo "  mypy passed"
       fi
@@ -360,7 +362,7 @@ hook_lint_file() {
         # 落ちる)だけになり、clippy を走らせる当の目的である lint が 1 件も
         # 引っかからない。cppcheck 側と同じく警告レベルも失敗として扱う。
         if echo "$OUTPUT" | grep -qE "^(error|warning)"; then
-          LINT_ERRORS="${LINT_ERRORS}[clippy]\n${OUTPUT}\n"
+          LINT_ERRORS="${LINT_ERRORS}[clippy]${nl}${OUTPUT}${nl}"
         else
           echo "  cargo clippy passed"
         fi
@@ -402,7 +404,7 @@ hook_lint_file() {
       if ! OUTPUT=$(go vet -C "$GO_PKG_DIR" . 2>&1); then
         # -C 配下の出力はパッケージ相対 (main.go:6:14) になるため、
         # 受け取ったエージェントがファイルへ辿れるようディレクトリを添える。
-        LINT_ERRORS="${LINT_ERRORS}[go vet] (in ${GO_PKG_DIR})\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[go vet] (in ${GO_PKG_DIR})${nl}${OUTPUT}${nl}"
       else
         echo "  go vet passed"
       fi
@@ -415,7 +417,7 @@ hook_lint_file() {
       if command -v staticcheck >/dev/null 2>&1; then
         echo "  Running staticcheck..."
         if ! OUTPUT=$(cd -P "$GO_PKG_DIR" && staticcheck . 2>&1); then
-          LINT_ERRORS="${LINT_ERRORS}[staticcheck] (in ${GO_PKG_DIR})\n${OUTPUT}\n"
+          LINT_ERRORS="${LINT_ERRORS}[staticcheck] (in ${GO_PKG_DIR})${nl}${OUTPUT}${nl}"
         else
           echo "  staticcheck passed"
         fi
@@ -443,12 +445,12 @@ hook_lint_file() {
       # 指摘ゼロと区別が付かず緑を返してしまう。ゲートが黙って無効化される
       # 経路なので、出力を見る前に潰す。
       if ! OUTPUT=$(checkstyle -c "$CONFIG" "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[checkstyle]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[checkstyle]${nl}${OUTPUT}${nl}"
       # 既定の google_checks.xml は severity=warning なので、指摘は [WARN] で
       # 出力され [ERROR] は現れない。[ERROR] だけを見ると、既定設定で拾えた
       # 指摘を 1 件残らず素通しすることになる。[INFO] は指摘ではないので除く。
       elif echo "$OUTPUT" | grep -qE "\[ERROR\]|\[WARN\]"; then
-        LINT_ERRORS="${LINT_ERRORS}[checkstyle]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[checkstyle]${nl}${OUTPUT}${nl}"
       else
         echo "  checkstyle passed"
       fi
@@ -481,12 +483,12 @@ hook_lint_file() {
         --template='{file}:{line}:{column}: ({severity}) {message} [{id}]' \
         --template-location='{file}:{line}:{column}: note: {info}' \
         "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[cppcheck]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[cppcheck]${nl}${OUTPUT}${nl}"
       # --enable で有効化した 4 カテゴリと error を漏れなく拾う。note 行は上の
       # --template-location 側の綴りで出るため、ここには掛からない
       # (指摘本体だけが判定に効く)。
       elif echo "$OUTPUT" | grep -qE "\((error|warning|style|performance|portability)\)"; then
-        LINT_ERRORS="${LINT_ERRORS}[cppcheck]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[cppcheck]${nl}${OUTPUT}${nl}"
       else
         echo "  cppcheck passed"
       fi
@@ -505,7 +507,7 @@ hook_lint_file() {
       echo "  Running rubocop (lint only)..."
       [ "$hook_phase" = "before-format" ] && rubocop_args=(--except Layout)
       if ! OUTPUT=$(rubocop --no-color "${rubocop_args[@]}" "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[rubocop]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[rubocop]${nl}${OUTPUT}${nl}"
       else
         echo "  rubocop passed"
       fi
@@ -520,7 +522,7 @@ hook_lint_file() {
     if command -v phpstan >/dev/null 2>&1; then
       echo "  Running phpstan..."
       if ! OUTPUT=$(phpstan analyse "$FILE_PATH" --no-progress 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[phpstan]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[phpstan]${nl}${OUTPUT}${nl}"
       else
         echo "  phpstan passed"
       fi
@@ -528,7 +530,7 @@ hook_lint_file() {
     elif command -v php >/dev/null 2>&1; then
       echo "  Running php -l (syntax check)..."
       if ! OUTPUT=$(php -l "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[php syntax]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[php syntax]${nl}${OUTPUT}${nl}"
       else
         echo "  php syntax OK"
       fi
@@ -542,7 +544,7 @@ hook_lint_file() {
     if command -v shellcheck >/dev/null 2>&1; then
       echo "  Running shellcheck..."
       if ! OUTPUT=$(shellcheck -x -P SCRIPTDIR "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[shellcheck]\n${OUTPUT}\n"
+        LINT_ERRORS="${LINT_ERRORS}[shellcheck]${nl}${OUTPUT}${nl}"
       else
         echo "  shellcheck passed"
       fi
@@ -558,10 +560,11 @@ hook_lint_file() {
 
   if [ -n "$LINT_ERRORS" ]; then
     hook_log "$hook_log_file" "FAILED: $BASENAME"
-    # `%b` ではなく `\n` だけを実改行へ戻す。区切りとしてリテラル `\n` を積む以上
-    # 復元は要るが、`%b` は `\c` も解釈し「以降の出力を打ち切る」ため、linter が
-    # 引用したソース行に `\c` が含まれるとそこから先の指摘が丸ごと消える。
-    printf '%s' "${LINT_ERRORS//\\n/$'\n'}" >>"$hook_log_file"
+    # 指摘は最初から実改行 ($nl) で積み、そのまま書き出す。区切りをリテラルの `\n` で
+    # 積んで最後に一括で改行へ戻す形は、linter が引用したソース中の `\n`
+    # (`print("x\ny")` や `C:\new`) まで改行に変えて断片を壊していた。`%b` も
+    # 使わない: `\c` を「以降の出力を打ち切る」と解釈し、後続の指摘が消える。
+    printf '%s' "$LINT_ERRORS" >>"$hook_log_file"
     printf -v "$hook_out_var" '%s' "$LINT_ERRORS"
     return 1
   fi

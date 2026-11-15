@@ -149,6 +149,28 @@ class TestLint:
         log = _log_file(shell_env, LINT, "lint.log")
         assert "FAILED: x.py" in log.read_text(encoding="utf-8")
 
+    def test_escape_sequences_in_linter_output_reach_the_model_verbatim(
+        self, LINT, shell_env, tmp_path
+    ):
+        # The report used to be joined with the two characters `\n` and every
+        # `\n` was turned into a newline at the end, so a linter quoting source
+        # such as `print("x\ny")` or a Windows path `C:\new` arrived broken
+        # (`print("x` / `y")`, `C:` / `ew`).
+        quoted = r'print("x\ny")  # C:\new'
+        shell_env.stub(
+            "ruff", body=f"printf '%s\\n' 'x.py:1:1: E501 {quoted}'", exit_code=1
+        )
+        shell_env.stub("bandit")
+        target = tmp_path / "x.py"
+        target.write_text("import os\n", encoding="utf-8")
+
+        res = shell_env.run(LINT, stdin=payload(target))
+
+        assert res.returncode == 2
+        assert quoted in res.stderr, res.stderr
+        log = _log_file(shell_env, LINT, "lint.log")
+        assert quoted in log.read_text(encoding="utf-8")
+
     def test_python_lint_clean_passes(self, LINT, shell_env, tmp_path):
         shell_env.stub("ruff")
         shell_env.stub("bandit")
@@ -1842,6 +1864,7 @@ class TestLintHelperOutputVarGuard:
             "tsc_line",
             "tsc_sep",
             "tsc_path",
+            "nl",
         ],
     )
     def test_a_colliding_output_variable_is_rejected(self, shell_env, tmp_path, name):
