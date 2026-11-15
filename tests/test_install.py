@@ -2137,6 +2137,112 @@ class TestRegisterClaudeMcpServers:
         python3_path = str(shell_env.stub_bin / "python3")
         assert f"-- {python3_path} " in gemini_calls[0]
 
+    def test_gemini_consultant_is_pinned_to_the_concrete_interpreter(self, shell_env):
+        # Under pyenv `command -v python3` is the shim, which picks the
+        # interpreter from the cwd's .python-version when Claude Code starts
+        # the server -- a project pinned to another version has no `mcp`
+        # there and the server never starts. Register the interpreter the shim
+        # resolves to right now (sys.executable), the one pip installed into.
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        gemini_calls = [
+            c
+            for c in shell_env.calls
+            if c.startswith("claude mcp add") and "gemini-consultant" in c
+        ]
+        assert len(gemini_calls) == 1, shell_env.calls
+        assert f"-- {real} " in gemini_calls[0], gemini_calls[0]
+
+    def test_a_non_executable_sys_executable_falls_back(self, shell_env, tmp_path):
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        ghost = tmp_path / "no-such-python"
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{ghost}"')
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        gemini = [c for c in shell_env.calls if "mcp add" in c and "gemini" in c]
+        assert len(gemini) == 1, shell_env.calls
+        assert f"-- {shell_env.stub_bin / 'python3'} " in gemini[0], gemini[0]
+
+    def test_an_interpreter_that_cannot_import_mcp_is_warned_about(self, shell_env):
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        real = shell_env.stub(
+            "python3.13-real",
+            body='case "$2" in *"import mcp"*) exit 1 ;; esac',
+        )
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert any(
+            "[WARNING]" in ln and "mcp" in ln and str(real) in ln
+            for ln in res.stdout.splitlines()
+        ), res.stdout
+        # Recorded, so main() does not end with "Installation completed!" while
+        # the server cannot start.
+        assert failures == ["gemini-consultant (mcp not importable)"], failures
+
+    def test_an_interpreter_that_imports_mcp_gets_no_warning(self, shell_env):
+        shell_env.stub("claude", body='[ "$1" = "mcp" ] && [ "$2" = "get" ] && exit 1')
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert "cannot import" not in res.stdout, res.stdout
+        assert failures == [], failures
+
+    def test_a_registration_with_another_interpreter_gets_a_re_pin_hint(
+        self, shell_env
+    ):
+        # add_mcp leaves an existing registration alone, so a machine registered
+        # with the pyenv shim by an older run stays on it; say how to re-pin.
+        shell_env.stub(
+            "claude",
+            body=(
+                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
+                '  [ "$3" = gemini-consultant ] && { echo "  Command: /old/shims/python3"; exit 0; }\n'
+                "  exit 1\n"
+                "fi"
+            ),
+        )
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert not [c for c in shell_env.calls if "mcp add" in c and "gemini" in c]
+        assert "claude mcp remove --scope user gemini-consultant" in res.stdout, (
+            res.stdout
+        )
+
+    def test_a_registration_with_the_same_interpreter_gets_no_hint(self, shell_env):
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub(
+            "claude",
+            body=(
+                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
+                f'  [ "$3" = gemini-consultant ] && {{ echo "  Command: {real}"; exit 0; }}\n'
+                "  exit 1\n"
+                "fi"
+            ),
+        )
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res = run_sourced("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stderr
+
+        assert "claude mcp remove" not in res.stdout, res.stdout
+
     def test_codex_is_not_registered_as_an_mcp_server(self, shell_env):
         # Codex CLI 0.154 removed its MCP-server mode: the registration only
         # produced a server that fails with CONNECTION_CLOSED on every start.

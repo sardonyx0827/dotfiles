@@ -1025,9 +1025,41 @@ register_claude_mcp_servers() {
 
   # Bare `python` does not exist on stock Ubuntu or Homebrew installs
   # (only `python3`); resolve a concrete interpreter instead.
-  local python_cmd
+  local python_cmd python_exe
   python_cmd="$(command -v python3 || command -v python || true)"
+  # Pin the concrete interpreter, not a version-manager shim. Under pyenv
+  # `command -v python3` is ~/.pyenv/shims/python3, which picks the version
+  # from the cwd's .python-version every time Claude Code starts the server:
+  # in a project pinned to another version `mcp` is not installed there and
+  # the server never starts. sys.executable is what the shim resolves to now,
+  # the same interpreter install_mcp_server_deps' pip installed into. Fall back
+  # to the resolved command when that cannot be read.
   if [ -n "$python_cmd" ]; then
+    python_exe="$("$python_cmd" -c 'import sys; print(sys.executable)' 2>/dev/null || true)"
+    case "$python_exe" in
+    /*)
+      if [ -f "$python_exe" ] && [ -x "$python_exe" ]; then
+        python_cmd="$python_exe"
+      fi
+      ;;
+    esac
+  fi
+  if [ -n "$python_cmd" ]; then
+    # install_mcp_server_deps resolves pip on its own, so it can have installed
+    # `mcp` for a different interpreter; check the one being registered.
+    if ! "$python_cmd" -c 'import mcp.server.fastmcp' &>/dev/null; then
+      print_warning "$python_cmd cannot import the 'mcp' package; gemini-consultant will not start until it is installed for that interpreter (e.g. $python_cmd -m pip install --user mcp)"
+      record_failure "gemini-consultant (mcp not importable)"
+    fi
+    # add_mcp keeps an existing registration, so one made by an older run with
+    # the pyenv shim (or a since-removed version) stays as it was.
+    local registered
+    if registered="$(claude mcp get gemini-consultant 2>/dev/null)"; then
+      case "$registered" in
+      *"$python_cmd"*) ;;
+      *) print_warning "MCP server 'gemini-consultant' is registered with another interpreter than $python_cmd; to re-pin it run: claude mcp remove --scope user gemini-consultant && ./install.sh" ;;
+      esac
+    fi
     add_mcp gemini-consultant -- "$python_cmd" "$HOME/.claude/mcp-servers/gemini-consultant/server.py"
   else
     print_warning "python3/python not found; skipping gemini-consultant MCP server registration"
