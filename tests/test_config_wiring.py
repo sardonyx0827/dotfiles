@@ -902,6 +902,35 @@ def test_vscode_git_stage_keys_are_distinct():
     assert by_key.get("ctrl+g s") == "git.stage"
 
 
+def test_vscode_clipboard_keys_are_not_taken_over_unconditionally():
+    """A clipboard chord bound to something else needs a `when` clause.
+
+    `cmd+x` bound to closeActiveEditor with no `when` closed the editor instead
+    of cutting -- in the editor, the find widget, the chat input and the
+    explorer alike, since a user binding without `when` wins everywhere.
+    """
+    clipboard = {"cmd+x", "cmd+c", "cmd+v", "ctrl+x", "ctrl+c", "ctrl+v"}
+    # Exact IDs, not substrings: "cut" is inside "executeCodeAction".
+    clipboard_commands = {
+        "editor.action.clipboardCutAction",
+        "editor.action.clipboardCopyAction",
+        "editor.action.clipboardPasteAction",
+        "execCut",
+        "execCopy",
+        "execPaste",
+    }
+    bindings = _load_jsonc(VSCODE_USER / "keybindings.json")
+    offenders = [
+        b
+        for b in bindings
+        if b.get("key") in clipboard
+        and b.get("command", "") not in clipboard_commands
+        and not b.get("command", "").startswith("-")
+        and not b.get("when")
+    ]
+    assert offenders == [], offenders
+
+
 def test_tmux_double_click_selects_the_word_under_the_mouse():
     """copy-mode needs `-M` to start at the mouse, and -M only works in a binding.
 
