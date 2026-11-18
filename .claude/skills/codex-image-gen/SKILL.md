@@ -22,8 +22,9 @@ in a caller-specified directory.
 Codex's `image_gen` lives in its system skill `~/.codex/skills/.system/imagegen/SKILL.md`.
 The **built-in tool mode is preferred and requires no `OPENAI_API_KEY`** (last verified 2026-11-18
 with Codex CLI 0.170 under `codex exec -s workspace-write`: a still landed in the named
-destination; the raw built-in output was 1254x1254 for a square request). A CLI fallback exists
-but needs `OPENAI_API_KEY` and is only for true native transparency — see Transparency below.
+destination; the raw built-in output was 1254x1254 for a square request and 1536x1024 for 3:2).
+A CLI fallback exists but needs `OPENAI_API_KEY` and is only for true native transparency — see
+Transparency below.
 
 ## Step 0 — pick the output kind
 

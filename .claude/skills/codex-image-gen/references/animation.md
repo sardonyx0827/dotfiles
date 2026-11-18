@@ -12,11 +12,11 @@ it yourself.
 
 ## Status (verified 2026-11-18, Codex CLI 0.170.0, ChatGPT login)
 
-| Option                                       | Status                                                                                                                                                                                                                                                                                       |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Spritesheet → local encode (GIF / MP4 / ...) | Works. Tested on one Codex-generated 2x2 sheet of a flat bouncing ball: the floor line and ball position lined up across all four frames. That proves flat art only; characters, hands, faces and liquids drift more. The commands below were run as written on a 1254px copy of that sheet. |
-| Native GIF (`gif` option of `imagegen`)      | Dormant: the backend rejects it on this login. See the last section.                                                                                                                                                                                                                         |
-| Generative video                             | Not available in the current Codex setup. See "Video requests".                                                                                                                                                                                                                              |
+| Option                                       | Status                                                                                                                                                                                                                                                     |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Spritesheet → local encode (GIF / MP4 / ...) | Works on flat art: a bouncing ball (2x2) and a waving cat (3x2), with a limb mix-up on the cat's first sheet — see "Spell out what moves". Photoreal subjects, close-up hands and faces, and liquids are untested. The commands below were run as written. |
+| Native GIF (`gif` option of `imagegen`)      | Dormant: the backend rejects it on this login. See the last section.                                                                                                                                                                                       |
+| Generative video                             | Not available in the current Codex setup. See "Video requests".                                                                                                                                                                                            |
 
 ## Frame budget
 
@@ -26,9 +26,11 @@ it yourself.
   more distinct poses than that is a video request (see Video requests).
 - **Use a grid whose cell count equals the frame count, with no empty cells:** 4 → 2x2, 6 → 3x2,
   8 → 4x2, 9 → 3x3. An empty cell would be encoded as a blank frame.
-- The raw built-in output measured 1254x1254 for a square request. **That size is not guaranteed.**
-  Only the square case was tested; a non-square sheet's raw size is unverified. Measure the actual
-  sheet before slicing. At 1254px: 2x2 ≈ 627px cells, 3x3 ≈ 418px, 4x4 ≈ 313px.
+- Raw built-in output measured 1254x1254 for a square request and 1536x1024 for a 3:2 request
+  (2026-11-18). **These sizes are not guaranteed**, and other aspects are untested, so measure the
+  actual sheet before slicing. Cell sizes at those raw sizes:
+  - 1254px square: 2x2 ≈ 627px cells, 3x3 ≈ 418px, 4x4 ≈ 313px
+  - 1536x1024: 3x2 = 512px cells exactly
 - Frame count alone does not make motion smooth. Extra cells help only when each one is a real
   in-between pose, and duplicated frames never help.
 - With square cells, the sheet aspect is cols : rows (3x2 → 3:2 landscape). For non-square cells it
@@ -39,6 +41,29 @@ it yourself.
 
 Use this in place of the still template in `SKILL.md`. Everything else in the invocation stays the
 same: a new empty scratch directory, the secret scan, `-s workspace-write`, and `--ephemeral`.
+
+**Spell out what moves** when the subject has a left/right pair (paws, arms, legs, eyes):
+
+- Fill the template's `Moving part:` line. Put the side first, as seen in the image ("VIEWER'S
+  LEFT"), and say what the paired part does in every cell.
+- In any frame where the moving part crosses toward the centre line, repeat the side there too
+  ("the SAME viewer's-left paw").
+- For whole-subject motion (a bouncing ball, a pulsing shape), drop `Moving part:` and state the axis
+  of motion in `Frames:` instead.
+
+**Evidence — the waving-cat trial, 2026-11-18, 3x2 sheet, flat art:**
+
+- **Sheet 1:** the prompt said "the cat's right front paw (on the viewer's left)" and described one
+  frame as "tilted toward the viewer's right". That cell raised the opposite paw.
+- **Sheet 2:** the prompt moved the side first and into capitals, kept the other paw on the ground
+  in all cells, and repeated the side in the crossing frame. That sheet kept the same paw
+  throughout.
+- **Registration:** the body's lower half lined up within 5px (sheet 1) and 1px (sheet 2) across
+  cells, measured by trimming the background on each frame.
+- **Codex's self-report:** Codex's report on sheet 1 flagged the swapped cell. A self-report is a
+  hint, not QA; Claude's contact-strip check still decides.
+- **Caveat:** several wording changes went into one retry, so this is a single data point, not a
+  proven cause.
 
 ```text
 Generate ONE still image with the built-in image_gen tool (do NOT set the `gif` option) and
@@ -51,7 +76,12 @@ Asset:
    Sheet aspect: <cols>:<rows> (<landscape|portrait|square>), square cells
    Grid: exactly <cols> columns x <rows> rows = <N> equal cells, every cell filled,
          read left-to-right, top-to-bottom
-   Frames: 1: <phase> / 2: <phase> / ... / <N>: <phase> (frame <N> leads back into frame 1)
+   Subject (identical in every cell): <what it is, its base pose apart from the moving part,
+         where it sits in the cell>
+   Moving part (only for a left/right pair; omit for whole-subject motion): only the VIEWER'S
+         <LEFT|RIGHT> <part> moves; the <paired part> stays <state> in all <N> cells
+   Frames: 1: <phase> / 2: <phase> / ... / <N>: <phase> (frame <N> leads back into frame 1;
+         repeat the side in any phase that crosses toward the centre line)
    Fixed in every cell: camera, framing, background, lighting, subject scale, ground-line position
    Avoid: borders, gutters, grid lines, frame numbers, labels, any text, watermark
    Style: <palette / tone / medium>
@@ -61,7 +91,8 @@ Requirements:
 - Move/copy the file into the destination (do NOT leave it only under
   $CODEX_HOME/generated_images/...).
 - Write nothing outside the current working directory.
-- Report the file's absolute path, pixel dimensions and byte size.
+- Report the file's absolute path, pixel dimensions and byte size. If a Moving part line is given,
+  list any cell numbers that break it (or say none do).
 ```
 
 ## Slice and encode (Claude, inside the scratch directory)
