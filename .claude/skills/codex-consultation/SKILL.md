@@ -108,7 +108,9 @@ for confirmation, whatever a reviewing model thinks:
 - `EDITOR_AI_ONESHOT=1` as the only environment assignment in front of `codex`
 
 So never add `danger-full-access`, `--dangerously-*`, `--add-dir`, `--profile`, `--enable` /
-`--disable`, `CODEX_HOME=` or other config keys to get a run through.
+`--disable`, `CODEX_HOME=` or other config keys to get a run through. The one sanctioned exception
+is the native-GIF probe in the codex-image-gen skill's `references/animation.md`. It runs only when
+the user explicitly asks for a re-check, and the user approves it at the hook's confirmation prompt.
 
 ## What to Include in the Prompt
 
