@@ -47,6 +47,30 @@ DEFAULT_HOOK_ENV = {
     "GEMINI_FLASH_MODEL": "fallback-model",
 }
 
+# The umask the suite runs under, whatever the runner's own is. Many tests build a
+# HOME or a bin directory and expect the hooks' trust checks (trusted_path: no
+# group- or other-writable directory on the way) to accept it. Under the umask 002
+# that Ubuntu gives its users (pam_umask), those directories come out 0775 and the
+# checks rightly refuse them; the production code is not loosened for that. A test
+# that is about the umask sets its own inside the test and restores it.
+SUITE_UMASK = 0o022
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _suite_umask():
+    """SUITE_UMASK for the whole session (session- and module-scoped fixtures too)."""
+    previous = os.umask(SUITE_UMASK)
+    yield
+    os.umask(previous)
+
+
+@pytest.fixture(autouse=True)
+def _test_umask(_suite_umask):
+    """SUITE_UMASK at the start of every test, and whatever was set put back after."""
+    previous = os.umask(SUITE_UMASK)
+    yield
+    os.umask(previous)
+
 
 def hook_payload(command: str, tool_name: str = "Bash") -> dict:
     """Build a minimal PreToolUse hook input for a Bash command."""

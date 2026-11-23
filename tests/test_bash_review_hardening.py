@@ -1,9 +1,11 @@
 """Regression tests for the bash-review gate hardening.
 
-Each class pins one audited defect of the shared decision module
-(.claude/hooks/_bash_review_common.py) or of the two entry points. They live
-apart from test_bash_review.py because they were written together, from one
-audit, and read best side by side.
+Each class pins one behaviour of the shared decision module
+(.claude/hooks/_bash_review_common.py) or of the two entry points: verdict
+parsing, Gemini response handling, what reasons and logs may echo, the Codex
+allowlist, the secret pre-scan, the stdin rules and the harness-write check.
+They live apart from test_bash_review.py so that related shapes read side by
+side.
 """
 
 import http.client
@@ -582,19 +584,25 @@ class TestSummaryLogIsOneLinePerDecision:
         assert text.rstrip("\n").split(" | ")[3:] == [f"first / second{self.MARK}third"]
 
 
-class TestNothingThatAskedBeforeAllowsNow:
-    """Inputs an independent review found had moved from ask to allow (or to
-    ERROR, which a lone Codex ALLOW resolves) in the first cut of this change."""
+class TestInputsThatMustStayAsk:
+    """Inputs that must stay ask: a looser parse would turn them into allow (or
+    into ERROR, which a lone Codex ALLOW resolves)."""
 
     @pytest.mark.parametrize("output", ["ALLOW_", "_ALLOW_", "ALLOW_OK", "ALLOW*x"])
     def test_allow_keeps_its_word_boundary(self, output):
         assert _common._parse_verdict(output) == "ASK"
 
     def test_a_run_of_decoration_does_not_make_the_parser_quadratic(self):
+        # What this pins: a long run of decoration is parsed in linear time. Linear
+        # costs about 0.1 ms of CPU here; a deliberately quadratic regex over the
+        # run took 0.11 s at 20 KB, so about 10 s at 200 KB. The 0.25 s bound on
+        # this process's CPU time (not stretched by other processes on a loaded CI
+        # runner) leaves orders of magnitude of headroom on the linear side and
+        # about 40x on the quadratic side.
         hostile = "ALLOW" + "*" * 200_000 + "X"
-        started = time.monotonic()
+        started = time.process_time()
         assert _common._parse_verdict(hostile) == "ASK"
-        assert time.monotonic() - started < 1.0
+        assert time.process_time() - started < 0.25
 
     @pytest.mark.parametrize(
         "parts",
@@ -632,7 +640,7 @@ class TestNothingThatAskedBeforeAllowsNow:
         assert "no verdict" in output
 
 
-class TestCodexAllowlistGapsSecondPass:
+class TestHiddenCodexEnvironmentChanges:
     @staticmethod
     def _reason(command):
         subs = _common._split_commands(command)
@@ -747,16 +755,22 @@ class TestSecretScanGhSecretBodyStaysOnItsLine:
 @pytest.mark.parametrize(
     "line",
     [
-        " " * 20_000 + " ALLOW  x",
-        " " * 20_000 + "X",
-        "*" * 20_000 + " " * 20_000 + "x",
-        "> " * 10_000 + "ALLOW x",
+        " " * 100_000 + " ALLOW  x",
+        " " * 100_000 + "X",
+        "*" * 100_000 + " " * 100_000 + "x",
+        "> " * 50_000 + "ALLOW x",
     ],
 )
 def test_the_verdict_parser_is_linear_in_leading_padding(line):
-    started = time.monotonic()
+    # What this pins: leading padding is parsed in linear time. Linear costs a few
+    # ms of CPU at most here; a deliberately quadratic regex over the padding took
+    # 0.37 s at 20 KB and 1.5 s at 40 KB, so 10-40 s at these sizes. The 0.5 s
+    # bound on this process's CPU time (not stretched by other processes on a
+    # loaded CI runner) leaves about 100x headroom on the linear side and 20x or
+    # more on the quadratic side.
+    started = time.process_time()
     assert _common._parse_verdict(line) == "ASK"
-    assert time.monotonic() - started < 0.5
+    assert time.process_time() - started < 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -804,6 +818,9 @@ HARNESS_REDIRECT_CASES = [
 ]
 
 HARNESS_WRITER_CASES = [
+    # a link whose target is protected is an alias of it: a later write through the
+    # link never names the protected path, so the link itself is asked
+    "ln -s .claude/hooks/x.py /tmp/l",
     "tee -a .claude/settings.json",
     "echo x | tee .claude/hooks/x.py",
     "rm .claude/hooks/x.py",
@@ -933,7 +950,6 @@ HARNESS_NOT_A_WRITE_CASES = [
     "cat < .claude/settings.json | jq .",
     "cat .claude/settings.json > /tmp/x",
     "cp .claude/settings.json /tmp/x",
-    "ln -s .claude/hooks/x.py /tmp/l",
     # a positional argument handed to code that only reads it
     "bash -c 'cat \"$1\"' _ .claude/settings.json",
     # with -t, every operand is a source and only the -t value is the destination
@@ -995,8 +1011,11 @@ HARNESS_NOT_A_WRITE_CASES = [
     "python3 - <<'EOF'\nprint(a > \".claude/settings.json\")\nEOF",
 ]
 
-# Accepted residuals, documented as known gaps in hooks/README.md. Pinned so that
-# closing one later is a visible, deliberate edit to this list.
+# Residuals of the lexical check alone (cwd=None): what `harness_write_ask_reason`
+# misses when it is not given a cwd. With the session cwd (what the entry points pass)
+# some of these are resolved -- the `cd` form and `x=…; tee $x` are asked then (see
+# tests/test_bash_review_harness_paths.py); this list pins the lexical behaviour only,
+# so closing one lexically is a visible, deliberate edit to it.
 HARNESS_WRITE_RESIDUAL_CASES = [
     "cd .claude/hooks && echo x > a.py",
     "git checkout -- .claude/hooks/x.py",
@@ -1008,6 +1027,13 @@ HARNESS_WRITE_RESIDUAL_CASES = [
     "echo 'rm .claude/hooks/x' | sh",
     "printf 'rm .claude/hooks/x' | bash",
     "bash <<< 'rm .claude/hooks/x'",
+    # a sed script read from a file, or spread over lines inside one quoted word
+    "sed -f evil.sed input",
+    "sed -n '1,3{w .claude/settings.json\n}' input",
+    # a bind mount of the working tree that happens to contain `.claude` (docker
+    # mounts are not resolved against the cwd, even when one is given)
+    'docker run --rm -v "$PWD":/app alpine true',
+    "docker run --rm -v .:/app alpine true",
 ]
 
 
@@ -1061,11 +1087,11 @@ class TestHarnessConfigWriteAsks:
         assert _common.classify_high_risk(sub, command) != "", command
 
     def test_shell_code_recursion_is_bounded(self):
-        # Three levels of `sh -c` nesting: the third is not unwrapped (it still
-        # reaches the AND gate as `sh -c`), so a pathological nesting cannot make
-        # the deterministic tier recurse without bound.
+        # Three levels of `sh -c` nesting: the third is not unwrapped, so a
+        # pathological nesting cannot make the deterministic tier recurse without
+        # bound -- and the unread code is asked, not passed as "no write".
         nested = 'sh -c "sh -c \'sh -c \\"echo x > .claude/settings.json\\"\'"'
-        assert _harness_reason(nested) == ""
+        assert "deeper than the review unwraps" in _harness_reason(nested)
         sub = _common._split_commands(nested)
         assert _common.classify_high_risk(sub, nested) != ""
 
@@ -1076,8 +1102,9 @@ class TestHarnessConfigWriteAsks:
     @pytest.mark.parametrize("command", HARNESS_WRITE_RESIDUAL_CASES)
     def test_residual_forms_are_pinned(self, command):
         assert _harness_reason(command) == "", (
-            f"{command!r} is now asked -- if that is intentional, move it out of "
-            "HARNESS_WRITE_RESIDUAL_CASES and drop it from the README's known gaps"
+            f"{command!r} is now asked by the lexical check (cwd=None) -- if that "
+            "is intentional, move it out of HARNESS_WRITE_RESIDUAL_CASES and update "
+            "the README's lexical-only gaps"
         )
 
     def test_absolute_home_codex_path_is_recognised(self, monkeypatch):

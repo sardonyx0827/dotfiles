@@ -557,7 +557,7 @@ class TestAgentBlockDirective:
 
 
 class TestWrappedDenyExecutables:
-    """A3 parity: wrappers that exec their argument resolve to the wrapped tool,
+    """Parity: wrappers that exec their argument resolve to the wrapped tool,
     so the exit-2 hard block applies exactly as it does for the bare form."""
 
     @pytest.mark.parametrize(
@@ -578,20 +578,33 @@ class TestWrappedDenyExecutables:
         assert res.exit_code == 2
         assert "Blocked dangerous command" in res.stderr
 
-    def test_glob_executable_escalates_to_the_dual_review_gate(self, run_hook):
-        # Gemini=ALLOW + Codex=ASK が弁別子 (低リスク経路なら Codex を呼ばず exit 0)
+    def test_glob_executable_is_blocked_before_any_model(self, run_hook):
+        # 実行体の位置の glob は名前を隠す綴りとして、モデルを呼ぶ前に静的にブロック
+        # (harness_write_ask_reason)。両モデルが ALLOW でも exit 2 になることが弁別子。
+        res = run_hook(
+            HOOK,
+            hook_payload("/usr/bin/py?hon3 -c 1"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.exit_code == 2
+        assert "hides the command name" in res.stderr
+
+    def test_glob_naming_a_deny_target_is_denied_before_any_model(self, run_hook):
+        # DENY の名前に当たる glob (`cur?` は curl を名指しうる) は、glob の確認より先に
+        # 静的 DENY (find_deny_command)
         res = run_hook(
             HOOK,
             hook_payload("/usr/bin/cur? http://x"),
             urlopen=fake_gemini("ALLOW"),
-            run=fake_run(stdout="ASK"),
+            run=fake_run(stdout="ALLOW"),
         )
         assert res.exit_code == 2
-        assert "High-risk" in res.stderr
+        assert "Blocked dangerous command" in res.stderr
 
 
 class TestInputLimit:
-    """A4 parity: over-cap input is not analysed; the Codex variant has no
+    """Parity: over-cap input is not analysed; the Codex variant has no
     `ask`, so the ask-equivalent is the exit-2 block (same convention as the
     secret pre-scan)."""
 
@@ -648,9 +661,9 @@ class TestInputLimit:
         assert "ASK (input limit)" in detail_text
 
 
-class TestNewDenyAndHighRiskEntries:
-    """B11 / A1 parity: the engine is shared, so one representative per table
-    pins that the Codex entry point routes the new entries the same way."""
+class TestDenyAndHighRiskEntries:
+    """Parity: the engine is shared, so one representative per table pins that
+    the Codex entry point routes the deny / high-risk entries the same way."""
 
     @pytest.mark.parametrize(
         "command", ["scp a.txt host:/tmp/", "slogin host", "telnet host 25"]

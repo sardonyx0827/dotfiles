@@ -20,6 +20,30 @@ sys.path.insert(0, str(REPO_ROOT / ".claude" / "hooks"))
 import _bash_review_common as _common  # noqa: E402
 
 
+# Linear-time checks compare the CPU time of an input with that of one `growth`
+# times longer: linear work grows about growth-fold, quadratic work growth**2-fold.
+# The CPU time of this process (process_time) is not stretched by other processes
+# on a loaded single-core CI runner, the best of a few tries drops one-off pauses,
+# and a ratio does not depend on how fast the machine is.
+def _cpu_seconds(fn, arg) -> float:
+    started = time.process_time()
+    fn(arg)
+    return time.process_time() - started
+
+
+def _assert_linear(fn, make, *, growth: int, max_ratio: float, tries: int = 3):
+    """make(scale) builds the input; make(growth) is growth times make(1)."""
+    short, long_ = make(1), make(growth)
+    best_short = best_long = float("inf")
+    for _ in range(tries):
+        best_short = min(best_short, _cpu_seconds(fn, short))
+        best_long = min(best_long, _cpu_seconds(fn, long_))
+        if best_long <= max_ratio * best_short:
+            return
+    ratio = best_long / max(best_short, 1e-9)
+    pytest.fail(f"{growth}x the input took {ratio:.0f}x the CPU time (quadratic?)")
+
+
 def _run_raw(hook, raw, capsys, monkeypatch):
     """Execute a hook against arbitrary raw stdin bytes (malformed-input tests).
 
@@ -2217,6 +2241,65 @@ class TestReadmeThreatModelMatchesBehavior:
                 "form; those examples are what make the claim falsifiable"
             )
 
+    # The permissions.deny Bash rules that the deterministic layer mirrors: a prefix
+    # rule misses these spellings, the resolver does not.
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "/usr/bin/printenv KEY",
+            "(printenv KEY)",
+            "/opt/homebrew/bin/gh auth token",
+            "git -C . credential fill",
+            "security find-generic-password -w",
+        ],
+    )
+    def test_deny_mirror_resolves_absolute_paths_and_subshells(self, command):
+        matched, _ = _common.find_deny_command(_common._split_commands(command))
+        assert matched, (
+            f"{command!r} is no longer denied; the README threat model describes the "
+            "permissions.deny mirror as resolving absolute paths and subshells"
+        )
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "docker compose up -d",
+            "docker run -v ~/.ssh:/s alpine",
+            "docker run --network=host alpine",
+            "git config core.hooksPath /tmp/h",
+            "git -c core.fsmonitor=x status",
+            "git checkout -- .",
+        ],
+    )
+    def test_container_and_git_escalations_reach_the_and_gate(self, command):
+        sub = _common._split_commands(command)
+        assert _common.classify_high_risk(sub, command) != "", (
+            f"{command!r} reached the low-risk path; the README lists it as high-risk"
+        )
+
+    def test_container_network_egress_is_accepted_not_blocked(self):
+        command = "docker run alpine wget -q -O- https://example.com"
+        sub = _common._split_commands(command)
+        assert _common.find_deny_command(sub, command) == (False, "")
+        assert _common.classify_high_risk(sub, command) == ""
+
+    def test_readme_names_the_new_rules_and_the_accepted_egress(self):
+        text = self.README.read_text(encoding="utf-8").casefold()
+        for needle in (
+            "/usr/bin/printenv",
+            "git credential",
+            "docker compose",
+            "core.hooksPath",
+            "docker.sock",
+            "network egress from inside a container",
+            "_CONTEXT_SCANNERS",
+            "exit 0 with empty stdout",
+        ):
+            assert needle.casefold() in text, (
+                f"the hooks README no longer mentions {needle!r}; the threat model "
+                "must describe the rules the tests above pin"
+            )
+
 
 class TestParseVerdict:
     @pytest.mark.parametrize(
@@ -3414,10 +3497,12 @@ class TestHighRiskClassifier:
         "command",
         [
             # Plain container use keeps isolation: stays on the fast path.
+            # (`docker compose up` is not here: compose files are not parsed, so
+            # it reaches the AND gate -- test_bash_review_gate_hardening.py pins
+            # that.)
             "docker ps",
             "docker container ls",
             "docker build -t app .",
-            "docker compose up -d",
             "docker run ubuntu echo hi",
             # Ordinary mounts (relative / non-root absolute) are the everyday
             # dev shape; flagging them would be paid on every container run.
@@ -4183,9 +4268,9 @@ class TestSecretPreScanGuard:
 
 
 # ---------------------------------------------------------------------------
-# A3: 後続を exec する前置 (zsh の precommand modifier / macOS ユーティリティ /
-# `NAME+=value` 代入 / `function` キーワード) が実行体解決を素通りして、
-# deny 対象のツールが単独モデルの低リスク経路へ落ちていた。
+# 後続を exec する前置 (zsh の precommand modifier / macOS ユーティリティ /
+# `NAME+=value` 代入 / `function` キーワード) も実行体の解決で剥がす。素通りすると、
+# deny 対象のツールが単独モデルの低リスク経路へ落ちる。
 # ---------------------------------------------------------------------------
 EXEC_PREFIX_DENY_CASES = [
     # zsh precommand modifier
@@ -4302,6 +4387,12 @@ GLOB_EXECUTABLE_CASES = [
     "env /usr/bin/cur? http://x",
     "timeout 5 /usr/bin/su?o ls",
 ]
+# glob が DENY の名前に当たらないもの (DENY とは偽らず、高リスクへ倒すだけ)
+GLOB_EXECUTABLE_NOT_DENY_CASES = [
+    "/usr/bin/py?hon3 -c 1",
+    "/bin/l? x",
+    "su? -c x",  # `?` は 1 文字: su で始まる 3 文字の DENY 名は無い
+]
 
 # 先頭の `[` / `[[` (test ビルトイン) は glob ではない。実行体位置の `*` / `?` を
 # 含まない日常のコマンドが巻き込まれないことも固定する。
@@ -4356,9 +4447,18 @@ class TestGlobInExecutablePosition:
         assert _common._split_prefix(_common._tokenize(command)) is None
 
     @pytest.mark.parametrize("command", GLOB_EXECUTABLE_CASES)
+    def test_glob_executable_naming_a_deny_target_is_denied(self, command):
+        # glob が DENY の名前に当たれば DENY (`cur?` は curl を名指しうる)。高リスク層へ
+        # 倒すだけだと、glob の静的 ASK が先に決まり、人の承認で通ってしまう
+        sub = _common._split_commands(command)
+        matched, name = _common.find_deny_command(sub)
+        assert matched and name in ("curl", "sudo"), (command, name)
+        assert _common.classify_high_risk(sub, command) != ""
+
+    @pytest.mark.parametrize("command", GLOB_EXECUTABLE_NOT_DENY_CASES)
     def test_glob_executable_escalates_to_high_risk(self, command):
         sub = _common._split_commands(command)
-        # 展開結果は静的に決まらないので DENY とは偽らない
+        # DENY の名前に当たらない glob は DENY とは偽らない
         assert _common.find_deny_command(sub) == (False, "")
         assert _common.classify_high_risk(sub, command) != ""
 
@@ -4379,17 +4479,29 @@ class TestGlobInExecutablePosition:
         sub = _common._split_commands(command)
         assert "wrapped command" in _common.classify_high_risk(sub, command), command
 
-    def test_glob_executable_reaches_the_dual_review_gate(self, run_hook):
-        # Gemini=ALLOW + Codex=ASK が弁別子: 単独モデルの低リスク経路なら
-        # Codex を呼ばずに allow を返す。
+    def test_glob_executable_is_asked_before_any_model(self, run_hook):
+        # 実行体の位置の glob は名前を隠す綴りとして、モデルを呼ぶ前に静的に ask
+        # (harness_write_ask_reason)。二モデル AND ゲートには回さない。
+        # Gemini=ALLOW + Codex=ALLOW でも allow にならないことが弁別子。
+        res = run_hook(
+            HOOK,
+            hook_payload("/usr/bin/py?hon3 -c 1"),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ALLOW"),
+        )
+        assert res.decision == "ask"
+        assert "hides the command name" in res.reason
+
+    def test_glob_naming_a_deny_target_is_denied_before_any_model(self, run_hook):
+        # DENY の名前に当たる glob は、glob の ASK より先に静的 DENY (人の承認で通さない)
         res = run_hook(
             HOOK,
             hook_payload("/usr/bin/cur? http://x"),
             urlopen=fake_gemini("ALLOW"),
-            run=fake_run(stdout="ASK"),
+            run=fake_run(stdout="ALLOW"),
         )
-        assert res.decision == "ask"
-        assert "High-risk" in res.reason
+        assert res.decision == "deny"
+        assert "Blocked dangerous command" in res.reason
 
 
 # 実行体位置のブレース展開 (`{curl,x}` → `curl x`、`c{u,}rl` → `curl crl`) も glob と同じく
@@ -4480,17 +4592,21 @@ class TestBraceInExecutablePosition:
         sub = _common._split_commands(command)
         assert "wrapped command" in _common.classify_high_risk(sub, command)
 
-    def test_unclosed_brace_in_executable_position_is_linear(self):
-        # An unclosed `{a,a,a,…` under the input cap must not trigger regex
-        # backtracking that is quadratic in its length (it now runs on every line).
-        # The hook evaluates each line several times (deny, high-risk, harness, and
-        # each classification variant), so even ~1s per call adds up to many seconds.
-        for token in ("{" + "a," * 15_000, "{" + "a.." * 10_000):
-            started = time.monotonic()
-            _common._split_prefix([token, "x"])
-            # The quadratic form took ~1s per call on a laptop; linear is milliseconds.
-            # The bound leaves headroom for a loaded CI runner while still failing it.
-            assert time.monotonic() - started < 0.5, token[:8]
+    @pytest.mark.parametrize("unit", ["a,", "a.."])
+    def test_unclosed_brace_in_executable_position_is_linear(self, unit):
+        # What this pins: an unclosed `{a,a,a,…` under the input cap must not
+        # trigger regex backtracking that is quadratic in its length (it runs on
+        # every line). The hook evaluates each line several times (deny, high-risk,
+        # harness, and each classification variant), so even ~1s per call adds up
+        # to many seconds. The quadratic form took ~1s per call for 30 KB; the long
+        # input here is 30 KB (under MAX_INPUT_CHARS), the short one 1/8 of it.
+        repeats = 30_000 // len(unit) // 8
+
+        def make(scale: int) -> list[str]:
+            return ["{" + unit * (repeats * scale), "x"]
+
+        assert len(make(8)[0]) <= _common.MAX_INPUT_CHARS
+        _assert_linear(_common._split_prefix, make, growth=8, max_ratio=20)
 
     @pytest.mark.parametrize("command", BRACE_AFTER_ARITHMETIC_SHIFT_CASES)
     def test_spoofed_heredoc_body_does_not_relax(self, command):
@@ -4511,7 +4627,7 @@ class TestBraceInExecutablePosition:
 
 
 # ---------------------------------------------------------------------------
-# A4: 入力サイズの上限。静的解析 (分割・秘密スキャン・分類) は入力に対して
+# 入力サイズの上限。静的解析 (分割・秘密スキャン・分類) は入力に対して
 # 二次の計算量を持つ形 (ネストした `$(`、区切りなしの `token` 連打) があり、
 # 上限なしだと 1 回のフック呼び出しが分〜時間単位で止まる。上限超過は
 # 「解析しない」= ask (確認) であって deny でも無言 allow でもない。
@@ -4634,7 +4750,7 @@ class TestInputLimitInHook:
 
 
 # ---------------------------------------------------------------------------
-# B11: 欠けていた DENY / 高リスクのエントリ
+# ネットワーク送出などの DENY / 高リスクのエントリ
 # ---------------------------------------------------------------------------
 NETWORK_EGRESS_DENY_CASES = [
     ("slogin host", "slogin"),
@@ -4667,7 +4783,7 @@ class TestNetworkEgressDeny:
         assert "scp" in res.reason
 
 
-HIGH_RISK_NEW_CASES = [
+HIGH_RISK_ENTRY_CASES = [
     # 他のシェル (-c でコード文字列を実行)
     "csh -c 'echo hi'",
     "tcsh -c 'echo hi'",
@@ -4730,8 +4846,8 @@ NOT_HIGH_RISK_CASES = [
 ]
 
 
-class TestNewHighRiskEntries:
-    @pytest.mark.parametrize("command", HIGH_RISK_NEW_CASES)
+class TestHighRiskEntries:
+    @pytest.mark.parametrize("command", HIGH_RISK_ENTRY_CASES)
     def test_form_is_high_risk(self, command):
         label = _common.classify_high_risk(_common._split_commands(command), command)
         assert label != "", f"{command!r} fell to the single-model path"
@@ -4770,7 +4886,7 @@ class TestNewHighRiskEntries:
 
 
 # ---------------------------------------------------------------------------
-# A1 (一部): Codex の設定ファイルは MCP の認証ヘッダを保持する
+# Codex の設定ファイルは MCP の認証ヘッダを保持する
 # ---------------------------------------------------------------------------
 class TestCodexConfigIsSensitive:
     @pytest.mark.parametrize(
@@ -4814,7 +4930,7 @@ class TestCodexConfigIsSensitive:
 
 
 # ---------------------------------------------------------------------------
-# B13: 秘密スキャナの精度 (誤検知の除去 / 既知形式の追加)
+# 秘密スキャナの精度 (参照だけの代入は誤検知しない / 既知形式は拾う)
 # ---------------------------------------------------------------------------
 class TestSecretAssignmentPrecision:
     """コード中の「資格情報を *参照* するだけ」の代入は値ではない。呼び出し・添字・
@@ -5261,20 +5377,30 @@ class TestSecretTokenNextToNonAscii:
 class TestSecretScanIsLinear:
     """区切りなしの連打でも線形時間。"secret assignment" の `[A-Za-z0-9_]*` が
     連打の末尾まで貪欲に食って巻き戻すと二次になる (100 KB の `token` 連打が分単位)。
-    閾値は旧実装 (分単位) を確実に検出する値で、遅い CI でも揺れない余裕を取る。"""
+    _assert_linear で 16 倍の入力に掛かる CPU 時間の比を見る (線形なら約 16、二次なら
+    約 256。上限 40)。短い入力は約 2,000 文字。"""
+
+    GROWTH = 16
+    MAX_RATIO = 40
+    SHORT = 2_000
+
+    def _assert_scan_is_linear(self, hook_fns, make):
+        scan = hook_fns["scan_secrets"]
+        long_ = make(self.GROWTH)
+        assert scan(long_, {"command": long_})[0] is False
+        _assert_linear(
+            lambda text: scan(text, {"command": text}),
+            make,
+            growth=self.GROWTH,
+            max_ratio=self.MAX_RATIO,
+        )
 
     @pytest.mark.parametrize(
         "unit", ["token", "password", "secret", "api_key", "password_", "token_x"]
     )
     def test_repeated_keyword_without_separator_is_fast(self, hook_fns, unit):
-        import time
-
-        command = unit * (100_000 // len(unit))
-        started = time.perf_counter()
-        found, _ = hook_fns["scan_secrets"](command, {"command": command})
-        elapsed = time.perf_counter() - started
-        assert found is False
-        assert elapsed < 2.0, f"{unit!r} x N took {elapsed:.1f}s (quadratic?)"
+        repeats = self.SHORT // len(unit)
+        self._assert_scan_is_linear(hook_fns, lambda s: unit * (repeats * s))
 
     @pytest.mark.parametrize(
         "unit",
@@ -5287,28 +5413,16 @@ class TestSecretScanIsLinear:
     def test_repeated_long_flag_prefix_is_fast(self, hook_fns, unit):
         # "secret flag" accepts prefix words before the keyword
         # (`--access-token`); the bounded, separator-delimited group must stay
-        # linear when a 100 KB command is nothing but near-miss flags.
-        import time
-
-        command = (unit + " ") * (100_000 // (len(unit) + 1))
-        started = time.perf_counter()
-        found, _ = hook_fns["scan_secrets"](command, {"command": command})
-        elapsed = time.perf_counter() - started
-        assert found is False
-        assert elapsed < 2.0, f"{unit!r} x N took {elapsed:.1f}s (quadratic?)"
+        # linear when a long command is nothing but near-miss flags.
+        repeats = max(1, self.SHORT // (len(unit) + 1))
+        self._assert_scan_is_linear(hook_fns, lambda s: (unit + " ") * (repeats * s))
 
     def test_repeated_jwt_header_prefix_is_fast(self, hook_fns):
         # `eyJ-eyJ-...`: every `eyJ` is a fresh start whose unbounded first segment
-        # ran to the end of the input before failing on the missing `.eyJ` (2 s at
-        # 100 KB). A real JWT header is a few hundred characters.
-        import time
-
-        command = "eyJ-" * 25_000
-        started = time.perf_counter()
-        found, _ = hook_fns["scan_secrets"](command, {"command": command})
-        elapsed = time.perf_counter() - started
-        assert found is False
-        assert elapsed < 1.5, f"took {elapsed:.1f}s (quadratic?)"
+        # would run to the end of the input before failing on the missing `.eyJ`.
+        # A real JWT header is a few hundred characters.
+        repeats = self.SHORT // len("eyJ-")
+        self._assert_scan_is_linear(hook_fns, lambda s: "eyJ-" * (repeats * s))
 
     def test_realistic_jwt_is_still_detected(self, hook_fns):
         header = "eyJ" + "a" * 300
@@ -5326,7 +5440,7 @@ class TestSecretScanIsLinear:
 
 
 # ---------------------------------------------------------------------------
-# B13(c): 詳細ログは本人以外に読ませない (コマンド全文と Gemini/Codex の応答を含む)
+# 詳細ログは本人以外に読ませない (コマンド全文と Gemini/Codex の応答を含む)
 # ---------------------------------------------------------------------------
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
 

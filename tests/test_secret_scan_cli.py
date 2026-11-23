@@ -19,7 +19,6 @@ import io
 import os
 import subprocess
 import sys
-import time
 import types
 
 import pytest
@@ -148,6 +147,76 @@ class TestMainInProcess:
         assert capsys.readouterr().out == ""  # nothing on stdout
 
 
+class TestContextualShapesThroughTheCli:
+    """The contextual shapes the scanner refuses (test_secret_scanners.py) reach the editors
+    through this CLI, the only gate before a buffer goes to an AI tool. The
+    values are built at runtime so no well-formed credential sits in this file.
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "label"),
+        [
+            ("DB_PASS=hunter2hunter2 ./run", "credential variable"),
+            ("MYSQL_PWD=hunter2hunter2 mysql", "credential variable"),
+            ('{"pwd": "hunter2hunter2"}', "credential field"),
+            ("'password' => 'hunter2hunter2',", "credential field"),
+            ("curl -u admin:hunter2hunter2 https://x.test", "curl credential"),
+            ("curl --user admin:hunter2hunter2 https://x.test", "curl credential"),
+            ("redis-cli -u redis://:hunter2hunter2@host:6379", "URL credentials"),
+            ("sshpass -p hunter2hunter2 ssh host", "sshpass password"),
+            (
+                "machine h.test login me password hunter2hunter2",
+                "netrc credential",
+            ),
+            (
+                "Authorization: Token " + "0123456789abcdef" * 2,
+                "authorization credential",
+            ),
+            ("AccountKey=" + "A" * 86 + "==", "Azure storage key"),
+            ("shpat_" + "0123456789abcdef" * 2, "Shopify token"),
+            ("lin_api_" + "a" * 40, "Linear key"),
+            ("nfp_" + "a" * 36, "Netlify token"),
+            ("dapi" + "0123456789abcdef" * 2, "Databricks token"),
+            ("sk_test_" + "a" * 24, "Stripe key"),
+            ("whsec_" + "a" * 32, "Stripe webhook secret"),
+            ("123456789:AA" + "a" * 33, "Telegram bot token"),
+            ("SK" + "0123456789abcdef" * 2, "Twilio API key"),
+            (
+                "M" + "a" * 23 + "." + "b" * 6 + "." + "c" * 27,
+                "Discord bot token",
+            ),
+        ],
+    )
+    def test_shape_exits_1_with_its_label_and_never_echoes_the_value(
+        self, monkeypatch, capsys, text, label
+    ):
+        rc, out = _run_main(monkeypatch, capsys, text)
+        assert rc == 1
+        assert out.strip() == label
+        assert "hunter2" not in out
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "PASS=1 make",
+            "export PASSWORD_MIN_LEN=8",
+            "PWD=/Users/x/work/dotfiles make",
+            '{"pwd": "/Users/x/work/dotfiles"}',
+            "items.map(token => token.value)",
+            "docker run -u 1000:1000 alpine",
+            "curl -u user https://x.test",
+            'curl -u "$USER:$TOKEN" https://x.test',
+            "sshpass -e ssh -p 2222 host",
+            "git commit -m 'machine learning password reset flow'",
+            "redis-cli -u redis://:$REDIS_PASSWORD@cache:6379",
+        ],
+    )
+    def test_ordinary_buffer_exits_0_silently(self, monkeypatch, capsys, text):
+        rc, out = _run_main(monkeypatch, capsys, text)
+        assert rc == 0
+        assert out == ""
+
+
 class TestCliSubprocess:
     """The editors invoke it as `python3 secret_scan.py` with the payload on
     stdin — never on argv (a secret on argv would leak via `ps`)."""
@@ -180,17 +249,25 @@ class TestCliSubprocess:
     @pytest.mark.parametrize("unit", ["token", "password", "secret", "api_key"])
     def test_large_payload_of_repeated_keyword_finishes_quickly(self, unit):
         """The editors call this synchronously with no timeout: a 100 KB buffer of
-        a credential keyword with no separators used to take minutes (the
-        assignment pattern's unbounded name suffix backtracked once per
-        occurrence). The bound is far above the linear cost and far below the
-        quadratic one, so a slow CI host cannot flip it."""
+        a credential keyword with no separators takes minutes if the assignment
+        pattern's name suffix is unbounded (it backtracks once per occurrence).
+
+        What this pins: the CLI scans such a buffer in linear time. It measures
+        the CPU time of the child process (os.times), which other processes on a
+        loaded single-core CI runner do not stretch. A ratio would not work here:
+        interpreter startup (about 0.06 s) is part of every run. The linear run
+        took 0.2-0.25 s of child CPU on a laptop, so the 5 s bound leaves about
+        20x headroom for a slower runner and stays far below minutes."""
         payload = unit * (100_000 // len(unit))
-        started = time.perf_counter()
+        before = os.times()
         r = self._run(payload)
-        elapsed = time.perf_counter() - started
+        after = os.times()
+        cpu = (after.children_user - before.children_user) + (
+            after.children_system - before.children_system
+        )
         assert r.returncode == 0, r.stderr
         assert r.stdout == ""
-        assert elapsed < 5.0, f"{unit!r} x N took {elapsed:.1f}s"
+        assert cpu < 5.0, f"{unit!r} x N took {cpu:.1f}s of CPU"
 
     def test_credential_reference_in_buffer_is_clean(self):
         # Editor buffers are full of code; reading a credential from the
@@ -230,7 +307,7 @@ class TestCliSubprocess:
         assert r.stdout.strip() == "AWS access key"
 
     def test_a_longer_lookalike_next_to_japanese_still_exits_0(self):
-        # Only the follower rule changed: 17 characters after AKIA is not a key.
+        # The follower rule: 17 characters after AKIA is not a key.
         r = self._run("キー AKIAIOSFODNN7EXAMPLEXです\n")
         assert r.returncode == 0
         assert r.stdout == ""

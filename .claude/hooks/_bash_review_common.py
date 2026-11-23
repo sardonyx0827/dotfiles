@@ -48,6 +48,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import fnmatch
+import functools
 import http.client
 import json
 import os
@@ -57,11 +59,13 @@ import re
 import shlex
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from typing import NamedTuple
 
 
 class _GeminiTransportError(Exception):
@@ -188,8 +192,32 @@ DENY_EXECUTABLES = frozenset(
         "doas",
         "su",
         "pkexec",
+        # 以下は permissions.deny の Bash(x:*) をそのまま写したもの。prefix 一致の deny は
+        # `/usr/bin/printenv KEY` / `(printenv KEY)` / `env psql` に当たらないので、実行体を
+        # 解決するこの層にも置く (どれも deny 側に Bash(x:*) の対があり、
+        # tests/test_config_wiring.py がその対を pin している)。
+        "printenv",
+        "shutdown",
+        "reboot",
+        "psql",
+        "mysql",
+        "mongod",
     }
 )
+
+# 実行体だけでは決まらず、サブコマンドで決まる permissions.deny の写し
+# (`gh auth token` / `git credential …` / `security find-generic-password …`)。
+# _is_deny_command が _deny_subcommand で照合する。
+_SECURITY_SECRET_SUBCOMMANDS = frozenset(
+    {"find-generic-password", "find-internet-password", "dump-keychain"}
+)
+# 変数を宣言し、環境へ export もできるシェル組み込み。下の _ENV_DUMP_BUILTINS と
+# _ASSIGNING_BUILTINS はこれに足して作る
+_ENV_DECLARING_BUILTINS = frozenset({"export", "declare", "typeset"})
+# 引数なしで環境変数を一覧するシェル組み込み (permissions.deny の Bash(set) / Bash(export)
+# / Bash(export -p:*) / Bash(declare) / Bash(typeset) の写し)。名前付きの
+# `declare -p KEY` は高リスク層に回す (_high_risk_label)。
+_ENV_DUMP_BUILTINS = _ENV_DECLARING_BUILTINS | {"set"}
 
 # 複数語の危険プレフィックス (raw サブコマンド文字列への前方一致)。
 DENY_COMMANDS = [
@@ -420,7 +448,11 @@ _WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
 # サブコマンド検出時に読み飛ばす。--flag=value 形式は 1 トークンで完結する
 # ため別途処理する。
 _GLOBAL_VALUE_FLAGS = {
-    "git": frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace"}),
+    # `--config-env <name>=<envvar>` (分離形) も値を取る。未登録だと値がサブコマンド枠に
+    # 入り、後ろの `credential` / `config` が見えなくなる。
+    "git": frozenset(
+        {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
+    ),
     "npm": frozenset({"--prefix", "-C", "-w", "--workspace"}),
     "pnpm": frozenset({"--prefix", "-C", "-w", "--workspace", "--filter"}),
     "yarn": frozenset({"--cwd"}),
@@ -459,6 +491,26 @@ _GLOBAL_VALUE_FLAGS = {
             "--tlscacert",
             "--tlscert",
             "--tlskey",
+        }
+    ),
+    # `docker compose` / `docker-compose` のグローバルフラグ (サブコマンドの前に置く)。
+    # compose 段の `--env-file` は変数の展開に使うだけで、コンテナの環境には入らない。
+    # v1 (docker-compose) の -H / --context はデーモンの切り替え (_docker_remote_daemon)。
+    "compose": frozenset(
+        {
+            "-f",
+            "--file",
+            "-p",
+            "--project-name",
+            "--profile",
+            "--env-file",
+            "--project-directory",
+            "--ansi",
+            "--progress",
+            "--parallel",
+            "-H",
+            "--host",
+            "--context",
         }
     ),
 }
@@ -1030,6 +1082,15 @@ SENSITIVE_PATTERNS = re.compile(
     r"|\.claude\.json"
     # Codex の設定は MCP サーバーの認証ヘッダ (Authorization / API キー) を保持する。
     r"|\.codex/config\.toml"
+    # CLI の認証ストア (docker の config.json、kubeconfig、GnuPG の鍵束、gcloud / Azure /
+    # 1Password CLI の資格情報)。`~/` 付きは下の _OUT_OF_TREE_PATH でもレビューに回るが、
+    # cwd が ~ だと相対パス (`cat .docker/config.json`) で safe-skip に届く。`.dockerignore`
+    # / `.kubeconfig` は \b が成立しないので当たらない。`//` `/./` の綴りも拾う。
+    r"|\.docker\b"
+    r"|\.kube\b"
+    r"|\.gnupg\b"
+    r"|\.azure\b"
+    r"|\.config/(?:\.?/)*(?:gcloud|op)\b"
     r"|auth\.json"
     r"|hosts\.yml"
     r"|credentials"
@@ -1891,8 +1952,11 @@ def _can_skip_review(cmd: str) -> bool:
     return not COMPLEX_SHELL_SYNTAX.search(cmd) and _is_safe_command(cmd)
 
 
-def _is_deny_command(cmd: str) -> tuple[bool, str]:
-    """危険コマンドに一致するか判定し、(一致したか, 一致したコマンド名) を返す"""
+def _is_deny_command(cmd: str, *, globs: bool = True) -> tuple[bool, str]:
+    """危険コマンドに一致するか判定し、(一致したか, 一致したコマンド名) を返す
+
+    globs=False は glob で綴った実行体の照合 (_glob_deny_command) をしない。
+    """
     # DENY_COMMANDS は実行体ではなく生コマンド文字列への前方一致なので、
     # _resolve_executable の畳み込みが効かない。ここで独自に畳む。
     #
@@ -1922,13 +1986,178 @@ def _is_deny_command(cmd: str) -> tuple[bool, str]:
     # 前方一致で拾う (対象デバイスを問答無用で消去する)。
     if exe in DENY_EXECUTABLES or exe == "mkfs" or exe.startswith("mkfs."):
         return True, exe
+    if rest:
+        # サブシェルの閉じ `)` / `}` は最後の引数に密着して残る (`(gh auth token)`)
+        args = [t.rstrip(")}") if k == len(rest) - 1 else t for k, t in enumerate(rest)]
+        name = _deny_subcommand(exe, [t for t in args[1:] if t])
+        if name:
+            return True, name
+    name = _environment_dump(cmd)
+    if name:
+        return True, name
+    # 実行体を basename で引き直す (`/bin/rm -rf /` は生の前方一致に当たらない)
+    if rest and " " not in rest[0]:
+        word, tail = _deny_word_and_args(rest)
+        if not _GLOB_METACHARS.search(word):
+            name = _deny_as(word, tail)
+            if name:
+                return True, name
+    if globs:
+        return _glob_deny_command(cmd)
     return False, ""
 
 
-def _find_deny_in_lines(sub_commands: list[str]) -> tuple[bool, str]:
+def _deny_word_and_args(words: list[str]) -> tuple[str, list[str]]:
+    """実行体の語 (basename、casefold 済み) と、閉じの `)` / `}` を落とした引数。"""
+    tail = [t.rstrip(")}") if k == len(words) - 1 else t for k, t in enumerate(words)]
+    return words[0].rsplit("/", 1)[-1].casefold(), [t for t in tail[1:] if t]
+
+
+def _glob_deny_command(cmd: str) -> tuple[bool, str]:
+    """glob で綴った実行体 (`/bin/r? -rf /` / `/usr/bin/cur? x`) が DENY の名前に当たるか。
+
+    glob は _split_prefix が実行体を決めない (None) ので、glob を語として残した形で見る。
+    `/` を含む glob (`/bin/r?`) は glob_unresolvable=False でも決めないので、glob の語は
+    basename にして見る (DENY の名前との照合に使うだけ)。
+    """
+    if not _GLOB_METACHARS.search(cmd):
+        return False, ""  # glob の文字が無い行 (行ごとに字句解析しない)
+    tokens = _tokenize(cmd)
+    if _split_prefix(tokens) is not None:
+        return False, ""  # 実行体が決まる (glob ではない): 字面の照合が見る
+    words = _split_prefix(
+        [t.rsplit("/", 1)[-1] if _GLOB_METACHARS.search(t) else t for t in tokens],
+        glob_unresolvable=False,
+    )
+    if not words or " " in words[0]:
+        return False, ""
+    # basename が glob でない形 (`/usr/b*/curl`) はその名前、glob なら当たる名前を引く
+    word, args = _deny_word_and_args(words)
+    for alias in _deny_names_matching(word):
+        name = _deny_as(alias, args)
+        if name:
+            return True, name
+    return False, ""
+
+
+# glob で綴った実行体と照合する名前 (DENY_EXECUTABLES と、DENY_COMMANDS・サブコマンド
+# 付きの規則の実行体)
+_DENY_GLOB_NAMES = frozenset(
+    {
+        *DENY_EXECUTABLES,
+        *(rule.split(" ", 1)[0] for rule in DENY_COMMANDS),
+        "git",
+        "gh",
+        "security",
+        "mkfs",
+        *(
+            f"mkfs.{fs}"
+            for fs in ("ext2", "ext3", "ext4", "xfs", "btrfs", "vfat", "fat")
+        ),
+        *(f"mkfs.{fs}" for fs in ("exfat", "ntfs", "apfs", "hfs", "msdos")),
+    }
+)
+_GLOB_METACHARS = re.compile(r"\[[^\]]*\]|[*?]")
+
+
+def _deny_names_matching(word: str) -> list[str]:
+    """実行体の語 (basename、casefold 済み) が名指しうる名前。
+
+    glob でなければ語そのもの。glob なら _DENY_GLOB_NAMES のうち当たるもの。ただし
+    文字で始まらない glob (`*` / `??` / Markdown の `**3**` / 正規表現の `[A-Za-z]*`)
+    は何も名指さない: `*3*` は mkfs.ext3 に当たるが、DENY は承認で覆せないので、cwd の
+    中身次第の語は名前を隠す語として確認に回すだけにする。`[` / `[[` は test。
+    """
+    if word in ("[", "[[") or not _GLOB_METACHARS.search(word):
+        return [word]
+    if word[:1] in ("*", "?", "["):
+        return []
+    return sorted(n for n in _DENY_GLOB_NAMES if fnmatch.fnmatchcase(n, word))
+
+
+def _deny_as(name: str, args: list[str]) -> str:
+    """実行体を name とみたときの DENY の規則名 (当たらなければ "")。"""
+    line = " ".join([name, *args]).casefold()
+    for deny in DENY_COMMANDS:
+        if line == deny or line.startswith(deny + " "):
+            return deny
+    if name in DENY_EXECUTABLES or name == "mkfs" or name.startswith("mkfs."):
+        return name
+    return _deny_subcommand(name, args)
+
+
+def _deny_subcommand(exe: str, args: list[str]) -> str:
+    """permissions.deny のサブコマンド付き規則に当たる形なら規則名、無ければ ""。
+
+    `git credential fill` / `git -C . credential fill` / `git credential-osxkeychain get`、
+    `gh auth token` / `gh auth status --show-token|-t`、`security [opts]
+    find-generic-password|find-internet-password|dump-keychain` を、実行体を解決したうえで
+    照合する (`/opt/homebrew/bin/gh auth token` / `(git credential fill)` も同じ)。
+    """
+    if exe == "git":
+        sub = _find_subcommand("git", args).casefold()
+        if sub == "credential" or sub.startswith("credential-"):
+            return "git credential"
+    elif exe == "gh":
+        words = [a for a in args if not a.startswith("-")]
+        if words[:2] == ["auth", "token"]:
+            return "gh auth token"
+        if words[:2] == ["auth", "status"] and any(
+            a.split("=", 1)[0] == "--show-token"
+            or (not a.startswith("--") and _SHORT_FLAG_BUNDLE.fullmatch(a) and "t" in a)
+            for a in args
+        ):
+            return "gh auth status --show-token"
+    elif exe == "security":
+        # security(1): `security [-hilqv] [-p prompt] command [options]`
+        i = 0
+        while i < len(args) and args[i].startswith("-"):
+            i += 2 if args[i] == "-p" else 1
+        if i < len(args) and args[i] in _SECURITY_SECRET_SUBCOMMANDS:
+            return f"security {args[i]}"
+    return ""
+
+
+def _environment_dump(cmd: str) -> str:
+    """環境変数を丸ごと出力する形 (`env` / `set` / `export -p` / `declare`) なら名前。
+
+    `env` は後続コマンドを取らない (フラグと代入だけの) ときだけ一覧を出す。
+    `/usr/bin/env python3 x` / `env -i PATH=… make` はラッパーなので対象外。組み込みは
+    被演算子 (名前) を持たない形だけを拾う (`set -e` / `export FOO=1` / `declare -A m` は
+    通す)。綴りは大文字小文字を区別する: 組み込みは小文字でしか動かず、`env` を畳むと
+    Dockerfile の `ENV FOO=bar` を書く heredoc 行が層 1 の拒否 (ask で覆せない) に当たる。
+    """
+    tokens = [t.strip("(){}") for t in _tokenize(cmd)]
+    tokens = [t for t in tokens if t and t != ";"]
+    rest = _split_prefix(tokens)
+    if rest is None:
+        return ""
+    if not rest:
+        named = (t.rsplit("/", 1)[-1] for t in tokens if not _ENV_ASSIGNMENT.match(t))
+        return "env" if "env" in named else ""
+    if rest[0] not in _ENV_DUMP_BUILTINS:
+        return ""
+    args = [a.rstrip(";") for a in rest[1:]]
+    args = [a for a in args if a]
+    operands = [a for a in args if not a.startswith(("-", "+"))]
+    if rest[0] == "set":
+        return "" if args else "set"
+    if rest[0] == "export":
+        printing = any("p" in a for a in args if _SHORT_FLAG_BUNDLE.fullmatch(a))
+        return "export" if not operands or printing else ""
+    return "" if operands else rest[0]
+
+
+def _find_deny_in_lines(
+    sub_commands: list[str], *, globs: bool = True, glob_only: bool = False
+) -> tuple[bool, str]:
+    """行ごとの DENY の照合。glob_only は glob で綴った実行体だけを見る。"""
     for sub_cmd in sub_commands:
         for line in sub_cmd.splitlines():
-            matched, deny_name = _is_deny_command(line.strip())
+            if glob_only:
+                matched, deny_name = _glob_deny_command(line.strip())
+            else:
+                matched, deny_name = _is_deny_command(line.strip(), globs=globs)
             if matched:
                 return True, deny_name
     return False, ""
@@ -2343,10 +2572,9 @@ _CODEX_REDACTED_REASON = (
     "a codex invocation outside the allowlist "
     "(details withheld: the command contains a credential)"
 )
-# 後続のコマンドの環境を変える組み込み。`VAR=v codex …` の前置代入は同じ行の
-# トークンとして見えるが、`export VAR=v; codex …` は別のサブコマンドなので、
-# コマンド全体から探す (_changes_codex_environment)。
-_ENV_EXPORTING_BUILTINS = frozenset({"export", "declare", "typeset"})
+# 後続のコマンドの環境を変える組み込みは _ENV_DECLARING_BUILTINS。`VAR=v codex …` の
+# 前置代入は同じ行のトークンとして見えるが、`export VAR=v; codex …` は別のサブコマンド
+# なので、コマンド全体から探す (_changes_codex_environment)。
 
 
 def _codex_name(token: str) -> str:
@@ -2386,7 +2614,7 @@ def _changes_codex_environment(line: str) -> bool:
     head, args = rest[0], rest[1:]
     if head in ("eval", "source", "."):
         return True
-    if head in _ENV_EXPORTING_BUILTINS:
+    if head in _ENV_DECLARING_BUILTINS:
         return any(
             _ENV_ASSIGNMENT.match(tok) and _assigned_name(tok) not in _CODEX_ENV_OK
             for tok in args
@@ -2606,10 +2834,20 @@ def find_deny_command(
     コマンド) を渡すと、一致がシェルの実行しないテキストの中だけにあり、実行される
     のが data-only のコマンドだけなら除外する (_deny_only_in_inert_text)。
     """
-    matched, deny_name = _find_deny_in_lines(sub_commands)
+    matched, deny_name = _find_deny_in_lines(sub_commands, globs=False)
     if matched and command is not None and _deny_only_in_inert_text(command):
         return False, ""
-    return matched, deny_name
+    if matched:
+        return matched, deny_name
+    # glob で綴った実行体 (`/bin/r? -rf /`) は、シェルがコマンドとして実行する行だけで
+    # DENY にする。他のプログラムに渡す heredoc の本文や引用符の中の綴りはデータなので、
+    # DENY (承認で覆せない) ではなく確認に回す (harness_write_ask_reason)
+    lines = (
+        sub_commands
+        if command is None
+        else _command_view(sub_commands, command).command_lines
+    )
+    return _find_deny_in_lines(lines, glob_only=True)
 
 
 # -------------------------------------------------------------------
@@ -2694,15 +2932,183 @@ _STDIN_CODE_INTERPRETERS = _SHELL_EXECUTABLES | frozenset(_INTERPRETER_EVAL_FLAG
 # (`curl url | sh -s -- stable` のインストーラ変種を取りこぼさない)。python の
 # -s は no-user-site であって stdin 実行ではないのでシェル限定。
 _SHELL_STDIN_FLAG = re.compile(r"^-[A-Za-z]*s")
+# stdin をスクリプトとして読ませる位置引数 (`sh /dev/stdin` / `bash /proc/self/fd/0`)。
+# これを受けたインタプリタは、位置引数があっても stdin のコードを実行する
+_STDIN_SCRIPT_OPERANDS = frozenset(
+    {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0", "/proc/self/fd/0/"}
+)
+# シェルの値を取るオプション (`-o pipefail` / `+o posix` / `-O extglob` / `--rcfile F`)。
+# 値は位置引数 (スクリプトファイル) ではない
+_SHELL_VALUE_OPTION = re.compile(r"^[-+][A-Za-z]*[oO]$")
+_SHELL_LONG_VALUE_OPTIONS = frozenset({"--rcfile", "--init-file"})
+# `sh -c "$(cat)"`: -c のコードを stdin から読む
+_CODE_FROM_STDIN = re.compile(
+    r"^(?:\$\(\s*(?:cat(?:\s+-|\s+/dev/stdin)?|<\s*/dev/stdin)\s*\)|`\s*cat\s*`)$"
+)
 
 # docker はデーモン (root 相当) 経由で動くため、コンテナの分離を明示的に破る
 # 起動形はホスト root 相当の操作に直結する (--privileged、ホスト root /
-# docker.sock のマウント、ホスト PID 名前空間、SYS_ADMIN 級 capability)。
-# この「脱出級」の形だけを rm -r 等と同じ高リスク層 (二モデル AND ゲート)
-# に載せる。素の `docker run img` は分離が保たれるため対象外で、
-# 単独モデルの通常レビューに残す (リストは意図的に狭く始める方針に従う)。
+# docker.sock / ホーム / 認証ストアのマウント、ホストの名前空間、危険な capability、
+# 別のデーモン)。この「脱出級」の形と、ホストのデータを消す・外へ出す形を、rm -r 等と
+# 同じ高リスク層 (二モデル AND ゲート) に載せる。素の `docker run img` と作業ツリーの
+# bind mount (`-v "$PWD":/app`) は分離が保たれるため対象外で、単独モデルの通常
+# レビューに残す。コンテナの中からのネットワーク送出 (`docker run alpine wget …`) は
+# 受容する (hooks/README.md)。
+_DOCKER_EXECUTABLES = frozenset({"docker", "docker-compose"})
 _DOCKER_RUN_SUBCOMMANDS = frozenset({"run", "create"})
-_DOCKER_ESCAPE_CAPS = frozenset({"SYS_ADMIN", "ALL"})
+# `docker container run` と同じく、管理コマンドの次の語が実サブコマンドになるもの。
+_DOCKER_MANAGEMENT_COMMANDS = frozenset(
+    {"container", "image", "volume", "network", "system", "context"}
+)
+_DOCKER_ESCAPE_CAPS = frozenset(
+    {
+        "ALL",
+        "SYS_ADMIN",
+        "SYS_PTRACE",
+        "SYS_MODULE",
+        "SYS_RAWIO",
+        "SYS_BOOT",
+        "SYS_TIME",
+        "NET_ADMIN",
+        "DAC_READ_SEARCH",
+        "DAC_OVERRIDE",
+        "BPF",
+        "PERFMON",
+        "MAC_ADMIN",
+        "MAC_OVERRIDE",
+        "LINUX_IMMUTABLE",
+        "SYSLOG",
+    }
+)
+_DOCKER_HOST_NAMESPACE_FLAGS = frozenset(
+    {"--pid", "--userns", "--ipc", "--uts", "--cgroupns"}
+)
+_DOCKER_UNCONFINED_OPT = re.compile(
+    r"(?:seccomp|apparmor|systempaths)[=:]unconfined|label[=:]disable", re.IGNORECASE
+)
+# 値を取らずに分離を外す / ホストの資源を渡すフラグ (値はどれでも高リスク)
+_DOCKER_HOST_RESOURCE_FLAGS = frozenset(
+    {"--device", "--device-cgroup-rule", "--volumes-from", "--env-file"}
+)
+# 値を取らない長オプション / 短縮文字。ここに無い長オプションは値を取るものとして
+# 読み飛ばす: 誤って値付きと読むと走査が先へ延びるだけ (fail-closed) だが、真偽値と
+# 読むと値をイメージと取り違えて後ろのフラグを見落とす (`--name web --privileged img`)。
+_DOCKER_RUN_BOOL_LONG = frozenset(
+    {
+        "--detach",
+        "--disable-content-trust",
+        "--help",
+        "--init",
+        "--interactive",
+        "--no-healthcheck",
+        "--oom-kill-disable",
+        "--privileged",
+        "--publish-all",
+        "--quiet",
+        "--read-only",
+        "--rm",
+        "--sig-proxy",
+        "--tty",
+        "--use-api-socket",
+    }
+)
+_DOCKER_RUN_BOOL_SHORT = frozenset("ditPq")
+_DOCKER_EXEC_BOOL_LONG = frozenset(
+    {"--detach", "--interactive", "--tty", "--privileged", "--no-TTY", "--help"}
+)
+_DOCKER_EXEC_BOOL_SHORT = frozenset("ditT")
+_COMPOSE_RUN_BOOL_LONG = frozenset(
+    {
+        "--build",
+        "--detach",
+        "--help",
+        "--interactive",
+        "--no-TTY",
+        "--no-deps",
+        "--quiet",
+        "--quiet-pull",
+        "--remove-orphans",
+        "--rm",
+        "--service-ports",
+        "--tty",
+        "--use-aliases",
+    }
+)
+_COMPOSE_RUN_BOOL_SHORT = frozenset("ditTPq")
+# compose が compose ファイルを読んで起動する (中身のマウント・権限はここでは見ない)
+_COMPOSE_FILE_SUBCOMMANDS = frozenset({"up", "run", "create"})
+# コンテナの中で走らせると permissions.deny の DB クライアントと同じになるもの
+_DOCKER_DENIED_CLIENTS = frozenset({"psql", "mysql", "mongod"})
+# ホストの認証ストア。HOME からの相対で、それ自体かその下をマウントすれば脱出級。
+_PROTECTED_HOME_ENTRIES = (
+    ".ssh",
+    ".aws",
+    ".docker",
+    ".kube",
+    ".gnupg",
+    ".azure",
+    ".config",
+    ".claude",
+    ".claude.json",
+    ".codex",
+    ".gemini",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    ".local/state/claude-sandbox",
+    "Library/Keychains",
+)
+# 相対パスの部品として現れても認証ストアとみなす名前 (cwd が ~ の `-v ./.ssh:/s`)
+_SECRET_DIR_COMPONENTS = frozenset(
+    {".ssh", ".aws", ".docker", ".kube", ".gnupg", ".azure"}
+)
+_SYSTEM_MOUNT_ROOTS = (
+    "/etc",
+    "/private/etc",
+    "/root",
+    "/var/root",
+    "/private/var/root",
+    "/boot",
+    "/proc",
+    "/sys",
+    "/dev",
+)
+# 読み取り専用なら日常の形 (タイムゾーンの共有)
+_READ_ONLY_SYSTEM_FILES = frozenset({"/etc/localtime", "/etc/timezone"})
+_DOCKER_SOCKETS = (
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+    "/private/var/run/docker.sock",
+)
+# シェルの起動ファイル。次に起動するシェル (Bash ツールのシェルも) が実行するコードなので
+# ハーネスとして扱う (_HARNESS_PATH)。場所は問わない (HOME 直下も、dotfiles リポジトリの
+# 中の実体も)。編集には確認が出る。
+_SHELL_STARTUP_NAMES = frozenset(
+    {
+        ".zshrc",
+        ".zshenv",
+        ".zprofile",
+        ".zlogin",
+        ".zlogout",
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".profile",
+    }
+)
+# docker のマウント / `docker cp` の行き先として保護する名前 (起動ファイルに加えて、
+# ログアウト時に走る .bash_logout も)
+_SHELL_RC_NAMES = _SHELL_STARTUP_NAMES | {".bash_logout"}
+# マウント元の綴り。cwd の綴りは `.` に置き換えて相対パスとして扱い、HOME の綴りは
+# 環境の HOME に置き換える。どちらでもない展開は解決できない (ラベル化する)。
+_CWD_SPELLING = re.compile(r"^(?:\$PWD|\$\{PWD\}|\$\(pwd\)|`pwd`)(?=/|$)")
+_HOME_SPELLING = re.compile(r"^(?:~|\$HOME|\$\{HOME\})(?=/|$)")
+_DOCKER_CONTAINER_REF = re.compile(r"^[A-Za-z0-9][\w.-]*:")
+_DOCKER_ENV_NAMES = frozenset({"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"})
+_DOCKER_REMOTE_LABEL = (
+    "docker remote or alternate daemon (-H / --context / DOCKER_HOST)"
+)
 
 
 def _is_long_option_abbrev(tok: str, full: str) -> bool:
@@ -2717,66 +3123,780 @@ def _is_long_option_abbrev(tok: str, full: str) -> bool:
     return len(name) > 2 and name.startswith("--") and full.startswith(name)
 
 
-def _docker_escape_mount(source: str) -> str:
-    """マウントのホスト側ソースが脱出級ならラベル断片、そうでなければ ""。"""
-    if source and source.rstrip("/") == "":
+def _docker_options(
+    args: list[str], bool_long: frozenset[str], bool_short: frozenset[str]
+) -> tuple[list[tuple[str, str | None]], list[str]]:
+    """docker / compose のサブコマンド引数を (オプション列, 最初の位置引数以降) に割る。
+
+    pflag の規則で読む: 長オプションは `--x=v` か、真偽値表に無ければ次の語が値。短縮は
+    束ね (`-itv /:/h`) を左から読み、真偽値表に無い文字に当たったら、束ねの残り
+    (`-itv/:/h` / `-v=/:/h`) か次の語がその値になる。最初の位置引数 (イメージ /
+    コンテナ / サービス) で止めるので、その後ろのコンテナ側の引数
+    (`docker run img ls -v /`) を docker のフラグと読まない。値は真偽値なら None。
+    """
+    opts: list[tuple[str, str | None]] = []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "--":
+            return opts, args[i + 1 :]
+        if tok.startswith("--"):
+            name, eq, value = tok.partition("=")
+            if eq:
+                opts.append((name, value))
+            elif name in bool_long:
+                opts.append((name, None))
+            else:
+                opts.append((name, args[i + 1] if i + 1 < len(args) else ""))
+                i += 1
+            i += 1
+            continue
+        if tok.startswith("-") and len(tok) > 1:
+            letters = tok[1:]
+            for j, ch in enumerate(letters):
+                if ch in bool_short:
+                    opts.append(("-" + ch, None))
+                    continue
+                glued = letters[j + 1 :]
+                if glued:
+                    opts.append(("-" + ch, glued[1:] if glued[0] == "=" else glued))
+                else:
+                    opts.append(("-" + ch, args[i + 1] if i + 1 < len(args) else ""))
+                    i += 1
+                break
+            i += 1
+            continue
+        return opts, args[i:]
+    return opts, []
+
+
+def _is_false(value: str | None) -> bool:
+    """真偽値フラグに `=false` / `=0` が明示されたか (`--privileged=false`)。"""
+    return value is not None and value.casefold() in ("false", "0")
+
+
+def _home_dir() -> str:
+    home = os.environ.get("HOME", "").rstrip("/")
+    return home or "/nonexistent-home"
+
+
+def _is_within(path: str, root: str) -> bool:
+    """path が root そのものか、その下か (どちらも正規化済みの絶対パス)。"""
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def _docker_mount_path(source: str) -> str | None:
+    """マウント元を正規化した綴り (相対は相対のまま)。解決できなければ None。
+
+    先に HOME と cwd の綴りを置き換えてから normpath する (逆だと `~/../..` が `..` に
+    畳まれて HOME の外を指していることが消える)。`//etc` は normpath でも `//etc` の
+    ままなので、先頭の連続した `/` も 1 つに畳む。
+    """
+    text = _CWD_SPELLING.sub(".", source, count=1)
+    text = _HOME_SPELLING.sub(lambda _m: _home_dir(), text, count=1)
+    if _UNRESOLVABLE_EXPANSION.search(text):
+        return None
+    text = posixpath.normpath(text)
+    if text.startswith("//"):
+        text = "/" + text.lstrip("/")
+    return text
+
+
+def _docker_mounts(opts: list[tuple[str, str | None]]) -> list[tuple[str, bool]]:
+    """bind mount の (ホスト側ソース, 読み取り専用か)。名前付き / 匿名ボリュームは除く。"""
+    mounts: list[tuple[str, bool]] = []
+    for name, value in opts:
+        if value is None:
+            continue
+        if name in ("-v", "--volume"):
+            # `ソース:行き先[:オプション]`。1 フィールドだけなら匿名ボリューム。
+            parts = value.split(":")
+            if len(parts) < 2 or not parts[0]:
+                continue
+            source, mode = parts[0], parts[2] if len(parts) > 2 else ""
+            read_only = bool({"ro", "readonly"} & set(mode.casefold().split(",")))
+        elif name == "--mount":
+            fields: dict[str, str] = {}
+            bare: set[str] = set()
+            for part in value.split(","):
+                key, eq, val = part.partition("=")
+                if eq:
+                    fields[key.strip().casefold()] = val.strip()
+                else:
+                    bare.add(key.strip().casefold())
+            source = fields.get("source") or fields.get("src") or ""
+            if not source or fields.get("type", "").casefold() == "tmpfs":
+                continue
+            read_only = bool({"ro", "readonly"} & bare) or any(
+                fields.get(k, "").casefold() in ("true", "1")
+                for k in ("ro", "readonly")
+            )
+        else:
+            continue
+        # 名前付きボリューム (`pgdata:/var/lib/...`) はホストのパスではない
+        if source[0] in "/.~$`":
+            mounts.append((source, read_only))
+    return mounts
+
+
+def _docker_mount_escape(path: str | None, read_only: bool) -> str:
+    """正規化したマウント元が脱出級ならラベル断片、そうでなければ ""。
+
+    大文字小文字は畳んで比べる: APFS では `-v ~/.SSH:/s` / `-v /users/<me>:/h` も本物の
+    ディレクトリに届く (_is_harness_target が `.Claude//Hooks/` を数えるのと同じ理由)。
+    """
+    if path is None:
+        return "unresolved mount source"
+    path = path.casefold()
+    if not path.startswith("/"):
+        # cwd からの相対 (cwd 自体の位置はフックからは見えない)
+        if path == ".." or path.startswith("../"):
+            return "mount outside the working tree"
+        if path.endswith("docker.sock"):
+            return "docker.sock mount"
+        parts = path.split("/")
+        if _SECRET_DIR_COMPONENTS & set(parts) or path.startswith(
+            (".config/gcloud", ".config/op", ".config/gh")
+        ):
+            return "protected path mount"
+        return ""
+    if path == "/":
         return "host root mount"
-    if source.endswith("docker.sock"):
+    if path.endswith("docker.sock") or any(
+        _is_within(sock, path) for sock in _DOCKER_SOCKETS
+    ):
         return "docker.sock mount"
+    home = _home_dir().casefold()
+    if path in ("/users", "/home") or _is_within(home, path):
+        return "home directory mount"
+    for root in _SYSTEM_MOUNT_ROOTS:
+        if _is_within(path, root):
+            if read_only and path in _READ_ONLY_SYSTEM_FILES:
+                return ""
+            return "system path mount"
+    if any(
+        _is_within(path, f"{home}/{entry.casefold()}")
+        for entry in _PROTECTED_HOME_ENTRIES
+    ):
+        return "protected path mount"
+    if _SECRET_DIR_COMPONENTS & set(path.split("/")):
+        return "protected path mount"
     return ""
 
 
-def _docker_high_risk_label(args: list[str]) -> str:
-    """docker コマンドが脱出級の起動形ならラベル、そうでなければ "" を返す。
+def _compose_split(args: list[str]) -> tuple[list[str], str, list[str]]:
+    """compose の引数を (グローバル部, サブコマンド, サブコマンドの引数) に割る。"""
+    rest = _strip_global_flags("compose", args)
+    head = args[: len(args) - len(rest)]
+    return head, (rest[0] if rest else ""), rest[1:]
 
-    フラグはサブコマンド以降に限定せず全引数から探す。イメージ名より後ろは
-    本来コンテナ側の引数だが、そこを正確に切るには docker run の全値付き
-    フラグ表が必要になる。誤検出のコストは ask 1 回で済むため全走査で足りる。
-    束ね短フラグ (-itv 等) に紛れた -v は拾えないが、その場合も単独モデルの
-    通常レビューに残るだけで、無審査にはならない。
+
+def _docker_command(
+    exe: str, args: list[str]
+) -> tuple[list[str], bool, str, list[str]]:
+    """docker / docker-compose を (グローバル部, compose か, サブコマンド, 引数) に正規化する。
+
+    管理形 (`docker container run` / `docker image push` / `docker volume rm` …) は
+    `container` を落として `run`、それ以外は `image push` のように 2 語で返す。切り出しは
+    サブコマンド位置から行う: `args.index("container")` だと `--context container` の
+    ような同名のフラグ値に先に当たって 1 つ手前で切れる。
     """
-    sub = _find_subcommand("docker", args)
-    if sub == "container":
-        # 管理形 `docker container run` は `docker run` と同じ動作。container
-        # の次の非フラグトークンが実サブコマンド (container 管理サブコマンドに
-        # 値付きグローバルフラグは無いため _find_subcommand で足りる)。
-        # 切り出しはサブコマンド位置から行う。`args.index("container")` だと
-        # `--context container` のような同名のフラグ値に先に当たって 1 つ手前で
-        # 切れ、sub が "container" のまま残って脱出級判定が外れる。
-        args = _strip_global_flags("docker", args)[1:]
-        sub = _find_subcommand("container", args)
-    if sub not in _DOCKER_RUN_SUBCOMMANDS:
+    if exe == "docker-compose":
+        head, sub, rest = _compose_split(args)
+        return head, True, sub, rest
+    stripped = _strip_global_flags("docker", args)
+    head = args[: len(args) - len(stripped)]
+    if not stripped:
+        return head, False, "", []
+    sub, rest = stripped[0], stripped[1:]
+    if sub == "compose":
+        compose_head, compose_sub, compose_rest = _compose_split(rest)
+        return head + compose_head, True, compose_sub, compose_rest
+    if sub in _DOCKER_MANAGEMENT_COMMANDS:
+        inner = _strip_global_flags(sub, rest)
+        if inner:
+            if sub == "container":
+                return head, False, inner[0], inner[1:]
+            return head, False, f"{sub} {inner[0]}", inner[1:]
+    return head, False, sub, rest
+
+
+def _docker_remote_daemon(head: list[str], assignments: list[str]) -> bool:
+    """別のデーモン / 設定を指す形 (`-H` / `--context` / `--config` / DOCKER_HOST=) か。"""
+    for tok in head:
+        name = tok.split("=", 1)[0]
+        if name in ("-H", "--host", "-c", "--context", "--config"):
+            return True
+        if not tok.startswith("--") and tok[:2] in ("-H", "-c") and len(tok) > 2:
+            return True
+    return any(a.split("=", 1)[0].rstrip("+") in _DOCKER_ENV_NAMES for a in assignments)
+
+
+def _docker_run_label(prefix: str, opts: list[tuple[str, str | None]]) -> str:
+    """run / create のオプションが分離を破る形ならラベル。"""
+    for name, value in opts:
+        if name == "--privileged" and not _is_false(value):
+            return f"{prefix} --privileged"
+        if value is None:
+            continue
+        lowered = value.casefold()
+        if name in _DOCKER_HOST_NAMESPACE_FLAGS and lowered == "host":
+            return f"{prefix} {name}=host"
+        if name in ("--network", "--net"):
+            if lowered == "host":
+                return f"{prefix} --network=host"
+            if lowered.startswith("container:"):
+                return f"{prefix} --network=container"
+        if name == "--cap-add":
+            # docker は capability 名の大文字小文字と CAP_ 接頭辞を無視して受理するため、
+            # 照合前に正規化しないと表記ゆれで素通りする。
+            for cap in value.split(","):
+                normalized = cap.strip().upper().removeprefix("CAP_")
+                if normalized in _DOCKER_ESCAPE_CAPS:
+                    return f"{prefix} --cap-add {normalized}"
+        if name == "--security-opt" and _DOCKER_UNCONFINED_OPT.fullmatch(value.strip()):
+            return f"{prefix} --security-opt unconfined"
+        if name in _DOCKER_HOST_RESOURCE_FLAGS:
+            return f"{prefix} {name}"
+    for source, read_only in _docker_mounts(opts):
+        fragment = _docker_mount_escape(_docker_mount_path(source), read_only)
+        if fragment:
+            return f"{prefix} {fragment}"
+    return ""
+
+
+def _is_root_user(value: str) -> bool:
+    user = value.split(":", 1)[0].strip().casefold()
+    return user in ("0", "root")
+
+
+def _docker_exec_label(prefix: str, args: list[str], *, compose: bool) -> str:
+    """exec が root / privileged / deny 済みの DB クライアントを走らせるならラベル。"""
+    bool_long = _DOCKER_EXEC_BOOL_LONG | ({"--dry-run"} if compose else frozenset())
+    opts, rest = _docker_options(args, bool_long, _DOCKER_EXEC_BOOL_SHORT)
+    for name, value in opts:
+        if name in ("-u", "--user") and value is not None and _is_root_user(value):
+            return f"{prefix} as root"
+        if name == "--privileged" and not _is_false(value):
+            return f"{prefix} --privileged"
+        if name == "--env-file":
+            return f"{prefix} --env-file"
+    argv = _split_prefix(rest[1:]) if len(rest) > 1 else None
+    if argv:
+        client = argv[0].rsplit("/", 1)[-1].casefold()
+        if client in _DOCKER_DENIED_CLIENTS:
+            return f"{prefix} runs {client}"
+    return ""
+
+
+def _has_short_letter(args: list[str], letters: str) -> bool:
+    """短縮フラグ (束ねを含む) にどれかの文字があるか。長オプションは見ない。"""
+    return any(
+        _SHORT_FLAG_BUNDLE.fullmatch(t) and any(c in t[1:] for c in letters)
+        for t in args
+    )
+
+
+def _compose_high_risk_label(sub: str, args: list[str]) -> str:
+    if sub in _COMPOSE_FILE_SUBCOMMANDS:
+        return (
+            f"docker compose {sub} (compose-file mounts and privileges are not "
+            "inspected)"
+        )
+    if sub in ("down", "rm") and ("--volumes" in args or _has_short_letter(args, "v")):
+        return f"docker compose {sub} -v"
+    if sub == "exec":
+        return _docker_exec_label("docker compose exec", args, compose=True)
+    if sub in ("cp", "push"):
+        return f"docker compose {sub}"
+    return ""
+
+
+def _docker_high_risk_label(
+    args: list[str],
+    assignments: Sequence[str] = (),
+    exe: str = "docker",
+) -> str:
+    """docker / docker-compose が脱出級・破壊的な形ならラベル、そうでなければ ""。
+
+    ラベルは固定の語彙だけで組む (マウント元・`-H` の値・env-file のパスを埋め込まない)。
+    確認ダイアログとサマリーログへ出るので、同じ行の資格情報が紛れ込まないようにする。
+    """
+    head, compose, sub, rest = _docker_command(exe, args)
+    # 具体的な形のラベルを先に出し、無ければ別デーモンのラベルにする (どちらも高リスク)。
+    label = (
+        _compose_high_risk_label(sub, rest) if compose else _docker_sub_label(sub, rest)
+    )
+    if not label and _docker_remote_daemon(head, list(assignments)):
+        return _DOCKER_REMOTE_LABEL
+    return label
+
+
+def _docker_sub_label(sub: str, rest: list[str]) -> str:
+    """docker (compose 以外) のサブコマンドとその引数のラベル。"""
+    if sub in _DOCKER_RUN_SUBCOMMANDS:
+        opts, _ = _docker_options(rest, _DOCKER_RUN_BOOL_LONG, _DOCKER_RUN_BOOL_SHORT)
+        return _docker_run_label(f"docker {sub}", opts)
+    if sub == "exec":
+        return _docker_exec_label("docker exec", rest, compose=False)
+    if sub in ("cp", "push", "login", "commit", "image push"):
+        return f"docker {sub.rsplit(' ', 1)[-1]}"
+    if sub == "rm" and (
+        "--force" in rest or "--volumes" in rest or _has_short_letter(rest, "fv")
+    ):
+        return "docker rm -f"
+    if sub in ("system prune", "volume rm", "volume remove", "volume prune"):
+        return f"docker {sub}"
+    if sub == "image prune" and ("--all" in rest or _has_short_letter(rest, "a")):
+        return "docker image prune -a"
+    if sub == "network connect":
+        return "docker network connect"
+    if sub in ("context use", "context create", "context update"):
+        return "docker context change"
+    return ""
+
+
+def _docker_writes_harness(exe: str, args: list[str]) -> bool:
+    """docker の bind mount / `docker cp` の行き先がハーネスの設定を書き換えうるか。
+
+    読み書きのマウント元が保護対象そのもの・その下・その祖先 (`~` / `/` / `~/.local`) なら
+    書き込みとみなす。読み取り専用 (`:ro` / `readonly`) は書けないので対象外 (脱出級の
+    ラベルは高リスク層で別に付く)。作業ツリーそのもの (`-v "$PWD":/app`) は、その中に
+    `.claude` があっても対象外: cwd はフックから見えない (hooks/README.md の既知の穴)。
+    """
+    _head, compose, sub, rest = _docker_command(exe, args)
+    if (compose and sub == "run") or (not compose and sub in _DOCKER_RUN_SUBCOMMANDS):
+        bool_long = _COMPOSE_RUN_BOOL_LONG if compose else _DOCKER_RUN_BOOL_LONG
+        bool_short = _COMPOSE_RUN_BOOL_SHORT if compose else _DOCKER_RUN_BOOL_SHORT
+        opts, _ = _docker_options(rest, bool_long, bool_short)
+        return any(
+            not read_only and _harness_host_path(source)
+            for source, read_only in _docker_mounts(opts)
+        )
+    if sub == "cp":
+        operands = [t for t in rest if not t.startswith("-")]
+        if len(operands) >= 2:
+            dest = operands[-1]
+            if not _DOCKER_CONTAINER_REF.match(dest):
+                return _harness_host_path(dest)
+    return False
+
+
+def _harness_host_path(source: str) -> bool:
+    """ホスト側のパス (マウント元 / cp の行き先) がハーネスの設定を指すか、含むか。"""
+    if _is_harness_target(source):
+        return True
+    path = _docker_mount_path(source)
+    if path is None:
+        return False
+    folded = path.casefold()
+    if _is_harness_target(path) or posixpath.basename(folded) in _SHELL_RC_NAMES:
+        return True
+    if not path.startswith("/"):
+        return False
+    home = _home_dir().casefold()
+    roots = [
+        f"{home}/{name}"
+        for name in (
+            ".claude",
+            ".codex",
+            ".gemini",
+            ".local/state/claude-sandbox",
+            ".local/bin",
+            ".pyenv",
+            ".oh-my-zsh",
+            *_SHELL_RC_NAMES,
+            *_COMPILED_STARTUP_NAMES,
+            *_HOME_ONLY_NAMES,
+        )
+    ]
+    roots += [root.casefold() for root in _absolute_root_spellings()]
+    return any(_is_within(root, folded) for root in roots)
+
+
+# --- git: 設定の注入 / 実行フック / 作業ツリーの破棄 --------------------------------
+# git の設定にはコマンドを走らせるキーがある。ここに値を書き込むと、static allow の
+# `git status` / `git diff` (SAFE_COMMANDS) を叩いた時点でそれが走る。書き込みの形
+# (`git config KEY VALUE` / `git -c KEY=VALUE` / GIT_CONFIG_* 環境変数) を高リスク層へ回す。
+# 読み取り (`--get` / `--list` / 引数 1 つ) と削除 (`--unset`) は対象外。キーは大小を
+# 区別せずに照合する (git は節と変数名の大小を区別しない)。ラベルはキーの綴りを
+# 埋め込まない (サブセクションの URL に資格情報が入りうる)。
+_GIT_EXEC_CONFIG_KEYS = re.compile(
+    r"core\.(?:fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy"
+    r"|alternaterefscommand)"
+    r"|sequence\.editor|pager\..+|diff\.external|diff\..+\.(?:textconv|command)"
+    r"|merge\..+\.driver|filter\..+\.(?:clean|smudge|process)"
+    r"|credential(?:\..+)?\.helper|include\.path|includeif\..+"
+    r"|gpg(?:\..+)?\.program|uploadpack\.packobjectshook"
+    r"|remote\..+\.(?:uploadpack|receivepack)|protocol\.(?:.+\.)?allow"
+    r"|alias\..+",
+    re.IGNORECASE,
+)
+# 値が無害なときだけ外すキー: ページャ / エディタに `cat` / `less -R` / `true` を置く形は
+# 日常的 (`git -c core.pager=cat log`)。fsmonitor の真偽値は組み込みデーモンの on/off。
+_GIT_PAGER_LIKE_KEYS = re.compile(
+    r"core\.(?:pager|editor)|sequence\.editor|pager\..+", re.IGNORECASE
+)
+# 引数なしなら無害とみなすページャ / エディタ (_benign_pager)。危ないのは名前ではなく
+# 引数で、コマンドを走らせる / ファイルを開く形 (`vim -c '!id'`、`less +!id`、
+# `less -oFILE`、`nano -s CMD`、`emacs --eval X`) があるので、引数は既知の形だけ許す:
+# less の表示用フラグと、code の `--wait` / `-w` (git の core.editor の定番)。
+# `GIT_EDITOR=:` / `GIT_EDITOR=true` はエディタを開かずに進める日常の形
+_BENIGN_PAGER_PROGRAMS = frozenset(
+    {
+        "cat",
+        "less",
+        "more",
+        "most",
+        "delta",
+        "true",
+        "false",
+        ":",
+        "vi",
+        "vim",
+        "nvim",
+        "nano",
+        "emacs",
+        "code",
+    }
+)
+_CODE_WAIT_FLAGS = frozenset({"--wait", "-w"})
+# less(1) の短いオプションのうち、値を取らず、ファイルもコマンドも扱わず、制御文字を
+# そのまま端末へ送らないもの (検索・表示・終了の振る舞いだけ)。束ねた形 (`-FRX`) も
+# 許す。外したもの: 値を取る b h j k o O p P t T x y z D # " と数字 (-o / -O はログ
+# ファイル、-k は lesskey ファイル)、-f (特殊ファイルを開く)、-L (LESSOPEN の切り替え)、
+# -r / -u / -U (生の制御文字)、-V / -? 。`+cmd` (起動時のコマンド)、`-+X`、長い
+# オプション (`--…`) も許さない
+_LESS_DISPLAY_FLAG_LETTERS = frozenset("aABcCdeEFgGiIJKmMnNqQRsSwWX")
+_SHELL_META = re.compile(r"[;&|`$()<>\n\\]")
+_GIT_BOOLEAN_VALUES = frozenset({"true", "false", "yes", "no", "on", "off", "1", "0"})
+# 未知の値 (`--config-env` は値を環境変数から取る)
+_GIT_UNKNOWN_VALUE = "\0unknown"
+_GIT_CONFIG_VALUE_OPTS = frozenset(
+    {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value"}
+)
+# 値を書き込まない `git config` のサブコマンド (読み取り / 削除 / 節の改名 / エディタで開く)
+_GIT_CONFIG_NON_SET_SUBCOMMANDS = frozenset(
+    {"get", "list", "unset", "rename-section", "remove-section", "edit"}
+)
+# 設定ファイルを差し替える / 設定を足す環境変数と、コマンドを値に取る環境変数
+_GIT_CONFIG_FILE_ENV = frozenset(
+    {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG"}
+)
+_GIT_COMMAND_ENV = frozenset(
+    {
+        "GIT_SSH_COMMAND",
+        "GIT_SSH",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_ASKPASS",
+        "GIT_PROXY_COMMAND",
+        "GIT_EXEC_PATH",
+        "GIT_PAGER",
+        "GIT_EDITOR",
+        "GIT_SEQUENCE_EDITOR",
+    }
+)
+_GIT_PAGER_LIKE_ENV = frozenset({"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR"})
+# git が GIT_PAGER / GIT_EDITOR の無いときに使うページャ / エディタ (man / psql /
+# crontab なども読む)。値は GIT_PAGER と同じ _benign_pager で見る
+_PAGER_LIKE_ENV = frozenset({"PAGER", "EDITOR", "VISUAL"})
+# less(1) が読む環境変数のうち、値があればコマンドを走らせる (LESSOPEN / LESSCLOSE の
+# 前後処理、LESSECHO / LESSGLOBALTAGS / LESSEDIT のプログラム) か、キーの割り当てを
+# 差し替える (lesskey。#env 節で LESSOPEN も設定できる) もの。LESS 本体は
+# _benign_less_env で見る
+_LESS_COMMAND_ENV = frozenset(
+    {
+        "LESSOPEN",
+        "LESSCLOSE",
+        "LESSECHO",
+        "LESSEDIT",
+        "LESSGLOBALTAGS",
+        "LESSKEY",
+        "LESSKEYIN",
+        "LESSKEY_CONTENT",
+        "LESSKEY_SYSTEM",
+        "LESSKEYIN_SYSTEM",
+    }
+)
+_PAGER_ENV_LABEL = "pager / editor via environment"
+# 作業ツリー全体を指す pathspec (`git checkout -- .` / `git restore :/`)
+_WHOLE_TREE_PATHSPECS = frozenset({".", "./", ":", ":/", ":/*", ":(top)", "*", "**"})
+# 他プロセスを起動するサブコマンドのオプション (git は長オプションの前方一致の略記を受理)
+_GIT_TRANSPORT_EXEC_OPTS = ("--upload-pack", "--receive-pack")
+_GIT_EXEC_OPTION_SUBCOMMANDS = frozenset({"push", "send-pack", "archive", "fetch-pack"})
+
+
+def _is_less_display_flag(tok: str) -> bool:
+    """`-R` / `-FRX` のように、_LESS_DISPLAY_FLAG_LETTERS だけを束ねた短いオプションか。"""
+    return (
+        len(tok) >= 2
+        and tok[0] == "-"
+        and all(ch in _LESS_DISPLAY_FLAG_LETTERS for ch in tok[1:])
+    )
+
+
+def _benign_pager(value: str) -> bool:
+    """ページャ / エディタの値が、シェルを通さない既知の無害なコマンドか。
+
+    無害なのは、空の値、_BENIGN_PAGER_PROGRAMS の引数なしの形、表示だけを変える
+    オプション (_LESS_DISPLAY_FLAG_LETTERS) しか付かない `less`、`--wait` / `-w` しか
+    付かない `code`。それ以外の引数とプログラムは無害とみなさない (迷う形は高リスク層の
+    二モデルへ回す)。
+    """
+    if value == _GIT_UNKNOWN_VALUE:
+        return False
+    if not value.strip():
+        return True
+    if _SHELL_META.search(value):
+        return False
+    program, *args = value.split()
+    if program not in _BENIGN_PAGER_PROGRAMS:
+        return False
+    if program == "less":
+        return all(_is_less_display_flag(tok) for tok in args)
+    if program == "code":
+        return all(tok in _CODE_WAIT_FLAGS for tok in args)
+    return not args
+
+
+def _benign_less_env(value: str) -> bool:
+    """LESS の値が表示用フラグだけか (`-R` / `-FRX` / `FRX`。先頭の `-` は省ける)。
+
+    `+cmd` (起動時のコマンド)、値を取るオプション (`-oFILE` のログファイル …)、長い
+    オプションは無害とみなさない。空の値はオプションなしと同じ。
+    """
+    if _SHELL_META.search(value):
+        return False
+    return all(
+        _is_less_display_flag(tok if tok.startswith("-") else "-" + tok)
+        for tok in value.split()
+    )
+
+
+def _git_exec_config(key: str, value: str | None) -> bool:
+    """key=value の設定がコマンドを走らせうるか。value None は値なし (`-c key` = true)。"""
+    key = key.strip()
+    if not _GIT_EXEC_CONFIG_KEYS.fullmatch(key):
+        return False
+    lowered = key.casefold()
+    if lowered.startswith("alias."):
+        if value is None:
+            return False
+        # `!` で始まる別名はシェルで走る。`-c` を含む別名は設定を注入できる。
+        return (
+            value == _GIT_UNKNOWN_VALUE
+            or value.lstrip().startswith("!")
+            or bool(re.search(r"(?:^|\s)(?:-c|--config-env|--exec-path)\b", value))
+        )
+    if lowered == "core.fsmonitor":
+        return not (value is None or value.strip().casefold() in _GIT_BOOLEAN_VALUES)
+    if _GIT_PAGER_LIKE_KEYS.fullmatch(key) and value is not None:
+        return not _benign_pager(value)
+    return True
+
+
+# 値を書き込まない `git config` の長いオプション (一覧 / 削除 / 節の改名 / エディタで開く)。
+# 前方一致の略記も照合する (_is_long_option_abbrev)
+_GIT_CONFIG_NON_SET_OPTIONS = (
+    "--list",
+    "--unset-all",
+    "--remove-section",
+    "--rename-section",
+    "--edit",
+)
+
+
+def _git_config_options_end(args: list[str], start: int) -> int:
+    """`git config` のオプションを start から読み、最初の位置引数の位置を返す。
+
+    読み取り / 削除のオプション (`--get*` / `--list` / `--unset*` / `-l` / `-e` …) が
+    あれば -1。git config は最初の位置引数でオプションの解析をやめる
+    (PARSE_OPT_STOP_AT_NON_OPTION) ので、値 `'-c core.pager=sh status'` はフラグではない。
+    """
+    i = start
+    while i < len(args):
+        tok = args[i]
+        if tok == "--":
+            return i + 1
+        if not tok.startswith("-") or tok == "-":
+            return i
+        name = tok.split("=", 1)[0]
+        if tok in ("-l", "-e") or name.startswith("--get"):
+            return -1
+        if any(
+            _is_long_option_abbrev(name, full) for full in _GIT_CONFIG_NON_SET_OPTIONS
+        ):
+            return -1
+        if name in _GIT_CONFIG_VALUE_OPTS and "=" not in tok:
+            i += 1
+        i += 1
+    return i
+
+
+def _git_config_sets_exec(args: list[str]) -> bool:
+    """`git config …` の引数が、コマンドを走らせるキーへの書き込みか。"""
+    i = _git_config_options_end(args, 0)
+    if 0 <= i < len(args) and args[i] == "set":
+        i = _git_config_options_end(args, i + 1)
+    elif 0 <= i < len(args) and args[i] in _GIT_CONFIG_NON_SET_SUBCOMMANDS:
+        return False
+    if i < 0 or len(args) - i < 2:
+        return False
+    return _git_exec_config(args[i], args[i + 1])
+
+
+def _git_global_config_label(head: list[str]) -> str:
+    """git のグローバル部 (`-c k=v` / `--config-env` / `--exec-path=`) の注入ラベル。"""
+    for i, tok in enumerate(head):
+        nxt = head[i + 1] if i + 1 < len(head) else ""
+        if tok == "-c":
+            key, eq, value = nxt.partition("=")
+            if _git_exec_config(key, value if eq else None):
+                return "git -c (command-running config)"
+        elif tok == "--config-env" or tok.startswith("--config-env="):
+            spec = nxt if tok == "--config-env" else tok.split("=", 1)[1]
+            if _git_exec_config(spec.split("=", 1)[0], _GIT_UNKNOWN_VALUE):
+                return "git -c (command-running config)"
+        elif tok.startswith("--exec-path="):
+            return "git --exec-path"
+    return ""
+
+
+def _env_assignment_label(assignments: Sequence[str]) -> str:
+    """前置 / export された環境変数が、デーモンや git の設定・コマンドを差し替えるか。"""
+    for assignment in assignments:
+        name, _, value = assignment.partition("=")
+        name = name.rstrip("+")
+        if name in _DOCKER_ENV_NAMES:
+            return _DOCKER_REMOTE_LABEL
+        if name in _GIT_CONFIG_FILE_ENV:
+            if value != "/dev/null":
+                return "git config via environment"
+        elif name.startswith("GIT_CONFIG_KEY_"):
+            if _GIT_EXEC_CONFIG_KEYS.fullmatch(value.strip()):
+                return "git config via environment"
+        elif name == "GIT_CONFIG_PARAMETERS":
+            # git が書く形は `'key'='value' …` (旧形式は `'key=value'`)。引用符の塊ごとに
+            # キーを取り出して照合する (値全体への search はキーの `.+` で二乗になる)。
+            # 引用符が無い = 読めない値は安全側に倒す。
+            quoted = re.findall(r"'([^']*)'", value)
+            if not quoted or any(
+                _GIT_EXEC_CONFIG_KEYS.fullmatch(q.split("=", 1)[0]) for q in quoted
+            ):
+                return "git config via environment"
+        elif name in _GIT_COMMAND_ENV:
+            if not (name in _GIT_PAGER_LIKE_ENV and _benign_pager(value)):
+                return "git command via environment"
+        elif name in _PAGER_LIKE_ENV:
+            if not _benign_pager(value):
+                return _PAGER_ENV_LABEL
+        elif name == "LESS":
+            if not _benign_less_env(value):
+                return _PAGER_ENV_LABEL
+        elif name in _LESS_COMMAND_ENV:
+            if value:
+                return _PAGER_ENV_LABEL
+    return ""
+
+
+def _short_letters(tok: str, stop: str = "") -> str:
+    """単一ダッシュの短縮フラグの文字列 (stop の文字 = 値を取る文字までで打ち切る)。"""
+    if tok.startswith("--") or not tok.startswith("-") or len(tok) < 2:
         return ""
-    label = f"docker {sub}"
-    for i, tok in enumerate(args):
-        head, sep, inline_value = tok.partition("=")
-        if head == "--privileged":
-            return f"{label} --privileged"
-        if head in ("--pid", "--cap-add", "-v", "--volume", "--mount"):
-            value = inline_value if sep else (args[i + 1] if i + 1 < len(args) else "")
-            if head == "--pid":
-                if value == "host":
-                    return f"{label} --pid=host"
-            elif head == "--cap-add":
-                # docker は capability 名の大文字小文字と CAP_ 接頭辞を無視して
-                # 受理するため、照合前に正規化しないと表記ゆれで素通りする。
-                cap = value.upper().removeprefix("CAP_")
-                if cap in _DOCKER_ESCAPE_CAPS:
-                    return f"{label} --cap-add {cap}"
-            elif head == "--mount":
-                # `type=bind,source=/,target=/host` 形式。source= / src= が
-                # ホスト側ソース。
-                fields = dict(
-                    part.split("=", 1) for part in value.split(",") if "=" in part
-                )
-                source = fields.get("source") or fields.get("src") or ""
-                mount = _docker_escape_mount(source)
-                if mount:
-                    return f"{label} {mount}"
-            else:  # -v / --volume: `ホスト側:コンテナ側[:オプション]`
-                mount = _docker_escape_mount(value.split(":", 1)[0])
-                if mount:
-                    return f"{label} {mount}"
+    letters = tok[1:]
+    for j, ch in enumerate(letters):
+        if ch in stop:
+            return letters[: j + 1]
+    return letters
+
+
+def _is_whole_tree_pathspec(spec: str) -> bool:
+    if spec in _WHOLE_TREE_PATHSPECS:
+        return True
+    collapsed = posixpath.normpath(spec) if spec else spec
+    return collapsed in (".", "..") or collapsed.startswith("../")
+
+
+def _git_positionals(args: list[str]) -> list[str]:
+    """フラグ以外の語 (`--` の後ろはすべて)。"""
+    if "--" in args:
+        cut = args.index("--")
+        return [t for t in args[:cut] if not t.startswith("-")] + args[cut + 1 :]
+    return [t for t in args if not t.startswith("-")]
+
+
+def _git_subcommand_label(sub: str, args: list[str]) -> str:
+    """git のサブコマンドが実行フック / 作業ツリーの破棄 / 強制削除ならラベル。"""
+    if sub == "config":
+        return "git config (command-running key)" if _git_config_sets_exec(args) else ""
+    if (
+        any(
+            _is_long_option_abbrev(t, opt)
+            for t in args
+            for opt in _GIT_TRANSPORT_EXEC_OPTS
+        )
+        or (
+            sub == "clone"
+            and any(t == "-u" or _short_letters(t, "u").endswith("u") for t in args)
+        )
+        or (
+            sub in _GIT_EXEC_OPTION_SUBCOMMANDS
+            and any(_is_long_option_abbrev(t, "--exec") for t in args)
+        )
+    ):
+        return "git --upload-pack / --receive-pack (runs a program)"
+    if sub == "rebase" and any(
+        _is_long_option_abbrev(t, "--exec") or "x" in _short_letters(t, "sXC")
+        for t in args
+    ):
+        return "git rebase --exec"
+    words = _git_positionals(args)
+    if sub == "bisect" and words[:1] == ["run"]:
+        return "git bisect run"
+    if sub == "submodule" and words[:1] == ["foreach"]:
+        return "git submodule foreach"
+    if sub == "filter-branch":
+        return "git filter-branch"
+    if sub == "difftool" and any(
+        _is_long_option_abbrev(t, "--extcmd") or _short_letters(t, "tx").endswith("x")
+        for t in args
+    ):
+        return "git difftool --extcmd"
+    if sub == "grep" and any(
+        _is_long_option_abbrev(t, "--open-files-in-pager")
+        or _short_letters(t, "O").endswith("O")
+        for t in args
+    ):
+        return "git grep --open-files-in-pager"
+    if sub == "checkout" and (
+        any("f" in _short_letters(t, "bB") for t in args)
+        or any(_is_long_option_abbrev(t, "--force") for t in args)
+        or any(_is_whole_tree_pathspec(w) for w in words)
+    ):
+        return "git checkout (discards working-tree changes)"
+    if sub == "restore":
+        staged = any(
+            "S" in _short_letters(t, "s") or _is_long_option_abbrev(t, "--staged")
+            for t in args
+        )
+        worktree = any(
+            "W" in _short_letters(t, "s") or _is_long_option_abbrev(t, "--worktree")
+            for t in args
+        )
+        if (worktree or not staged) and any(_is_whole_tree_pathspec(w) for w in words):
+            return "git restore (discards working-tree changes)"
+    if sub == "branch":
+        letters = "".join(_short_letters(t, "tu") for t in args)
+        delete = "d" in letters or any(
+            _is_long_option_abbrev(t, "--delete") for t in args
+        )
+        force = "f" in letters or any(
+            _is_long_option_abbrev(t, "--force") for t in args
+        )
+        if "D" in letters or (delete and force):
+            return "git branch -D"
+    if sub == "stash" and words[:1] in (["drop"], ["clear"]):
+        return f"git stash {words[0]}"
     return ""
 
 
@@ -2865,31 +3985,170 @@ def _is_pwsh_command_flag(tok: str) -> bool:
     return t == "-ec" or "-command".startswith(t) or "-encodedcommand".startswith(t)
 
 
+# 変数に値を入れるパラメータ展開 (`${NAME:=word}` / `${NAME=word}`、zsh の
+# `${NAME::=word}`)。どのコマンドのどこに書いても効く。生の文字列に当てるので、
+# 引用符の中・heredoc の本文でも当たる (安全側: README)
+_ASSIGNING_EXPANSION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):{0,2}=")
+_VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# 配列の要素 (`NAME[0]`)。fullmatch で使う: 先頭が名前でなければその場で外れ、名前の
+# 後ろは 1 回だけ走査するので、語の長さに線形 (`[` が並ぶだけの語でも二乗にならない)
+_SUBSCRIPTED_NAME = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[[^\]]*\]")
+# 変数を不明にするもの: 名前を引数に取って値を入れる / どの変数でも書き換えうる
+# (cwd の解析と、下の _VALUE_READING_BUILTINS が使う)
+_VAR_SETTERS = frozenset({"read", "unset", "getopts", "mapfile", "readarray"})
+# そのうち値を入れるもの (_assigned_env_label が、名前だけで判定する)
+_VALUE_READING_BUILTINS = _VAR_SETTERS - {"unset"}
+# 変数を宣言するが export はしない組み込み。export / declare / typeset
+# (_ENV_DECLARING_BUILTINS) は _base_high_risk_label が見る。_ASSIGNING_BUILTINS は
+# この 2 つの和
+_LOCAL_ASSIGNING_BUILTINS = frozenset({"readonly", "local"})
+
+
+def _unknown_value_env_label(name: str) -> str:
+    """値の分からない代入が、_env_assignment_label の見る名前に入るときのラベル。
+
+    名前の一覧と規則は _env_assignment_label のまま (増やさない)。値を無害と言える
+    規則 (`/dev/null` / 無害なページャ / 表示用の LESS) は、値が分からないので使わない
+    (_GIT_UNKNOWN_VALUE はどれにも当たらない)。GIT_CONFIG_KEY_* は値がキーの名前なので、
+    分からなければ設定を差し替えうるとみなす。
+    """
+    if name.startswith("GIT_CONFIG_KEY_"):
+        return "git config via environment"
+    return _env_assignment_label([f"{name}={_GIT_UNKNOWN_VALUE}"])
+
+
+def _assigned_env_label(cmd: str, rest: list[str]) -> str:
+    """readonly / local の代入と、値を静的に決められない代入のラベル (無ければ "")。
+
+    - `readonly NAME=v` / `local NAME=v` (zsh の local は関数の外でも効く): declare /
+      typeset と同じく値を _env_assignment_label で見る
+    - 値をこのフックが読めない代入: `read [-opts] NAME…` / `mapfile` / `readarray` /
+      `getopts OPTSTRING NAME` (_VALUE_READING_BUILTINS)、bash の `printf -v NAME`
+      (`-vNAME`)、zsh の `print -v NAME` (`-rv NAME` / `-rvNAME` のように束ねても)、
+      `${NAME:=…}` / `${NAME=…}` / zsh の `${NAME::=…}`、`for NAME in …` のループ変数。
+      名前が _env_assignment_label の見るものなら、値を見ずにラベルを付ける。read
+      などの値付きオプションの値も名前として数える (安全側。`read -a NAME` の配列名も
+      この形)。配列の要素 (`PAGER[0]`) は配列の名前で照合する ($PAGER は要素 0)
+    """
+    names = [m.group(1) for m in _ASSIGNING_EXPANSION.finditer(cmd)]
+    if rest:
+        exe = rest[0].rsplit("/", 1)[-1].casefold()
+        args = rest[1:]
+        if exe in _LOCAL_ASSIGNING_BUILTINS:
+            label = _env_assignment_label([t for t in args if _ENV_ASSIGNMENT.match(t)])
+            if label:
+                return label
+        elif exe in _VALUE_READING_BUILTINS:
+            names += args
+        elif exe in ("printf", "print"):
+            names += _dash_v_names(exe, args)
+        elif exe == "for" and args:
+            # `select NAME in …` はここに来ない: _split_prefix が None を返し、
+            # _base_high_risk_label が wrapped command にする
+            names.append(args[0])
+    for name in names:
+        subscripted = _SUBSCRIPTED_NAME.fullmatch(name)
+        if subscripted:
+            name = subscripted.group(1)
+        label = _unknown_value_env_label(name) if _VARIABLE_NAME.fullmatch(name) else ""
+        if label:
+            return label
+    return ""
+
+
+def _assignment_words(tokens: list[str]) -> list[str]:
+    """代入の語 (`NAME=…`)。サブシェルの `(` が密着した語 (`(PAGER=…`) は `(` を外す。
+
+    `{PAGER=x` は bash では 1 つの語 (代入ではない) なので対象外。
+    """
+    words = (t.lstrip("(") for t in tokens)
+    return [w for w in words if _ENV_ASSIGNMENT.match(w)]
+
+
+def _dash_v_names(exe: str, args: list[str]) -> list[str]:
+    """`printf -v NAME` / `-vNAME` と、zsh の `print` の -v (束ねたフラグの中でも)。
+
+    print は `-rv NAME` のように、`-` で始まる束ねたフラグに v があれば名前を取る:
+    v が末尾なら次の語、後ろに文字が続けばその残り。printf は -v だけを見る。
+    """
+    names = []
+    for i, tok in enumerate(args):
+        if tok == "--" or not tok.startswith("-"):
+            break
+        flags = tok[1:] if exe == "print" and not tok.startswith("--") else tok[1:2]
+        if "v" not in flags:
+            continue
+        value = tok[1 + flags.index("v") + 1 :] if exe == "print" else tok[2:]
+        if value:
+            names.append(value)
+        elif i + 1 < len(args):
+            names.append(args[i + 1])
+    return names
+
+
 def _high_risk_label(cmd: str, *, glob_unresolvable: bool = True) -> str:
     """コマンド 1 行が高リスク分類に一致すればラベル、しなければ "" を返す。
 
-    クォート/バックスラッシュを除去し、先頭の VAR=value 代入と env/command 等
-    のラッパーを剥がしてから分類する。ラッパーの値付き/未知フラグで実行体を
-    確定できない形 (`env -u X rm -rf /` 等) は難読化の可能性があるため、安全側
-    で高リスク (ask) に倒す。剥がしを省くと `env rm -rf ./x` が高リスク層を
-    素通りして単独モデルの fast path に流れてしまう (二モデル AND ゲートの保証が破れる)。
+    _base_high_risk_label が "" のときだけ、readonly / local と、値を静的に決められない
+    代入 (_assigned_env_label) を見る。先に付くラベルは変えない。字句の分割と前置の
+    剥がしは 1 回だけ行い、両方に渡す (_base_high_risk_label は渡された list を
+    書き換えない)。
     """
     tokens = _tokenize(cmd)
     if not tokens:
         return ""
     rest = _split_prefix(tokens, glob_unresolvable=glob_unresolvable)
+    label = _base_high_risk_label(tokens, rest)
+    if label:
+        return label
+    return _assigned_env_label(cmd, rest or [])
+
+
+def _base_high_risk_label(tokens: list[str], rest: list[str] | None) -> str:
+    """字句に分けたコマンド 1 行が高リスク分類に一致すればラベル、しなければ ""。
+
+    tokens はクォート/バックスラッシュを除去した語 (_tokenize)、rest は先頭の
+    VAR=value 代入と env/command 等のラッパーを剥がした残り (_split_prefix。剥がせ
+    なければ None)。ラッパーの値付き/未知フラグで実行体を
+    確定できない形 (`env -u X rm -rf /` 等) は難読化の可能性があるため、安全側
+    で高リスク (ask) に倒す。剥がしを省くと `env rm -rf ./x` が高リスク層を
+    素通りして単独モデルの fast path に流れてしまう (二モデル AND ゲートの保証が破れる)。
+    """
     if rest is None:
         # ラッパー付きで実行体を確定できない: 安全側で高リスク扱いにする。
         return "wrapped command"
     if not rest:
-        return ""
+        # 代入だけの文 (`PAGER='less +!id'`)。シェル変数として同じコマンドの後の文
+        # (`; git -p log`、改行の後の `git commit`) に引き継がれ、export 済みの名前なら
+        # その環境にも載るので、前置の代入・export と同じ名前を同じ規則で見る。
+        # 予約語・`{`・リダイレクトが同じ文に並んでも (`then PAGER=…`、`PAGER=… >f`)、
+        # 代入の語だけを見る。サブシェルの `(` が密着した語 (`(PAGER=…`) は `(` を外す。
+        return _env_assignment_label(_assignment_words(tokens))
     # 判定は畳んだ名前で行う (case-insensitive な FS では `GIT push --force` が
     # 本当に git を走らせる。理由は _resolve_executable のコメント参照)。ラベルに
     # 出すのは生の綴りのままで、「実際に走る形を見せる」既存方針を保つ。
     exe_raw = rest[0].rsplit("/", 1)[-1]
     exe = exe_raw.casefold()
+    # 前置の `VAR=value` (_split_prefix が剥がした分) と `export VAR=value` の代入。
+    # DOCKER_HOST= / GIT_SSH_COMMAND= / GIT_CONFIG_* はコマンドの意味を差し替える。
+    assignments = _assignment_words(tokens[: len(tokens) - len(rest)])
     rest = rest[1:]
     sub = _find_subcommand(exe, rest)
+    declared = (
+        [t for t in rest if _ENV_ASSIGNMENT.match(t)]
+        if exe in _ENV_DECLARING_BUILTINS
+        else []
+    )
+    env_label = _env_assignment_label(assignments + declared)
+    if env_label:
+        return env_label
+    if (
+        exe in ("declare", "typeset")
+        and any(not t.startswith(("-", "+")) for t in rest)
+        and any("p" in t for t in rest if _SHORT_FLAG_BUNDLE.fullmatch(t))
+    ):
+        # 名前付きの `declare -p KEY` は変数の値を出す。名前なしの一覧は層 1 で拒否済み。
+        return "declare -p (prints named variables)"
 
     if exe == "rm" and any(
         _RECURSIVE_FLAG.match(t) or t == "--recursive" for t in rest
@@ -2913,9 +4172,21 @@ def _high_risk_label(cmd: str, *, glob_unresolvable: bool = True) -> str:
             _FORCE_FLAG.match(t) or _is_long_option_abbrev(t, "--force") for t in rest
         ):
             return "git clean -f"
-        return ""
-    if exe == "docker":
-        return _docker_high_risk_label(rest)
+        stripped = _strip_global_flags("git", rest)
+        head = rest[: len(rest) - len(stripped)]
+        return _git_global_config_label(head) or _git_subcommand_label(
+            sub, stripped[1:]
+        )
+    if exe == "gh":
+        words = [t for t in rest if not t.startswith("-")]
+        if words[:2] in (
+            ["repo", "delete"],
+            ["release", "delete"],
+            ["release", "delete-asset"],
+        ):
+            return f"gh {words[0]} {words[1]}"
+    if exe in _DOCKER_EXECUTABLES:
+        return _docker_high_risk_label(rest, assignments, exe)
     # バージョン接尾辞を剥がしてから照合する (pip3.12 / pip2 も pip として扱う)。
     # python 判定 (下) やインタプリタ eval 判定と同じ正規化。ラベルには生 exe を
     # 残して実際に走る形を見せる。剥がした結果が別キーに化けるのは pip 系のみ
@@ -3126,14 +4397,36 @@ def _bare_interpreter_stdin_label(segment: str, *, is_pipe_target: bool) -> str:
     #     heredoc 本体) は I/O であってスクリプトではないため位置引数に数えない。
     #     これで `bash < evil.sh` / `bash <<< 'x'` / `bash <<EOF ...` は裸と判定でき、
     #     `bash script.sh < input` / `python app.py < in` (データ入力) は除外できる。
+    #   * stdin を指す位置引数 (`sh /dev/stdin` / `bash -` / `zsh /dev/fd/0`) は、位置
+    #     引数があっても stdin のコードを実行する
+    #   * シェルの値を取るオプション (`bash -o pipefail` / `--rcfile F`) の値は位置引数
+    #     ではない。`bash -c "$(cat)"` は -c のコードを stdin から読む
+    label = f"stdin into {exe_raw}"
+    shell = exe in _SHELL_EXECUTABLES
+    skip_value = code_flag = False
     for tok in args:
         if tok.startswith("<") or tok.startswith(">"):
             break  # リダイレクト以降は I/O。ここで打ち切る
-        if exe in _SHELL_EXECUTABLES and _SHELL_STDIN_FLAG.match(tok):
-            return f"stdin into {exe_raw}"  # 位置引数より前の -s = stdin 実行
+        if skip_value:
+            skip_value = False
+            continue
+        if shell and _SHELL_STDIN_FLAG.match(tok):
+            return label  # 位置引数より前の -s = stdin 実行
+        if shell and (
+            _SHELL_VALUE_OPTION.match(tok) or tok in _SHELL_LONG_VALUE_OPTIONS
+        ):
+            skip_value = True
+            continue
+        if shell and tok[:1] == "-" and tok[:2] != "--" and "c" in tok[1:]:
+            code_flag = True
+            continue
         if not tok.startswith("-"):
+            if tok in _STDIN_SCRIPT_OPERANDS or (
+                code_flag and _CODE_FROM_STDIN.match(tok)
+            ):
+                return label
             return ""  # スクリプト/モジュールの位置引数 → stdin 実行ではない
-    return f"stdin into {exe_raw}"
+    return label
 
 
 def stdin_interpreter_label(command: str) -> str:
@@ -3200,9 +4493,47 @@ _HARNESS_PATH = re.compile(
     r"(?![\w.-])"
     r"|(?<![\w.-])\.codex/(?:hooks|AGENTS\.md)(?![\w.-])"
     r"|(?<![\w.-])\.gemini/GEMINI\.md(?![\w.-])"
-    r"|(?:~|\$HOME|\$\{HOME\})/\.codex(?![\w.-])",
+    # HOME 直下だけを守るもの (_HOME_ONLY_NAMES): `~/.codex`、.zshrc が source する
+    # `~/.zsh_secrets`、compinit より前に fpath へ入る `~/.docker/completions`
+    r"|(?:~|\$HOME|\$\{HOME\})/\.(?:codex|zsh_secrets|docker/completions)(?![\w.-])"
+    # サンドボックス CLI (csb) の状態 (meta / patches / verify / attest) と、起動 symlink
+    # を置く `~/.local/bin`。状態を書き換えられると verify / attest の記録を偽造でき、
+    # `~/.local/bin` は PATH 上で `csb` / `claude` / `ruff` の解決先を決める (csb 1 本だけ
+    # 守っても、隣に置いた同名の実行体や cs? の glob で差し替えられる)。ディレクトリごと
+    # 保護する。`.local` を起点に照合するので `~/` / `$HOME/` / 絶対パス / 相対パスの
+    # どの綴りでも当たる。
+    r"|(?<![\w.-])\.local/state/claude-sandbox(?![\w.-])"
+    r"|(?<![\w.-])\.local/bin(?![\w.-])"
+    # pyenv の作業領域。フックの起動に使う python3 は pyenv の shim で、shim は cwd の
+    # `.python-version` が名指す `versions/<名前>/bin/python3` を走らせる (そこへ書けば
+    # フック自身を差し替えられる)。ディレクトリごと保護する。`$PYENV_ROOT` の綴りも。
+    r"|(?<![\w.-])\.pyenv(?![\w.-])"
+    r"|\$\{?PYENV_ROOT\}?(?![\w])"
+    # シェルの起動ファイル (_SHELL_STARTUP_NAMES、場所を問わない) と oh-my-zsh
+    # (.zshrc が `$ZSH/oh-my-zsh.sh` を読み、custom/ と plugins/ も読み込む)
+    r"|(?<![\w.-])\.(?:zshrc|zshenv|zprofile|zlogin|zlogout|bashrc|bash_profile"
+    r"|bash_login|profile)(?:\.zwc)?(?![\w.-])"
+    r"|(?<![\w.-])\.oh-my-zsh(?![\w.-])"
+    r"|\$\{?ZSH(?:_CUSTOM)?\}?(?![\w])"
+    # zsh が起動ファイルの代わりに読むコンパイル済みの `.zwc` (`.zshrc.zwc`。fpath の
+    # 関数の digest も `.zwc` なので、場所と名前を問わない: settings の Edit の確認と
+    # 揃える) と、compinit が source する補完の dump (`.zcompdump-<host>-<ver>`)
+    r"|\.zwc(?![\w.-])"
+    r"|(?<![\w.-])\.zcompdump"
+    # Homebrew の prefix (brew shellenv / pyenv / fzf が .zshrc から読み込まれ、PATH の
+    # 先頭にある)。Linuxbrew と、prefix を指す変数の綴りも
+    r"|(?<![\w.-])/opt/homebrew(?![\w.-])"
+    r"|(?<![\w.-])/home/linuxbrew/\.linuxbrew(?![\w.-])"
+    r"|\$\{?HOMEBREW_(?:PREFIX|CELLAR|REPOSITORY)\}?(?![\w])",
     re.IGNORECASE,
 )
+# HOME 直下だけを守る名前 (_HARNESS_PATH の `~/` の綴りと、環境の HOME の絶対パス)
+_HOME_ONLY_NAMES = (".codex", ".zsh_secrets", ".docker/completions")
+# 場所の決まった保護対象 (Homebrew の prefix)。環境の HOMEBREW_* も足す
+_ABSOLUTE_HARNESS_ROOTS = ("/opt/homebrew", "/home/linuxbrew/.linuxbrew")
+_HOMEBREW_ENV_NAMES = ("HOMEBREW_PREFIX", "HOMEBREW_CELLAR", "HOMEBREW_REPOSITORY")
+# zsh がコンパイル済みとして読む起動ファイル (`.zshrc.zwc` …)
+_COMPILED_STARTUP_NAMES = frozenset(f"{name}.zwc" for name in _SHELL_STARTUP_NAMES)
 # 書き込み先そのものとしての `.claude` / `.codex` / `.gemini` ディレクトリ
 # (`cp x ~/.claude/` は settings.json や CLAUDE.md を上書きしうる)。
 _HARNESS_DIR = re.compile(r"(?:.*/)?\.(?:claude|codex|gemini)/?", re.IGNORECASE)
@@ -3210,7 +4541,32 @@ _HARNESS_DIR = re.compile(r"(?:.*/)?\.(?:claude|codex|gemini)/?", re.IGNORECASE)
 # うるなら保護対象とみなす (_dynamic_harness_hint)。
 _DYNAMIC_WORD = re.compile(r"[*?\[{$`]")
 _GLOB_OR_BRACE = re.compile(r"[*?\[{]")
-_HARNESS_LEAF_FILES = frozenset({"settings.json", "settings.local.json", "claude.md"})
+_HARNESS_LEAF_FILES = frozenset(
+    {
+        "settings.json",
+        "settings.local.json",
+        "claude.md",
+        ".zsh_secrets",
+        *_SHELL_STARTUP_NAMES,
+        *_COMPILED_STARTUP_NAMES,
+    }
+)
+# ユーザー名に展開される綴り (_is_harness_target がフックのユーザー名で読み直す)
+_USER_SPELLING = re.compile(
+    r"\$\((?:whoami|logname|id -un|id -nu|id -u -n|id -n -u)\)"
+    r"|`(?:whoami|logname|id -un)`|\$\{?USER\}?(?![A-Za-z0-9_])"
+)
+# glob で名指されうる、先頭が `.` の保護対象の名前 (`~/.z*rc` / `~/.py*/x`)
+_PROTECTED_DOT_NAMES = frozenset(
+    {
+        ".pyenv",
+        ".oh-my-zsh",
+        ".zcompdump",
+        ".zsh_secrets",
+        *_SHELL_STARTUP_NAMES,
+        *_COMPILED_STARTUP_NAMES,
+    }
+)
 _HARNESS_DIR_NAMES = frozenset({".claude", ".codex", ".gemini"})
 # 単独では他のプロジェクトにもよくある名前 (React の hooks/、リポジトリ直下の AGENTS.md)
 # なので、親が `.claude` / `.codex` / `.gemini` か glob・ブレースを含むときだけ保護対象に
@@ -3233,7 +4589,8 @@ _HARNESS_WRITER_VALUE_FLAGS = {
 # `-t DIR` を束ねた形 (`-rt DIR` / `-Dt DIR`) と、値を密着させた形 (`-tDIR` / `-rtDIR`)
 _TARGET_DIR_BUNDLE = re.compile(r"^-[A-Za-z]*t$")
 _TARGET_DIR_GLUED = re.compile(r"^-[A-Za-z]*?t(.+)$")
-_SED_IN_PLACE = re.compile(r"^(?:-[A-Za-z]*i|--in-place(?:=|$))")
+# `-I` は BSD (macOS) の in-place (GNU には無いので、数えても確認が増えるだけ)
+_SED_IN_PLACE = re.compile(r"^(?:-[A-Za-z]*[iI]|--in-place(?:=|$))")
 _SED_SCRIPT_FLAGS = frozenset({"-e", "-f", "--expression", "--file", "-l"})
 # `-M` / `-m` / `-I` は値 (モジュール名・パス) を密着させるので、その中の i は -i ではない
 _PERL_IN_PLACE = re.compile(r"^-(?![MmI])[A-Za-z0-9]*i")
@@ -3241,7 +4598,101 @@ _PERL_CODE_FLAGS = frozenset({"-e", "-E"})
 _AWK_EXECUTABLES = frozenset({"awk", "gawk", "mawk", "nawk"})
 
 
+_BRACE_LIMIT = 64
+# 1 回の判定 (harness_write_ask_reason) でブレースから作る候補の総数の上限。語ごとの
+# 上限 (_BRACE_LIMIT) だけでは、ブレースを含む語を何百も並べたコマンド (cwd が多いと
+# さらにその倍) で照合の回数が数百万になる。超えたら決められないものとして確認へ回す
+_BRACE_TOTAL_LIMIT = 4096
+
+
+class _HarnessCall:
+    """判定 1 回分の状態: ブレースの候補の残り (None は上限なし) と、綴りごとの判定。
+
+    判定の中では cwd も環境 (HOME など) も変わらず、cwd モードの綴りは絶対パスに
+    なっているので、キャッシュのキーは綴りだけでよい。判定の外では使わない
+    (harness_write_ask_reason が入るときに作り、出るときに戻す)。
+    """
+
+    def __init__(self) -> None:
+        self.meter: int | None = None
+        self.cache: dict[str, bool] | None = None
+
+
+_HARNESS_CALL = _HarnessCall()
+# 展開しうるブレースの組 (中に `{` / `}` を含まない内側から。`${…}` は展開ではない)
+_BRACE_GROUP = re.compile(r"(?<!\$)\{([^{}]*)\}")
+_BRACE_SEQUENCE = re.compile(r"^(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?$")
+
+
+def _brace_sequence(body: str) -> list[str] | None:
+    """`{1..3}` / `{a..e}` / `{1..9..2}` の並び。並びでなければ None。"""
+    seq = _BRACE_SEQUENCE.match(body)
+    if seq is None:
+        return None
+    start, end, step_text = seq.groups()
+    step = abs(int(step_text or 1)) or 1
+    numeric = start.lstrip("-").isdigit() and end.lstrip("-").isdigit()
+    if not numeric and not (start.isalpha() and end.isalpha()):
+        return None
+    lo, hi = (int(start), int(end)) if numeric else (ord(start), ord(end))
+    direction = 1 if hi >= lo else -1
+    # range の切り出しは長さに比例しない (`{1..100000000}` でも上限 + 1 個だけ作る)
+    values = range(lo, hi + direction, step * direction)[: _BRACE_LIMIT + 1]
+    return [str(v) for v in values] if numeric else [chr(v) for v in values]
+
+
+def _brace_alternatives(word: str) -> list[str] | None:
+    """語のブレース展開 (`{a,b}` / `{1..3}`、入れ子も)。上限を超えたら None。
+
+    `{x}` / `{}` / `${…}` は展開しない (シェルもしない)。bash / zsh はブレースを `~`
+    や変数より先に展開するので、ここで先に開いて候補ごとに照合する。
+    """
+    pending, done = [word], []
+    while pending:
+        current = pending.pop()
+        group = None
+        for match in _BRACE_GROUP.finditer(current):
+            body = match.group(1)
+            items = body.split(",") if "," in body else _brace_sequence(body)
+            if items is not None:
+                group = (match, items)
+                break
+        if group is None:
+            done.append(current)
+        else:
+            match, items = group
+            head, tail = current[: match.start()], current[match.end() :]
+            pending.extend(head + item + tail for item in items)
+        if len(done) + len(pending) > _BRACE_LIMIT:
+            return None
+    if _HARNESS_CALL.meter is not None and len(done) > 1:
+        _HARNESS_CALL.meter -= len(done)
+        if _HARNESS_CALL.meter < 0:
+            return None  # この判定で作った候補が多すぎる (_BRACE_TOTAL_LIMIT)
+    return done
+
+
 def _is_harness_target(token: str) -> bool:
+    """書き込み先トークン (ブレースは候補ごとに) がハーネスの設定を指しうるか。
+
+    展開の候補が多すぎるブレースは、決められないものとして保護対象に数える。
+    """
+    cache = _HARNESS_CALL.cache
+    if cache is not None and token in cache:
+        return cache[token]
+    if "{" not in token:
+        found = _is_harness_word(token)
+    else:
+        alternatives = _brace_alternatives(token)
+        found = alternatives is None or (
+            _is_harness_word(token) or any(_is_harness_word(a) for a in alternatives)
+        )
+    if cache is not None:
+        cache[token] = found
+    return found
+
+
+def _is_harness_word(token: str) -> bool:
     """書き込み先トークンがハーネスの設定 (settings / hooks / mods 等) を指しうるか。
 
     字面そのままに加えて、字面だけで畳んだ綴り (`//` の圧縮・`/./` の除去・`x/..` の解決:
@@ -3254,7 +4705,44 @@ def _is_harness_target(token: str) -> bool:
     if _is_harness_spelling(token):
         return True
     collapsed = posixpath.normpath(token)
-    return collapsed != token and _is_harness_spelling(collapsed)
+    if collapsed != token and _is_harness_spelling(collapsed):
+        return True
+    # ユーザー名を作る綴り (`/Users/$(whoami)/.codex` / `$USER`) はフックのユーザー名で
+    # 読んだ綴りも見る (追加であって置き換えではない)
+    named = _USER_SPELLING.sub(lambda _m: _process_user() or _m.group(), token)
+    if named != token and (
+        _is_harness_spelling(named) or _is_harness_spelling(posixpath.normpath(named))
+    ):
+        return True
+    # `~user/…` はそのユーザーの HOME の綴りでも見る (`~me/.codex/config.toml`)。同名の
+    # 変数が環境にあれば zsh はそちらを使うが、その判定は cwd の解決 (_named_directory)
+    user = _NAMED_DIRECTORY.match(token)
+    home = _user_home(user.group(1)) if user else None
+    if user is None or home is None:
+        return False
+    spelled = home + token[user.end() :]
+    return _is_harness_spelling(spelled) or _is_harness_spelling(
+        posixpath.normpath(spelled)
+    )
+
+
+def _pyenv_root_spellings() -> list[str]:
+    """環境の PYENV_ROOT (絶対パスのときだけ、字面のまま。ファイルシステムは見ない)。"""
+    root = os.environ.get("PYENV_ROOT", "").rstrip("/")
+    return [root] if root.startswith("/") else []
+
+
+def _absolute_root_spellings() -> list[str]:
+    """場所の決まった保護対象 (Homebrew の prefix) と、環境の PYENV_ROOT / HOMEBREW_*。"""
+    roots = [*_ABSOLUTE_HARNESS_ROOTS, *_pyenv_root_spellings()]
+    for name in _HOMEBREW_ENV_NAMES:
+        value = os.environ.get(name, "").rstrip("/")
+        if value.startswith("/"):
+            roots.append(value)
+    return roots
+
+
+_HOME_ONLY_PATTERN = "|".join(re.escape(name) for name in _HOME_ONLY_NAMES)
 
 
 def _is_harness_spelling(token: str) -> bool:
@@ -3262,7 +4750,12 @@ def _is_harness_spelling(token: str) -> bool:
     if _HARNESS_PATH.search(token) or _HARNESS_DIR.fullmatch(token):
         return True
     home = os.environ.get("HOME", "").rstrip("/")
-    if home and re.match(re.escape(home) + r"/\.codex(?![\w.-])", token, re.IGNORECASE):
+    if home and re.match(
+        re.escape(home) + rf"/(?:{_HOME_ONLY_PATTERN})(?![\w.-])", token, re.IGNORECASE
+    ):
+        return True
+    folded = posixpath.normpath(token).casefold()
+    if any(_is_within(folded, r.casefold()) for r in _absolute_root_spellings()):
         return True
     return bool(_DYNAMIC_WORD.search(token)) and _dynamic_harness_hint(token)
 
@@ -3299,24 +4792,69 @@ def _dynamic_harness_hint(token: str) -> bool:
       `~/.co*/AGENTS.md`)。`src/hooks/*.ts` (React の hooks) や `$D/AGENTS.md` のように親が
       固定名・変数なら外す。親と名前の組までは見ないので `.gemini/rules/*.md` も数える
       (過剰側に倒れるだけ)
+    - `.local` の直下が展開を含む (`~/.local/b*/csb` / `~/.local/{bin,x}/y`)。`bin` /
+      `state` は親が `.local` に展開されうる glob のときだけ数える (`~/.l*/bin/x`)。
+      シェルの glob は先頭の `.` を明示しないと隠しファイルに当たらないので、`.` で
+      始まらない親 (`node_modules/*/bin/`) は外す
+    - シェルの起動ファイル・`.pyenv`・`.oh-my-zsh` に展開されうる、`.` で始まる glob
+      (`~/.z*rc` / `~/.py*/versions/x`)。起動ファイルの名前そのものは末端の名前として
+      数える (`$D/.zshrc`)
 
     正規表現 1 本にすると、展開文字の位置を探す後戻りが長いトークンで 2 乗になるので、
     部品ごとに見る。
     """
     parts = token.split("/")
+    if token.startswith("/") and any(
+        _glob_may_name_root(parts[1:], root) for root in _ABSOLUTE_HARNESS_ROOTS
+    ):
+        return True  # `/opt/home*/bin/x`
     for i, part in enumerate(parts):
         name = part.casefold()
-        if name in _HARNESS_LEAF_FILES:
+        following = parts[i + 1] if i + 1 < len(parts) else ""
+        if name in _HARNESS_LEAF_FILES or name.startswith(".zcompdump"):
             return True
+        if name == ".docker" and _DYNAMIC_WORD.search(following):
+            return True  # `~/.docker/comp*`
         if name in _HARNESS_DIR_NAMES:
-            following = parts[i + 1] if i + 1 < len(parts) else ""
             if not following or _DYNAMIC_WORD.search(following):
                 return True
-        if name in _HARNESS_CHILD_NAMES and i > 0:
-            parent = parts[i - 1]
+        if name == ".local" and _DYNAMIC_WORD.search(following):
+            return True
+        if name.startswith(".") and _GLOB_OR_BRACE.search(name):
+            if "{" in name or any(
+                fnmatch.fnmatchcase(dot, name) for dot in _PROTECTED_DOT_NAMES
+            ):
+                return True  # `~/.z*rc` / `~/.py*/versions/x`
+        if i == 0:
+            continue
+        parent = parts[i - 1]
+        if name in _HARNESS_CHILD_NAMES:
             if parent.casefold() in _HARNESS_DIR_NAMES or _GLOB_OR_BRACE.search(parent):
                 return True
+        if name in ("bin", "state") and _glob_may_name_local(parent):
+            return True
+        if name == "completions" and _glob_may_name_local(parent, ".docker"):
+            return True
     return False
+
+
+def _glob_may_name_local(part: str, name: str = ".local") -> bool:
+    """パスの部品 part が glob / ブレースとして name (`.local`) に展開されうるか。"""
+    if not part.startswith(".") or not _GLOB_OR_BRACE.search(part):
+        return False
+    return "{" in part or fnmatch.fnmatchcase(name, part.casefold())
+
+
+def _glob_may_name_root(parts: list[str], root: str) -> bool:
+    """絶対パスの部品 parts (先頭の `/` の後) が、glob として root の下を名指しうるか。"""
+    names = root.strip("/").split("/")
+    if len(parts) < len(names) or not any(
+        _GLOB_OR_BRACE.search(p) for p in parts[: len(names)]
+    ):
+        return False
+    return all(
+        fnmatch.fnmatchcase(name, part.casefold()) for name, part in zip(names, parts)
+    )
 
 
 def _redirect_targets(line: str) -> list[str] | None:
@@ -3384,29 +4922,433 @@ def _target_dir_values(args: list[str]) -> list[str]:
     return values
 
 
-def _writes_harness(exe: str, args: list[str]) -> bool:
-    """既知の書き込みコマンドが、保護対象を書き込み先に取るか。"""
+def _sed_scripts(args: list[str]) -> list[str]:
+    """sed のスクリプト (-e / --expression の値、無ければ最初の被演算子)。
+
+    BSD の `-i SUFFIX` (分離形) はサフィックスを次の語に取るので、そのときは最初の
+    2 つの被演算子をスクリプトの候補にする (ファイル名をスクリプトとして読んでも、
+    保護パスへの `w` が現れなければ何も起きない)。`-f FILE` のスクリプトは読まない
+    (hooks/README.md の既知の穴)。
+    """
+    scripts: list[str] = []
+    operands: list[str] = []
+    explicit = bsd_suffix = False
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        nxt = args[i + 1] if i + 1 < len(args) else ""
+        if tok == "--":
+            operands.extend(args[i + 1 :])
+            break
+        if tok.startswith("--"):
+            name, eq, value = tok.partition("=")
+            if name in ("--expression", "--file"):
+                explicit = True
+                if name == "--expression":
+                    scripts.append(value if eq else nxt)
+                i += 1 if eq else 2
+                continue
+            if name == "--line-length" and not eq:
+                i += 1
+        elif tok.startswith("-") and len(tok) > 1:
+            letters = tok[1:]
+            for j, ch in enumerate(letters):
+                if ch in "efl":
+                    value = letters[j + 1 :]
+                    if not value:
+                        value = nxt
+                        i += 1
+                    if ch != "l":
+                        explicit = True
+                    if ch == "e":
+                        scripts.append(value)
+                    break
+                if ch in "iI":
+                    bsd_suffix = tok == "-" + ch
+                    break
+        else:
+            operands.append(tok)
+        i += 1
+    operands = [t for t in operands if t]  # BSD の `-i ''` の空語
+    if not explicit:
+        scripts.extend(operands[: 2 if bsd_suffix else 1])
+    return scripts
+
+
+def _skip_sed_delimited(script: str, i: int, count: int) -> int:
+    """script[i] を区切り文字として、区切られた部分を count 個読み飛ばした位置。"""
+    if i >= len(script):
+        return i
+    delim = script[i]
+    i += 1
+    for _ in range(count):
+        while i < len(script) and script[i] != delim:
+            i += 2 if script[i] == "\\" else 1
+        i += 1
+    return i
+
+
+def _sed_write_targets(script: str) -> list[str]:
+    """sed スクリプトの `w FILE` / `W FILE` コマンドと `s///w FILE` フラグの行き先。
+
+    アドレス (`/re/` / `\\cREc` / 行番号 / `$` / `,`) と `s` / `y` の区切られた部分を
+    読み飛ばしてからコマンド文字を見る。`s#.claude/hooks#x#` のように保護パスが正規表現
+    や置換文字列の中にあるだけなら行き先にならない。ファイル名は行末まで (`;` を含む)。
+    """
+    targets: list[str] = []
+    i = 0
+    n = len(script)
+    while i < n:
+        ch = script[i]
+        if ch in " \t\n;{}!,0123456789$+~":
+            i += 1
+        elif ch == "/":
+            i = _skip_sed_delimited(script, i, 1)
+        elif ch == "\\":
+            i = _skip_sed_delimited(script, i + 1, 1)
+        elif ch in "sy":
+            i = _skip_sed_delimited(script, i + 1, 2)
+            if ch == "s":
+                start = i
+                while i < n and script[i] not in "w;\n}":
+                    i += 1
+                if i < n and script[i] == "w" and i >= start:
+                    end = script.find("\n", i)
+                    end = n if end < 0 else end
+                    targets.append(script[i + 1 : end].strip())
+                    i = end
+        elif ch in "wW":
+            end = script.find("\n", i)
+            end = n if end < 0 else end
+            targets.append(script[i + 1 : end].strip())
+            i = end
+        elif ch in "aicrRbtTe:":
+            # 引数を行末まで取るコマンド (テキスト / 読み込み元 / ラベル / 実行)
+            end = script.find("\n", i)
+            i = n if end < 0 else end
+        else:
+            i += 1
+    return targets
+
+
+class _Dest(NamedTuple):
+    """書き込み先 1 つ。sources はそこへ入れるもの (ディレクトリなら dir/basename(src))。"""
+
+    path: str
+    sources: tuple[str, ...] = ()
+    # `-t DIR` の DIR: 行き先がディレクトリだと綴りから確定している
+    into_dir: bool = False
+
+
+def _write_destinations(
+    exe: str, args: list[str], tmpdir: str = "$TMPDIR"
+) -> list[_Dest] | None:
+    """既知の書き込みコマンドの書き込み先。書き込みコマンドでなければ None。
+
+    docker と sed の `w` は別に見る (_writes_harness / _segment_cwd_reason)。tmpdir は
+    mktemp が既定で作る場所 (前置の `TMPDIR=…` があればその値)。
+    """
+    exe = _writer_name(exe)
+    if exe == "mktemp":
+        return _mktemp_destinations(args, tmpdir)
     if exe in _HARNESS_ANY_OPERAND_WRITERS:
         value_flags = _HARNESS_WRITER_VALUE_FLAGS.get(exe, frozenset())
         targets = _operands(args, value_flags)[0]
-    elif exe in _HARNESS_DEST_WRITERS:
+        dests = [_Dest(t) for t in targets]
+        if exe == "mv" and len(targets) > 1:
+            dests[-1] = _Dest(targets[-1], tuple(targets[:-1]))
+        return dests
+    if exe in _HARNESS_DEST_WRITERS:
         # `-t DIR` があれば行き先はそれだけ (残りの被演算子はすべてコピー元)。
         # rsync の -t は時刻保持で、行き先ではない。
         target_dirs = [] if exe == "rsync" else _target_dir_values(args)
-        targets = target_dirs or _operands(args)[0][-1:]
-    elif exe == "dd":
-        targets = [t[len("of=") :] for t in args if t.startswith("of=")]
-    elif exe in ("sed", "gsed") and any(_SED_IN_PLACE.match(t) for t in args):
+        ops = _operands(args)[0]
+        if target_dirs:
+            sources = tuple(t for t in ops if t not in target_dirs)
+            return [_Dest(d, sources, True) for d in target_dirs]
+        return [_Dest(ops[-1], tuple(ops[:-1]))] if ops else []
+    if exe == "dd":
+        return [_Dest(t[len("of=") :]) for t in args if t.startswith("of=")]
+    if exe in ("sed", "gsed") and any(_SED_IN_PLACE.match(t) for t in args):
         # スクリプトは -e/-f の値、それが無ければ最初の被演算子。BSD の `-i ''` の空語は除く
         ops, scripted = _operands(args, _SED_SCRIPT_FLAGS)
         ops = [t for t in ops if t]
-        targets = ops if scripted else ops[1:]
-    elif exe == "perl" and any(_PERL_IN_PLACE.match(t) for t in args):
+        return [_Dest(t) for t in (ops if scripted else ops[1:])]
+    if exe == "perl" and any(_PERL_IN_PLACE.match(t) for t in args):
         ops, coded = _operands(args, _PERL_CODE_FLAGS)
-        targets = ops if coded else ops[1:]
-    else:
-        return False
-    return any(_is_harness_target(t) for t in targets)
+        return [_Dest(t) for t in (ops if coded else ops[1:])]
+    return None
+
+
+def _mktemp_destinations(args: list[str], tmpdir: str) -> list[_Dest]:
+    """mktemp が作るファイル・ディレクトリの場所 (`-u` は作らない)。
+
+    `-p DIR` / `--tmpdir[=DIR]` はその下、`/` を含むテンプレートはそこ、`/` を含まない
+    テンプレートは cwd、テンプレートなしと `-t` は tmpdir (`export TMPDIR=~/.local/bin;
+    mktemp -d` は ~/.local/bin の下に作る)。
+    """
+    directory, template, under_tmp = "", "", False
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok in ("-u", "--dry-run"):
+            return []
+        if tok == "-t":
+            under_tmp = True
+        elif tok in ("-p", "--tmpdir") and i + 1 < len(args):
+            directory = args[i + 1]
+            i += 1
+        elif tok.startswith("--tmpdir="):
+            directory = tok.split("=", 1)[1]
+        elif not tok.startswith("-"):
+            template = tok
+        i += 1
+    name = template.rsplit("/", 1)[-1] if template else "tmp.XXXXXXXXXX"
+    if directory:
+        return [_Dest(posixpath.join(directory, name))]
+    if under_tmp or not template:
+        return [_Dest(f"{tmpdir}/{name}")]
+    return [_Dest(template)]
+
+
+# 先頭の `g` を外すと既知の書き込みコマンドになる名前 (Homebrew の GNU coreutils:
+# `gcp` / `gtee` / `ginstall` …)。一覧に無い綴りで同じ書き込みを通させない
+_WRITER_NAMES = (
+    _HARNESS_ANY_OPERAND_WRITERS
+    | _HARNESS_DEST_WRITERS
+    | {"dd", "sed", "perl", "mktemp"}
+)
+# 後ろに別のコマンドを走らせるもの (`sudo` / `doas` は即時 DENY でも止まるが、ここでも
+# 中身を見る)
+_RUNNERS = frozenset({"sudo", "doas", "busybox"})
+_RUNNER_VALUE_FLAGS = {"sudo": frozenset("CDghpRrTtUu"), "doas": frozenset("aCu")}
+_RUNNER_VALUELESS_FLAGS = {
+    "sudo": frozenset("AbEeHiKklnPSsVv"),
+    "doas": frozenset("nsL"),
+}
+_SUDO_LONG_VALUE_FLAGS = frozenset(
+    {
+        "--user",
+        "--group",
+        "--host",
+        "--prompt",
+        "--close-from",
+        "--chdir",
+        "--role",
+        "--type",
+        "--command-timeout",
+        "--other-user",
+    }
+)
+_SUDO_LONG_VALUELESS_FLAGS = frozenset(
+    {
+        "--preserve-env",
+        "--login",
+        "--shell",
+        "--set-home",
+        "--non-interactive",
+        "--background",
+        "--askpass",
+        "--stdin",
+        "--bell",
+        "--edit",
+    }
+)
+_LINK_FLAG_LETTERS = frozenset("sl")
+_RUNNER_DEPTH_LIMIT = 8
+
+
+def _writer_name(exe: str) -> str:
+    """実行体名を既知の書き込みコマンドの名前へ寄せる (`gcp` -> `cp`)。"""
+    if exe not in _WRITER_NAMES and exe[:1] == "g" and exe[1:] in _WRITER_NAMES:
+        return exe[1:]
+    return exe
+
+
+def _command_name(token: str) -> str:
+    return token.rsplit("/", 1)[-1].casefold()
+
+
+def _runner_commands(exe: str, args: list[str]) -> list[tuple[str, list[str]]]:
+    """exe が走らせるコマンドの候補 (実行体, 引数)。sudo / doas / busybox でなければ自分。
+
+    sudo / doas のフラグを読み切れなければ、後ろに現れる書き込みコマンドやシェルの名前を
+    すべて候補にする (どれが実行体か決められないので、過剰側に倒す)。`sudo -e FILE` は
+    FILE を書き換える (`tee FILE` として扱う)。入れ子 (`sudo sudo …`) は繰り返し剥がし、
+    _RUNNER_DEPTH_LIMIT を超えたら読み切れないものとして同じく過剰側に倒す。
+    """
+    for _ in range(_RUNNER_DEPTH_LIMIT):
+        if exe not in _RUNNERS:
+            return [(exe, args)]
+        candidates = _runner_step(exe, args)
+        if len(candidates) != 1:
+            return candidates
+        exe, args = candidates[0]
+    return _runner_fallback(args)
+
+
+def _runner_step(exe: str, args: list[str]) -> list[tuple[str, list[str]]]:
+    """_runner_commands の 1 段分 (exe は _RUNNERS のどれか)。"""
+    if exe == "busybox":
+        return (
+            [(_command_name(args[0]), args[1:])]
+            if args[:1] != [] and not args[0].startswith("-")
+            else []
+        )
+    value_flags = _RUNNER_VALUE_FLAGS[exe]
+    valueless = _RUNNER_VALUELESS_FLAGS[exe]
+    edit = False
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "--":
+            i += 1
+            break
+        if not tok.startswith("-") or tok == "-":
+            break
+        if tok.startswith("--"):
+            name, eq, _value = tok.partition("=")
+            if exe != "sudo":
+                return _runner_fallback(args)
+            if name in _SUDO_LONG_VALUE_FLAGS:
+                i += 1 if eq else 2
+                continue
+            if name not in _SUDO_LONG_VALUELESS_FLAGS:
+                return _runner_fallback(args)
+            edit = edit or name == "--edit"
+            i += 1
+            continue
+        letters = tok[1:]
+        for k, ch in enumerate(letters):
+            if ch in value_flags:
+                i += 1 if k + 1 < len(letters) else 2
+                break
+            if ch not in valueless:
+                return _runner_fallback(args)
+            edit = edit or ch == "e"
+        else:
+            i += 1
+    inner = args[i:]
+    if edit:
+        return [("tee", inner)]
+    rest = _split_prefix(inner)
+    if rest is None:
+        return _runner_fallback(inner)
+    return [(_command_name(rest[0]), rest[1:])] if rest else []
+
+
+def _runner_fallback(args: list[str]) -> list[tuple[str, list[str]]]:
+    names = _WRITER_NAMES | _SHELL_EXECUTABLES | {"eval"}
+    return [
+        (_command_name(tok), args[j + 1 :])
+        for j, tok in enumerate(args)
+        if _writer_name(_command_name(tok)) in names
+    ]
+
+
+def _is_link_command(exe: str, args: list[str]) -> bool:
+    """link を張るか (`ln`、`cp -s` / `cp -l` / `cp --symbolic-link` / `cp --link`)。"""
+    if exe == "ln":
+        return True
+    return exe == "cp" and any(
+        tok in ("--symbolic-link", "--link")
+        or (
+            tok[:1] == "-"
+            and tok[1:2] != "-"
+            and bool(_LINK_FLAG_LETTERS.intersection(tok[1:]))
+        )
+        for tok in args
+    )
+
+
+def _is_symbolic_link(exe: str, args: list[str]) -> bool:
+    letter = "s"
+    return any(
+        tok in ("--symbolic", "--symbolic-link")
+        or (tok[:1] == "-" and tok[1:2] != "-" and letter in tok[1:])
+        for tok in args
+    )
+
+
+def _home_root_spellings(home: str) -> list[tuple[str, bool]]:
+    """HOME 起点の保護対象の綴り (casefold 済み、ファイルシステムは見ない)。"""
+    return [
+        (posixpath.join(home, rel).casefold(), whole)
+        for rel, whole in _HARNESS_HOME_ROOTS
+    ]
+
+
+def _ancestor_spelling(folded: str, roots: list[tuple[str, bool]]) -> bool:
+    """正規化して casefold した綴りが、保護対象を下に含むディレクトリを指すか。
+
+    `.local` と `.local/state` は場所を問わない (`.local/bin` と
+    `.local/state/claude-sandbox` は字面ではどこでも保護対象)。HOME 起点の保護対象は、
+    その祖先 (`~` / `~/.local` / `/Users` / `/`) を数える。
+    """
+    name = posixpath.basename(folded)
+    if name == ".local" or folded == ".local/state" or folded.endswith("/.local/state"):
+        return True
+    if _glob_may_name_local(name):
+        return True
+    return folded.startswith("/") and any(
+        _is_within(root, folded) for root, _whole in roots
+    )
+
+
+def _lexical_ancestor(path: str) -> bool:
+    """字面の path が保護対象の祖先か (_ancestor_spelling。HOME は環境の値)。"""
+    home = os.environ.get("HOME", "").rstrip("/")
+    if _HOME_SPELLING.match(path):
+        if not home.startswith("/"):
+            return True  # HOME が分からない: `~` がどこを指すか決められない
+        path = _HOME_SPELLING.sub(lambda _m: home, path, count=1)
+    roots = _home_root_spellings(home) if home.startswith("/") else []
+    roots += [(root.casefold(), True) for root in _absolute_root_spellings()]
+    return _ancestor_spelling(posixpath.normpath(path).casefold(), roots)
+
+
+def _replaces_ancestor(exe: str, args: list[str]) -> bool:
+    """rm / mv の被演算子か link の行き先が、保護対象の祖先を作り替えうるか。
+
+    `mv ~/.local x; ln -s /tmp/evil ~/.local` のように祖先を差し替えれば、その下の
+    保護対象は綴りを変えずに別物になる。cp / tee / リダイレクトの行き先は数えない
+    (`cp x ~/` は日常の形で、祖先そのものは置き換わらない)。
+    """
+    if exe in ("rm", "mv"):
+        return any(_lexical_ancestor(t) for t in _operands(args)[0])
+    if _is_link_command(exe, args):
+        for dest in _ln_destinations(args):
+            if exe == "ln" and _lexical_ancestor(dest.path):
+                return True
+            if any(
+                _is_harness_target(src) or _lexical_ancestor(src)
+                for src in dest.sources
+            ):
+                return True
+    return False
+
+
+def _writes_harness(exe: str, args: list[str]) -> bool:
+    """既知の書き込みコマンドが、保護対象を書き込み先に取るか。
+
+    link は、その指す先が保護対象かその祖先なら書き込みとみなす (`ln -s ~/.local d` の
+    後の `cp X d/bin/csb` は、字面では保護対象を名指ししない)。
+    """
+    if exe in _RUNNERS:
+        return any(_writes_harness(e, a) for e, a in _runner_commands(exe, args))
+    if exe in _DOCKER_EXECUTABLES:
+        return _docker_writes_harness(exe, args)
+    exe = _writer_name(exe)
+    if exe == "sed" and any(
+        _is_harness_target(t) or _mentions_harness_path(t)
+        for script in _sed_scripts(args)
+        for t in _sed_write_targets(script)
+    ):
+        return True
+    if _replaces_ancestor(exe, args):
+        return True
+    dests = _write_destinations(exe, args)
+    return dests is not None and any(_is_harness_target(d.path) for d in dests)
 
 
 def _awk_program(args: list[str]) -> str:
@@ -3447,6 +5389,12 @@ def _shell_code(line: str) -> str | None:
         return None
     exe = rest[0].rsplit("/", 1)[-1].casefold()
     args = rest[1:]
+    if exe in _RUNNERS:
+        # `sudo sh -c CODE` / `busybox sh -c CODE`: 走らせるシェルを見る
+        for inner_exe, inner_args in _runner_commands(exe, args):
+            if inner_exe in _SHELL_EXECUTABLES or inner_exe == "eval":
+                exe, args = inner_exe, inner_args
+                break
     if exe == "eval":
         return " ".join(args)
     if exe not in _SHELL_EXECUTABLES:
@@ -3476,7 +5424,11 @@ def _feeds_shell_stdin(command: str) -> bool:
 
 
 def harness_write_ask_reason(
-    sub_commands: list[str], command: str, *, _depth: int = 0
+    sub_commands: list[str],
+    command: str,
+    *,
+    cwd: str | None = None,
+    _depth: int = 0,
 ) -> str:
     """コマンドがハーネス自身の設定へ書き込む形なら理由を返す (無ければ "")。
 
@@ -3485,12 +5437,88 @@ def harness_write_ask_reason(
     (1)(2)、(4) awk のプログラム中の保護パス。python -c / node -e / `python3 - <<EOF` の
     ような他言語のコードは読むのか書くのか静的に決められないので、ここでは扱わず高リスク層
     (二モデル AND ゲート) に任せる (実測ではほぼ全てが hook のソースを読む解析だった)。
+    加えて、実行体の名前を隠す綴りのコマンド語 (_command_word) はどのコマンド
+    でも理由を返す。
 
     行の集め方は codex_flag_ask_reason と同じで、heredoc 本文・複数行のクォート・コメント
     の中の行は見ない (コミットメッセージが `rm .claude/hooks/x` に触れるだけで止めない)。
     ただし本文や stdin をシェルのコードとして実行する形 (`bash <<EOF` / `source <<EOF`) と、
     複数行のコード文字列を渡す `sh -c` では、元の綴りの行もコマンドとして同じ規則に掛ける。
+
+    cwd は 3 通り:
+    - None: cwd を使わない。字面だけで判定し、ファイルシステムには触れない (コマンド語の
+      難読化と、変数から取ったコマンド語は見る: _walk_reason)。
+    - 絶対パス: session の作業ディレクトリ。字面で当たらなかったコマンドについて、相対の
+      行き先・同じコマンド内の cd・ディレクトリへの書き込み・symlink を解決してもう一度
+      照合する。
+    - HARNESS_CWD_UNKNOWN (または絶対パスでない文字列): 作業ディレクトリが分からない。
+      絶対パスの行き先は解決して照合し、相対の書き込みは確認へ回す。
     """
+    if _depth:
+        view = _command_view(sub_commands, command)
+        return _lexical_harness_reason(view.redirect_text, view.subs, _depth)
+    # 1 回の判定の中だけで使う、ブレースの候補の総数の上限と、綴りごとの判定の
+    # キャッシュ (_HarnessCall)。判定の外 (高リスク層の docker の照合など) では使わない
+    saved = _HARNESS_CALL.meter, _HARNESS_CALL.cache
+    _HARNESS_CALL.meter, _HARNESS_CALL.cache = _BRACE_TOTAL_LIMIT, {}
+    try:
+        return _harness_write_reason(sub_commands, command, cwd)
+    finally:
+        _HARNESS_CALL.meter, _HARNESS_CALL.cache = saved
+
+
+class _CommandView(NamedTuple):
+    """コマンドのうちシェルが実行する部分 (harness_write_ask_reason と DENY が共有)。"""
+
+    # 字面の判定に掛ける行き先のテキストと行 (本文を実行する形なら元の綴りのまま)
+    redirect_text: str
+    subs: list[str]
+    # 難読化と cwd の追跡に掛けるテキスト (語を保つ走査用)
+    code_texts: list[str]
+    # シェルがコマンドとして実行する行 (glob で綴った DENY の照合の範囲)
+    command_lines: list[str]
+
+
+# 区切りに引用符もバックスラッシュも無い heredoc (`<<EOF` / `<<-EOF` / `<<2`)。here-string
+# (`<<<`) は除く
+_UNQUOTED_HEREDOC = re.compile(r"(?<!<)<<-?[ \t]*(?=[^\s'\"\\<])")
+
+
+_SHIFT_OPERATOR = re.compile(r"(?<!<)<<(?!<)")
+
+
+def _arithmetic_shift(command: str) -> bool:
+    """`<<` の前に閉じていない `((` / `$[` がある行があるか。
+
+    `(( x = 1 << 2 ))` の `<<` は算術のシフトで heredoc ではなく、次の行はシェルが実行
+    する (bash・zsh で確かめた)。heredoc の本文を伏せた綴りはこれを本文と読みうるので、
+    この形ではすべての行をコマンドとみなす (_command_view)。
+    """
+    for line in command.splitlines():
+        for shift in _SHIFT_OPERATOR.finditer(line):
+            head = line[: shift.start()]
+            if head.count("((") > head.count("))") or head.count("$[") > head.count(
+                "]"
+            ):
+                return True
+    return False
+
+
+def _command_view(sub_commands: list[str], command: str) -> _CommandView:
+    """command のうち、シェルが実行するテキストと行を集める (呼び出し側は読むだけ)。
+
+    入口は DENY の判定 (find_deny_command) とハーネスの判定で同じコマンドを見るので、
+    直近の数件を使い回す (32 KB のコマンドで 0.5 s ほどかかる)。
+    """
+    return _command_view_cached(tuple(sub_commands), command)
+
+
+@functools.lru_cache(maxsize=4)
+def _command_view_cached(
+    sub_commands_key: tuple[str, ...], command: str
+) -> _CommandView:
+    """_command_view の本体。"""
+    sub_commands = list(sub_commands_key)
     texts = _live_texts(command)
     live_subs = (
         None
@@ -3509,15 +5537,94 @@ def harness_write_ask_reason(
         for sub in live_subs
         for raw in sub.splitlines()
     )
-    if (
-        live_subs is None
-        or sourced
-        or multiline_shell_code
-        or _feeds_shell_stdin(command)
-    ):
+    runs_bodies = sourced or multiline_shell_code or _feeds_shell_stdin(command)
+    if live_subs is None or runs_bodies:
         redirect_text, subs = command, sub_commands
     else:
         redirect_text, subs = "\n".join(texts or []), live_subs
+    # 実行されるシェルのテキスト (難読化と cwd の追跡はクォートを跨いで語を保つ走査で
+    # 見るので、行ではなくテキストで渡す)。本文がシェルとして実行されるかは heredoc
+    # 本文を除いた綴りで決め直す (本文の中の `| sh` という文字列で本文全体をコマンドと
+    # して読まない)。解析できないコマンドは heredoc 本文とコメントだけ除く。
+    masked = _mask_inert_text(command)
+    shell_bodies = (
+        multiline_shell_code
+        or _feeds_shell_stdin(masked)
+        or (
+            ("<<" in command or bool(_PROCESS_SUBSTITUTION.search(command)))
+            and any(
+                _resolve_executable(raw.strip()) in _SOURCING_EXECUTABLES
+                for raw in masked.splitlines()
+            )
+        )
+    )
+    if shell_bodies:
+        code_texts = [command]
+    elif texts is None:
+        code_texts = [masked]
+    else:
+        code_texts = texts
+    # 本文をシェルが実行する形は、すべての行をコマンドとみなす。解析できないコマンド
+    # (`((` を含む python の heredoc など) は、heredoc 本文とコメントを伏せた綴りの行。
+    # ただし引用符なしの区切りの heredoc があって `$(…)` / `` `…` `` を含むなら、本文は
+    # 展開 (= 実行) されうるので、すべての行 (_live_scan はこの形を解析しない)
+    expanded_bodies = bool(_UNQUOTED_HEREDOC.search(command)) and (
+        "$(" in command or "`" in command
+    )
+    if shell_bodies or (
+        live_subs is None and (expanded_bodies or _arithmetic_shift(command))
+    ):
+        command_lines = sub_commands
+    elif live_subs is None:
+        command_lines = _split_commands(masked)
+    else:
+        command_lines = live_subs
+    return _CommandView(redirect_text, subs, code_texts, command_lines)
+
+
+def _harness_write_reason(
+    sub_commands: list[str], command: str, cwd: str | None
+) -> str:
+    """harness_write_ask_reason の本体 (_depth == 0)。"""
+    view = _command_view(sub_commands, command)
+    reason = _lexical_harness_reason(view.redirect_text, view.subs, 0)
+    if reason:
+        return reason
+    name = _glob_deny_in_data(sub_commands, command, view)
+    if name:
+        return _GLOB_DENY_IN_DATA_REASON.format(name=name)
+    return _walk_reason(view.code_texts[0], view.code_texts[1:], cwd)
+
+
+_GLOB_DENY_IN_DATA_REASON = (
+    "Bash text spells the deny-listed `{name}` with a glob (such as `/bin/r?` or "
+    "`cur?`) in text the shell does not run as a command (a heredoc body for another "
+    "program, quoted text); the static DENY covers only what the shell runs — "
+    "confirm manually"
+)
+
+
+def _glob_deny_in_data(
+    sub_commands: list[str], command: str, view: _CommandView
+) -> str:
+    """glob で綴った DENY の名前が、シェルの実行しないテキストの中にだけあるか。
+
+    glob の DENY はシェルが実行する行 (view.command_lines) だけで照合する。他の
+    プログラムに渡す heredoc の本文や引用符の中など、全行で照合すれば当たるが実行する
+    行には無い形は、DENY にしない代わりに確認へ回す (DENY は承認できない)。実行される
+    のが data-only のコマンドだけの形 (コミットメッセージ。_deny_only_in_inert_text)
+    は確認も出さない。
+    """
+    hit, name = _find_deny_in_lines(sub_commands, glob_only=True)
+    if not hit or _deny_only_in_inert_text(command):
+        return ""
+    if _find_deny_in_lines(view.command_lines, glob_only=True)[0]:
+        return ""  # シェルが実行する行にある: find_deny_command が DENY にする
+    return name
+
+
+def _lexical_harness_reason(redirect_text: str, subs: list[str], depth: int) -> str:
+    """harness_write_ask_reason の字面だけの判定 (cwd を使わない部分)。"""
     # リダイレクトは分割前の行で見る: `>|` (noclobber を無視する上書き) の `|` で
     # _split_commands が行を割ると、演算子と行き先が別のパートに分かれてしまう。
     # 行継続 (`> \<改行> path`) は先に畳む。
@@ -3540,20 +5647,1973 @@ def harness_write_ask_reason(
                 return _harness_reason("file command")
             if exe in _AWK_EXECUTABLES and _mentions_harness_path(_awk_program(args)):
                 return _harness_reason("awk program")
-        if _depth >= 2:
-            continue
         # シェルのコード文字列はそれ自体がコマンド。同じ規則を 1 段深く掛ける。複数行の
         # パートはパート全体も見る (shlex は複数行のクォートを 1 語に保つので、改行を含む
-        # `sh -c '…'` のコードが丸ごと取れる)。
+        # `sh -c '…'` のコードが丸ごと取れる)。2 段より深いコードは展開せず、空でなく
+        # 確認を返す (中を見ないまま「書き込みなし」と言わない)。
         for candidate in lines + ([sub] if len(lines) > 1 else []):
             code = _shell_code(candidate)
+            if code and depth >= 2:
+                return _NESTING_REASON
             if code:
                 reason = harness_write_ask_reason(
-                    _split_commands(code), code, _depth=_depth + 1
+                    _split_commands(code), code, _depth=depth + 1
                 )
                 if reason:
                     return reason
     return ""
+
+
+# --- 実行体名を隠すコマンド語 (決定論的 ask) ---------------------------------------
+# 実行体の名前を字面から隠す綴りは、permissions の前方一致 (`Bash(csb:*)`) も、単独
+# モデルのレビューも欺ける。`c\sb` は csb を、`cs${x}b` は x が空なら csb を、`$'\x63sb'`
+# はどのバイト列でも走らせられる。名前を静的に確定できないので、どのコマンドでも人間へ
+# 回す。見るのは実行体の位置の語だけで (代入・リダイレクト・ラッパーは _split_prefix が
+# 剥がす)、引数・代入・フラグの中の同じ綴り (`echo $'a\tb'` / `X=$'\n' cmd`) は見ない。
+# 裸の `$VAR` / `"$PY"` と、展開の後ろに `/` で続くパス (`"$HOME/bin/x"`) は従来どおり
+# 高リスク層 ("wrapped command") に任せる。
+_HIDDEN_WORD = "\x00hidden-command-word"
+_VARIABLE_WORD = "\x00variable-command-word:"
+_COMMAND_WORD_CHARS = frozenset("\\$`*?[=")
+# 演算子の無いパラメータ展開 (`${NAME}` / `${1}` / `${@}`)。それ以外の `${…}` は
+# 既定値・置換・切り出しで名前を作れる
+_PLAIN_PARAMETER = re.compile(r"\$\{(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])\}")
+# この語数を超える変数のコマンド語は、cwd での解決をやめて確認へ回す
+_VARIABLE_WORDS_LIMIT = 64
+# 引用の入れ子 (`${a:-${a:-…}}`) をこの深さまでしか読まない
+_SPAN_DEPTH_LIMIT = 64
+_REDIRECT_START = re.compile(r"^(?:\d*[<>]|&>)")
+_PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SPECIAL_PARAMS = frozenset("0123456789@*#?$!-")
+_OBFUSCATION_REASON = (
+    "Bash command word hides the command name (ANSI-C quoting, an expansion mixed "
+    "with letters or with an operator, an escaped letter, a glob, or zsh's =cmd)"
+    " — confirm manually"
+)
+_GLOB_DENY_NAME_REASON = (
+    "Bash command word hides the command name: the glob `{word}` can expand to the "
+    "deny-listed {names} (a file of that name in the cwd is enough) — confirm "
+    "manually"
+)
+
+
+def _hidden_word_reason(word: str) -> str:
+    """名前を隠す語の理由。glob が DENY の名前に当たれば、その名前を挙げる。
+
+    `?url` / `*url` / `[c]url` は文字で始まらないので静的 DENY の照合から外している
+    (_deny_names_matching) が、cwd に `curl` という名前があれば curl に展開される。
+    一般的な文面のままだと読まずに承認されやすいので、展開されうる名前を書く。
+    """
+    base = "".join(_tokenize(word)).rsplit("/", 1)[-1].casefold()
+    if not base or not _GLOB_METACHARS.search(base):
+        return _OBFUSCATION_REASON
+    names = sorted(n for n in _DENY_GLOB_NAMES if fnmatch.fnmatchcase(n, base))
+    if not names:
+        return _OBFUSCATION_REASON
+    shown = ", ".join(f"`{n}`" for n in names[:3]) + (" …" if len(names) > 3 else "")
+    return _GLOB_DENY_NAME_REASON.format(word=word, names=shown)
+
+
+_DYNAMIC_COMMAND_REASON = (
+    "Bash command whose name is decided at run time (a variable, a substitution or a"
+    " glob) is run on an agent harness path — confirm manually"
+)
+_NESTING_REASON = (
+    "Bash command nests shell code, substitutions or quoting deeper than the review"
+    " unwraps — confirm manually"
+)
+
+
+class _TooDeep(Exception):
+    """入れ子が読む上限を超えた (確認へ回す)。"""
+
+
+def _span_at(text: str, i: int, depth: int = 0) -> tuple[int, list[str]] | None:
+    """text[i] から始まるクォート・展開・エスケープ 1 つの終わりと、中で実行される本文。
+
+    該当しなければ None、閉じていなければ終わりは -1。本文は `$(…)` / `` `…` `` の
+    中身で、ダブルクォートや `${…}` の内側にあるものも含める。入れ子が
+    _SPAN_DEPTH_LIMIT を超えたら _TooDeep。
+    """
+    if depth > _SPAN_DEPTH_LIMIT:
+        raise _TooDeep
+    n = len(text)
+    ch = text[i]
+    if ch == "\\":
+        return min(i + 2, n), []
+    if ch == "'" or text.startswith("$'", i):
+        ansi = ch == "$"
+        j = i + (2 if ansi else 1)
+        while j < n and text[j] != "'":
+            j += 2 if ansi and text[j] == "\\" else 1
+        return (j + 1 if j < n else -1), []
+    if text.startswith("$(", i):
+        inner, close = _live_scan(text, i + 2, [], nested=True)
+        return (-1, []) if inner is None else (close + 1, [inner])
+    if ch == "`":
+        close = _scan_backtick(text, i)
+        return (-1, []) if close < 0 else (close + 1, [text[i + 1 : close]])
+    if ch == '"' or text.startswith("${", i):
+        return _nested_span_end(text, i, depth)
+    return None
+
+
+def _nested_span_end(text: str, i: int, depth: int = 0) -> tuple[int, list[str]]:
+    """`"…"` / `${…}` の終わりと中の本文。内側のクォートと置換は _span_at で飛ばす。"""
+    n = len(text)
+    quoted = text[i] == '"'
+    j = i + (1 if quoted else 2)
+    braces = 1
+    bodies: list[str] = []
+    while j < n:
+        ch = text[j]
+        if ch == "\\":
+            j += 2
+            continue
+        if (
+            ch == "`"
+            or text.startswith(("$(", "${"), j)
+            or (not quoted and ch in "'\"")
+        ):
+            end, inner = _span_at(text, j, depth + 1) or (j + 1, [])
+            if end < 0:
+                return -1, []
+            bodies += inner
+            j = end
+            continue
+        if quoted and ch == '"':
+            return j + 1, bodies
+        if not quoted and ch == "{":
+            braces += 1
+        elif not quoted and ch == "}":
+            braces -= 1
+            if not braces:
+                return j + 1, bodies
+        j += 1
+    return -1, []
+
+
+def _raw_words(line: str) -> list[str]:
+    """line を、クォート・展開・エスケープを保ったまま引用外の空白で語に割る。
+
+    閉じていないクォートや置換は行末までを 1 語とする。
+    """
+    words: list[str] = []
+    start = -1
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if ch in " \t\n":
+            if start >= 0:
+                words.append(line[start:i])
+                start = -1
+            i += 1
+            continue
+        if start < 0:
+            start = i
+        span = _span_at(line, i) if ch in "\\'\"`$" else None
+        if span is None:
+            i += 1
+        else:
+            i = span[0] if span[0] > 0 else n
+    if start >= 0:
+        words.append(line[start:])
+    return words
+
+
+def _expansion_end(word: str, i: int) -> int:
+    """word[i] (`$` か `` ` ``) から始まる展開の終わり。展開でない `$` なら i + 1。"""
+    if word[i] == "`" or word.startswith(("$(", "${"), i):
+        span = _span_at(word, i)
+        end = span[0] if span else -1
+        return len(word) if end < 0 else end
+    if word[i + 1 : i + 2] and word[i + 1] in _SPECIAL_PARAMS:
+        return i + 2
+    name = _PARAM_NAME.match(word, i + 1)
+    return name.end() if name else i + 1
+
+
+def _word_hides_name(word: str) -> bool:
+    """生の語が実行体名を隠す綴りか (_OBFUSCATION_REASON の形)。
+
+    `/` で区切った部品ごとに見る: 同じ部品に展開と英字のリテラルが並べば、名前の一部を
+    展開が作っている (`cs${x}b` / `python${V}` / `c$@sb`)。展開の内側の英字
+    (`${PY}` の PY) はリテラルではないので数えない。演算子付きの展開
+    (`${x:-cp}` / `${x/a/b}`)、先頭の `=` (zsh の `=cp` は PATH 上の cp に展開される)、
+    引用されていない glob (`c?` / `/bin/c[p]`。_word_has_glob) は、それだけで名前を
+    作れる。`[` だけの語 (`[ -f x ]`) は test コマンドなので数えない。
+    """
+    if _word_has_glob(word):
+        return True
+    if word[:1] == "=" and len(word) > 1:
+        return True
+    expanded = lettered = False
+    quote = ""
+    i, n = 0, len(word)
+    while i < n:
+        ch = word[i]
+        step = 1
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+            elif ch == "/":
+                expanded = lettered = False
+            elif ch.isascii() and ch.isalpha():
+                lettered = True
+        elif ch == "'" and not quote:
+            quote = "'"
+        elif ch == '"':
+            quote = "" if quote else '"'
+        elif ch == "\\":
+            nxt = word[i + 1 : i + 2]
+            if not quote and nxt.isascii() and nxt.isalpha():
+                return True
+            # ダブルクォートの中の `\` は `$` `` ` `` `"` `\` の前でだけエスケープになる
+            if not quote or nxt in '$`"\\':
+                step = 2
+        elif ch in "$`":
+            if word.startswith("$'", i) and not quote:
+                return True
+            end = _expansion_end(word, i)
+            if word.startswith("${", i) and not _PLAIN_PARAMETER.fullmatch(
+                word, i, end
+            ):
+                return True
+            expanded = expanded or end > i + 1
+            step = max(end - i, 1)
+        elif ch == "/":
+            expanded = lettered = False
+        elif ch.isascii() and ch.isalpha():
+            lettered = True
+        if expanded and lettered:
+            return True
+        i += step
+    return False
+
+
+def _word_has_glob(word: str) -> bool:
+    """語に引用されていない glob (`*` / `?` / `[…]`) があるか。`[` だけの語は test。"""
+    quote = ""
+    i, n = 0, len(word)
+    while i < n:
+        ch = word[i]
+        if quote == "'":
+            quote = "" if ch == "'" else quote
+        elif ch == "'" and not quote:
+            quote = "'"
+        elif ch == '"':
+            quote = "" if quote else '"'
+        elif ch == "\\":
+            i += 1
+        elif not quote and (ch in "*?" or (ch == "[" and "]" in word[i + 1 :])):
+            return True
+        i += 1
+    return False
+
+
+def _is_dynamic_word(word: str) -> bool:
+    """語が展開とクォートだけでできているか (`$X` / `"$PY"` / `$x$y` / `$(…)`)。
+
+    リテラルの文字を 1 つでも含む語 (`$HOME/bin/x` の `/bin/x`) は数えない。
+    """
+    expanded = False
+    i, n = 0, len(word)
+    while i < n:
+        ch = word[i]
+        if ch == '"':
+            i += 1
+            continue
+        if ch not in "$`":
+            return False
+        end = _expansion_end(word, i)
+        if end == i + 1:
+            return False  # 展開でない `$`
+        expanded = True
+        i = end
+    return expanded
+
+
+_COMMAND_SUBSTITUTION = re.compile(r"\$\((?!\()|`")
+
+
+def _command_word(segment: str) -> tuple[str, str, list[str]]:
+    """セグメントの実行体の位置の語の種類と、変数ならその語と後ろの語 (クォートを外す)。
+
+    ("hidden", 語, []) は名前を隠す語 (_word_hides_name。glob を含む)、
+    ("variable", 語, 引数) は展開だけの語、("", "", []) はそれ以外。語を印に置き換えてから
+    _split_prefix に通し、
+    実行体の位置に印が残るかを見る (ラッパー `env` / `timeout 5` / `nohup` や文法
+    `if` / `(` の剥がし方を判定側と共有するため)。代入・リダイレクト・フラグの語は
+    見ない (`echo $'a\tb'` / `X=$'\n' cmd` は名前を隠さない)。
+    """
+    if not _COMMAND_WORD_CHARS.intersection(segment):
+        return "", "", []
+    words = _raw_words(segment)
+    probes: list[str] = []
+    for index, word in enumerate(words):
+        cooked = "".join(_tokenize(word))
+        if (
+            word.startswith("-")
+            or _REDIRECT_START.match(word)
+            or _ENV_ASSIGNMENT.match(cooked)
+        ):
+            probes.append(cooked)
+        elif _word_hides_name(word):
+            probes.append(f"{_HIDDEN_WORD}{index}")
+        elif _is_dynamic_word(word) or _COMMAND_SUBSTITUTION.search(word):
+            # コマンド置換を含む語 (`$(mktemp -d)/x`) も実行時に決まる語として扱う
+            probes.append(f"{_VARIABLE_WORD}{index}")
+        else:
+            probes.append(cooked)
+    rest = _split_prefix(probes)
+    if not rest:
+        return "", "", []
+    if rest[0].startswith(_HIDDEN_WORD):
+        return "hidden", words[int(rest[0][len(_HIDDEN_WORD) :])], []
+    if rest[0].startswith(_VARIABLE_WORD):
+        index = int(rest[0][len(_VARIABLE_WORD) :])
+        start = len(probes) - len(rest)
+        args = ["".join(_tokenize(w)) for w in words[start + 1 :]]
+        return "variable", words[index], args
+    return "", "", []
+
+
+def _variable_command_reason(
+    word: str,
+    args: list[str],
+    cwds: frozenset[str],
+    stack: list[frozenset[str]],
+    ctx: _CwdContext,
+    depth: int,
+) -> tuple[str, frozenset[str] | None]:
+    """変数から取ったコマンド語 (`$CP X dest`) の理由と、それが cd なら移動先。
+
+    同じコマンドで字面の値を代入されていれば、その値の実行体として判定し直す
+    (`CP=cp; $CP X ~/.local/bin/csb`)。決められなければ、同じ段の語が保護対象かその
+    祖先を指すとき (字面、cwd があれば cwd 経由でも) だけ確認へ回す。`$PY -m pytest`
+    のような日常の形は止めない。同じコマンドで代入されたのに値の決まらない変数なら、
+    その後の cwd は分からないものとする (cd かもしれない)。
+    """
+    # コマンド語の位置では自前の解決 (値の決まるコマンド置換・`$USER`・for の一覧) を
+    # 使わない (`$(whoami) X ~/.local/bin/csb` / `$(mktemp -d)/x X …` は字面の扱い)
+    spelled = _cook_word(word)
+    values = _expand_vars(spelled, ctx, derived=False)
+    if values is not None:
+        moved: frozenset[str] | None = None
+        for value in values:
+            line = shlex.join([value, *args])
+            reason = _lexical_harness_reason(line, _split_commands(line), depth + 1)
+            if reason:
+                return reason, None
+            reason, value_moved = _segment_cwd_reason(line, cwds, stack, ctx, depth + 1)
+            if reason:
+                return reason, None
+            if value_moved is not None:
+                moved = (moved or frozenset()) | value_moved
+            elif moved is not None:
+                moved |= cwds
+        return "", moved
+    operands = _operands(args)[0]
+    if any(_is_harness_target(a) or _lexical_ancestor(a) for a in operands):
+        return _DYNAMIC_COMMAND_REASON, None
+    if not ctx.lexical:
+        if len(operands) > _VARIABLE_WORDS_LIMIT:
+            return _DYNAMIC_COMMAND_REASON, None
+        for operand in operands:
+            for path in _dest_paths(operand, cwds, ctx) or []:
+                if _harness_candidate(path, ctx) or _harness_ancestor(path, ctx):
+                    return _DYNAMIC_COMMAND_REASON, None
+    # 自前の解決でなら決まる語 (`for c in cd; do $c …`) も cd かもしれないので、その後の
+    # cwd は分からないものとする
+    unresolved_local = _names_unresolved_local(spelled, ctx) or (
+        _expand_vars(spelled, ctx) is not None
+    )
+    return "", _UNKNOWN_CWD_SET if unresolved_local else None
+
+
+# --- 書き込み先を session の cwd で解決する (cwd が分かるときだけ) -------------------
+# 字面の照合は、相対の行き先 (cwd が ~/.claude/hooks の `cp x bash-review.py`)、同じ
+# コマンドの中の `cd ~/.local/bin && cp x .`、symlink の別名 (`h -> ~/.claude/hooks` の
+# `cp x h/bash-review.py`) を見られない。フックの入力には session の cwd があるので、
+# 渡されたときは (1) 相対の行き先を cwd へ繋ぎ、(2) 同じコマンドの中の字面の
+# `cd` / `pushd` / `popd` を順に辿り、(3) ディレクトリへ入れる書き込みは
+# dir/basename(src) も行き先に数え、(4) 字面の綴りに加えて realpath の綴りも照合する。
+# いずれも字面の判定への「追加」で、置き換えではない。
+#
+# cwd は「ありうる cwd の集合」で持つ。`&&` の直後だけは直前のコマンドが成功したときの
+# cwd に絞り、それ以外 (`;` / 改行 / `||` / `|` / `&`) はそれまでに現れた cwd すべての
+# 和にする (`cd x; cp a b` は cd が失敗すれば元の cwd で cp が走る)。`( … )` と置換・
+# `sh -c` の中の cd は外へ漏らさない。行き先を決められない cd (展開・`cd -`・CDPATH・
+# 書き換えた HOME) の後ろの相対の書き込みは、確認へ回す。
+#
+# ファイルシステムは os.path.realpath と os.lstat でしか見ない (どちらもファイルを開かず、
+# 何も実行しない)。どちらかが想定外の例外を投げたら、字面の判定へ黙って戻さず確認へ回す
+# (深い symlink の鎖で実体側の照合を外させない)。
+_UNKNOWN_CWD = ""
+# 入口が「cwd が分からない」と渡す値 (Codex のシェルツールの workdir を解決できない
+# ときなど)。絶対パスでないので、相対の書き込みは確認へ回る。
+HARNESS_CWD_UNKNOWN = "\x00cwd-unknown"
+_CD_EXECUTABLES = frozenset({"cd", "chdir", "pushd", "popd"})
+# cd を含まなくても cwd を変えうるもの (コードを今のシェルで走らせる)
+_CWD_CHANGERS = frozenset({"eval", "source", "."})
+# ディレクトリの履歴を指す綴り (`~-` / `~+` / `~1` / `$OLDPWD` / `$DIRSTACK` / zsh の
+# `$dirstack`)。cwd の追跡は履歴を持たないので、行き先にあれば決められない
+_DIRECTORY_HISTORY = re.compile(
+    r"^~(?:[+-][0-9]*|[0-9]+)(?=/|$)|\$\{?(?:OLDPWD|DIRSTACK|dirstack)(?![A-Za-z0-9_])"
+)
+# macOS の autofs (`/net/<host>` は lstat だけでそのホストへ問い合わせる)
+_AUTOMOUNT_ROOTS = ("/net", "/network")
+# 行き先を変えない cd のフラグ。-L / -P の違いは、字面と実体の両方の綴りを照合するので
+# 区別しない
+_CD_PATH_FLAGS = re.compile(r"^-[LPe@]+$")
+_FD_TARGET = re.compile(r"^(?:\d+-?|-)$")
+# 「区切り (`;` `&` `|` 改行) の中で、A の後ろに B」は 1 本の正規表現
+# (`A[^;&|\n]*B`) にすると、A が何度も出る長い区切りで毎回区切りの終わりまで走って
+# 戻るので 2 乗になる (32 KB の `local x local x …` で 3 秒)。区切りごとに分けて、
+# 最初の A の後ろで B を探す (_segment_search。線形)
+_SEGMENT_BREAK = re.compile(r"[;&|\n]")
+
+
+def _segment_search(code: str, head: re.Pattern[str], tail: re.Pattern[str]) -> bool:
+    """code のどれかの区切りで、head の後ろに tail があるか (`head[^;&|\\n]*tail`)。"""
+    for segment in _SEGMENT_BREAK.split(code):
+        found = head.search(segment)
+        if found and tail.search(segment, found.end()):
+            return True
+    return False
+
+
+_HOME_ASSIGNMENT = re.compile(r"\bHOME\s*=")
+_UNSET_WORD = re.compile(r"\bunset\b")
+_HOME_WORD = re.compile(r"\bHOME\b")
+
+
+def _home_reassigned(code: str) -> bool:
+    """`HOME=` か、同じ区切りの中の `unset … HOME` があるか (_segment_search で線形)。"""
+    return bool(_HOME_ASSIGNMENT.search(code)) or _segment_search(
+        code, _UNSET_WORD, _HOME_WORD
+    )
+
+
+_PWD_REASSIGNED = re.compile(r"\bPWD\s*=")
+# 名前を引数に取って値を入れる組み込み (_assigns_name)
+_NAME_SETTING_BUILTINS = re.compile(
+    r"\b(?:read|mapfile|readarray|getopts|typeset|declare|local|export|readonly"
+    r"|unset|integer|float|vared)\b"
+)
+_PRINTF_WORD = re.compile(r"\bprintf\b")
+# 環境を空にして起動する形 (`env -i` / `env -` / `exec -c`): TMPDIR / USER / HOME が消える。
+# `env -u X -i` のように値を取るフラグを挟んでもよい。同じ段の後ろの `-i` も数えるので
+# 過剰側に倒れるが、止めるのは自前の解決だけ
+_ENV_WORD = re.compile(r"\benv\b")
+_ENV_CLEARING_FLAG = re.compile(
+    r"\s(?:-[A-Za-z]*i[A-Za-z]*|--ignore-environment|-)(?=\s|$)"
+)
+_EXEC_WORD = re.compile(r"\bexec\b")
+_EXEC_CLEARING_FLAG = re.compile(r"\s-[A-Za-z]*c")
+
+
+def _env_clearing(code: str) -> bool:
+    """環境を空にして起動する形を含むか。"""
+    return _segment_search(code, _ENV_WORD, _ENV_CLEARING_FLAG) or _segment_search(
+        code, _EXEC_WORD, _EXEC_CLEARING_FLAG
+    )
+
+
+# 自前の解決が前提にする変数 (mktemp の TMPDIR、実行体の PATH、ユーザー名と HOME)
+_PREMISE_NAMES = ("TMPDIR", "PATH", "USER", "LOGNAME", "HOME")
+# 自前の解決 (値の決まるコマンド置換・`$USER`・代入値の `$PWD`) の前提を、同じコマンドが
+# 書き換えうる綴り: 実行体の探し方 (PATH / alias / enable / hash) と、実行ユーザーの切り替え
+_SUBSTITUTION_UNSAFE = re.compile(
+    r"(?<![$\w{])PATH\b"
+    r"|\b(?:alias|enable|hash|unhash|rehash|disable|autoload|unfunction|emulate"
+    r"|zmodload)\b"
+    r"|\b(?:sudo|doas|su|runuser|pkexec|setpriv|chroot|login)\b"
+    # zsh: PATH / FPATH / CDPATH と連動する小文字の配列と、別名・関数・実行体の表
+    r"|(?<![\w$./-])(?:f|cd|module_)?path\s*(?:\+?=|\[)"
+    r"|(?<![$\w{])FPATH\b"
+    r"|\b[gs]?aliases\b|\b(?:functions|commands|builtins)\s*\["
+)
+# `typeset -a path=(…)` / `export path` (区切りの中で宣言の組み込みの後ろ: _segment_search)
+_DECLARING_WORD = re.compile(r"\b(?:typeset|declare|local|export|readonly)\b")
+_PATH_ARRAY_WORD = re.compile(r"(?<![\w$./-])(?:f|cd|module_)?path\b")
+# 値の決まるコマンド置換と `$USER` の綴り。前提を書き換えうるコマンドの書き込み先に
+# これがあれば、字面のパスとしては扱わない (`whoami() {…}; cp X /Users/$(whoami)`)
+_KNOWN_SUBSTITUTION_SPELLING = re.compile(
+    r"(?:\$\(|`)\s*(?:/usr)?(?:/bin/)?(?:whoami|logname|id|mktemp|pwd)\b"
+    r"|\$\{?(?:USER|LOGNAME)(?![A-Za-z0-9_])"
+)
+# 置換の中身として値を決める綴り: 区切り・リダイレクト・展開・クォート・`~` を含まない
+_KNOWN_BODY = re.compile(r"[A-Za-z0-9_./ \t=:+,%@-]*")
+# `$TMPDIR` / `${TMPDIR}` / `${TMPDIR:-既定値}` (group 1 が既定値)
+_TMPDIR_REFERENCE = re.compile(r"\$(?:TMPDIR\b|\{TMPDIR(?::-([^}]*))?\})")
+# 名前の綴りを割るクォートとエスケープ (`export TMP""DIR=…` / `read P\WD`)
+_QUOTING = re.compile(r"[\"'\\]")
+
+
+def _mentions_name(name: str, code: str) -> bool:
+    """code が変数 name を `$` 抜きの語として書くか (代入・read・declare・for など)。"""
+    return re.search(rf"(?<![$\w{{]){name}\b", code) is not None
+
+
+def _assigns_name(name: str, code: str) -> bool:
+    """code (クォートを外した綴り) が変数 name を書き換えうる形を含むか。
+
+    `NAME=` / `NAME+=` / `NAME[…]=`、`${NAME:=…}` / `${NAME=…}`、名前を取る組み込み
+    (read / mapfile / getopts / typeset / declare / local / export / unset …)、
+    `printf -v NAME`、`for NAME in`。`os.environ["HOME"]` のような他言語の読み取りは
+    数えない (_mentions_name より狭い)。
+    """
+    word = rf"(?<![$\w{{./-]){name}\b"
+    pattern = (
+        rf"{word}(?:\[[^\]]*\])?\+?="
+        rf"|\$\{{{name}:?="
+        rf"|\b(?:for|select)\s+{name}\b"
+    )
+    if re.search(pattern, code):
+        return True
+    # 組み込みの後ろの名前は区切りごとに探す (1 本の正規表現だと 2 乗になる)
+    return _segment_search(
+        code, _NAME_SETTING_BUILTINS, re.compile(word)
+    ) or _segment_search(code, _PRINTF_WORD, re.compile(rf"-v\s*{name}\b"))
+
+
+def _dynamic_name(token: str) -> bool:
+    """代入する組み込みの引数で、名前 (`=` の前) が展開で決まるか。"""
+    name = token.split("=", 1)[0]
+    return "$" in name or "`" in name
+
+
+def _words_before_redirect(args: list[str]) -> list[str]:
+    """引数のうち、最初のリダイレクト (`<` / `>` / `2>` …) より前の語。"""
+    for i, tok in enumerate(args):
+        if tok.lstrip("0123456789&")[:1] in ("<", ">"):
+            return args[:i]
+    return args
+
+
+_VAR_REFERENCE = re.compile(
+    r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"
+)
+_VAR_VALUES_LIMIT = 8
+# 「不明」だけを含む集合。cwd の集合にも、変数のありうる値の集合にも使う
+_UNKNOWN_CWD_SET = frozenset({_UNKNOWN_CWD})
+# _VAR_SETTERS (名前を引数に取って値を入れる) は高リスク層の近くで定義している
+_VAR_POISONERS = frozenset({"eval", "source", ".", "let"})
+_ASSIGNING_BUILTINS = _ENV_DECLARING_BUILTINS | _LOCAL_ASSIGNING_BUILTINS
+# これより後ろの代入は条件付きかもしれない (if / ループ / グループ / 関数の本体)
+_BLOCK_OPENERS = frozenset(
+    {"if", "while", "until", "for", "select", "case", "{", "function"}
+)
+_CASE_WORD = re.compile(r"(?<![\w-])(?:case|esac)(?![\w-])")
+_SEGMENT_SEPARATORS = ("&&", "||", ";;", "|&", ";", "|", "&", "\n")
+_TARGET_WORD_END = frozenset(" \t\n;|&<>()")
+_CWD_WALK_DEPTH = 3
+# 1 つの path から同じコマンドで張られた link を辿って作る綴り (link の link も) の上限。
+# 達したら _Unresolvable で確認へ回す (綴りを黙って捨てない。_alias_spellings)
+_ALIAS_SPELLING_LIMIT = 16
+# ありうる cwd の数の上限。照合は (cwd 数 × 書き込み先) 回の realpath になるので、
+# 超えたら cwd を不明 (_UNKNOWN_CWD_SET) として扱い、相対パスの書き込みを確認へ回す
+# (cd を何百も並べて遅くさせない)
+_CWD_SET_LIMIT = 16
+# 同じコマンドで張られた link の数の上限 (ctx.aliases)。達したら _Unresolvable で
+# 確認へ回す (ln を何百も並べて綴りの照合を遅くさせない)
+_ALIAS_LIMIT = 32
+# 1 コマンドで realpath に掛ける綴りの上限 (cwd の数 × 行き先の数 × link の綴り)。
+# 超えたら解決をやめて確認へ回す (被演算子を何千も並べて遅くさせない)
+_RESOLUTION_BUDGET = 20_000
+# HOME 起点の保護対象 (_HARNESS_PATH / _HARNESS_DIR と同じ集合)。True はその下全体、
+# False はディレクトリそのものだけ (`~/.claude/agents` は保護しない)
+_HARNESS_HOME_ROOTS = (
+    (".claude/settings.json", True),
+    (".claude/settings.local.json", True),
+    (".claude/CLAUDE.md", True),
+    (".claude/hooks", True),
+    (".claude/mods", True),
+    (".claude/rules", True),
+    (".claude", False),
+    (".codex", True),
+    (".gemini/GEMINI.md", True),
+    (".gemini", False),
+    (".local/bin", True),
+    (".local/state/claude-sandbox", True),
+    (".pyenv", True),
+    (".oh-my-zsh", True),
+    *((name, True) for name in sorted(_SHELL_STARTUP_NAMES)),
+    *((name, True) for name in sorted(_COMPILED_STARTUP_NAMES)),
+    (".zsh_secrets", True),
+    (".docker/completions", True),
+)
+_UNRESOLVED_CWD_REASON = (
+    "Bash write to a destination that cannot be resolved (a cd to an expansion, the "
+    "directory history, CDPATH, a reassigned HOME, a variable this command assigned, "
+    "an unknown cwd) may land in the agent harness configuration — confirm manually"
+)
+_UNRESOLVED_PATH_REASON = (
+    "Bash write destination could not be resolved on the filesystem and may land in "
+    "the agent harness configuration — confirm manually"
+)
+
+
+class _Unresolvable(Exception):
+    """書き込み先の実体を調べられなかった (確認へ回す)。"""
+
+
+class _UnresolvedDirectory(Exception):
+    """行き先が、同じコマンドで代入されたのに値の決まらない変数や履歴に依る。"""
+
+
+def _defined_commands(text: str) -> frozenset[str]:
+    """text が定義する関数と alias の名前 (`cd() { … }` / `function pwd` / `alias g=…`)。
+
+    cd / pwd や任意の名前を差し替えうるので、あればコマンド中の cd と `$(pwd)` を解決
+    せず、定義された名前の呼び出しの後の cwd は分からないものとする。名前を読めない
+    定義 (`alias -g` の全域 alias など) は "*" を返す。見るのはコマンドの位置の語だけ
+    (`python3 -c "f()"` の中の括弧は定義ではない)。
+    """
+    events = _cwd_events(text)
+    segments = (
+        [e[2] for e in events if e[0] == "cmd"]
+        if events is not None
+        else text.splitlines()
+    )
+    names: set[str] = set()
+    # `f () { … }`: 名前の後ろの空白で、`()` はサブシェルの開閉として切り出される
+    for k, event in enumerate(events or []):
+        following = [e[0] for e in (events or [])[k + 1 : k + 3]]
+        if event[0] == "cmd" and following == ["open", "close"]:
+            names.update(_tokenize(event[2])[-1:])
+    for segment in segments:
+        # _split_prefix は `function NAME` と `f()` を剥がしてしまうので、文法だけ剥がす
+        tokens = _tokenize(segment)
+        if tokens[:1] == ["case"] and "in" in tokens:
+            tokens = tokens[tokens.index("in") + 1 :]  # `case $a in x) f () …`
+        while tokens and (
+            tokens[0].casefold() in _GRAMMAR_PREFIXES
+            or (tokens[0].endswith(")") and "(" not in tokens[0])  # case の腕 `x)`
+        ):
+            tokens = tokens[1:]
+        head = tokens[0] if tokens else ""
+        if head == "function":
+            names.add(tokens[1].split("(", 1)[0] if len(tokens) > 1 else "*")
+        elif head == "alias":
+            for tok in tokens[1:]:
+                if tok.startswith("-"):
+                    names.add("*")
+                elif "=" in tok:
+                    names.add(tok.split("=", 1)[0])
+        elif tokens[1:2] == ["()"]:
+            names.add(head)
+        elif "()" in head and not head.startswith("$"):
+            names.add(head.split("(", 1)[0])
+    return frozenset(n.casefold() for n in names if n)
+
+
+class _CwdVars:
+    """同じコマンドの中で字面の値を代入されたシェル変数 (cd と書き込み先の展開用)。"""
+
+    def __init__(
+        self,
+        values: dict[str, frozenset[str]] | None = None,
+        poisoned: bool = False,
+        blocks: bool = False,
+        derived: set[str] | None = None,
+        named: dict[str, frozenset[str]] | None = None,
+    ) -> None:
+        # zsh の `hash -d NAME=DIR` で登録した名前付きディレクトリ (_named_directory)
+        self.named = dict(named or {})
+        # 名前 -> ありうる値 (_UNKNOWN_CWD を含めば不明)。無い名前は不明 (環境由来)
+        self.values = dict(values or {})
+        # eval / source / 展開の実行体を見た: どの変数も分からない
+        self.poisoned = poisoned
+        # if / ループ / グループを見た: 以後の代入は条件付きかもしれない
+        self.blocks = blocks
+        # 値を _known_substitution / for の字面の一覧 / 代入値の $PWD から決めた名前。
+        # 行き先やコマンド語の照合には使うが、cd の行き先には使わない (cd は従来どおり
+        # 不明として扱い、それ以前の判定より確認を減らさない)
+        self.derived = set(derived or ())
+
+    def copy(self) -> _CwdVars:
+        return _CwdVars(
+            self.values, self.poisoned, self.blocks, self.derived, self.named
+        )
+
+
+class _CwdContext:
+    """1 コマンド分の解決の文脈 (HOME / CDPATH / 同じコマンドで張られた link)。
+
+    code は実行されるシェルのテキスト (harness_write_ask_reason の code_texts)。
+    """
+
+    def __init__(self, code: str, *, lexical: bool = False) -> None:
+        # lexical: cwd が無い (ファイルシステムを見ず、コマンド語だけを判定する)
+        self.lexical = lexical
+        env_home = os.environ.get("HOME", "").rstrip("/")
+        self.env_home = env_home if env_home.startswith("/") else ""
+        # 名前はクォートを外した綴りでも探す。`$'…'` はどんな名前も作れる
+        plain = _QUOTING.sub("", code)
+        ansi_c = "$'" in code
+        # コマンドが HOME を書き換えるなら、`~` と引数なしの cd の行き先は決められない
+        # (`HOME+=` / read / printf -v / typeset / `${HOME:=…}` なども: _assigns_name)
+        home_changed = _home_reassigned(code) or _assigns_name("HOME", plain)
+        self.home = "" if home_changed or ansi_c else self.env_home
+        # zsh の小文字の cdpath 配列も CDPATH と同じに数える
+        self.cdpath = bool(os.environ.get("CDPATH")) or "cdpath" in plain.casefold()
+        self.defined = _defined_commands(code)
+        self.shadowed = bool(self.defined)
+        self.pwd_reliable = not (
+            self.shadowed
+            or _PWD_REASSIGNED.search(code)
+            or _mentions_name("PWD", plain)  # read PWD / declare PWD / for PWD in
+            or _assigns_name("PWD", plain)  # `${PWD:=…}`
+            or ansi_c
+        )
+        # 自前の解決 (mktemp・whoami・id -un・logname・`$USER`・代入値の `$PWD`) が前提に
+        # する事実 (TMPDIR・PATH・USER・LOGNAME・HOME、実行体の探し方、実行ユーザー) を、
+        # このコマンドが書き換えうるなら解決しない (従来どおり不明)。関数・alias の定義、
+        # hash、環境を空にする起動 (`env -i`)、eval / source (ctx.vars.poisoned) も同じ
+        self.substitutions_ok = not (
+            self.shadowed
+            or ansi_c
+            or home_changed
+            or _SUBSTITUTION_UNSAFE.search(plain)
+            or _segment_search(plain, _DECLARING_WORD, _PATH_ARRAY_WORD)
+            or _env_clearing(plain)
+            or any(_mentions_name(name, plain) for name in _PREMISE_NAMES)
+        )
+        self.vars = _CwdVars()
+        # 同じコマンドの前の段が消した・動かした・作った・張り替えたパス (casefold)。
+        # ここにあるパスは、今のファイルシステムの状態 (ディレクトリかどうか) を信じない
+        self.touched: set[str] = set()
+        # 同じコマンドで張られた link: (link の正規化した綴り, 指す先)
+        self.aliases: list[tuple[str, str]] = []
+        # これまでに現れた cwd すべてと、辿り終えた置換の本文 (_walk_reason)
+        self.seen: set[str] = set()
+        self.walked: set[str] = set()
+        self.budget = _RESOLUTION_BUDGET
+        self._roots: list[tuple[str, bool]] | None = None
+
+    def roots(self) -> list[tuple[str, bool]]:
+        """HOME 起点の保護対象の綴りと、その実体 (casefold 済み)。
+
+        保護対象そのものが symlink (`~/.codex -> elsewhere`) だと、行き先の実体の綴りから
+        保護名が消えるので、保護対象の側も実体へ解決して比べる。
+        """
+        if self._roots is None:
+            roots: list[tuple[str, bool]] = []
+            paths: list[tuple[str, bool]] = [
+                (posixpath.join(self.env_home, rel), whole)
+                for rel, whole in (_HARNESS_HOME_ROOTS if self.env_home else ())
+            ]
+            # PYENV_ROOT (設定されていれば。~/.pyenv の外に置かれていても守る) と
+            # Homebrew の prefix (環境の HOMEBREW_* も)
+            paths += [(root, True) for root in _absolute_root_spellings()]
+            for path, whole in paths:
+                roots.append((path.casefold(), whole))
+                if not _autofs_home(path):
+                    roots.append((_realpath(path).casefold(), whole))
+            self._roots = roots
+        return self._roots
+
+    def resolve(self, path: str) -> str:
+        """予算の内で _realpath する。使い切ったら _Unresolvable (確認へ)。"""
+        self.budget -= 1
+        if self.budget < 0:
+            raise _Unresolvable
+        return _realpath(path)
+
+    def touch(self, paths: list[str]) -> None:
+        self.touched.update(posixpath.normpath(p).casefold() for p in paths)
+
+    def was_touched(self, path: str) -> bool:
+        folded = posixpath.normpath(path).casefold()
+        return any(_is_within(folded, t) for t in self.touched)
+
+
+def _autofs_home(path: str) -> bool:
+    """macOS の /home (autofs の auto_home) の下か。
+
+    lstat だけで 1 回 15 ms ほど問い合わせるので、保護対象の Linuxbrew の prefix
+    (`/home/linuxbrew/.linuxbrew`) を実体へ解決しない (綴りでは照合する)。
+    """
+    folded = path.casefold()
+    return sys.platform == "darwin" and (
+        folded == "/home" or folded.startswith("/home/")
+    )
+
+
+def _under_automount(path: str) -> bool:
+    folded = posixpath.normpath(path).casefold()
+    return any(folded == r or folded.startswith(r + "/") for r in _AUTOMOUNT_ROOTS)
+
+
+def _realpath(path: str) -> str:
+    """os.path.realpath (存在しない後半は字面のまま)。例外は _Unresolvable にする。
+
+    `/net` / `/Network` の下は解決しない (lstat だけで autofs がホストへ問い合わせる)。
+    解決した先がそこへ入った場合も、それ以上は見ない。
+    """
+    if _under_automount(path):
+        raise _Unresolvable
+    try:
+        resolved = os.path.realpath(path)
+    except (OSError, ValueError, RecursionError) as exc:
+        raise _Unresolvable from exc
+    if _under_automount(resolved):
+        raise _Unresolvable
+    return resolved
+
+
+def _is_directory(path: str) -> bool:
+    """解決済みの path が既存のディレクトリか。調べられなければディレクトリとみなす。"""
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except (OSError, ValueError):
+        return True
+
+
+def _alias_spellings(path: str, ctx: _CwdContext) -> list[str]:
+    """path と、同じコマンドで張られた link を辿った綴り (link の link も)。"""
+    spellings = [path]
+    for spelling in spellings:
+        norm = posixpath.normpath(spelling)
+        for link, target in ctx.aliases:
+            head, tail = norm[: len(link)], norm[len(link) :]
+            if head.casefold() != link.casefold() or tail[:1] not in ("", "/"):
+                continue
+            alias = target + tail
+            if alias in spellings:
+                continue
+            if len(spellings) >= _ALIAS_SPELLING_LIMIT:
+                raise _Unresolvable  # 辿り切れない: 綴りを黙って捨てず確認へ
+            spellings.append(alias)
+    return spellings
+
+
+def _harness_candidate(path: str, ctx: _CwdContext) -> bool:
+    """絶対パス path が、字面か実体のどちらかの綴りで保護対象に当たるか。
+
+    字面は normpath で畳んだ綴りだけを見る。cwd に繋いだ綴りは cwd 側に保護名を含み
+    うるので (`~/.claude/hooks` で `> ../agents/x.md`)、畳む前の綴りまで見ると `..` で
+    出た先まで保護対象に数えてしまう。symlink 越しの `..` は実体の綴りが拾う。
+    """
+    for spelling in _alias_spellings(path, ctx):
+        if _is_harness_target(posixpath.normpath(spelling)):
+            return True
+        resolved = ctx.resolve(spelling)
+        folded = resolved.casefold()
+        if _is_harness_target(resolved) or any(
+            _is_within(folded, root) if whole else folded == root
+            for root, whole in ctx.roots()
+        ):
+            return True
+    return False
+
+
+def _harness_ancestor(path: str, ctx: _CwdContext) -> bool:
+    """絶対パス path が、字面か実体のどちらかの綴りで保護対象の祖先か。"""
+    for spelling in (posixpath.normpath(path), ctx.resolve(path)):
+        if _ancestor_spelling(spelling.casefold(), ctx.roots()):
+            return True
+    return False
+
+
+def _names_unresolved_local(text: str, ctx: _CwdContext) -> bool:
+    """text が、同じコマンドで代入されたのに値を決められない変数を参照するか。
+
+    eval / source の後はどの変数も書き換わりうるので、参照があれば数える。環境から来る
+    変数 (同じコマンドで代入されていない `$TMPDIR`) は数えない。
+    """
+    names = [m.group(1) or m.group(2) for m in _VAR_REFERENCE.finditer(text)]
+    if not names:
+        return False
+    if ctx.vars.poisoned:
+        return True
+    values = [ctx.vars.values.get(name) for name in names]
+    if any(v is not None and _UNKNOWN_CWD in v for v in values):
+        return True
+    combinations = 1
+    for v in values:
+        if v is None:
+            return False
+        combinations *= len(v)
+    return combinations > _VAR_VALUES_LIMIT
+
+
+@functools.lru_cache(maxsize=1)
+def _process_user() -> str:
+    """フックのプロセスの実効ユーザー名 (分からなければ "")。"""
+    try:
+        import pwd  # noqa: PLC0415 - Unix だけのモジュール
+
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except (ImportError, KeyError, OSError):
+        return ""
+
+
+def _temp_roots() -> list[str]:
+    """一時ディレクトリとみなす場所 (/tmp・TMPDIR・macOS の /var/folders)。"""
+    # 綴りを比べるだけでファイルは作らない
+    roots = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"]  # nosec B108
+    tmpdir = os.environ.get("TMPDIR", "").rstrip("/")
+    return roots + ([tmpdir] if tmpdir.startswith("/") else [])
+
+
+def _mktemp_value(args: list[str]) -> str | None:
+    """`mktemp ARGS` が作るパスの代表の綴り。一時ディレクトリの下と決まらなければ None。
+
+    テンプレートなし・`-t`・一時ディレクトリの下のテンプレート (`-p DIR` を含む) は
+    `<TMPDIR>/…` の新しいパス。テンプレートが保護対象の下にあれば、代表の綴りがそこを
+    指すので照合で確認へ回る。読めないフラグや相対のテンプレートは決めない。
+    """
+    tmpdir = os.environ.get("TMPDIR", "").rstrip("/")
+    base = tmpdir if tmpdir.startswith("/") else "/tmp"  # nosec B108 - 綴りだけ
+    directory, template, relative_to_tmp = "", "", False
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok in ("-d", "-q", "-u", "--directory", "--quiet", "--dry-run"):
+            pass
+        elif tok == "-t":
+            relative_to_tmp = True
+        elif tok in ("-p", "--tmpdir") and i + 1 < len(args):
+            directory = args[i + 1]
+            i += 1
+        elif tok.startswith("--tmpdir="):
+            directory = tok.split("=", 1)[1]
+        elif tok.startswith("-"):
+            return None
+        elif template:
+            return None
+        else:
+            template = tok
+        i += 1
+    if relative_to_tmp:
+        return f"{base}/mktemp.XXXXXXXXXX"
+    # シェルの TMPDIR はフックと同じ値か、未設定 (空、`${TMPDIR:-X}` なら X) のどちらか。
+    # どちらでも同じ綴りに決まり、それが一時ディレクトリの下のときだけ解決する (一時
+    # ディレクトリの下にも保護対象はありうるので、値が割れるなら決めない)
+    candidates: list[str] = []
+    for folder in _tmpdir_forms(directory, base):
+        for path in _tmpdir_forms(template, base):
+            if folder:
+                path = posixpath.join(folder, path or "tmp.XXXXXXXXXX")
+            candidates.append(path or f"{base}/mktemp.XXXXXXXXXX")
+    if len(set(candidates)) > 1:
+        return None
+    path = candidates[0]
+    folded = posixpath.normpath(path).casefold()
+    roots = [root.casefold() for root in _temp_roots()]
+    if not path.startswith("/") or not any(_is_within(folded, r) for r in roots):
+        return None
+    return path
+
+
+def _tmpdir_forms(word: str, base: str) -> list[str]:
+    """word の先頭の `$TMPDIR` を、フックの値 (base) と未設定のときの値に置き換えた綴り。"""
+    ref = _TMPDIR_REFERENCE.match(word)
+    if not ref:
+        return [word]
+    rest = word[ref.end() :]
+    return [base + rest, (ref.group(1) or "") + rest]
+
+
+def _known_substitution(body: str, ctx: _CwdContext) -> str | None:
+    """値の決まるコマンド置換の中身 (`mktemp -d` / `whoami` / `id -un` / `logname`)。
+
+    中身は 1 つの単純なコマンドに限る (区切り・リダイレクト・展開・クォートを含めば、
+    出力に別のコマンドの出力が混ざりうるので決めない)。実行体は素の名前か /bin・/usr/bin
+    の下だけ (`./mktemp` は別のスクリプト)。前提をコマンドが書き換えうるなら決めない。
+    """
+    if not ctx.substitutions_ok or not _KNOWN_BODY.fullmatch(
+        _TMPDIR_REFERENCE.sub("/tmp", body)  # nosec B108 - 綴りを確かめるだけ
+    ):
+        return None
+    tokens = _tokenize(body.strip())
+    if not tokens:
+        return None
+    exe = tokens[0].rsplit("/", 1)[-1]
+    if tokens[0] not in (exe, f"/bin/{exe}", f"/usr/bin/{exe}"):
+        return None
+    args = tokens[1:]
+    if (exe in ("whoami", "logname") and not args) or (
+        exe == "id" and sorted(args) in (["-un"], ["-nu"], ["-n", "-u"])
+    ):
+        return _process_user() or None
+    if exe == "mktemp" and "TMPDIR" not in ctx.vars.values:
+        return _mktemp_value(args)
+    return None
+
+
+def _substitute_known(text: str, ctx: _CwdContext) -> str:
+    """text の中の値の決まるコマンド置換 (_known_substitution) を字面に置き換える。"""
+    if "$(" not in text and "`" not in text:
+        return text
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith("$(", i) or text[i] == "`":
+            span = _span_at(text, i)
+            end = span[0] if span else -1
+            if end < 0:
+                out.append(text[i:])
+                break
+            body = text[i + 2 : end - 1] if text[i] == "$" else text[i + 1 : end - 1]
+            value = _known_substitution(body, ctx)
+            out.append(text[i:end] if value is None else value)
+            i = end
+            continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def _expand_with_flag(
+    text: str, ctx: _CwdContext, derived: bool = True
+) -> tuple[list[str] | None, bool]:
+    """_expand_vars の本体。2 つ目は、自前の解決 (_CwdVars.derived) を使ったか。
+
+    derived=False は cd の行き先用: 値の決まるコマンド置換・`$USER`・自前の解決で値の
+    決まった変数を使わず、それ以前の判定と同じく決められないものとする。
+    """
+    if "$" not in text and "`" not in text:
+        return [text], False
+    if ctx.vars.poisoned:
+        return None, False
+    used = False
+    if derived:
+        substituted = _substitute_known(text, ctx)
+        used = substituted != text
+        text = substituted
+    results = [""]
+    pos = 0
+    for ref in _VAR_REFERENCE.finditer(text):
+        name = ref.group(1) or ref.group(2)
+        values = ctx.vars.values.get(name)
+        if name in ctx.vars.derived:
+            if not derived:
+                return None, False
+            used = True
+        if values is None and derived and name == "USER" and ctx.substitutions_ok:
+            # 実行ユーザーが分からなければ不明のまま (下の _UNKNOWN_CWD_SET)
+            if _process_user():
+                values, used = frozenset({_process_user()}), True
+        values = _UNKNOWN_CWD_SET if values is None else values
+        if _UNKNOWN_CWD in values or len(results) * len(values) > _VAR_VALUES_LIMIT:
+            return None, False
+        head = text[pos : ref.start()]
+        results = [r + head + v for r in results for v in sorted(values)]
+        pos = ref.end()
+    results = [r + text[pos:] for r in results]
+    if any(_UNRESOLVABLE_EXPANSION.search(r) for r in results):
+        return None, False
+    return results, used
+
+
+def _expand_vars(
+    text: str, ctx: _CwdContext, *, derived: bool = True
+) -> list[str] | None:
+    """text の `$NAME` / `${NAME}` を字面の値で展開した綴り。確定できなければ None。
+
+    derived=True なら、値の決まるコマンド置換 (`$(mktemp -d)` / `$(whoami)`) と `$USER`
+    も字面に置き換える (_expand_with_flag)。
+    """
+    return _expand_with_flag(text, ctx, derived)[0]
+
+
+def _literal_values(
+    value: str, ctx: _CwdContext, cwds: frozenset[str]
+) -> tuple[frozenset[str] | None, bool]:
+    """代入の値 (クォートを外した綴り) が取りうる字面の値と、自前の解決を使ったか。
+
+    `$PWD` / `$(pwd)` で始まる値は、その時点の cwd (分かっていれば) に置き換える。
+    """
+    if _HOME_SPELLING.match(value):
+        if not ctx.home:
+            return None, False
+        value = _HOME_SPELLING.sub(lambda _m: ctx.home, value, count=1)
+    # `S=~D/x`: zsh は代入の時点で名前付きディレクトリを展開する
+    named = _NAMED_DIRECTORY.match(value)
+    if named:
+        bases = _named_directory(named.group(1), ctx)
+        if bases is None:
+            return None, False
+        named_found: set[str] = set()
+        named_used = named.group(1) in ctx.vars.derived
+        for base in bases:
+            expanded, used = _expand_with_flag(base + value[named.end() :], ctx)
+            if expanded is None:
+                return None, False
+            named_found.update(expanded)
+            named_used = named_used or used
+        return frozenset(named_found), named_used
+    # 同じコマンドで PWD に代入した (と読める) なら、従来どおりその値で展開する
+    cwd_form = None if "PWD" in ctx.vars.values else _CWD_SPELLING.match(value)
+    if cwd_form:
+        # `$(pwd)` も alias で差し替えうるので、自前の解決の前提 (substitutions_ok) を見る
+        reliable = ctx.pwd_reliable and ctx.substitutions_ok
+        if not reliable or not cwds or _UNKNOWN_CWD in cwds:
+            return None, False
+        found: set[str] = set()
+        for cwd in sorted(cwds):
+            expanded, _used = _expand_with_flag(cwd + value[cwd_form.end() :], ctx)
+            if expanded is None:
+                return None, False
+            found.update(expanded)
+        return frozenset(found), True
+    expanded, used = _expand_with_flag(value, ctx)
+    return (None if expanded is None else frozenset(expanded)), used
+
+
+def _assign_variable(
+    token: str, clean: bool, ctx: _CwdContext, cwds: frozenset[str] = frozenset()
+) -> None:
+    """`NAME=value` を ctx.vars へ。clean は無条件に実行される位置か。"""
+    name, _, value = token.partition("=")
+    if name.endswith("+"):
+        ctx.vars.values[name[:-1]] = _UNKNOWN_CWD_SET
+        ctx.vars.derived.discard(name[:-1])
+        return
+    values, used = _literal_values(value, ctx, cwds)
+    if values is None:
+        ctx.vars.values[name] = _UNKNOWN_CWD_SET
+        ctx.vars.derived.discard(name)
+        return
+    if clean:
+        ctx.vars.values[name] = values
+    else:
+        ctx.vars.values[name] = ctx.vars.values.get(name, _UNKNOWN_CWD_SET) | values
+        used = used or name in ctx.vars.derived
+    if used:
+        ctx.vars.derived.add(name)
+    else:
+        ctx.vars.derived.discard(name)
+
+
+def _cook_word(word: str) -> str:
+    """語のクォートとエスケープを外す。展開 (`$(…)` / `${…}` / `` `…` ``) は綴りのまま。
+
+    shlex は引用されていない `$(mktemp -d)` を空白で割ってしまうので、代入の値は生の語
+    (_raw_words) からこれで読む。
+    """
+    out: list[str] = []
+    quote = ""
+    i, n = 0, len(word)
+    while i < n:
+        ch = word[i]
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+            else:
+                out.append(ch)
+            i += 1
+        elif ch == "'" and not quote:
+            quote = "'"
+            i += 1
+        elif ch == '"':
+            quote = "" if quote else '"'
+            i += 1
+        elif ch == "\\":
+            nxt = word[i + 1 : i + 2]
+            if not quote or nxt in '$`"\\':
+                out.append(nxt)
+                i += 2
+            else:
+                out.append(ch)
+                i += 1
+        elif ch in "$`":
+            end = _expansion_end(word, i)
+            out.append(word[i:end])
+            i = end
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _raw_assignments(segment: str) -> list[str]:
+    """セグメントの `NAME=value` の語 (値は _cook_word で読む)。"""
+    found: list[str] = []
+    for word in _raw_words(segment):
+        match = _ENV_ASSIGNMENT.match(word)
+        if match:
+            found.append(word[: match.end()] + _cook_word(word[match.end() :]))
+    return found
+
+
+def _loop_values(segment: str, ctx: _CwdContext) -> frozenset[str] | None:
+    """`for NAME in w1 w2 …` の字面の一覧 (上限の内)。glob・展開を含めば None。"""
+    words = _raw_words(segment)
+    items = words[3:] if words[2:3] == ["in"] else []
+    if not items or len(items) > _VAR_VALUES_LIMIT:
+        return None
+    values: set[str] = set()
+    for item in items:
+        if (
+            any(ch in item for ch in "$`*?[{")
+            or item.startswith("~")
+            and not (_HOME_SPELLING.match(item) and ctx.home)
+        ):
+            return None
+        cooked = _cook_word(item)
+        if _HOME_SPELLING.match(cooked):
+            cooked = _HOME_SPELLING.sub(lambda _m: ctx.home, cooked, count=1)
+        values.add(cooked)
+    return frozenset(values)
+
+
+def _track_variables(
+    segment: str, op: str, ctx: _CwdContext, cwds: frozenset[str] = frozenset()
+) -> None:
+    """セグメントがシェル変数へ代入するなら ctx.vars を更新する。
+
+    確定値にするのは、無条件の位置 (コマンドの頭・`;`・改行の後で、if / ループ /
+    グループをまだ見ていない) で字面の値を代入されたものだけ。条件付きの代入は以前の
+    値との和 (以前が不明なら不明)、read / unset などは不明、eval / source と展開の
+    実行体はすべての変数を不明にする。`for NAME in 字面の一覧` は一覧の値の集合
+    (自前の解決として。_CwdVars.derived)。代入の値は生の語から読む (_raw_assignments)。
+    """
+    tokens = _tokenize(segment)
+    vars_ = ctx.vars
+    first = (tokens or [""])[0]
+    head = first.casefold()
+    if head in _BLOCK_OPENERS or head.endswith("()"):
+        vars_.blocks = True
+    if head in ("for", "select") and len(tokens) > 1:
+        values = _loop_values(segment, ctx) if head == "for" else None
+        vars_.values[tokens[1]] = _UNKNOWN_CWD_SET if values is None else values
+        if values is None:
+            vars_.derived.discard(tokens[1])
+        else:
+            vars_.derived.add(tokens[1])
+        return
+    clean = op in ("", ";", "\n") and not vars_.blocks
+    rest = _split_prefix(tokens)
+    if rest is None:
+        vars_.poisoned = True
+        return
+    # shlex は引用されていない `$(mktemp -d)` を割るので、代入だけの文かは生の語でも見る
+    if not rest or _split_prefix([_cook_word(w) for w in _raw_words(segment)]) == []:
+        clean = clean and bool(_ENV_ASSIGNMENT.match(first))
+        for tok in _raw_assignments(segment):
+            _assign_variable(tok, clean, ctx, cwds)
+        return
+    exe = rest[0].rsplit("/", 1)[-1].casefold()
+    args = rest[1:]
+    if exe == "printf":
+        names = args[args.index("-v") + 1 :][:1] if "-v" in args[:-1] else []
+    else:
+        setter = exe in _ASSIGNING_BUILTINS or exe in _VAR_SETTERS
+        names = _words_before_redirect(args) if setter else []
+    if exe in _VAR_POISONERS or (
+        exe in _ASSIGNING_BUILTINS and any(t[:1] == "-" and "n" in t for t in args)
+    ):
+        vars_.poisoned = True  # eval / source / `declare -n` (別名で代入できる)
+    elif any(_dynamic_name(t) for t in names):
+        vars_.poisoned = True  # `export ${X}DIR=…` / `read $N`: どの名前か決まらない
+    elif exe in _ASSIGNING_BUILTINS:
+        for tok in _raw_assignments(segment):
+            _assign_variable(tok, clean and head == exe, ctx, cwds)
+        for tok in args:
+            if (
+                not _ENV_ASSIGNMENT.match(tok)
+                and exe not in ("export", "readonly")
+                and tok[:1] not in ("-", "+")
+            ):
+                vars_.values[tok] = _UNKNOWN_CWD_SET  # `local S` は値を空にする
+    elif exe in ("hash", "unhash") and any(t[:1] == "-" and "d" in t for t in args):
+        _track_named_directories(exe, args, clean and head == exe, ctx, cwds)
+    elif exe in _VAR_SETTERS:
+        for tok in args:
+            if tok[:1] != "-":
+                vars_.values[tok] = _UNKNOWN_CWD_SET
+    elif exe == "printf" and "-v" in args[:-1]:
+        vars_.values[args[args.index("-v") + 1]] = _UNKNOWN_CWD_SET
+
+
+_SUBSTITUTION_COMMAND = re.compile(r"(?:\$\(|`)\s*([\w./-]+)")
+# zsh の名前付きディレクトリ / 他のユーザーの HOME (`~name`)。`~+` / `~-` / `~2` は
+# ディレクトリの履歴 (_DIRECTORY_HISTORY)
+_NAMED_DIRECTORY = re.compile(r"^~([A-Za-z_][A-Za-z0-9_.-]*)(?=/|$)")
+_USER_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,63}")
+
+
+@functools.lru_cache(maxsize=64)
+def _user_home(name: str) -> str | None:
+    """ユーザー name の HOME (いなければ None)。"""
+    if not _USER_NAME.fullmatch(name):
+        return None
+    try:
+        import pwd  # noqa: PLC0415 - Unix だけのモジュール
+
+        home = pwd.getpwnam(name).pw_dir.rstrip("/")
+    except (ImportError, KeyError, OSError):
+        return None
+    return home if home.startswith("/") else None
+
+
+def _named_directory(name: str, ctx: _CwdContext) -> list[str] | None:
+    """`~name` の行き先の候補。決められなければ None。
+
+    zsh は `hash -d` の登録、値が `/` で始まる同名の変数、ユーザーの HOME の順に引く
+    (`D=~/.local/bin; cp X ~D/csb`)。同じコマンドで代入・登録されていればその値。
+    されていなくても、環境に同名の変数があれば (シェルの値は分からないので) 決めない。
+    ユーザーでも変数でもなければ zsh はエラーにするが、bash は字面の相対パスとして
+    書くので、どちらとも決めずに確認へ回す。
+    """
+    if ctx.vars.poisoned:
+        return None
+    values = ctx.vars.named.get(name, ctx.vars.values.get(name))
+    if values is not None:
+        if _UNKNOWN_CWD in values or not all(v.startswith("/") for v in values):
+            return None
+        return sorted(values)
+    if name in os.environ:
+        return None
+    home = _user_home(name)
+    return None if home is None else [home]
+
+
+def _paths_of(
+    spellings: list[str], cwds: frozenset[str], ctx: _CwdContext
+) -> list[str] | None:
+    """綴りごとの _dest_paths をまとめる (どれかが決められなければ None)。"""
+    paths: list[str] = []
+    for spelling in spellings:
+        found = _dest_paths(spelling, cwds, ctx)
+        if found is None:
+            return None
+        paths += found
+    return paths
+
+
+def _substitution_overridden(text: str, ctx: _CwdContext) -> bool:
+    """text のコマンド置換・`$USER` の値を、このコマンドが差し替えうるか。
+
+    値の決まる置換 (`$(whoami)` / `$(mktemp)` / `$USER`) の前提を書き換えうるコマンド
+    (substitutions_ok でない) か、置換の中身のコマンドを同じコマンドで関数にした
+    (`whoami() {…}; cp X /Users/$(whoami)`) なら、字面のパスとしては扱えない。
+    """
+    if not ctx.substitutions_ok and _KNOWN_SUBSTITUTION_SPELLING.search(text):
+        return True
+    return any(
+        m.group(1).rsplit("/", 1)[-1] in ctx.defined or "*" in ctx.defined
+        for m in _SUBSTITUTION_COMMAND.finditer(text)
+    )
+
+
+def _track_named_directories(
+    exe: str, args: list[str], clean: bool, ctx: _CwdContext, cwds: frozenset[str]
+) -> None:
+    """zsh の `hash -d NAME=DIR` / `unhash -d NAME` を ctx.vars.named へ。"""
+    named = ctx.vars.named
+    for tok in args:
+        if tok[:1] == "-":
+            if exe == "hash" and "r" in tok:
+                ctx.vars.poisoned = True  # `hash -dr`: 登録を消して作り直す
+            continue
+        name, eq, value = tok.partition("=")
+        if _dynamic_name(name):
+            ctx.vars.poisoned = True
+            return
+        if exe == "unhash" or not eq:
+            if exe == "unhash":
+                named[name] = _UNKNOWN_CWD_SET
+            continue
+        values, _used = _literal_values(value, ctx, cwds)
+        found = _UNKNOWN_CWD_SET if values is None else values
+        named[name] = found if clean else named.get(name, _UNKNOWN_CWD_SET) | found
+
+
+def _dest_paths(dest: str, cwds: frozenset[str], ctx: _CwdContext) -> list[str] | None:
+    """書き込み先の絶対パスの候補 (未正規化)。決められないまま書くなら None。
+
+    None になるのは、cwd が分からないままの相対の行き先、ディレクトリの履歴
+    (`~-` / `$OLDPWD`)、同じコマンドで代入されたのに値の決まらない変数。環境から来る
+    変数 (`$TMPDIR/x`) は従来どおり字面の判定に任せる。
+    """
+    if _DIRECTORY_HISTORY.search(dest):
+        return None
+    if "{" in dest:
+        alternatives = _brace_alternatives(dest)
+        if alternatives is None:
+            return None  # 候補が多すぎる
+        if len(alternatives) > 1:
+            return _paths_of(alternatives, cwds, ctx)
+    named = _NAMED_DIRECTORY.match(dest)
+    if named:
+        bases = _named_directory(named.group(1), ctx)
+        if bases is None:
+            return None
+        return _paths_of([b + dest[named.end() :] for b in bases], cwds, ctx)
+    cwd_form = _CWD_SPELLING.match(dest)
+    if cwd_form:
+        if not ctx.pwd_reliable:
+            return None
+        dest = "." + dest[cwd_form.end() :]
+    elif _HOME_SPELLING.match(dest):
+        if not ctx.home:
+            return None
+        return [_HOME_SPELLING.sub(lambda _m: ctx.home, dest, count=1)]
+    elif "$" in dest or "`" in dest:
+        expanded = _expand_vars(dest, ctx)
+        if expanded is None and _names_unresolved_local(dest, ctx):
+            return None
+        if expanded is None and _substitution_overridden(dest, ctx):
+            return None
+        if expanded is not None:
+            paths: list[str] = []
+            for spelling in expanded:
+                found = _dest_paths(spelling, cwds, ctx)
+                if found is None:
+                    return None
+                paths += found
+            return paths
+    if dest.startswith("/"):
+        return [dest]
+    if not dest or dest == "-" or dest.startswith(("$", "`", "~")):
+        # 標準出力・解決できない展開・他のユーザーの HOME は字面の判定に任せる
+        return []
+    if _UNKNOWN_CWD in cwds:
+        return None
+    return [posixpath.join(c, dest) for c in sorted(cwds)]
+
+
+def _receives_into(dest: _Dest, path: str, ctx: _CwdContext) -> bool:
+    """dest がディレクトリとして中へ受け取るか (dir/basename(src) が行き先になる)。"""
+    if dest.into_dir or len(dest.sources) > 1 or dest.path.endswith("/"):
+        return True
+    if posixpath.basename(dest.path) in (".", ".."):
+        return True
+    spellings = _alias_spellings(path, ctx)
+    if any(ctx.was_touched(s) for s in spellings):
+        return True  # 前の段が作り替えたパス: 今の状態を信じない
+    return any(_is_directory(ctx.resolve(s)) for s in spellings)
+
+
+def _dest_reason(dest: _Dest, cwds: frozenset[str], ctx: _CwdContext, form: str) -> str:
+    """cwd を踏まえて dest (とディレクトリなら dir/basename(src)) を照合した理由。"""
+    paths = _dest_paths(dest.path, cwds, ctx)
+    if paths is None:
+        return _UNRESOLVED_CWD_REASON
+    for path in paths:
+        if _harness_candidate(path, ctx):
+            return _harness_reason(form)
+        if not dest.sources or not _receives_into(dest, path, ctx):
+            continue
+        for src in dest.sources:
+            expanded = _expand_vars(src, ctx)
+            if expanded is None and _names_unresolved_local(src, ctx):
+                raise _UnresolvedDirectory
+            for spelling in expanded or [src]:
+                name = posixpath.basename(spelling.rstrip("/"))
+                if name not in ("", ".", "..") and _harness_candidate(
+                    posixpath.join(path, name), ctx
+                ):
+                    return _harness_reason(form)
+    return ""
+
+
+def _redirect_writes(segment: str) -> list[tuple[str, str]]:
+    """セグメントの書き込み系リダイレクトの (演算子, クォートを外した行き先)。
+
+    _redirect_targets と違って語の中の `$(pwd)` を割らない (cwd の綴りとして読むため)。
+    """
+    found: list[tuple[str, str]] = []
+    i, n = 0, len(segment)
+    while i < n:
+        ch = segment[i]
+        span = _span_at(segment, i) if ch in "\\'\"`$" else None
+        if span is not None:
+            i = span[0] if span[0] > 0 else n
+            continue
+        if ch in "<>" and segment.startswith("(", i + 1):
+            inner, close = _live_scan(segment, i + 2, [], nested=True)
+            i = n if inner is None else close + 1
+            continue
+        op = ""
+        if ch == ">":
+            op = ">" + (
+                segment[i + 1] if segment[i + 1 : i + 2] in (">", "|", "&") else ""
+            )
+        elif segment.startswith("&>", i):
+            op = "&>>" if segment.startswith("&>>", i) else "&>"
+        elif segment.startswith("<>", i):
+            op = "<>"
+        if not op:
+            i += 1
+            continue
+        j = i + len(op)
+        while j < n and segment[j] in " \t":
+            j += 1
+        start = j
+        while j < n and segment[j] not in _TARGET_WORD_END:
+            span = _span_at(segment, j) if segment[j] in "\\'\"`$" else None
+            j = j + 1 if span is None else (span[0] if span[0] > 0 else n)
+        if j > start:
+            found.append((op, "".join(_tokenize(segment[start:j]))))
+        i = j
+    return found
+
+
+def _ln_destinations(args: list[str]) -> list[_Dest]:
+    """ln が張る link の行き先。被演算子 1 つなら cwd に同じ名前で張る。"""
+    dests = _write_destinations("ln", args) or []
+    ops = _operands(args)[0]
+    if len(ops) == 1 and not _target_dir_values(args):
+        return [_Dest(".", (ops[0],), True)]
+    return dests
+
+
+def _link_source(
+    src: str, link: str, cwds: frozenset[str], ctx: _CwdContext, symbolic: bool
+) -> list[str]:
+    """link が指す先の絶対パス。symlink の相対の元は link のディレクトリから辿る。
+
+    指す先が履歴 (`~-`) か、同じコマンドで代入されたのに値の決まらない変数なら
+    _UnresolvedDirectory (link の先を確かめられない)。
+    """
+    if _DIRECTORY_HISTORY.search(src):
+        raise _UnresolvedDirectory
+    if "$" in src and not _HOME_SPELLING.match(src):
+        expanded = _expand_vars(src, ctx)
+        if expanded is None and _names_unresolved_local(src, ctx):
+            raise _UnresolvedDirectory
+        return [
+            target
+            for spelling in expanded or []
+            for target in _link_source(spelling, link, cwds, ctx, symbolic)
+        ]
+    if _HOME_SPELLING.match(src):
+        return (
+            [_HOME_SPELLING.sub(lambda _m: ctx.home, src, count=1)] if ctx.home else []
+        )
+    if src.startswith("/"):
+        return [src]
+    if not src or src.startswith(("$", "`", "~")):
+        return []
+    if symbolic:
+        return [posixpath.join(posixpath.dirname(link), src)]
+    return [posixpath.join(c, src) for c in sorted(cwds) if c != _UNKNOWN_CWD]
+
+
+def _record_links(
+    args: list[str], cwds: frozenset[str], ctx: _CwdContext, symbolic: bool
+) -> list[str]:
+    """`ln [-s] SRC… DEST` の link を、同じコマンドの後ろの書き込みのために覚える。
+
+    行き先がディレクトリかどうか (中に張るか、その名前で張るか) はファイルシステムに
+    聞かない: 同じコマンドの前の段が消したり張り替えたりしていれば、今の状態は当てに
+    ならない (`rm d; ln -s ~/.local d`)。綴りから決まらなければ、`DEST` と
+    `DEST/basename(SRC)` の両方を link として覚える。張った先の絶対パスを返す。
+    """
+    targets: list[str] = []
+    for dest in _ln_destinations(args):
+        for path in _dest_paths(dest.path, cwds, ctx) or []:
+            definite = (
+                dest.into_dir
+                or len(dest.sources) > 1
+                or dest.path.endswith("/")
+                or posixpath.basename(dest.path) in (".", "..")
+            )
+            for src in dest.sources:
+                name = posixpath.basename(src.rstrip("/"))
+                inside = posixpath.join(path, name)
+                links = [inside] if definite else [path, inside]
+                if name in ("", ".", ".."):
+                    links = [path]
+                for link in links:
+                    link = posixpath.normpath(link)
+                    for target in _link_source(src, link, cwds, ctx, symbolic):
+                        if len(ctx.aliases) >= _ALIAS_LIMIT:
+                            raise _Unresolvable  # link が多すぎる: 辿り切れないので確認へ
+                        ctx.aliases.append((link, target))
+                        targets.append(target)
+                ctx.touch(links)
+    return targets
+
+
+def _cd_resolve(arg: str, cwds: frozenset[str], ctx: _CwdContext) -> frozenset[str]:
+    """cd の被演算子 arg の行き先の集合 (決められなければ _UNKNOWN_CWD)。"""
+    unknown = frozenset({_UNKNOWN_CWD})
+    cwd_form = _CWD_SPELLING.match(arg)
+    home_form = _HOME_SPELLING.match(arg)
+    if cwd_form:
+        if not ctx.pwd_reliable:
+            return unknown
+        arg = "." + arg[cwd_form.end() :]
+    elif home_form:
+        if not ctx.home:
+            return unknown
+        arg = ctx.home + arg[home_form.end() :]
+    elif "$" in arg or "`" in arg:
+        # 自前の解決 (mktemp / whoami / for の一覧 / 代入値の $PWD) は cd には使わない
+        expanded = _expand_vars(arg, ctx, derived=False)
+        if expanded is None:
+            return unknown
+        return frozenset().union(*(_cd_resolve(e, cwds, ctx) for e in expanded))
+    if (
+        _UNRESOLVABLE_EXPANSION.search(arg)
+        or _GLOB_OR_BRACE.search(arg)
+        or arg.startswith("~")
+    ):
+        return unknown
+    if arg.startswith("/"):
+        resolved = frozenset({arg})
+    elif ctx.cdpath and arg not in (".", "..") and not arg.startswith(("./", "../")):
+        # CDPATH は `.` / `..` で始まる名前と絶対パスには使われない
+        return unknown
+    else:
+        resolved = frozenset(c and posixpath.join(c, arg) for c in cwds)
+    if any(c and _under_automount(c) for c in resolved):
+        raise _Unresolvable  # `/net` の下へは入らない (autofs が問い合わせる)
+    return resolved
+
+
+def _cd_target(
+    rest: list[str],
+    cwds: frozenset[str],
+    stack: list[frozenset[str]],
+    ctx: _CwdContext,
+) -> frozenset[str] | None:
+    """rest が cd / chdir / pushd / popd なら、その後の cwd の集合。違えば None。"""
+    exe = rest[0].rsplit("/", 1)[-1].casefold()
+    if exe not in _CD_EXECUTABLES:
+        return None
+    unknown = frozenset({_UNKNOWN_CWD})
+    if ctx.shadowed:
+        return unknown
+    # リダイレクト (`pushd x >/dev/null`) は被演算子ではない
+    args: list[str] = []
+    skip = False
+    for tok in rest[1:]:
+        if skip or _REDIRECT_GLUED.match(tok):
+            skip = False
+        elif _REDIRECT_ALONE.match(tok):
+            skip = True
+        else:
+            args.append(tok)
+    if exe == "popd":
+        return stack.pop() if stack and not args else unknown
+    moved: frozenset[str] | None = None
+    operands: list[str] = []
+    for k, tok in enumerate(args):
+        if tok == "--":
+            operands += args[k + 1 :]
+            break
+        if exe != "pushd" and _CD_PATH_FLAGS.match(tok):
+            continue
+        if tok[:1] in ("-", "+") and not operands:
+            # `cd -` (OLDPWD)・zsh の `cd -q`・ディレクトリスタック (`+1`)・`pushd -n`
+            moved = unknown
+            break
+        operands.append(tok)
+    if moved is None:
+        if len(operands) > 1 or (exe == "pushd" and not operands):
+            moved = unknown  # zsh の `cd OLD NEW` / 引数なしの pushd (入れ替え)
+        elif not operands:
+            moved = frozenset({ctx.home}) if ctx.home else unknown
+        else:
+            moved = _cd_resolve(operands[0], cwds, ctx)
+    if exe == "pushd":
+        stack.append(cwds)
+    return moved
+
+
+def _segment_cwd_reason(
+    segment: str,
+    cwds: frozenset[str],
+    stack: list[frozenset[str]],
+    ctx: _CwdContext,
+    depth: int,
+) -> tuple[str, frozenset[str] | None]:
+    """1 つのコマンドを照合した理由と、それが cwd を動かすなら移動先。
+
+    コマンド語の判定 (名前を隠す語・変数から取った語) はどちらのモードでも行う。行き先の
+    照合・cd の追跡・link の記録は cwd があるときだけ (ctx.lexical でないとき)。
+    """
+    if not ctx.lexical:
+        for op, target in _redirect_writes(segment):
+            if op.endswith("&") and _FD_TARGET.match(target):
+                continue  # fd の複製 (`2>&1` / `>&-`)
+            reason = _dest_reason(_Dest(target), cwds, ctx, "redirect")
+            if reason:
+                return reason, None
+    kind, word, args = _command_word(segment)
+    if kind == "hidden":
+        return _hidden_word_reason(word), None
+    if kind == "variable":
+        return _variable_command_reason(word, args, cwds, stack, ctx, depth)
+    tokens = _tokenize(segment)
+    rest = _split_prefix(tokens)
+    moved = None
+    if rest:
+        exe = _command_name(rest[0])
+        if not ctx.lexical:
+            # 前置の `TMPDIR=…` (`env TMPDIR=… mktemp -d` も) は mktemp の作る場所を変える
+            tmpdir = next(
+                (
+                    t.split("=", 1)[1]
+                    for t in reversed(tokens[: len(tokens) - len(rest)])
+                    if t.startswith("TMPDIR=")
+                ),
+                "$TMPDIR",
+            )
+            for inner_exe, inner_args in _runner_commands(exe, rest[1:]):
+                reason = _command_dests_reason(inner_exe, inner_args, cwds, ctx, tmpdir)
+                if reason:
+                    return reason, None
+            moved = _cd_target(rest, cwds, stack, ctx)
+        if exe in _CWD_CHANGERS or exe in ctx.defined or "*" in ctx.defined:
+            # eval / source / 定義した関数: cd したかもしれない
+            moved = _UNKNOWN_CWD_SET
+    code = _shell_code(segment)
+    if code and depth >= _CWD_WALK_DEPTH:
+        raise _TooDeep
+    if code:
+        reason = _walk_cwd_text(code, cwds, ctx, depth + 1)
+        if reason:
+            return reason, None
+    return "", moved
+
+
+def _command_dests_reason(
+    exe: str,
+    args: list[str],
+    cwds: frozenset[str],
+    ctx: _CwdContext,
+    tmpdir: str = "$TMPDIR",
+) -> str:
+    """既知の書き込みコマンドの行き先を cwds で照合した理由 (cwd があるときだけ)。
+
+    行き先そのもの (_dest_reason) に加えて、rm / mv の被演算子と link の行き先が保護対象
+    の祖先を指すか、link の指す先が保護対象かその祖先かも見る。前の段が触れたパスは
+    ctx.touched に積み、後ろの段でファイルシステムの状態を信じない。
+    """
+    exe = _writer_name(exe)
+    link = _is_link_command(exe, args)
+    if exe == "ln":
+        dests = _ln_destinations(args)
+    else:
+        dests = _write_destinations(exe, args, tmpdir) or []
+    if exe == "sed":
+        dests += [
+            _Dest(t)
+            for script in _sed_scripts(args)
+            for t in _sed_write_targets(script)
+        ]
+    for dest in dests:
+        reason = _dest_reason(dest, cwds, ctx, "file command")
+        if reason:
+            return reason
+    structural: list[str] = []
+    if exe in ("rm", "rmdir", "mv", "mkdir"):
+        structural = _operands(args, frozenset({"-m", "--mode"}))[0]
+    elif link and exe == "ln":
+        structural = [d.path for d in dests]
+    changed = [p for t in structural for p in _dest_paths(t, cwds, ctx) or []]
+    if exe != "mkdir" and any(_harness_ancestor(p, ctx) for p in changed):
+        return _harness_reason("file command")
+    ctx.touch(changed)
+    if link:
+        for target in _record_links(args, cwds, ctx, _is_symbolic_link(exe, args)):
+            if _harness_candidate(target, ctx) or _harness_ancestor(target, ctx):
+                return _harness_reason("file command")
+    return ""
+
+
+_CwdEvent = tuple  # ("cmd", 区切り, セグメント, 本文) / ("open", 区切り) / ("close",)
+
+
+def _cwd_events(text: str) -> list[_CwdEvent] | None:
+    """text を cwd の追跡の単位 (コマンドとサブシェルの開閉) へ分ける。
+
+    クォートや置換が閉じていなければ None。`(` は語頭にあるときだけサブシェルの開きで、
+    `f()` / `a=(…)` / `@(…)` の括弧は語の一部。case があると `pat)` / `(pat)` が括弧に
+    紛れるので、そのときはスコープを切らない (cd を外へ漏らす = 確認を増やす側に倒れる)。
+    """
+    scoped = not _CASE_WORD.search(text)
+    events: list[_CwdEvent] = []
+    buf: list[str] = []
+    bodies: list[str] = []
+    op = ""
+    depth = word_paren = 0
+
+    def flush(next_op: str) -> None:
+        nonlocal op, buf, bodies
+        segment = "".join(buf)
+        if segment.strip():
+            events.append(("cmd", op, segment, bodies))
+            op = next_op
+        elif next_op != "\n":
+            op = next_op  # 改行だけを挟んだ `a &&<改行>b` は && のまま
+        buf, bodies = [], []
+
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        span = _span_at(text, i) if ch in "\\'\"`$" else None
+        if span is not None:
+            if span[0] < 0:
+                return None
+            buf.append(text[i : span[0]])
+            bodies += span[1]
+            i = span[0]
+            continue
+        if ch in "<>" and text.startswith("(", i + 1):
+            inner, close = _live_scan(text, i + 2, [], nested=True)
+            if inner is None:
+                return None
+            bodies.append(inner)
+            buf.append(text[i : close + 1])
+            i = close + 1
+            continue
+        at_word_start = not buf or buf[-1][-1] in " \t"
+        if ch == "#" and at_word_start:
+            newline = text.find("\n", i)
+            i = n if newline < 0 else newline
+            continue
+        if ch == "(":
+            if scoped and not word_paren and at_word_start:
+                flush(op)
+                events.append(("open", op))
+                depth += 1
+                i += 1
+                continue
+            word_paren += 1
+        elif ch == ")":
+            if word_paren:
+                word_paren -= 1
+            elif scoped and depth:
+                flush("")
+                events.append(("close",))
+                depth -= 1
+                i += 1
+                continue
+        elif ch in ";|&\n" and not word_paren:
+            prev = text[i - 1] if i else ""
+            redirect = (ch == "|" and prev == ">") or (
+                ch == "&" and (prev in ("<", ">") or text.startswith(">", i + 1))
+            )
+            if not redirect:
+                sep = next(s for s in _SEGMENT_SEPARATORS if text.startswith(s, i))
+                flush(sep)
+                i += len(sep)
+                continue
+        buf.append(ch)
+        i += 1
+    flush("")
+    return events
+
+
+def _walk_cwd_events(
+    events: list[_CwdEvent], start: frozenset[str], ctx: _CwdContext, depth: int
+) -> str:
+    """events を順に辿り、各コマンドをその時点のありうる cwd で照合する。"""
+    acc = set(start)
+    last = start
+    stack: list[frozenset[str]] = []
+    scopes: list[tuple[frozenset[str], set[str], list[frozenset[str]], _CwdVars]] = []
+    # 各イベントの直後の区切り。`S=/x &` / `S=/x | cat` の代入はサブシェルで走るので、
+    # 親の変数には残らない (bash では未設定の `cd $S` は HOME へ行く)
+    following = [""] * len(events)
+    upcoming = ""
+    for k in range(len(events) - 1, -1, -1):
+        following[k] = upcoming
+        if events[k][0] != "close":
+            upcoming = events[k][1]
+    for index, event in enumerate(events):
+        if event[0] == "open":
+            entering = last if event[1] == "&&" else frozenset(acc)
+            scopes.append((entering, acc, stack, ctx.vars))
+            acc, last, stack = set(entering), entering, list(stack)
+            ctx.vars = ctx.vars.copy()
+            continue
+        if event[0] == "close":
+            # _cwd_events は開いた数より多くは閉じない
+            last, acc, stack, ctx.vars = scopes.pop()
+            continue
+        _kind, op, segment, bodies = event
+        cwds = last if op == "&&" else frozenset(acc)
+        if len(cwds) > _CWD_SET_LIMIT:
+            cwds = _UNKNOWN_CWD_SET
+        ctx.seen |= cwds
+        reason, moved = _segment_cwd_reason(segment, cwds, stack, ctx, depth)
+        if bodies and depth >= _CWD_WALK_DEPTH:
+            raise _TooDeep  # 置換の中を見ないまま「書き込みなし」と言わない
+        for body in bodies:
+            ctx.walked.add(body)
+            reason = reason or _walk_cwd_text(body, cwds, ctx, depth + 1)
+        if reason:
+            return reason
+        if following[index] not in ("&", "|", "|&"):
+            _track_variables(segment, op, ctx, cwds)
+        negated = segment.lstrip().startswith("!")
+        if moved is None:
+            last = cwds
+        elif op in ("", ";", ";;", "\n", "&&", "&") and not negated:
+            last = moved
+        else:
+            # `a || cd x` / パイプの段 / `! cd x`: cd しないこともある
+            last = cwds | moved
+        acc |= last
+    return ""
+
+
+def _walk_cwd_text(
+    text: str, start: frozenset[str], ctx: _CwdContext, depth: int
+) -> str:
+    """text を cwd を辿りながら照合する。解析できなければ順不同の和で見る。
+
+    text は子プロセスかサブシェルで走るので、中の代入は呼び出し側へ戻さない。
+    """
+    events = _cwd_events(text)
+    if events is None:
+        # クォートの閉じない行など: スコープも && も使わず、cd と代入はすべて
+        # それまでとの和で見る (過剰側。`||` はどちらの意味でも和になる区切り)
+        events = [
+            ("cmd", "||", line, [])
+            for part in _split_commands(text)
+            for line in part.splitlines()
+            if line.strip()
+        ]
+    outer = ctx.vars
+    ctx.vars = outer.copy()
+    try:
+        return _walk_cwd_events(events, start, ctx, depth)
+    finally:
+        ctx.vars = outer
+
+
+def _walk_reason(text: str, extra_texts: list[str], cwd: str | None) -> str:
+    """コマンドを順に辿る判定 (harness_write_ask_reason の、字面の行の判定への追加分)。
+
+    どちらのモードでも、コマンド語の難読化・変数から取ったコマンド語・読み切れない
+    入れ子を見る。cwd があれば (None でなければ) 行き先を cwd で解決して照合する。
+
+    text は字面の判定と同じ選び方の本文 (heredoc 本文・コメント・複数行のクォートを
+    除いたもの、シェルとして実行される形なら元の綴り)。extra_texts は複数行の
+    ダブルクォートの中の置換など text に現れない実行される本文で、位置が分からないので
+    それまでに現れたすべての cwd で照合する。
+    """
+    start = frozenset({cwd if cwd and cwd.startswith("/") else _UNKNOWN_CWD})
+    try:
+        # HOME / PWD の書き換えや関数定義は、実行されるテキストの中だけで探す (heredoc
+        # 本文のコード `const HOME = …` / `s.strip()` に反応させない)
+        ctx = _CwdContext("\n".join([text, *extra_texts]), lexical=cwd is None)
+        reason = _walk_cwd_text(text, start, ctx, 0)
+        for extra in extra_texts:
+            if not reason and extra not in ctx.walked:
+                reason = _walk_cwd_text(extra, frozenset(ctx.seen | start), ctx, 1)
+    except _Unresolvable:
+        return _UNRESOLVED_PATH_REASON
+    except _UnresolvedDirectory:
+        return _UNRESOLVED_CWD_REASON
+    except (_TooDeep, RecursionError):
+        return _NESTING_REASON
+    return reason
 
 
 # 判定行の頭に付いてよい装飾 (引用・markdown の強調・箇条書き)。行頭の空白は
@@ -3775,6 +7835,49 @@ _TOKEN_END_OR_BOUNDARY = r"(?:(?![A-Za-z0-9_])|\b)"
 # 直前の漢字が語の文字に数えられ、設定系 CLI の裸の秘密が素通りしていた。
 _WORD_START = r"(?<![A-Za-z0-9_])"
 
+# --- 文脈で決まる資格情報 (表の末尾に足す形) のための部品 -------------------------
+# 接頭辞で決まる既知形式でも、`password` 系キーワード付きの代入でも拾えない形が
+# 実在する: `DB_PASS=` / `MYSQL_PWD=` / `{"pwd": …}` / `'password' => …` /
+# `curl -u user:pw` / `sshpass -p` / netrc の 1 行 / `Authorization: Token …`。
+# どれも「文脈が資格情報だと言っている」形なので、文脈ごとに別の規則にして、
+# 文脈の外では 1 文字も拾わないようにする (拒否 = 実作業の停止なので誤検知が高い)。
+#
+# 値の「参照」(`$VAR` / `${VAR}` / `$(cmd)`) は値ではない。JSON 化した綴りでは
+# クォートが `\"` になるので、`\"$VAR\"` も参照として除く。`pwd` だけは作業ディレクトリ
+# (`PWD=/srv/app` / `{"pwd": "~/work"}`) の意味でも使われるので、パスの形の値も除く。
+_VALUE_NOT_REF = r"(?!\\*[\"']?\$)"
+_VALUE_NOT_REF_OR_PATH = r"(?!\\*[\"']?(?:\$|[/~]|\.{1,2}/))"
+# PHP / Ruby の `'password' => Hash::make('x')` / `$this->hasher->make(…)` のような
+# メソッド呼び出しは値ではない (`env('X')` / `config('x')` は _CREDENTIAL_REFERENCE が除く)。
+_VALUE_NOT_METHOD_CALL = r"(?![A-Za-z_][\w\\]*(?:::|->)[A-Za-z_]\w*\()"
+
+
+def _credential_value(lead: str) -> str:
+    """代入の右辺: クォートで開いたら閉じクォートまで、非クォートなら次の空白まで。
+
+    "secret assignment" の右辺と同じ形 (8 文字以上) で、`lead` の先読みを各枝の先頭に
+    掛ける。非クォートの値には資格情報の参照 (_CREDENTIAL_REFERENCE) も掛ける。
+    """
+    return (
+        rf"(?:\"{lead}[^\"\n]{{8,}}|'{lead}[^'\n]{{8,}}"
+        rf"|{lead}(?!{_CREDENTIAL_REFERENCE})\S{{8,}})"
+    )
+
+
+# 「空白」: 同じ行の空白、または行継続 (`\` + 改行)。複数行の curl / sshpass は
+# 行継続でつなぐのが普通なので、行継続を越えられないと最も多い書き方を取りこぼす。
+_CMD_SEP = r"(?:[ \t]+|[ \t]*\\\r?\n[ \t]*)"
+# コマンドの 1 語。引用符の中は `;|&` と空白を含んでよい (`"https://x/?a=1&b=2"` /
+# `-H 'Content-Type: application/json'`) が、引用符の外の `;|&` と改行は別コマンドとの
+# 境界なので越えない。`\` は改行 (`\n` の綴りを含む: json.dumps した複数行の
+# コマンドでは行の切れ目が `\n` の 2 文字になる) の手前では語に入れず、別の行の
+# コマンド (`curl …\ndocker run -u 1000:1000 …`) を 1 つながりに読まない。
+_CMD_WORD = r"(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s;|&\"'\\]|\\(?![nr\r\n]))+"
+# netrc の区切り: 空白、または json.dumps / printf の `\n` 等の綴り。
+_NETRC_SEP = r"(?:\s|\\[nrt])+"
+# パスワードとして最低 1 文字ある (参照 `$…` と引用符・`\` の閉じは値でない)。
+_NONEMPTY_SECRET = r"(?:\\*[\"'])?[^\s'\"\\$]"
+
 _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     (
         "GitHub token",
@@ -3806,9 +7909,11 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
             _TOKEN_START + r"(?:xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,})"
         ),
     ),
+    # テストモードの鍵 (`sk_test_` / `rk_test_`) も資格情報: 共有のテスト用アカウントの
+    # 鍵であり、コマンドやログに流す理由がない。
     (
         "Stripe key",
-        re.compile(_TOKEN_START + r"[rs]k_live_[0-9A-Za-z]{16,}" + _TOKEN_END),
+        re.compile(_TOKEN_START + r"[rs]k_(?:live|test)_[0-9A-Za-z]{16,}" + _TOKEN_END),
     ),
     # 以下は接頭辞だけで高精度に判定できる既知形式 (キーワード付き代入の助けが無い
     # 裸の値でも拾う)。長さは各サービスの発行形式に合わせ、near-miss は拾わない。
@@ -3883,7 +7988,12 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
     # ここまで許すと最後の `@` がどこか決まらず、区切りの意味が消える。
     # 「だから誤検知は起こらない」とまでは言えない -- 末尾 `@` は一致範囲を
     # 縛るだけで、`@` を含む URL 様の文字列そのものを除外はしない。
-    ("URL credentials", re.compile(r"://[^/\s:]+:(?!\$)[^/\s:@]+@")),
+    #
+    # ユーザ名は空でもよい (`*`): Redis など、パスワードだけで認証する URL は
+    # `redis://:pw@host` / `https://:token@host/` と書く。`+` だと `://` の直後の `:`
+    # に届かず丸ごと素通りしていた。`://:` の直後にパスワードと `@` が続く形は通常の
+    # URL にはない (ポートは `://host:8080`、IPv6 は `://[::1]` で、どちらも `@` が無い)。
+    ("URL credentials", re.compile(r"://[^/\s:]*:(?!\$)[^/\s:@]+@")),
     # 資格情報らしき「代入」(NAME=value / NAME: value)。キーワードは複合名の
     # 一部でも拾えるよう部分一致にし (PGPASSWORD / SECRET_KEY / ACCESS_TOKEN 等)、
     # キーワード直後に続く語 ([A-Za-z0-9_]*) を吸ってから区切り記号へ到達させる。
@@ -4035,6 +8145,201 @@ _SECRET_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
             r"|(?![-=$\\])[^\s\"'$]{8,}))"
         ),
     ),
+    # ---- ここから: 接頭辞で決まる既知形式の追加 (上の検出のラベルは変えない) ----
+    # 接頭辞で決まる既知形式。長さは発行形式の細部に寄りかからず下限だけで縛り、
+    # 短い near-miss を拾わない (開始 / 終了境界は上の既知形式と同じ)。
+    (
+        "Shopify token",
+        re.compile(_TOKEN_START + r"shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32,}" + _TOKEN_END),
+    ),
+    (
+        "Linear key",
+        re.compile(_TOKEN_START + r"lin_api_[A-Za-z0-9]{32,}" + _TOKEN_END),
+    ),
+    # nfp = 個人アクセストークン / nfc = CLI / nfo = OAuth。
+    (
+        "Netlify token",
+        re.compile(_TOKEN_START + r"nf[pco]_[A-Za-z0-9]{30,}" + _TOKEN_END),
+    ),
+    # 末尾に `-<数字>` が付く形があるが、`-` は終了境界に影響しない。
+    (
+        "Databricks token",
+        re.compile(_TOKEN_START + r"dapi[0-9a-f]{32,}" + _TOKEN_END),
+    ),
+    (
+        "Stripe webhook secret",
+        re.compile(_TOKEN_START + r"whsec_[A-Za-z0-9]{24,}" + _TOKEN_END),
+    ),
+    # API キーの SID (`SK` + 32 桁 hex)。対になるシークレットは別の値。
+    (
+        "Twilio API key",
+        re.compile(_TOKEN_START + r"SK[0-9a-f]{32}" + _TOKEN_END),
+    ),
+    # 3 つの `.` 区切り: ユーザ ID の base64 / 時刻 / HMAC。先頭は ID の base64 が
+    # 取りうる M / N / O。
+    (
+        "Discord bot token",
+        re.compile(
+            _TOKEN_START
+            + r"[MNO][A-Za-z0-9_\-]{23,27}\.[A-Za-z0-9_\-]{6,7}\.[A-Za-z0-9_\-]{27,}"
+        ),
+    ),
+    # ボット ID + `:` + `AA…` (35 文字)。`AA` を必須にして、`<秒>:<ハッシュ>` のような
+    # 数字 + コロン + 英数字の並びを拾わない。API の URL では ID が `bot` に密着する
+    # (`/bot123456789:AA…`) ので、`bot` の直後も開始境界にする。
+    (
+        "Telegram bot token",
+        re.compile(
+            r"(?:"
+            + _TOKEN_START
+            + r"|(?<=bot))[0-9]{8,10}:AA[A-Za-z0-9_\-]{32,}"
+            + _TOKEN_END
+        ),
+    ),
+]
+
+# 文脈で決まる資格情報 (`DB_PASS=` / `{"pwd": …}` / `'password' => …` / `curl -u user:pw` /
+# `sshpass -p` / netrc の 1 行 / `Authorization: Token …` / `AccountKey=…`)。
+# 接頭辞だけでは決まらず、文脈が資格情報だと言っている形なので、文脈ごとに別の規則にして、
+# 文脈の外では 1 文字も拾わない (拒否 = 実作業の停止なので誤検知が高い)。
+#
+# 上の表と分けてあるのは、上の表が share 用 dossier の伏字 (dossier_redact.py) にも
+# 流用されるため。そちらは一致全体を `[REDACTED]` に置き換えるので、ここの規則を入れると、
+# dossier が自前の規則で「キーは残して値だけ伏せる」形 (`DB_PASS=[REDACTED]` /
+# `curl -u admin:[REDACTED]`) まで全体が潰れる。dossier にこの表も流用させるなら、
+# 先に dossier 側の順序 (値だけ伏せる規則を先に当てる) を決める必要がある。
+# scan_secrets (bash-review / エディタの送信前ゲート / gemini-consultant) は両方を見る。
+_CONTEXT_SCANNERS: list[tuple[str, "re.Pattern[str]"]] = [
+    # 環境変数名の形 (大文字 + `_`) の `*_PASS` / `*_PWD` / `*_PAT` と、素の `PASS=`。
+    # 語中一致の "secret assignment" と違って `pass` は `bypass` / `compass` /
+    # `passthrough` に埋まるので、`_` で区切られた最後の語に限り、大文字に限る
+    # (`first_pass = first_pass_result` のような小文字の変数名はコードで、
+    # 識別子は値と区別できない)。素の `PASS` は `=` だけ (`pass: …` は散文・テスト
+    # 出力に多い)。素の `PWD` は拾わない: シェルが作業ディレクトリを入れる変数で、
+    # `MYSQL_PWD` のように接頭語があるときだけ資格情報とみなす。PAT は値が
+    # トークンの字種 (英数字と `_-`) で 20 文字以上のものに限る: `SKIP_PAT="^v.*"` の
+    # ような「パターン」の意味の変数を拾わない。
+    (
+        "credential variable",
+        re.compile(
+            r"(?<![A-Za-z0-9])(?:"
+            r"(?:(?:[A-Z][A-Z0-9]*_){1,8}PASS(?:\\*[\"'])?\s*[=:]|PASS\s*=)\s*"
+            + _credential_value(_VALUE_NOT_REF)
+            + r"|(?:[A-Z][A-Z0-9]*_){1,8}PWD(?:\\*[\"'])?\s*[=:]\s*"
+            + _credential_value(_VALUE_NOT_REF_OR_PATH)
+            + r"|(?:[A-Z][A-Z0-9]*_){1,8}PAT(?:\\*[\"'])?\s*[=:]\s*"
+            r"(?:\\*[\"'])?[A-Za-z0-9_\-]{20,})"
+        ),
+    ),
+    # キーを引用符で囲んだ形 (JSON / PHP / Ruby のリテラル)。
+    #   * `=>` は引用符で囲んだキーの後だけ受ける (`'password' => '…'`)。どのキーの後でも
+    #     受けると JS のアロー関数 (`items.map(token => token.value)`) まで値として拾う。
+    #   * `pass` / `pwd` は引用符で囲んだキー全体に限る (`"passport"` は拾わない)。
+    #     引用符が付いていれば小文字でも変数名ではなくキー (文字列) と分かる。
+    #   * `pwd` の値がディレクトリのパスの形なら除く (`{"pwd": "/srv/app"}`)。
+    #   * `Hash::make('x')` / `$this->hasher->make(…)` のようなメソッド呼び出しは値でない。
+    # 引用符の外側は json.dumps した綴り (`\"pwd\":\"…\"`) でも同じ形にする。
+    (
+        "credential field",
+        re.compile(
+            r"(?i)(?<=[\"'])(?:"
+            r"[A-Za-z0-9_\-]{0,64}?(?:password|passwd|passphrase|secret|token"
+            r"|credential|api[_-]?key|access[_-]?key|auth[_-]?token"
+            r"|client[_-]?secret|private[_-]?key|secret[_-]?key)[A-Za-z0-9_\-]{0,64}"
+            r"\\*[\"']\s*=>\s*"
+            + _VALUE_NOT_METHOD_CALL
+            + _credential_value(_VALUE_NOT_REF)
+            + r"|(?:[A-Za-z0-9]+[_-]){0,8}pass\\*[\"']\s*(?:=>|[=:])\s*"
+            + _VALUE_NOT_METHOD_CALL
+            + _credential_value(_VALUE_NOT_REF)
+            + r"|(?:[A-Za-z0-9]+[_-]){0,8}pwd\\*[\"']\s*(?:=>|[=:])\s*"
+            + _VALUE_NOT_METHOD_CALL
+            + _credential_value(_VALUE_NOT_REF_OR_PATH)
+            + r")"
+        ),
+    ),
+    # `curl -u user:pw` / `--user user:pw` / `--proxy-user`。`-u` / `--user` は docker /
+    # sudo / sort / git push にもあり (`docker run -u 1000:1000` / `--user
+    # www-data:www-data`)、値の形だけでは見分けられないので、同じコマンドの
+    # curl の引数であることを条件にする (`;` `|` `&` と改行は別コマンドとの境界)。
+    # `curl` からフラグまでの語数は有界 (40)。短縮フラグは引数を取らない curl の
+    # フラグとの束ね書き (`-sSu`) まで見る。引数付きのフラグ (`-d` / `-H`) を含めると
+    # `-dusername=bob:x` のような別のフラグの値を拾う。ユーザ名は空 / 変数
+    # (`-u "$API_USER:pw"`) でもよく、パスワード側が参照 (`$PASS`) か空なら拾わない。
+    # 長さの下限は無い: この文脈のパスワードは短くても資格情報で、"URL credentials"
+    # (`user:pw@host`) と同じ扱い。
+    (
+        "curl credential",
+        re.compile(
+            r"(?<![A-Za-z0-9_\-])curl(?![A-Za-z0-9_\-])"
+            r"(?:" + _CMD_SEP + _CMD_WORD + r"){0,40}?" + _CMD_SEP + r"(?:"
+            r"--(?:proxy-)?user(?:[ \t]+|=)"
+            # `[ \t]*=?[ \t]*` と書くと空白の切り分けが L 通りになり、空白が長いと二次
+            # (`(?:[ \t]*=)?[ \t]*` なら、`=` が無い形でも空白の扱いが 1 通りに決まる)。
+            r"|-[sSLfkvViIgGOJNaq#]*[uU](?:[ \t]*=)?[ \t]*)"
+            r"(?:\\*[\"'])?[^\s:'\"\\]*:(?!//)[^\s'\"\\$]"
+        ),
+    ),
+    # `sshpass -p <password>` (`-p<password>` の続け書きも)。`-p` の前に置けるのは
+    # sshpass 自身のフラグだけ: `sshpass -e ssh -p 2222 host` の `-p` は ssh のポート。
+    (
+        "sshpass password",
+        re.compile(
+            r"(?<![A-Za-z0-9_\-])sshpass"
+            r"(?:"
+            + _CMD_SEP
+            + r"(?:-[ve]|-d[ \t]*[0-9]+|-[Pf][ \t]+[^\s;|&]+)){0,6}"
+            + _CMD_SEP
+            + r"-p[ \t]*"
+            + _NONEMPTY_SECRET
+        ),
+    ),
+    # netrc の `machine <host> login <user> password <pw>` (`password` が先の順も)。
+    # `login` を要求するのは、"machine learning password reset" のような散文を
+    # 拾わないため。区切りは空白に加え `\n` の綴り (printf / json.dumps) を許す。
+    # host / user は `\` を含まない語: 含めると `\n` の綴りの境界の取り方が曖昧に
+    # なり、バックトラックが増える。
+    (
+        "netrc credential",
+        re.compile(
+            r"(?i)(?<![A-Za-z0-9_\-])machine"
+            + _NETRC_SEP
+            + r"[^\s\\]+"
+            + _NETRC_SEP
+            + r"(?:login"
+            + _NETRC_SEP
+            + r"[^\s\\]+"
+            + _NETRC_SEP
+            + r"password"
+            + _NETRC_SEP
+            + _NONEMPTY_SECRET
+            + r"|password"
+            + _NETRC_SEP
+            + _NONEMPTY_SECRET
+            + r"[^\s\\]*"
+            + _NETRC_SEP
+            + r"login\b)"
+        ),
+    ),
+    # `Authorization: Token <hex>` (Django REST framework など) / `ApiKey`。bearer / basic
+    # は上で扱っている。変数参照 (`$TOKEN`) は字種に含まれないので拾わない。
+    (
+        "authorization credential",
+        re.compile(
+            r"(?i)authorization\\*[\"']?\s*:\s*(?:\\*[\"'])?(?:token|api-?key)[ \t]+"
+            r"[A-Za-z0-9._~+/=\-]{12,}"
+        ),
+    ),
+    # Azure のストレージの接続文字列 (`AccountKey=<base64>`)。`AccountKey` は上の
+    # キーワード表 (`access[_-]?key`) に無く、base64 の値 (+/=) は 40 文字以上。
+    # Service Bus の `SharedAccessKey=` は `access[_-]?key` が既に拾う。
+    (
+        "Azure storage key",
+        re.compile(
+            r"(?i)AccountKey\s*=\s*(?:\\*[\"'])?"
+            r"[A-Za-z0-9+/]{40,}={0,2}"
+        ),
+    ),
 ]
 
 
@@ -4053,7 +8358,7 @@ def scan_secrets(command: str, tool_input) -> tuple[bool, str]:
         haystacks.append(json.dumps(tool_input, ensure_ascii=False))
     except (TypeError, ValueError):
         pass
-    for label, pattern in _SECRET_SCANNERS:
+    for label, pattern in (*_SECRET_SCANNERS, *_CONTEXT_SCANNERS):
         if any(pattern.search(h) for h in haystacks):
             return True, label
     return False, ""
