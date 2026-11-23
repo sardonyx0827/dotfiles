@@ -15,7 +15,7 @@ tools:
     "TaskList",
     "TaskGet",
   ]
-model: opus
+model: sonnet
 effort: medium
 ---
 

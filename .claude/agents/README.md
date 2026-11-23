@@ -57,14 +57,14 @@ Located in `~/.claude/agents/`:
 | -------------------- | ------ | ------------------------------------------------ | ------------------- |
 | build-error-resolver | sonnet | Fix TS/build errors (minimal diffs)              | When build fails    |
 | go-build-resolver    | sonnet | Fix Go build/vet/lint errors                     | When Go builds fail |
-| refactor-cleaner     | opus   | Dead code cleanup (knip, depcheck, ts-prune)     | Code maintenance    |
+| refactor-cleaner     | sonnet | Dead code cleanup (knip, depcheck, ts-prune)     | Code maintenance    |
 | doc-updater          | sonnet | Docs & codemaps (/update-docs, /update-codemaps) | Updating docs       |
 
 ### Delegation
 
-| Agent           | Model  | Purpose                                   | When to Use                                           |
-| --------------- | ------ | ----------------------------------------- | ----------------------------------------------------- |
-| codex-delegator | sonnet | Route decisions to Codex via `codex exec` | Spec discussion, fix strategy, complex tech decisions |
+| Agent           | Model  | Purpose                                   | When to Use                                                                                    |
+| --------------- | ------ | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| codex-delegator | sonnet | Route decisions to Codex via `codex exec` | Spec / design, large changes, test strategy (not checkpoints or 2-failure root-cause analysis) |
 
 ### Chores (docs/requests)
 
