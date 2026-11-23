@@ -19,6 +19,7 @@ The hooks run through the `run_hook` fixture, which remaps /tmp/claude_hooks and
 /tmp/codex_hooks into tmp_path (see conftest.py).
 """
 
+import json
 import os
 import re
 import sys
@@ -511,6 +512,122 @@ class TestDecisionIsSettledBeforeLogging:
         text = res.reason if entry == "claude" else res.stderr
         assert "High-risk command" in text
         assert "hook error" not in text
+
+
+# ---------------------------------------------------------------------------
+# Each summary line names the detail log written for the same run
+# ---------------------------------------------------------------------------
+# The mod (bash-review-log) used to pair the two by time and command prefix only;
+# the name at the end of the reason makes the pairing exact.
+DETAIL_REF = re.compile(r" detail=(bash_cmd_\d+_\d+\.log)$")
+LONG_COMMAND = "make " + " ".join(f"target-{i:02d}" for i in range(20))
+# log_summary keeps the first 80 characters of a longer command and adds "..."
+SUMMARY_COMMAND_CHARS = 80
+
+
+def _last_decision(res, name):
+    """(command column, reason) of the last decision line (NOTE lines skipped)."""
+    line = [ln for ln in _summary_lines(res, name) if "| logging" not in ln][-1]
+    match = SUMMARY_HEADER.match(line)
+    assert match, line
+    command, _, reason = match.group(4).rpartition(" | ")
+    return command, reason
+
+
+def _named_detail(res, name, reason) -> Path:
+    match = DETAIL_REF.search(reason)
+    assert match, reason
+    path = _managed_root(res, name) / DETAIL_SUBPATH / match.group(1)
+    assert path.is_file(), path
+    return path
+
+
+def _logged_command(path: Path) -> str:
+    line = next(
+        ln
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln.startswith("Tool Input: ")
+    )
+    return json.loads(line[len("Tool Input: ") :])["command"]
+
+
+class TestSummaryNamesItsDetailLog:
+    @pytest.mark.parametrize(
+        ("command", "gemini"),
+        [
+            ("ls -la", None),  # safe skip
+            ("sudo ls", None),  # static deny
+            ("make build", "ASK"),  # Gemini then Codex
+        ],
+    )
+    def test_the_named_detail_log_holds_the_same_command(
+        self, run_hook, entry, command, gemini
+    ):
+        hook, _, _ = ENTRIES[entry]
+        res = run_hook(
+            hook,
+            hook_payload(command),
+            urlopen=fake_gemini(gemini) if gemini else None,
+            run=fake_run(stdout="ASK"),
+        )
+        shown, reason = _last_decision(res, entry)
+        logged = _logged_command(_named_detail(res, entry, reason))
+        assert logged == shown == command
+
+    def test_the_named_detail_log_holds_a_long_command_whole(self, run_hook, entry):
+        # single model; the summary cuts the command, the detail log keeps it whole
+        assert len(LONG_COMMAND) > SUMMARY_COMMAND_CHARS
+        hook, _, _ = ENTRIES[entry]
+        res = run_hook(
+            hook,
+            hook_payload(LONG_COMMAND),
+            urlopen=fake_gemini("ALLOW"),
+            run=fake_run(stdout="ASK"),
+        )
+        shown, reason = _last_decision(res, entry)
+        assert shown == LONG_COMMAND[:SUMMARY_COMMAND_CHARS] + "..."
+        assert _logged_command(_named_detail(res, entry, reason)) == LONG_COMMAND
+
+    def test_every_run_names_its_own_file(self, run_hook, entry):
+        hook, _, _ = ENTRIES[entry]
+        names = set()
+        for _ in range(3):
+            res = run_hook(hook, hook_payload("ls -la"))
+            names.add(_named_detail(res, entry, _last_decision(res, entry)[1]).name)
+        assert len(names) == 3
+
+    def test_a_redacted_detail_log_is_named_too(self, run_hook, entry):
+        hook, _, _ = ENTRIES[entry]
+        token = "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0" + "K1l2M3n4O5p6Q7r8"
+        res = run_hook(hook, hook_payload(f"make deploy TOKEN={token}"))
+        _, reason = _last_decision(res, entry)
+        text = _named_detail(res, entry, reason).read_text(encoding="utf-8")
+        assert "[REDACTED - credential detected]" in text
+        assert token not in text
+
+    def test_the_input_limit_branch_names_its_placeholder_log(self, run_hook, entry):
+        hook, _, _ = ENTRIES[entry]
+        res = run_hook(hook, hook_payload("echo " + "x" * (40 * 1024)))
+        shown, reason = _last_decision(res, entry)
+        assert _logged_command(_named_detail(res, entry, reason)) == shown
+
+    @posix_only
+    def test_no_name_while_detail_logging_is_off(self, run_hook, tmp_path, entry):
+        hook, tmp_name, _ = ENTRIES[entry]
+        _disable_detail_logging(tmp_path, tmp_name)
+        res = run_hook(hook, hook_payload("ls -la"))
+        assert "detail=" not in _last_decision(res, entry)[1]
+
+    def test_no_name_when_the_write_failed(self, run_hook, monkeypatch, entry):
+        hook, _, _ = ENTRIES[entry]
+
+        def fail(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(_common, "write_detail_log", fail)
+        res = run_hook(hook, hook_payload("ls -la"))
+        assert _outcome(res, entry) == "allow"
+        assert "detail=" not in _last_decision(res, entry)[1]
 
 
 # ---------------------------------------------------------------------------

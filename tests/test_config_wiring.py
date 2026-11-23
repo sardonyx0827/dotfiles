@@ -216,6 +216,15 @@ SECRET_PATH_PATTERNS = [
     "//**/.envrc",
     "//**/.git-credentials",
     "//**/.zsh_secrets",
+    # Container, cloud and signing credentials. Mirrors bash-review's
+    # SENSITIVE_PATTERNS, so the Read tool cannot fetch what `cat` would ask for.
+    # The names are not ordinary project files, so they are anchored at any depth.
+    "//**/.docker/config.json",
+    "//**/.kube/**",
+    "//**/.gnupg/**",
+    "//**/.azure/**",
+    "//**/.config/gcloud/**",
+    "//**/.config/op/**",
 ]
 # Credential files whose names are common inside projects too (a project's own
 # auth.json or .npmrc), so only the copy in the home directory is denied.
@@ -410,9 +419,13 @@ def _edit_ask_paths() -> list[str]:
         glob = rule[len("Edit(") : -1]
         if glob.endswith("/**"):
             glob = glob[: -len("/**")] + "/a"
+        # a name pattern (`*.zwc`, `.zcompdump*`) stands for one concrete name
+        glob = glob.replace("**/", "\0").replace("*", "x").replace("\0", "**/")
         if glob.startswith("//**/"):
             tail = glob[len("//**/") :]
             paths += [f"/r/{tail}", tail]
+        elif glob.startswith("//"):
+            paths.append(glob[1:])  # `//abs` is an absolute path in Claude Code rules
         else:
             paths.append(glob)
     return paths
@@ -760,9 +773,13 @@ def test_bash_review_fails_closed_on_timeout():
     into a block. The timeout sits above the review's own worst case (Gemini 30s
     plus Codex 60s) so a slow but healthy review is not cut off.
 
-    git-push-review stays fail-open on purpose for a timeout or a crash (a broken
-    summary must never block a real command; `Bash(git push:*)` in ask is its
-    backstop), so it must not carry the block setting.
+    git-push-review fails closed the same way. Inside the script, a broken
+    summary still degrades quietly (`|| exit 0`), so a healthy hook never blocks
+    a real command. But a hook that hangs, cannot start or crashes used to be a
+    non-blocking error, and `Bash(git push:*)` in ask only backstops the plain
+    spelling: `git -C <dir> push` or a push inside `python3 -c` would then run
+    with no confirmation. Its timeout is far above its own cost (a non-push
+    command short-circuits in ~70ms) and below the default 600s.
     """
     hooks = _pretooluse_bash_hooks()
     launcher = [h for h in hooks if "bash-review-launcher.sh" in h["command"]]
@@ -770,7 +787,106 @@ def test_bash_review_fails_closed_on_timeout():
     assert launcher[0].get("onFailure") == "block"
     assert launcher[0].get("timeout", 600) >= 120
     push = [h for h in hooks if "git-push-review.sh" in h["command"]]
-    assert push and all("onFailure" not in h for h in push)
+    assert len(push) == 1, push
+    assert push[0].get("onFailure") == "block"
+    assert 30 <= push[0].get("timeout", 600) < 600
+
+
+def _settings_hooks(event: str) -> list[dict]:
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    return [hook for entry in settings["hooks"][event] for hook in entry["hooks"]]
+
+
+def _codex_template_hooks(event: str) -> list[dict]:
+    text = CODEX_HOOKS_TEMPLATE.read_text(encoding="utf-8")
+    data = json.loads(text.replace("__HOME__", "/home/tester"))
+    return [hook for entry in data["hooks"][event] for hook in entry["hooks"]]
+
+
+@pytest.mark.parametrize(
+    ("hooks_of", "event", "ceiling"),
+    [
+        (_settings_hooks, "PostToolUse", 120),
+        (_settings_hooks, "Stop", 60),
+        (_codex_template_hooks, "PostToolUse", 180),
+        (_codex_template_hooks, "Stop", 120),
+    ],
+    ids=["claude-post", "claude-stop", "codex-post", "codex-stop"],
+)
+def test_lint_format_and_stop_hooks_carry_a_timeout(hooks_of, event, ceiling):
+    """Without `timeout` a hook may run for the 600s default after every edit or
+    at every stop. The lint layer caps each tool (`HOOK_LINT_TIMEOUT_*`), so the
+    hook-level value is only the outer bound for a wedged formatter or linter;
+    these hooks are advisory, so hitting it never blocks the work."""
+    hooks = hooks_of(event)
+    assert hooks, f"expected {event} hooks"
+    for hook in hooks:
+        assert "timeout" in hook, f"{event} hook without timeout: {hook['command']}"
+        assert 1 <= hook["timeout"] <= ceiling, hook
+
+
+# The container sandbox CLI (`csb`: ~/.local/bin/csb is a fixed /bin/sh wrapper
+# that install.sh writes from _sandbox_gate.csb_wrapper_text, running
+# ~/.claude/hooks/claude_sandbox.py; not a symlink). Work inside a sandbox runs without a
+# prompt, so `Bash(csb:*)` is allowed. The four boundaries between the
+# sandbox and the host still reach the user even in auto mode (ask wins over
+# allow): create runs repository-defined setup with the network on, `net on`
+# reconnects a work container, apply writes the patch into the host tree, and
+# image build builds the generic image with the network on.
+SANDBOX_BOUNDARY_ASKS = [
+    "Bash(csb create:*)",
+    "Bash(csb net on:*)",
+    "Bash(csb apply:*)",
+    "Bash(csb image build:*)",
+]
+# The state directory holds the verify records and review attestations apply
+# relies on, and the link decides what `csb` runs; neither is written by hand.
+SANDBOX_EDIT_DENIES = [
+    "Edit(~/.local/state/claude-sandbox/**)",
+    "Edit(~/.local/bin/csb)",
+]
+
+
+def test_sandbox_cli_is_allowed_with_its_boundaries_asked():
+    permissions = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))["permissions"]
+    assert "Bash(csb:*)" in permissions["allow"]
+    missing = [rule for rule in SANDBOX_BOUNDARY_ASKS if rule not in permissions["ask"]]
+    assert not missing, f"permissions.ask is missing sandbox boundaries: {missing}"
+
+
+def test_sandbox_state_and_cli_link_are_not_editable():
+    deny = _deny_rules()
+    missing = [rule for rule in SANDBOX_EDIT_DENIES if rule not in deny]
+    assert not missing, f"permissions.deny is missing sandbox guards: {missing}"
+
+
+def test_sandbox_state_and_cli_link_are_harness_paths_for_bash():
+    """Same two-sided rule as the Edit-ask paths: Bash must not reach what the
+    Edit tool may not."""
+    for path in ("~/.local/state/claude-sandbox/abc/meta.json", "~/.local/bin/csb"):
+        assert _bash_review._is_harness_target(path), path
+
+
+def test_every_shipped_mod_is_loaded():
+    """A mod added under .claude/mods but left out of CLAUDE_CODE_PLUGIN_DIRS is
+    never loaded, and nothing else notices."""
+    shipped = sorted(
+        manifest.parent.parent.name
+        for manifest in (REPO_ROOT / ".claude/mods").glob(
+            "*/.claude-plugin/plugin.json"
+        )
+    )
+    assert shipped, "expected mods under .claude/mods"
+    loaded = sorted(entry.rsplit("/", 1)[-1] for entry in _claude_plugin_dirs())
+    assert loaded == shipped
+
+
+def test_no_inert_sandbox_block():
+    """Claude Code's own sandbox is off; its sibling keys are never consulted
+    while it is, so a leftover allowlist only reads as protection."""
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    sandbox = settings.get("sandbox")
+    assert sandbox is None or sandbox.get("enabled") is True, sandbox
 
 
 def test_codex_bash_review_is_wired_through_failclosed_launcher():
@@ -1056,3 +1172,152 @@ def test_posttooluse_edit_hook_is_a_single_ordered_handler():
         f"format-then-lint order is not guaranteed: {commands}"
     )
     assert "format-then-lint.sh" in commands[0], commands
+
+
+# The hook commands do not look `bash` up on PATH either
+# (/opt/homebrew/bin, which the user can write, comes before /bin). /bin/bash is
+# root-owned; the launchers then pick the trusted system python3 themselves.
+def _all_claude_hook_commands() -> list[str]:
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    commands = [
+        hook["command"]
+        for groups in settings["hooks"].values()
+        for group in groups
+        for hook in group["hooks"]
+    ]
+    return [*commands, settings["statusLine"]["command"]]
+
+
+def test_claude_hook_commands_start_with_bin_bash():
+    commands = _all_claude_hook_commands()
+    # anti-vacuity: PreToolUse (2), PostToolUse, Stop and the status line
+    assert len(commands) >= 5, commands
+    # -p: no $BASH_ENV / $ENV file and no function from the environment (an
+    # exported `printf` would shadow the launcher's builtin)
+    wrong = [c for c in commands if not c.startswith("/bin/bash -p ~/")]
+    assert not wrong, f"hook commands must start with /bin/bash -p: {wrong}"
+
+
+def test_codex_hook_commands_start_with_bin_bash():
+    data = json.loads(
+        CODEX_HOOKS_TEMPLATE.read_text(encoding="utf-8").replace(
+            "__HOME__", "/home/tester"
+        )
+    )
+    commands = [
+        hook["command"]
+        for groups in data["hooks"].values()
+        for group in groups
+        for hook in group["hooks"]
+    ]
+    assert len(commands) >= 5, commands
+    wrong = [c for c in commands if not c.startswith("/bin/bash -p '/home/tester/")]
+    assert not wrong, f"hook commands must start with /bin/bash -p: {wrong}"
+
+
+# The shell layer (functions, aliases, PATH) decides what `csb`, `git` or
+# `python3` mean in the Bash tool, ahead of anything the hook can check. Its
+# start-up files therefore ask before the Edit tool changes them. ~/.zshrc reads
+# $ZSH/oh-my-zsh.sh, which reads custom/ and plugins/, so oh-my-zsh is in too.
+# (Bash writes to the same files are bash-review's harness paths.)
+SHELL_STARTUP_ASKS = [
+    "Edit(//**/.zshrc)",
+    "Edit(//**/.zshenv)",
+    "Edit(//**/.zprofile)",
+    "Edit(//**/.zlogin)",
+    "Edit(//**/.zlogout)",
+    "Edit(//**/.bashrc)",
+    "Edit(//**/.bash_profile)",
+    "Edit(//**/.bash_login)",
+    "Edit(//**/.profile)",
+    "Edit(~/.oh-my-zsh/**)",
+    # what zsh loads besides them: compiled files (`source x` reads x.zwc when it
+    # is newer), the completion dump compinit loads, and the completion files
+    # Docker Desktop puts in fpath
+    "Edit(//**/*.zwc)",
+    "Edit(//**/.zcompdump*)",
+    "Edit(~/.docker/completions/**)",
+]
+
+
+def test_shell_startup_file_edits_ask_the_user():
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    ask = settings["permissions"].get("ask", [])
+    missing = [rule for rule in SHELL_STARTUP_ASKS if rule not in ask]
+    assert not missing, f"permissions.ask is missing {missing}"
+
+
+# Homebrew's prefix holds the git, fzf, bash and python the shell finds first on
+# PATH. A direct write there asks (Bash side: bash-review harness paths). What
+# brew itself installs into it is not covered, and Intel's /usr/local is too broad
+# to guard (README "Known gaps").
+HOMEBREW_ASKS = ["Edit(//opt/homebrew/**)", "Edit(//home/linuxbrew/.linuxbrew/**)"]
+
+
+def test_homebrew_prefix_edits_ask_the_user():
+    settings = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+    ask = settings["permissions"].get("ask", [])
+    missing = [rule for rule in HOMEBREW_ASKS if rule not in ask]
+    assert not missing, f"permissions.ask is missing {missing}"
+    assert "Edit(//usr/local/**)" not in ask
+
+
+def test_edit_ask_paths_turn_patterns_into_concrete_paths():
+    paths = _edit_ask_paths()
+    assert "/opt/homebrew/a" in paths and ".zcompdumpx" in paths and "x.zwc" in paths
+    assert not [p for p in paths if "*" in p.replace("**/", "")]
+
+
+# Codex fails a PreToolUse hook open when it times out (onFailure
+# defaults to "continue"), and an omitted "timeout" means 600 s
+# (codex-rs/hooks/src/engine/discovery.rs normalize_command_hook:
+# `timeout_sec.unwrap_or(600)`; key "timeout" in codex-rs/protocol/src/hooks.rs).
+# So the gate hooks state their timeout, never below that default nor below the
+# 180 s the Claude side gives bash-review.
+CODEX_DEFAULT_HOOK_TIMEOUT = 600
+
+
+def test_codex_gate_hooks_state_a_timeout_no_shorter_than_the_default():
+    data = json.loads(
+        CODEX_HOOKS_TEMPLATE.read_text(encoding="utf-8").replace("__HOME__", "/h")
+    )
+    gates = {
+        name: hook
+        for entry in data["hooks"]["PreToolUse"]
+        if entry.get("matcher") == "Bash"
+        for hook in entry["hooks"]
+        for name in ("bash-review-launcher.sh", "git-push-review.sh")
+        if name in hook["command"]
+    }
+    assert set(gates) == {"bash-review-launcher.sh", "git-push-review.sh"}, gates
+    for name, hook in gates.items():
+        timeout = hook.get("timeout")
+        assert isinstance(timeout, int), (name, hook)
+        assert timeout >= max(CODEX_DEFAULT_HOOK_TIMEOUT, 180), (name, timeout)
+
+
+# -p on the top-level command does not reach a bash the hook starts
+# (BASH_ENV and BASH_FUNC_* stay in the environment). Every bash a hook starts is
+# /bin/bash -p as well; none comes from PATH.
+_INNER_BASH = re.compile(r"(?:^|[\s;&|(])bash\s+(?:-c\b|\"\$|-\w)")
+
+
+def test_hooks_start_inner_bash_with_bin_bash_p():
+    scripts = sorted(
+        [
+            *(REPO_ROOT / ".claude/hooks").glob("*.sh"),
+            *(REPO_ROOT / ".codex/hooks").glob("*.sh"),
+        ]
+    )
+    assert scripts
+    offenders = []
+    privileged = 0
+    for path in scripts:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if _INNER_BASH.search(line):
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+            privileged += line.count("/bin/bash -p")
+    assert not offenders, offenders
+    assert privileged >= 3  # format-then-lint (2) and the lint cwd runner (1)

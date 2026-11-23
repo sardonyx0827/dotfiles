@@ -2,7 +2,7 @@
   "env": {
     "BASH_DEFAULT_TIMEOUT_MS": "600000",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/bash-review-log:~/.claude/mods/doc-browser",
+    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/bash-review-log:~/.claude/mods/doc-browser:~/.claude/mods/containers",
     "CLAUDE_CODE_THISTLE_GREBE": "default"
   },
   "attribution": {
@@ -91,6 +91,7 @@
       "Bash(cargo:*)",
       "Bash(docker:*)",
       "Bash(docker-compose:*)",
+      "Bash(csb:*)",
       "mcp__serena__activate_project",
       "mcp__serena__initial_instructions",
       "mcp__serena__onboarding",
@@ -167,6 +168,12 @@
       "Read(~/.npmrc)",
       "Read(~/.netrc)",
       "Read(~/.pypirc)",
+      "Read(//**/.docker/config.json)",
+      "Read(//**/.kube/**)",
+      "Read(//**/.gnupg/**)",
+      "Read(//**/.azure/**)",
+      "Read(//**/.config/gcloud/**)",
+      "Read(//**/.config/op/**)",
       "Edit(//**/.envrc)",
       "Edit(//**/.git-credentials)",
       "Edit(//**/.zsh_secrets)",
@@ -177,6 +184,14 @@
       "Edit(~/.npmrc)",
       "Edit(~/.netrc)",
       "Edit(~/.pypirc)",
+      "Edit(//**/.docker/config.json)",
+      "Edit(//**/.kube/**)",
+      "Edit(//**/.gnupg/**)",
+      "Edit(//**/.azure/**)",
+      "Edit(//**/.config/gcloud/**)",
+      "Edit(//**/.config/op/**)",
+      "Edit(~/.local/state/claude-sandbox/**)",
+      "Edit(~/.local/bin/csb)",
       "Bash(env)",
       "Bash(env -*)",
       "Bash(printenv)",
@@ -224,6 +239,10 @@
       "Bash(codex exec --dangerously-bypass-approvals-and-sandbox:*)",
       "Bash(codex exec -s danger-full-access:*)",
       "Bash(codex exec --sandbox danger-full-access:*)",
+      "Bash(csb create:*)",
+      "Bash(csb net on:*)",
+      "Bash(csb apply:*)",
+      "Bash(csb image build:*)",
       "Edit(//**/.claude/mods/**)",
       "Edit(//**/.claude/settings.json)",
       "Edit(//**/.claude/settings.local.json)",
@@ -234,6 +253,21 @@
       "Edit(//**/.claude/hooks/**)",
       "Edit(//**/.codex/hooks/**)",
       "Edit(~/.codex/**)",
+      "Edit(//**/.zshrc)",
+      "Edit(//**/.zshenv)",
+      "Edit(//**/.zprofile)",
+      "Edit(//**/.zlogin)",
+      "Edit(//**/.zlogout)",
+      "Edit(//**/.bashrc)",
+      "Edit(//**/.bash_profile)",
+      "Edit(//**/.bash_login)",
+      "Edit(//**/.profile)",
+      "Edit(~/.oh-my-zsh/**)",
+      "Edit(//**/*.zwc)",
+      "Edit(//**/.zcompdump*)",
+      "Edit(~/.docker/completions/**)",
+      "Edit(//opt/homebrew/**)",
+      "Edit(//home/linuxbrew/.linuxbrew/**)",
       "mcp__serena__replace_symbol_body",
       "mcp__serena__replace_content",
       "mcp__serena__replace_in_files",
@@ -256,7 +290,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/format-then-lint.sh"
+            "command": "/bin/bash -p ~/.claude/hooks/format-then-lint.sh",
+            "timeout": 120
           }
         ]
       }
@@ -267,13 +302,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/bash-review-launcher.sh",
+            "command": "/bin/bash -p ~/.claude/hooks/bash-review-launcher.sh",
             "timeout": 180,
             "onFailure": "block"
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/git-push-review.sh"
+            "command": "/bin/bash -p ~/.claude/hooks/git-push-review.sh",
+            "timeout": 60,
+            "onFailure": "block"
           }
         ]
       }
@@ -283,7 +320,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/stop-audit.sh"
+            "command": "/bin/bash -p ~/.claude/hooks/stop-audit.sh",
+            "timeout": 60
           }
         ]
       }
@@ -291,7 +329,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "bash ~/.claude/statusline-command.sh"
+    "command": "/bin/bash -p ~/.claude/statusline-command.sh"
   },
   "enabledPlugins": {
     "document-skills@anthropic-agent-skills": true,
@@ -305,21 +343,6 @@
         "repo": "openai/codex-plugin-cc"
       }
     }
-  },
-  "sandbox": {
-    "enabled": false,
-    "network": {
-      "allowedDomains": [
-        "github.com",
-        "api.github.com",
-        "registry.npmjs.org",
-        "pypi.org",
-        "files.pythonhosted.org",
-        "crates.io",
-        "static.crates.io"
-      ]
-    },
-    "excludedCommands": ["docker", "docker-compose", "git"]
   },
   "effortLevel": "xhigh",
   "modelSettings": {

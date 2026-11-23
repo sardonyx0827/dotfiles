@@ -6,11 +6,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash '__HOME__/.codex/hooks/bash-review-launcher.sh'"
+            "command": "/bin/bash -p '__HOME__/.codex/hooks/bash-review-launcher.sh'",
+            "timeout": 600
           },
           {
             "type": "command",
-            "command": "bash '__HOME__/.codex/hooks/git-push-review.sh'"
+            "command": "/bin/bash -p '__HOME__/.codex/hooks/git-push-review.sh'",
+            "timeout": 600
           }
         ]
       }
@@ -21,7 +23,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'__HOME__/.codex/hooks/lint.sh'"
+            "command": "/bin/bash -p '__HOME__/.codex/hooks/lint.sh'",
+            "timeout": 180
           }
         ]
       }
@@ -31,11 +34,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'__HOME__/.codex/hooks/auto-format.sh'"
+            "command": "/bin/bash -p '__HOME__/.codex/hooks/auto-format.sh'",
+            "timeout": 120
           },
           {
             "type": "command",
-            "command": "bash '__HOME__/.codex/hooks/stop-audit.sh'"
+            "command": "/bin/bash -p '__HOME__/.codex/hooks/stop-audit.sh'",
+            "timeout": 60
           }
         ]
       }
