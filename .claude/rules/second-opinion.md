@@ -19,7 +19,7 @@ Second opinions run as a **pair — advisor + Codex** — in the main session, w
 ## When — checkpoints
 
 - Before committing to an approach
-- When first stuck
+- When first stuck (in debugging: the first failed fix attempt, or a hypothesis loop that stops narrowing — see the debugging-protocol skill)
 - Before declaring done
 
 They apply to every nontrivial main-session task — evaluations, reviews and research included, not

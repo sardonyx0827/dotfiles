@@ -1,6 +1,6 @@
 ---
 name: debugging-protocol
-description: Systematic debugging workflow with Codex escalation. Use this skill whenever investigating a bug, test failure, unexpected behavior, error message, or regression — even if the cause seems obvious. Especially important when a first fix attempt has already failed, since it defines when and how to escalate to Codex for root-cause analysis.
+description: Systematic debugging workflow with Codex escalation. Use this skill whenever investigating a bug, test failure, unexpected behavior, error message, or regression — even if the cause seems obvious. Especially important when a first fix attempt has already failed, since it defines when the "first stuck" second-opinion checkpoint fires and when to escalate to a deeper Codex root-cause analysis.
 ---
 
 # Debugging Protocol
@@ -81,11 +81,38 @@ Why: it prevents retrying refuted ideas, and it is exactly the "Attempts so far"
 3. Confirm: the new test passes, the original repro passes, the full test suite passes
 4. Ask: "could this same root cause exist elsewhere?" — grep for the pattern
 
-## Escalation to Codex
+## Escalation
 
-Per the `codex-consultation` skill: after **2 consecutive failed fix attempts on the same issue**, stop iterating and escalate for root-cause analysis. Continuing to guess past this point burns context and compounds confusion.
+Two triggers, of different weight. This skill says _when_ each fires. The order of calls and who
+stands in when a consultant is unavailable live in `~/.claude/rules/second-opinion.md`; the
+`codex exec` command shape lives in the `codex-consultation` skill.
 
-Use the `codex-delegator` agent, or run the `codex-consultation` skill's invocation contract yourself (`codex exec -s read-only` behind the secret-scan gate; leave `-m` unset to inherit the Codex default). Build the prompt from the attempt log and write it to the prompt file:
+### First stuck → second-opinion checkpoint
+
+When the first fix attempt fails, or the hypothesis loop stops narrowing the search, you are at
+the "when first stuck" checkpoint of `~/.claude/rules/second-opinion.md`. Follow that rule as
+written — its pair (advisor + Codex), its order of calls and its fallback table — rather than
+consulting Codex alone. Give the cross-vendor half the attempt log as its evidence. A failed attempt
+at a trivial or mechanical edit (a typo, a stale import, an obvious one-line fix) does not trigger
+the checkpoint: `second-opinion.md` skips it for such edits, and so does this section.
+
+### 2 consecutive failed fixes → deeper Codex root-cause run
+
+After **2 consecutive failed fix attempts on the same issue**, stop iterating: this is the
+heavier escalation the `codex-consultation` skill and `second-opinion.md` assign to Codex — a
+dedicated root-cause analysis, not another checkpoint opinion. Continuing to guess past this
+point burns context and compounds confusion. If Codex cannot run, the fallback table in
+`second-opinion.md` decides who takes its place.
+
+Run the `codex-consultation` skill's invocation contract yourself, with `run_in_background: true`
+(`codex exec -s read-only` behind the secret-scan gate; leave `-m` unset and add no effort
+override, so the Codex defaults — `xhigh` reasoning — apply), and wait for the task
+notification. The `codex-delegator` agent keeps the exchange out of your context instead, but it
+runs Codex in the foreground at `model_reasoning_effort=medium` to fit its 10-minute Bash limit —
+a shallower pass than this escalation usually wants. The background run is the main session's
+path: a subagent cannot wait on a background task, so a subagent that reaches this point stops and
+returns its attempt log to the caller instead. Build the prompt from the attempt log and write it
+to the prompt file:
 
 ```text
 Goal: <what correct behavior looks like>
@@ -115,10 +142,11 @@ Then:
 
 ## Quick Reference
 
-| Situation               | Action                                                             |
-| ----------------------- | ------------------------------------------------------------------ |
-| Bug report received     | Phase 0: reproduce before anything else                            |
-| Regression suspected    | `git log` / `git bisect` first                                     |
-| Hypothesis confirmed    | Failing test → minimal fix → full verification                     |
-| 2 fix attempts failed   | STOP → escalate to Codex with attempt log                          |
-| Codex strategy received | Validate against evidence → implement → verify with original repro |
+| Situation                | Action                                                                |
+| ------------------------ | --------------------------------------------------------------------- |
+| Bug report received      | Phase 0: reproduce before anything else                               |
+| Regression suspected     | `git log` / `git bisect` first                                        |
+| Hypothesis confirmed     | Failing test → minimal fix → full verification                        |
+| First fix attempt failed | "First stuck" checkpoint → follow `~/.claude/rules/second-opinion.md` |
+| 2 fix attempts failed    | STOP → deeper Codex root-cause run with the attempt log               |
+| Codex strategy received  | Validate against evidence → implement → verify with original repro    |

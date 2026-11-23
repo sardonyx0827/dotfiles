@@ -90,10 +90,17 @@ or secrets.
 
 ### Phase 6: Diff Review
 
+Pick the range by what you are about to do — `HEAD~1` is the last commit, not the change in
+front of you:
+
 ```bash
-# Show what changed
+# Before a commit: staged, unstaged, and untracked files
+git diff --cached --stat
 git diff --stat
-git diff HEAD~1 --name-only
+git ls-files --others --exclude-standard
+
+# Before a PR: everything the branch adds on top of its base
+git diff <base>...HEAD --stat
 ```
 
 Review each changed file for:

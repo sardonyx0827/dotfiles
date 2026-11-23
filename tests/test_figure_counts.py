@@ -34,8 +34,16 @@ def _skills() -> int:
     # to tell which definition a given "N skills" uses, so the raw count is the
     # one: the architecture doc's Codex-sharing breakdown ("N 中 M を共有") is
     # already stated in those terms, and the template is a real directory that
-    # Codex-side sharing decisions apply to like any other.
-    return len(list((REPO_ROOT / ".claude/skills").glob("*/SKILL.md")))
+    # Codex-side sharing decisions apply to like any other. The one exclusion is
+    # `learned-*`: /learn writes those into this directory on the local machine,
+    # and .gitignore keeps them out of the repo, so the docs never count them.
+    return len(
+        [
+            p
+            for p in (REPO_ROOT / ".claude/skills").glob("*/SKILL.md")
+            if not p.parent.name.startswith("learned-")
+        ]
+    )
 
 
 def _test_suites() -> int:

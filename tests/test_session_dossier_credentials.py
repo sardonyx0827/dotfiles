@@ -17,6 +17,7 @@ the absence of the secret is asserted (the hook owns its own rewriting).
 """
 
 import html
+import importlib.util
 import sys
 import time
 
@@ -443,6 +444,45 @@ class TestUrlUserinfo:
         r = redactor()
         r.scrub(f"postgres{SEP}admin:{PW_AT}@10.0.0.5/db")
         assert r.replaced["secret"] == 1
+
+
+# Credential forms that `scan_secrets` (secret_scan.py and the bash-review
+# pre-send scan) flags through `_CONTEXT_SCANNERS`, and that the redactor does
+# not mask, because it loads `_SECRET_SCANNERS` only. They are pinned here, not
+# fixed: the xfail is strict, so closing a hole turns the test into an XPASS
+# failure and whoever did it must delete the entry (and the matching "at the time
+# of writing" text in dossier_redact.py's docstring and session-dossier's
+# SKILL.md, step 3). Assembled from PW at runtime like the rest of this file.
+CONTEXT_SCANNER_GAPS = [
+    pytest.param(f"DEPLOY_PAT={PW * 2}", id="pat-variable-without-a-known-prefix"),
+    pytest.param(f"'password' => '{PW}',", id="hash-rocket-field"),
+    pytest.param(f"machine example.test login bob password {PW}", id="netrc-line"),
+]
+
+
+def _scan_secrets():
+    """`scan_secrets` from the hook, loaded by path so sys.path stays untouched."""
+    spec = importlib.util.spec_from_file_location(
+        "_dossier_gap_probe", REPO_ROOT / ".claude/hooks/_bash_review_common.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.scan_secrets
+
+
+class TestContextScannerGaps:
+    @pytest.mark.parametrize("text", CONTEXT_SCANNER_GAPS)
+    def test_secret_scan_flags_the_form(self, text):
+        flagged, _label = _scan_secrets()(text, None)
+        assert flagged
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="the redactor does not load _CONTEXT_SCANNERS (see dossier_redact.py)",
+    )
+    @pytest.mark.parametrize("text", CONTEXT_SCANNER_GAPS)
+    def test_the_redactor_masks_the_form(self, text):
+        assert PW not in redactor(bare=False).scrub(text)
 
 
 class TestSharePage:

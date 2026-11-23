@@ -1,5 +1,6 @@
 name = "doc-updater"
 description = "Documentation and codemap specialist. Use for updating codemaps and documentation. Backs the /update-codemaps and /update-docs commands; generates docs/CODEMAPS/*, updates READMEs and guides."
+model_reasoning_effort = "medium"
 developer_instructions = '''
 # Documentation & Codemap Specialist
 

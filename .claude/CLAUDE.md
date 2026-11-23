@@ -149,12 +149,13 @@ Set via `settings.json` (top-level `effortLevel`, and per model under `modelSett
 
 ### On failure
 
-Raise **effort first, model tier second.** Escalating the tier when an effort bump would have done wastes budget and latency. Only after effort is exhausted at the current tier should you move up a tier, or consult Codex (`codex exec`) per the `codex-consultation` skill.
+Raise **effort first, model tier second.** Escalating the tier when an effort bump would have done wastes budget and latency; only after effort is exhausted at the current tier should you move up a tier. This ladder covers the model's own settings and does not gate second opinions: the "when first stuck" checkpoint in `@~/.claude/rules/second-opinion.md` (advisor + Codex) still fires at the first failure, and 2 consecutive failed fixes on the same issue escalate to a Codex root-cause run per the **debugging-protocol** skill.
 
 ## Development Workflow
 
 - For new features, bug fixes, and refactoring, follow the **tdd-workflow** skill (test-first; it defines the coverage policy)
 - Review timing for code changes is a delegation trigger — see § Execution Layer Selection
+- For disposable verification, use `/sandbox` (the container sandbox) when Docker is usable; a git worktree is the fallback, not the first choice
 - Do not always load code pattern/style details; instead follow the relevant skill (backend-patterns / frontend-patterns / golang-patterns, etc.)
 
 ## Safety Guards
@@ -164,7 +165,7 @@ Raise **effort first, model tier second.** Escalating the tier when an effort bu
 
 ## External Agent Integration
 
-When working on specification review, design, bug fixes, or test code creation, follow the **codex-consultation** skill.
+The **codex-consultation** skill holds the `codex exec` invocation contract. When to call Codex is set by the checkpoints below and by the heavier escalations (spec / design proposals, large-scale changes, test strategy, 2 consecutive failed fixes → root-cause analysis) in `@~/.claude/rules/second-opinion.md` § Escalation and action.
 
 Second opinions run as a **pair — advisor + Codex** — in the main session, with **gemini-consultant** as the backup that takes whichever slot cannot run. **`advisor()` is never the first call at a checkpoint: launch Codex in the background, then call the advisor as the very next tool call in the same turn, while Codex runs — never end the turn in between.** The checkpoints (before committing to an approach, when first stuck, before declaring done — for every nontrivial task, evaluations and reviews included), the order of calls and the fallback table live in `@~/.claude/rules/second-opinion.md` — follow them there.
 

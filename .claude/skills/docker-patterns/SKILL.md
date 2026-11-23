@@ -5,6 +5,9 @@ description: >
   Use this skill whenever you are writing or editing a Dockerfile or docker-compose.yml,
   configuring devcontainers, debugging a failing container build, shrinking image size,
   speeding up build times, or hardening a container against security vulnerabilities.
+  Also use it to run disposable verification in the `csb` container sandbox (the `/sandbox`
+  command: create, exec, export, verify, review, apply) and to operate containers day to day
+  (compose up/down, logs, exec, cleanup, contexts, buildx).
   If Docker is in scope, load this skill first.
 ---
 
@@ -302,6 +305,31 @@ dive myapp:latest
 # Execute a one-off command in a running container
 docker exec -it <container_id> sh
 ```
+
+Compose lifecycle (`down` versus `down -v`), cleanup and `prune`, contexts and `DOCKER_HOST`,
+buildx, and which of these the bash-review hook treats as high-risk are in
+[references/operations.md](references/operations.md).
+
+## 9. Sandbox verification
+
+When a check must not touch the host (running code you have not reviewed, installing dependencies,
+trying a risky change) and Docker is usable, run it in the `csb` container sandbox instead of on the
+host. Use the `/sandbox` command. If Docker is not usable, a git worktree is the fallback.
+
+The full guide is [references/sandbox.md](references/sandbox.md): the flow
+(create, exec, export, verify, review, attest, apply), which subcommands ask for confirmation and
+which are statically allowed, the `net on` window, exit codes, and what is unsupported. Three rules to
+keep without opening it:
+
+- A patch that touches the harness (`.claude/`, `.codex/`, `.gemini/`, `CLAUDE.md`, …) is never
+  applied by `csb apply`; a human applies it by hand with the steps `csb` prints.
+- `csb image build --generic` is run by a human in their own terminal; an agent cannot get it
+  approved.
+- A refused boundary (`create`, `net on`, `apply`) is the end of it: do not hand it to a subagent or
+  retry it another way; report and ask the user. When Docker or `csb` is missing, use a worktree for
+  ordinary verification (testing a change you wrote), and ask the user first if the point is to run
+  unreviewed code or install dependencies, since a worktree shares the host's user, network and
+  secrets.
 
 ## Checklist
 

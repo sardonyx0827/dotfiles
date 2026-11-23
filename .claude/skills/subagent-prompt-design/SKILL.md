@@ -1,11 +1,11 @@
 ---
 name: subagent-prompt-design
 description: >
-  Design and write well-formed prompts for SubAgents launched via the Agent/Task tool.
+  Design and write well-formed prompts for SubAgents launched via the Agent tool.
   Use this skill whenever you are about to delegate work to a SubAgent, write prompts for
   parallel fan-out exploration or multi-perspective review, decide which model tier a
   SubAgent should use, or structure the return format so the main context stays clean.
-  If you are about to fire off a Task call without reading this first, stop and read it —
+  If you are about to fire off an Agent call without reading this first, stop and read it —
   a poorly written subagent prompt is worse than doing the work inline.
 ---
 

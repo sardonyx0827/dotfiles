@@ -61,7 +61,7 @@
 │   └── custom/themes/              # Zshテーマ (px-rose-pine: pixeljae 製 agnoster ベースを vendored)
 ├── .vim/rc/                        # Vim設定本体 (分割ロード: 00-plugins, 10-basic ...)
 ├── assets/                         # README / docs から参照する構成図 (SVG)
-├── docs/                           # 補助ドキュメント (setup / configuration / testing / ai-integration)
+├── docs/                           # 補助ドキュメント (setup / configuration / testing / ai-integration / claude-architecture)
 ├── .gitconfig                      # Git設定
 ├── .gitignore_global               # グローバルgitignore
 ├── .tmux.conf                      # tmux設定
@@ -111,7 +111,7 @@ cd ~/dotfiles
 - GitHub CLI（gh）、pyenv、uv、glow のインストール
 - Docker のインストール
   - macOS: Homebrew Cask で Docker Desktop を導入（導入後に一度起動すると docker CLI が PATH に載る）
-  - Ubuntu: `get.docker.com` のスクリプトを `sudo sh` で実行し、ユーザーを `docker` グループに追加（反映にはログアウト／ログインが必要）
+  - Ubuntu / Debian: Docker 公式の署名付き apt リポジトリから導入（鍵の主鍵の指紋を `install.sh` 冒頭の `DOCKER_APT_KEY_FPR` と照合し、一致しなければリポジトリを足しません。スクリプトを `sudo sh` で流すことはしません）。導入後、ユーザーを `docker` グループに追加（反映にはログアウト／ログインが必要）
 - Oh My Zshとプラグインのインストール
 - vim-plugのインストール
 - tmux プラグインマネージャー（tpm）のインストール（プラグイン本体は下記の手順 6 で導入）
@@ -121,7 +121,7 @@ cd ~/dotfiles
 - Claude Code への MCP サーバー登録（`claude` コマンドが PATH にある場合のみ。無ければ警告してスキップ）
 - デフォルトシェルをZshに変更
 
-> **ステップが失敗したとき**: 個々のインストール手順（パッケージ・ツール・プラグインの導入、MCP サーバー登録、`chsh` など）が失敗しても、警告（`[WARNING]`）を出して残りの手順を続行します。最後に `Installation completed!` の代わりに失敗したステップの一覧（`Installation finished with N failed step(s):`）を表示し、終了コードは `1` になります。原因は一覧の上に出ている `[WARNING]` を見て直し、`./install.sh` を再実行してください（導入済みのステップはスキップされるため、何度実行しても安全です）。`--dry-run` はインストール手順を実行しないので、事前チェックで中止した場合を除き常に `0` で終わります。終了コードの一覧は `./install.sh --help` にあります。
+> **ステップが失敗したとき**: 個々のインストール手順（パッケージ・ツール・プラグインの導入、MCP サーバー登録、`chsh` など）が失敗しても、警告（`[WARNING]`）を出して残りの手順を続行します。最後に `Installation completed!` の代わりに失敗したステップの一覧（`Installation finished with N failed step(s):`）を表示し、終了コードは `1` になります。原因は一覧の上に出ている `[WARNING]` / `[ERROR]` を見て直し、`./install.sh` を再実行してください。何度実行しても安全です。導入済みのツールは入れ直さず（pip `--user` や npm で入れた CLI も含む）、正しく張れているリンクにも触りません。`--dry-run` はインストール手順を実行しないので、事前チェックで中止した場合を除き常に `0` で終わります。終了コードの一覧は `./install.sh --help` にあります。
 
 3. **AIツールのインストール（オプション）**
 
@@ -212,7 +212,7 @@ Codex は MCP サーバーとしては登録しません（Codex の MCP サー�
 | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | [docs/setup.md](docs/setup.md)                             | 手動インストール手順・バックアップと復旧・トラブルシューティング                                      |
 | [docs/configuration.md](docs/configuration.md)             | Zsh / Vim / Neovim / tmux / WezTerm / Git / AI 各ツールの設定、ユーティリティスクリプト、カスタマイズ |
-| [docs/testing.md](docs/testing.md)                         | pytest スイート・カバレッジゲート・静的解析（ruff / bandit / shellcheck / mypy / luacheck）           |
+| [docs/testing.md](docs/testing.md)                         | pytest・カバレッジゲート・静的解析（ruff / bandit / shellcheck / mypy / luacheck）・mod の CI         |
 | [docs/ai-integration.md](docs/ai-integration.md)           | 複数 LLM 連携・Bash 安全ゲート（bash-review）・Neovim のエディタ内 AI の構成                          |
 | [docs/claude-architecture.md](docs/claude-architecture.md) | `.claude/` の agents / skills / hooks / commands / rules の配線マップ                                 |
 | [.claude/hooks/README.md](.claude/hooks/README.md)         | フックシステムの設計根拠と脅威モデル                                                                  |

@@ -130,5 +130,14 @@ the `/codex:rescue` command. Image generation is the one write path this repo dr
 
 ## Choosing Between This and the codex-delegator Agent
 
-- **`codex-delegator` agent (via the Agent tool)**: Delegate spec discussions, bug-fix strategy consultations, and complex technical decisions so the Codex exchange stays out of your context. Escalate here after 2 consecutive failed fix attempts on the same issue (see When to Use)
-- **Running the contract yourself**: When you need the answer in your own context, or are continuing a thread you started
+- **Running the contract yourself, in the background (the main session's path)**: The path for the
+  Codex half of every checkpoint (`~/.claude/rules/second-opinion.md`), for the
+  2-consecutive-failed-fix root-cause run (see When to Use; the debugging-protocol skill sets it out),
+  and for any answer you need in your own context or any thread you are continuing. Codex's default
+  `xhigh` reasoning is what those want, and only a background run fits it.
+- **`codex-delegator` agent (via the Agent tool)**: For the other consultations (spec and design
+  questions, large-scale changes, test strategy, a fix strategy where a shallower pass will do) when
+  you want the Codex exchange kept out of your context. It runs Codex in the foreground at
+  `model_reasoning_effort=medium` to fit the Bash tool's 10-minute limit, and a subagent cannot wait on
+  a background task, so it is not the path for a checkpoint or for the 2-failed-fix escalation. A
+  subagent that reaches one of those returns its attempt log to the caller instead.

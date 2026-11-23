@@ -13,11 +13,12 @@ policy. Language-neutral by design — it does not carry framework mechanics.
 This skill is the **methodology**. For framework-specific mechanics, pair it with the
 matching skill rather than duplicating their guidance here:
 
-| Need                                                    | Skill                  |
-| ------------------------------------------------------- | ---------------------- |
-| Vitest / Jest, mocking (`vi.mock`, MSW), async patterns | **typescript-testing** |
-| Table-driven tests, subtests, benchmarks, fuzzing       | **golang-testing**     |
-| E2E journeys, artifacts, flake quarantine               | **e2e-runner** agent   |
+| Need                                                                    | Skill                                                     |
+| ----------------------------------------------------------------------- | --------------------------------------------------------- |
+| Vitest / Jest, mocking (`vi.mock`, MSW), async patterns                 | **typescript-testing**                                    |
+| Table-driven tests, subtests, benchmarks, fuzzing                       | **golang-testing**                                        |
+| Python conventions; `pytest` with `capsys` / `monkeypatch` / `tmp_path` | **python-scripting-patterns** (§ Testing Hooks & Scripts) |
+| E2E journeys, artifacts, flake quarantine                               | **e2e-runner** agent                                      |
 
 If you are reaching for a mock, a matcher, or a test-runner flag, you want one of those —
 not this skill. The `/tdd`, `/go-test`, and `/test-coverage` commands drive this workflow.

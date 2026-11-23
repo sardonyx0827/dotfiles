@@ -1,5 +1,6 @@
 name = "build-error-resolver"
 description = "Build and TypeScript error resolution specialist. Use when a build fails or type errors are mechanical to clear. Fixes build/type errors only with minimal diffs, no architectural edits. Focuses on getting the build green quickly."
+model_reasoning_effort = "medium"
 developer_instructions = '''
 # Build Error Resolver
 

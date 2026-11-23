@@ -20,7 +20,7 @@
 > `CLAUDE.md` の委譲ポリシーを複製し、矛盾するまでドリフトさせた前科があります。
 > ここでは繰り返しません。委譲の判断ルールを書きたくなったら、それは `CLAUDE.md` の仕事です。
 
-また、この図は**全インベントリを描きません**。エージェント 14・スキル 27・コマンド 21 を
+また、この図は**全インベントリを描きません**。エージェント 14・スキル 27・コマンド 22 を
 一枚に並べても読めないため、レイヤと代表的な連鎖だけを描いています。
 一覧は `agents/README.md` と各 `SKILL.md` の frontmatter が正です。
 
@@ -59,7 +59,7 @@ flowchart TB
     end
 
     subgraph ACTOR["実行層 — 起動される"]
-        CMD["commands/*.md<br/>21 スラッシュコマンド"]
+        CMD["commands/*.md<br/>22 スラッシュコマンド"]
         AGENT["agents/*.md<br/>14 サブエージェント"]
     end
 
@@ -119,6 +119,12 @@ flowchart TB
 Claude 側と Codex 側の唯一の実体です（`git-push-review.sh` は両側とも薄いアダプタで、
 判定の本体は `_push_review_common.sh`。読めなければ fail-open ではなく確認要求に倒します）。設計根拠は [`.claude/hooks/README.md`](../.claude/hooks/README.md) にあります。
 
+`git-push-review.sh` が検知する `git push` は、シェルの語として書かれたものだけではありません。インタプリタの
+ワンライナーやヒアドキュメントの中の `git push`（`python3 -c` `node -e` `ruby -e` `perl -e` `deno eval` `bun -e`
+などと、標準入力へ渡したスクリプト）も検知します。コードは自分で作業ディレクトリを移せるので、宛先は追えません。
+そのため現在のブランチの要約は出さず、push の内容を自分で確かめるよう促す確認にします
+（実装は `_push_review_common.sh` の `indirect_push`）。
+
 ### Codex はフックもスキルも `codex exec` で呼ぶ
 
 Codex は MCP サーバーではなく CLI として呼びます（Codex の MCP サーバーモードは CLI 0.154 で削除されました）。
@@ -154,10 +160,11 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
 `settings.json` の `env.CLAUDE_CODE_PLUGIN_DIRS` が `~/.claude/mods/<name>` を名指しし、
 セッション開始時に `--plugin-dir` と同じ扱いで読み込まれます。Claude 専用のため Codex 側には置きません。
 
-| mod               | フックするイベント                                   | 役割                                                                                                                                                                    |
-| ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bash-review-log` | `session.start` `command.run` `ui.close` `ui.render` | `~/.claude/logs/bash-review.log` の判定をペイン表示。80 字で切られたコマンドは詳細ログ (`/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/`) から全文を引く           |
-| `doc-browser`     | `session.start` `command.run` `ui.render`            | リポジトリの Markdown（`git ls-files`）と `~/.claude/reports/` のセッションレポート・dossier・調査ドキュメント（`codebase-survey`）を一覧し、選んだものをブラウザで開く |
+| mod               | フックするイベント                                   | 役割                                                                                                                                                                                 |
+| ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `bash-review-log` | `session.start` `command.run` `ui.close` `ui.render` | `~/.claude/logs/bash-review.log` の判定をペイン表示。80 字で切られたコマンドは詳細ログ (`/tmp/claude_hooks/logs/PreToolUse/Bash/bash-review/`) から全文を引く                        |
+| `doc-browser`     | `session.start` `command.run` `ui.render`            | リポジトリの Markdown（`git ls-files`）と `~/.claude/reports/` のセッションレポート・dossier・調査ドキュメント（`codebase-survey`）を一覧し、選んだものをブラウザで開く              |
+| `containers`      | `session.start` `command.run` `ui.close` `ui.render` | csb のサンドボックスと、Docker のコンテナ・Compose の状態をペインに一覧する。開いている間は 10 秒ごとに `csb status` を呼ぶので、期限切れの net の窓を切断する。`/containers` で開く |
 
 `/bash-review-log [all|allow|ask|deny|error|flagged ...] [件数] [full|short]` の引数は順不同です。
 
@@ -188,6 +195,19 @@ bash-review の判定フロー自体（静的 DENY → 秘密スキャン → �
   外部コマンド（`git`・`python3`・`open` / `xdg-open`）はシェルを通さず argv で渡し、`git` には `core.fsmonitor=false` を付けます。
 - 一覧の文字列は制御文字・書式文字（ゼロ幅・bidi・タグ文字）を置き換えてから描き、ペインを描けない環境の本文（モデルも読む）には
   絶対パスを載せません。
+
+mod が外部プロセスを起動するときは、Bash ツールを通さず `$.process.run` に argv を渡して直接起動します。
+そのため bash-review の審査の対象外で、起動するものは mod ごとに固定です。
+
+- `bash-review-log`: `id -u`（自分の uid）と `find`（詳細ログの所有者と種別を `-user` `-type` で確かめる）。
+  確かめられなければ詳細ログは読みません。
+- `doc-browser`: `git`・`uname -s`・`python3`・`open` / `xdg-open`（上の説明のとおり）。
+- `containers`: `python3 <config>/hooks/claude_sandbox.py status --json`、`docker ps -a --no-trunc --format {{json .}}`、
+  `docker compose ls --format json` の 3 つだけで、どれも 5 秒の timeout を付けて並べて走らせます。
+  変更するコマンド（`rm` `stop` `prune` `csb net on` など）は呼びません。ただし `csb` はどのサブコマンドも
+  最初に期限切れの `net on` の窓を切断するので、`status --json` を呼ぶと、その切断が起こりえます
+  （ペインを開いている間は 10 秒ごと）。詳細は
+  [`.claude/mods/containers/README.md`](../.claude/mods/containers/README.md) にあります。
 
 mod は settings hook より**先に**走り、サンドボックスもありません。`tool.call` に応答する mod は
 `bash-review` / `git-push-review` を素通りさせられ、`tool.check` は PreToolUse の判定の後から可否を差し替えられます。
@@ -267,10 +287,13 @@ flowchart LR
   Codex が書けるのは空のスクラッチ用ディレクトリだけで、検証したファイルを Claude がプロジェクトへコピーします。
 - **第二意見**もスキル → エージェントの直列ではありません。`codex-consultation` /
   `debugging-protocol` は、`codex exec` を Bash から直接呼ぶ入口と `codex-delegator`
-  エージェント経由の入口を並べており、どちらかが主経路とは決めていません。`debugging-protocol` は
-  エージェントを先に挙げて `codex exec` 直呼びを括弧書きの代替とし、`codex-consultation` は回答を自分の
-  コンテキストで受け取りたいときや `codex exec resume` で同じスレッドを続けたいときに直接呼ぶ、と使い分けを
-  書いています（サンドボックスは固定で、広げると bash-review の許可リストを外れて確認になります）。
+  エージェント経由の入口を持ちますが、重みは同じではありません。checkpoint の Codex と、2 回続けて
+  修正に失敗したあとの根本原因の分析は、どちらもメインセッションが `codex exec` を background で
+  直接呼びます（既定の `xhigh` の推論が要り、サブエージェントは background の完了を待てないため）。
+  `codex-delegator` は、それ以外の浅い相談（仕様・設計、大規模な変更、テスト戦略など）で、Codex との
+  やりとりを自分のコンテキストの外に置きたいときの入口です。前景で `medium` の effort で走ります。
+  回答を自分のコンテキストで受け取りたいときや `codex exec resume` で同じスレッドを続けたいときも、
+  直接呼びます（サンドボックスは固定で、広げると bash-review の許可リストを外れて確認になります）。
 - **`rules/git-workflow.md` にはスキルもエージェントもありません。** ルール本文の大半
   （コミットメッセージ規約・commit / PR の手順・PR 品質基準）は Claude 自身が従う指示のままで、
   フック化されているのは push 前の確認ゲートだけです（`git-push-review.sh`）。
@@ -307,6 +330,7 @@ flowchart LR
 | `/requests-watch`                   | `request-worker`（条件付き。下記参照）                                    |
 | `/auto-improve`                     | `refactor-cleaner`, `doc-updater`, `security-reviewer`                    |
 | `/orchestrate`                      | `architect`, `planner`, `tdd-guide`, `code-reviewer`, `security-reviewer` |
+| `/sandbox`                          | `code-reviewer`, `security-reviewer`（条件付き。下記参照）                |
 
 エージェントを起動しないコマンド（`/checkpoint` `/eval` `/learn` `/test-coverage`）は、
 スキルの読み込みか手順の提示のみを行います。`/requests-watch` は `request-harness` スキルの
@@ -321,10 +345,17 @@ Watch Mode に従い、独立チケットを並列実行する場合に限って
 トリガ表で決まります（`.claude/commands/verify.md` 参照。条件はここにも書き写しません）。
 `/db-review` → `database-reviewer` のような無条件の薄いラッパーとして読まないでください。
 
+`/sandbox` も薄いラッパーではありません。使い捨てのコンテナで検証してパッチを作る流れ（`docker-patterns` スキルの
+`references/sandbox.md` が手順の正）の中で、レビューの工程が `code-reviewer` を起動し、`security-reviewer` は
+`csb export` が必須と示したとき（RISKY なパス・秘密の検出・未解析のパッチ）に限って起動します。Codex と advisor も
+レビューに加わりますが、これはメインが呼ぶ第二意見の組で、エージェントではないので表には含めません。
+
 モデルと effort はエージェント定義の frontmatter で決まります。`effort` を書いていない
 エージェントはセッションの `effortLevel` に追従します（`CLAUDE.md` の方針どおり、
 下げたいときだけ固定する）。現状 `opus` を指定しているのは `architect` `planner`
-`refactor-cleaner` の 3 つ、それ以外は `sonnet` です。
+の 2 つ、それ以外は `sonnet` です。`effort` を固定しているのは、`build-error-resolver`
+`go-build-resolver` `doc-updater` `refactor-cleaner`（いずれも `medium`）と
+`codex-delegator`（`low`）です。
 
 ---
 
@@ -364,16 +395,20 @@ flowchart LR
   第二意見の層が Codex 側に対応物を持たないため）。`--check` は本文を再生成せず
   「存在し、有効な TOML であること」だけを確かめ、`description` が `.md` と一致していることは
   `tests/test_agent_parity.py` が固定します。`.claude/` 側が唯一の上流です。
-- **エージェントで写るものと捨てるもの**: 生成物に写るのは `name` / `description` / 本文だけで、
-  frontmatter の `tools` / `model` / `effort` / `color` は捨てます（`model` を落とすのは意図どおりです）。
+- **エージェントで写るものと捨てるもの**: 生成物に写るのは `name` / `description` / 本文と、
+  固定してある `effort`（`model_reasoning_effort` として）です。frontmatter の `tools` / `model` / `color` は
+  捨てます（`model` を落とすのは意図どおりです）。
   結果として、**制限は本文に書かないと Codex 側へ届きません**。`planner` `architect` `code-reviewer`
   `go-reviewer` は Claude 側では `tools` に Write / Edit が無いことでファイルを書くツールを持ちませんが
   （`code-reviewer` と `go-reviewer` は Bash を持つので、そこは本文の「読み取りと既存テスト・リンターの
   実行に限る」という文言だけが縛ります）、
   それだけでは Codex の同名エージェントは何も制限されないので、本文にも `Read-only agent` と明記してあり、
   `tests/test_agent_parity.py` が「Write / Edit を持たないエージェントは本文（と生成された `.toml`）に
-  この一文を持つ」ことを固定します。同じ理由で、Codex のサブエージェントは Claude 側の `effort` 固定に
-  関係なく、`.codex/config.toml.template` の `model_reasoning_effort` で動きます。
+  この一文を持つ」ことを固定します。`effort` を固定していないエージェントは、親セッションの設定
+  （`.codex/config.toml.template` の `model_reasoning_effort`、現状 `xhigh`）で動きます。固定してあるものは
+  生成物の `model_reasoning_effort` に写り、現状 `build-error-resolver` `go-build-resolver` `doc-updater`
+  `refactor-cleaner` の 4 つが `medium` です（`max` や整数は生成が失敗します）。手書きの `codex-delegator.toml`
+  はこのキーを持たないので、Claude 側の `effort: low` は写らず、親セッションの設定で動きます。
 - **フック**: 実体もリンクも置かず、`.codex/hooks/*` が自身の**物理パス**
   （`realpath(__file__)` / `cd -P`）から `../../.claude/hooks` を解決して共有ライブラリを
   読み込みます。シンボリックリンクを避けているのは `core.symlinks=false` の

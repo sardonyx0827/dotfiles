@@ -13,7 +13,21 @@ Share mode works on two levels:
   slug, and the bare user name), Claude's temp directory and git identities.
 
 Secret detection starts from the bash-review hook's ``_SECRET_SCANNERS`` so
-the two lists cannot drift, then adds share-only rules. The hook's list is
+that table cannot drift, then adds share-only rules. It is not the hook's whole
+rule set: ``scan_secrets`` (what secret_scan.py and the pre-send scan run) also
+applies ``_CONTEXT_SCANNERS``, the credential forms that only a context gives
+away. Those rules replace the whole match, which would also swallow the key the
+share-only rules keep (``DB_PASS=[REDACTED]``), so they are not loaded here.
+The share-only rules cover most of the same forms on their own (``*_PASS=``,
+``*_PWD=``, quoted ``"password"`` fields, ``curl -u``, ``sshpass -p``,
+``Authorization: Token``, ``AccountKey=``), but not all: a ``*_PAT=`` value
+without a known token prefix, a hash-rocket field (``'password' => 'x'``) and
+a netrc ``login … password …`` line are flagged by secret_scan and are not
+masked here. Those three holes are pinned by strict xfail tests in
+tests/test_session_dossier_credentials.py (``TestContextScannerGaps``), which
+fail with an XPASS once one is closed; this list is only as current as that
+test. A form secret_scan flags is therefore not guaranteed to be masked on a
+shared page. The hook's list is
 tuned for precision (a false hit blocks a command); a shared page needs
 recall instead, so the extra rules redact key=value secrets, Authorization and
 Cookie headers in escaped forms, and name/value secret pairs. Two more rules

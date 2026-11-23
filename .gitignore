@@ -9,6 +9,11 @@
 # names .claude/skills.
 .claude/skills/synced/
 
+# Skills that /learn extracts from a session. It writes them to
+# ~/.claude/skills/learned-*/, which is this directory: they are per-machine
+# notes to audit and prune, not part of the versioned skill set.
+.claude/skills/learned-*/
+
 # Claude Code's generated mod types -- install.sh links ~/.claude/mods here, and
 # each time Claude Code loads a mod it rewrites `.claude-plugin/types/` (the API
 # declarations and a tsconfig for the editor) inside the mod's folder. They

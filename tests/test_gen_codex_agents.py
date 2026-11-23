@@ -22,6 +22,7 @@ from gen_codex_agents import (
     GenerationError,
     adapt_body,
     build,
+    codex_effort,
     frontmatter_value,
     main,
     render_toml,
@@ -115,6 +116,20 @@ def test_hand_maintained_list_stays_justified():
     )
 
 
+def test_hand_maintained_twin_has_no_reasoning_effort():
+    """The generator mirrors a pinned `effort:` as `model_reasoning_effort`, but a
+    hand-written twin is not generated, so it must not carry the key: the Claude
+    side's `effort: low` is not mirrored, and the twin follows the parent
+    session's effort. docs/claude-architecture.md states exactly that."""
+    for name in HAND_MAINTAINED:
+        twin = CODEX_AGENTS_DIR / f"{name}.toml"
+        parsed = tomllib.loads(twin.read_text(encoding="utf-8"))
+        assert "model_reasoning_effort" not in parsed, (
+            f"{twin.name} gained model_reasoning_effort: update "
+            "docs/claude-architecture.md (section 5) together with this test"
+        )
+
+
 # --- Substitutions and the residue guard -----------------------------------
 
 
@@ -141,12 +156,66 @@ def test_no_tool_names_are_substituted():
     assert body == "- **Denormalized for Read Performance**: use Bash\n"
 
 
+REQUIRED_KEYS = {"name", "description", "developer_instructions"}
+
+
 def test_generated_toml_carries_no_tools_key():
+    """Only the three required keys plus an optional effort; never tools/model."""
     for path in source_agents():
         parsed = tomllib.loads(
             (CODEX_AGENTS_DIR / f"{path.stem}.toml").read_text(encoding="utf-8")
         )
-        assert set(parsed) == {"name", "description", "developer_instructions"}
+        assert (
+            REQUIRED_KEYS <= set(parsed) <= REQUIRED_KEYS | {"model_reasoning_effort"}
+        ), f"{path.stem}: unexpected keys {set(parsed) - REQUIRED_KEYS}"
+
+
+# --- effort: -> model_reasoning_effort --------------------------------------
+
+
+def test_effort_pin_is_carried_as_model_reasoning_effort():
+    """A Claude `effort:` pin reaches Codex; an unpinned agent inherits.
+
+    Codex custom-agent files accept `model_reasoning_effort` and fall back to
+    the parent session's effort when it is absent -- the same "pin only to go
+    below the default" contract the Claude side follows.
+    """
+    for path in source_agents():
+        if path.stem in HAND_MAINTAINED:
+            continue
+        fm, _ = split_frontmatter(path.read_text(encoding="utf-8"), path.stem)
+        parsed = tomllib.loads(
+            (CODEX_AGENTS_DIR / f"{path.stem}.toml").read_text(encoding="utf-8")
+        )
+        if any(line.startswith("effort:") for line in fm):
+            assert parsed.get("model_reasoning_effort") == frontmatter_value(
+                fm, "effort", path.stem
+            ), f"{path.stem}: effort pin not carried over"
+        else:
+            assert "model_reasoning_effort" not in parsed, (
+                f"{path.stem}: no effort pin, yet the .toml pins one"
+            )
+
+
+def test_render_toml_emits_effort_only_when_given():
+    assert "model_reasoning_effort" not in tomllib.loads(render_toml("t", "d", "b\n"))
+    parsed = tomllib.loads(render_toml("t", "d", "b\n", effort="medium"))
+    assert parsed["model_reasoning_effort"] == "medium"
+    assert parsed["developer_instructions"] == "b\n"
+
+
+def test_codex_effort_reads_the_pin():
+    assert codex_effort(["name: t", "effort: low"], "t") == "low"
+    assert codex_effort(["name: t"], "t") is None
+
+
+@pytest.mark.parametrize("value", ["max", "40", "minimal", '"high"; x = 1'])
+def test_effort_without_a_codex_counterpart_is_rejected(value):
+    """`max` and integers exist only on the Claude side; refuse, never guess."""
+    with pytest.raises(GenerationError, match="effort"):
+        codex_effort(["name: t", f"effort: {value}"], "t")
+    with pytest.raises(GenerationError, match="effort"):
+        render_toml("t", "d", "b\n", effort=value)
 
 
 # --- TOML rendering hazards ------------------------------------------------

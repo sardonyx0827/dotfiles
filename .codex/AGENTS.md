@@ -63,7 +63,7 @@
 5. Push with the `-u` flag for new branches
 6. If direct push to the default branch is inappropriate, propose PR creation
 
-> On `git push`, the PreToolUse hook (`hooks/git-push-review.sh`) presents a summary of the commits to be pushed and blocks the operation, so review the contents before re-running.
+> On `git push`, the PreToolUse hook (`hooks/git-push-review.sh`) blocks the command and prints a summary of the commits to be pushed. Codex has no way to ask the user to approve, so the block does not lift: running the same push again is blocked again, and you must not try another way of writing it. Show the user the summary and leave the push to them. A `git push` written inside interpreter code (`python3 -c`, `node -e`, a here-document, …) is detected too; its destination cannot be followed, so the hook blocks it without a summary, and the push is left to the user in the same way.
 
 ## 4. Execution Layer Selection (SubAgents / Single)
 

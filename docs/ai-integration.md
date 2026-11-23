@@ -14,7 +14,7 @@ Claude Code が主エンジンとして駆動し、他の LLM は **第二意見
 
 - **Claude Code** — 主エンジン（Opus セッション / agents・commands・skills・hooks・MCP）
 - **advisor (Opus)** — 全軌跡を見るセルフチェック。チェックポイント（方針を決める前・最初に行き詰まったとき・完了宣言の前）では Codex と組で動かし、メインモデルが両方の回答を踏まえて判断する
-- **Codex** — クロスベンダーの独立レビュー。各チェックポイントでバックグラウンドの `codex exec` として advisor と並走し、重い案件（仕様・設計・大規模変更・修正の 2 連続失敗）のエスカレーション先も兼ねる（`codex-consultation` skill・`codex-delegator` agent）
+- **Codex** — クロスベンダーの独立レビュー。各チェックポイントでバックグラウンドの `codex exec` として advisor と並走し、重い案件（仕様・設計・大規模変更・修正の 2 連続失敗）のエスカレーション先も兼ねる。checkpoint と 2 連続失敗の根本原因の分析は、どちらもメインが background の `codex exec` で行い（`codex-consultation` skill）、`codex-delegator` agent はそれ以外の浅い相談用
 - **Gemini** — advisor か Codex のどちらかが動かないときの代役（自作 `gemini-consultant` MCP サーバー）。Fable がメインのときは Opus の advisor が付かないため、Codex + Gemini の組になる。Codex と Gemini は軌跡を直接見ないため、状況を再構成して渡す
 - **GitHub Copilot** — 補完 + CLI
 - **Gemma (Ollama)** — ローカル/オフライン実行

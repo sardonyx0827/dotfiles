@@ -49,6 +49,9 @@ Create the file at:
 - `<pattern-name>`: lowercase, hyphen-separated (e.g. `learned-vite-hmr-stale-cache`)
 - The directory name and the `name` frontmatter field MUST match exactly.
 - The `learned-` prefix keeps session-extracted skills grouped and easy to audit/remove.
+- When `~/.claude/skills` is linked into the dotfiles repo (install.sh does this), the
+  repo's `.gitignore` keeps `learned-*/` untracked: learned skills stay local to the
+  machine. Never rename one to drop the prefix, or it lands in `git status`.
 
 The `SKILL.md` content:
 

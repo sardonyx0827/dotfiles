@@ -17,14 +17,24 @@ delta was genuine runtime adaptation; ~81% was unintended drift.
 
 What is carried over, what is dropped
 -------------------------------------
-Carried over: `name`, `description` and the Markdown body (after the
-substitutions below). Dropped: the frontmatter keys `tools`, `model`, `effort`
-and `color` -- Codex's format has no `tools` key, `model` is deliberately not
-mirrored, and the generated agents run at the reasoning effort set in
-`.codex/config.toml.template`, whatever `effort:` the Claude copy pins.
+Carried over: `name`, `description`, the Markdown body (after the
+substitutions below), and an `effort:` pin as `model_reasoning_effort` -- a key
+Codex custom-agent files accept, falling back to the parent session's effort
+(`.codex/config.toml.template`) when it is absent, which matches the Claude
+side's "pin only to go below the default" rule. Only the values both runtimes
+share are mapped (CODEX_EFFORTS); `max` or an integer fails generation rather
+than being guessed at. Dropped: the frontmatter keys `tools`, `model` and
+`color` -- Codex's format has no `tools` key, and `model` is deliberately not
+mirrored.
 Consequence: a restriction that exists only in the Claude `tools:` list (no
 write tools) does not exist under Codex. It has to be stated in the body;
 tests/test_agent_parity.py requires that of every agent without write tools.
+`sandbox_mode` is not a dependable carrier either: a custom-agent file can set
+one, but Codex's own migration notes (the migrate-to-codex skill's
+references/differences.md, shipped with Codex; not checked against the
+runtime) describe such files as setting "defaults, not hard isolation from the
+parent turn". The body's `Read-only agent` sentence is the carrier this repo
+relies on. It is guidance to the model, not enforcement.
 
 Design constraints (learned the hard way -- do not relax without evidence)
 -------------------------------------------------------------------------
@@ -74,6 +84,11 @@ SUBSTITUTIONS = (
 # unrelated SSOT edit.
 FORBIDDEN_RESIDUE = ("~/.claude/", "CLAUDE.md")
 
+# Claude `effort:` values that Codex's `model_reasoning_effort` also accepts
+# (`xhigh` is what .codex/config.toml.template already sets). Claude's `max`
+# and integer efforts have no Codex counterpart.
+CODEX_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
+
 
 class GenerationError(RuntimeError):
     """Raised when an agent cannot be generated safely."""
@@ -119,6 +134,19 @@ def frontmatter_value(fm: list[str], key: str, name: str) -> str:
     raise GenerationError(f"{name}: frontmatter has no `{key}`")
 
 
+def codex_effort(fm: list[str], name: str) -> str | None:
+    """The `effort:` pin as a Codex `model_reasoning_effort`, or None if unpinned."""
+    if not any(line.startswith("effort:") for line in fm):
+        return None
+    value = frontmatter_value(fm, "effort", name)
+    if value not in CODEX_EFFORTS:
+        raise GenerationError(
+            f"{name}: effort {value!r} has no Codex model_reasoning_effort "
+            f"counterpart (expected one of {sorted(CODEX_EFFORTS)})"
+        )
+    return value
+
+
 def adapt_body(body: str, name: str) -> str:
     """Apply the runtime substitutions and prove nothing Claude-only survived."""
     for src, dst in SUBSTITUTIONS:
@@ -133,13 +161,18 @@ def adapt_body(body: str, name: str) -> str:
     return body
 
 
-def render_toml(name: str, description: str, body: str) -> str:
+def render_toml(
+    name: str, description: str, body: str, effort: str | None = None
+) -> str:
     """Serialize one agent deterministically.
 
     `description` is a basic string (it is one line and free of quotes today,
     which is asserted rather than assumed); the body is a literal string so it
-    survives byte-exact.
+    survives byte-exact. `effort`, when given, must be one of CODEX_EFFORTS, so
+    it can be written unescaped.
     """
+    if effort is not None and effort not in CODEX_EFFORTS:
+        raise GenerationError(f"{name}: unsupported effort {effort!r}")
     if '"' in description or "\\" in description:
         raise GenerationError(
             f"{name}: description contains a quote or backslash; the basic-string "
@@ -150,9 +183,11 @@ def render_toml(name: str, description: str, body: str) -> str:
             f"{name}: body cannot be held in a TOML literal string (contains "
             f"''' or ends with a quote)."
         )
+    effort_line = f'model_reasoning_effort = "{effort}"\n' if effort else ""
     return (
         f'name = "{name}"\n'
         f'description = "{description}"\n'
+        f"{effort_line}"
         f"developer_instructions = '''\n"
         f"{body}"
         f"'''\n"
@@ -164,7 +199,8 @@ def build(path: Path) -> tuple[str, str]:
     name = path.stem
     fm, body = split_frontmatter(path.read_text(encoding="utf-8"), name)
     description = frontmatter_value(fm, "description", name)
-    rendered = render_toml(name, description, adapt_body(body, name))
+    effort = codex_effort(fm, name)
+    rendered = render_toml(name, description, adapt_body(body, name), effort)
 
     # Round-trip: the file we are about to write must parse, and the body must
     # come back byte-identical. This is what makes "the .toml is a faithful
@@ -174,6 +210,8 @@ def build(path: Path) -> tuple[str, str]:
         raise GenerationError(f"{name}: TOML round-trip altered the body")
     if parsed["description"] != description:
         raise GenerationError(f"{name}: TOML round-trip altered the description")
+    if parsed.get("model_reasoning_effort") != effort:
+        raise GenerationError(f"{name}: TOML round-trip altered the effort")
     return name, rendered
 
 

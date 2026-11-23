@@ -11,7 +11,7 @@
 ## 2. Web / Browser Operations
 
 - Prefer Gemini CLI's built-in `google_web_search` / `web_fetch` tools for searching and fetching web content
-- If `fetch` / `curl` is needed instead, explain the reason before executing
+- Do not use `curl` / `wget` / `nc` / `ssh` as a fetch path — use `web_fetch`. Claude Code and Codex hard-deny them; Gemini CLI has no hook that enforces this, so the rule rests on you
 - Do not send personal information or secrets to external services
 
 ## 3. Git Workflow
@@ -65,7 +65,7 @@
 
 ## 4. Execution Layer Selection (Single only)
 
-Gemini CLI has no SubAgent / parallel-agent primitive like Claude Code's Task tool or Codex's `[agents]` config. Always execute directly in the main session:
+Gemini CLI has no SubAgent / parallel-agent primitive like Claude Code's Agent tool or Codex's `[agents]` config. Always execute directly in the main session:
 
 - Break large tasks into smaller sequential steps instead of fanning out
 - When editing the same file continuously, or when an edit location depends on the previous step's result, keep the work strictly sequential
@@ -85,7 +85,8 @@ Do not inline coding standards, patterns, or checklists here — read the releva
 - New features, bug fixes, refactoring → `~/.claude/skills/tdd-workflow/SKILL.md` (test-first; it defines the coverage policy)
 - General style and patterns → `backend-patterns` / `frontend-patterns` / `golang-patterns` / `docker-patterns` / `postgres-patterns` under `~/.claude/skills/`, as relevant to the change
 - Requests dropped into `docs/requests/` → `~/.claude/skills/request-harness/SKILL.md`
-- Investigating bugs, test failures, or unexplained behavior → `~/.claude/skills/debugging-protocol/SKILL.md`
+- Investigating bugs, test failures, or unexplained behavior → `~/.claude/skills/debugging-protocol/SKILL.md`, Phases 0–4 only. Its Escalation section (advisor + Codex second opinions, the `codex-delegator` agent) is Claude Code machinery Gemini CLI cannot run: after 2 consecutive failed fix attempts on the same issue, stop and hand the attempt log to the user, suggesting Claude Code / Codex for the root-cause analysis
+- Disposable verification in the container sandbox (`csb`, the `/sandbox` command; `~/.claude/skills/docker-patterns/references/sandbox.md`): the confirmation for its boundaries (`create`, `net on`, `apply`, `image build`) comes from Claude Code's bash-review hook, and Gemini CLI has no such hook, so nothing stops them here. Do not run them; hand them to the user
 - After writing or modifying code, review it yourself against the pattern skill matching the change plus `~/.claude/skills/security-review/SKILL.md` before handing it back (Gemini CLI has no dedicated code-reviewer subagent to delegate to)
 
 ## 7. Safety Guards
