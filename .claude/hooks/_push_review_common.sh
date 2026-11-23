@@ -1887,6 +1887,10 @@ build_push_report() {
 # tests/test_hook_sync.py が関数の集合を固定しているため。)
 hook_push_review_run() {
   local input="$1" cmd="$2"
+  # 値を取る git のグローバルオプションの一覧 (下で代入する)。新しい変数は local にする
+  # 約束 (上の注記) なので、ここで宣言する: 宣言が無いと、このファイルを source した
+  # アダプタのシェルに残る。
+  local git_valued_opts
 
   # `${IFS}` / `$IFS` は bash が空白へ展開してから語分割するため、`git${IFS}push`
   # はシェルにとって本当に `git push` である。以降の検知はどれも「生バイトとしての
@@ -2029,8 +2033,12 @@ $(printf '%s' "$cmd_unquoted" | tr "\"'" '  ')"
   # `[^[:space:]]+` だと `-C /tmp/a\ b` の値が `\` で切れ、`b` をサブコマンドと
   # 読んで push を見失う (`git -C` で始まるので ask: Bash(git push:*) にも掛からない)。
   git_opt_word='([^[:space:]\\]|\\.)+'
+  # 値を別の語で取るグローバルオプションの一覧。インタプリタの argv 配列
+  # (`['git','-C',d,'push']`) の検知 (下の ip_unit) も同じ一覧を読む: 2 か所に
+  # 書くと片方だけ増えて、シェルでは検知される形が配列では素通りする。
+  git_valued_opts='-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source'
   # shellcheck disable=SC2016  # 正規表現中の $ とバッククォートはリテラル(展開させない)
-  git_opt_unit='[[:space:]]+((-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source)[[:space:]]+'"$git_opt_word"'|-'"$git_opt_word"'|[^[:space:]]*[$`][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)'
+  git_opt_unit='[[:space:]]+(('"$git_valued_opts"')[[:space:]]+'"$git_opt_word"'|-'"$git_opt_word"'|[^[:space:]]*[$`][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)'
   # shellcheck disable=SC2016  # 同上
   git_exp_unit='[[:space:]]+[^[:space:]]*[$`][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?'
   # shellcheck disable=SC2016  # 同上
@@ -2090,7 +2098,119 @@ $(printf '%s' "$cmd_unquoted" | tr "\"'" '  ')"
         printf '%s\n' "$cmd_quotes_stripped" | grep -qiE "$alias_c_re"; }; then
       indirect_push="the command defines or uses a git alias together with the word push, so a push may run under another name"
     else
-      return 1
+      # インタプリタのコードの中の push (`python3 -c "subprocess.run(['git','push'])"`
+      # / `node -e "execSync('git push')"` / `ruby -e 'system("git","push")'` / 標準入力や
+      # ヒアドキュメントで渡したスクリプト)。ここまで来たのは、シェルの語としては push が
+      # 見つからなかったコマンドだけ。
+      #
+      # 見逃していた理由は 2 つ。(1) `git` と `push` はコードの文字列リテラル (別々の
+      # リテラルのこともある) で、strip_quoted_ranges が「ただのメッセージ」として捨てる
+      # クォート区間そのもの。(2) 上の executes_string_arg はシェルしか知らず、python 等の
+      # `-c` / `-e` の引数を実行されるコードとして扱っていなかった。
+      #
+      # 照合は 3 段。
+      #   ゲート: インタプリタがコードを実行しているか。cmd_for_match (クォート区間を除いた
+      #     綴り) で見るので、引用符の中の `python -c` (`git commit -m "fix python -c …"`) では
+      #     開かない。コード実行フラグ付きの呼び出し (`python3 -I -c` / `node --eval` /
+      #     `perl -wle` / `deno eval`) と、標準入力にコードを渡す形 (`<<` / `<<<` / `| python3`)。
+      #     ヒアドキュメントの本文は引用符の区間ではなく、そのまま cmd_for_match に入る。
+      #     インタプリタに渡す `python3 <<'EOF'` が本物の push の経路なので、本文を判定から
+      #     外すことはできない。代償は、本文が `python3 -c "…['git','push']…"` のような文字列を
+      #     引用しているだけの `git commit -m "$(cat <<'EOF' … EOF)"` / `git commit -F - <<'EOF'`
+      #     / `cat > notes.md <<'EOF'` が確認に回ること (このブランチが入る前は静かだった)。
+      #     余分に確認が出るだけで push の見逃しは増えない側なので、受け入れてテストで
+      #     固定している (tests/test_git_push_review.py の ..._is_an_accepted_over_ask)。
+      #   argv 配列: 引用符と区切りを保ったまま `'git' , (オプション)* , 'push'` を探す。
+      #     間に入れてよいのはグローバルオプション (値付きは git_valued_opts) と、評価
+      #     できない裸の式 (`repo` / `*opts`) だけ。`'stash'` / `'log'` のような引用された
+      #     サブコマンドが挟まれば別物なので、`['git','stash','push']` は検知しない。
+      #     空白入りの値 (`'-C', '/tmp/my repo'`) は引用符単位で読むのでこちらでしか拾えない。
+      #     値付きオプションの値は、リテラル・裸の式・その `+` 連結のどれでもよい
+      #     (`os.path.join(a, b)` / `f'{d}/x'` / `d + '/x'`)。リスト同士の `+` も、リストでは
+      #     ない式を挟んで読む (`['git'] + opts + ['push']`)。評価できないという点ではどれも
+      #     同じで、値の形が複雑だから「push ではない」とは言えない。
+      #   文字列: 引用符・括弧・カンマを空白にしたコピーに、シェルと同じ git ... push の
+      #     照合を掛ける (`os.system("git push")` / `execSync('git push', {...})` /
+      #     `%w[git push]` / `qx{git push}`)。`f"git push {r}"` の f が git に密着するのも、
+      #     引用符を空白にすれば別語になる。
+      # コメント行 (行頭の `#`) は両方の照合の前に落とす。落とすのは行頭だけ: 行の途中の
+      # ` #` は文字列リテラルの中にもありうるので、そこから後ろを捨てると
+      # `x = 'a #'; os.system('git push')` が消える。
+      # 既知の穴 (直さない): 三連引用符の文字列の途中の行が `#` で始まり、同じ行で文字列を
+      # 閉じて push を続けると (`s = '''` の次の行が `# '''; subprocess.run(['git','push'])`)、
+      # 行ごと落ちて見えない。コメントと文字列の中身を見分けるにはインタプリタの字句解析が
+      # 要る。テストで現状を固定してある (..._hides_an_interpreter_push)。
+      #
+      # 検知したら indirect_push にして要約を出さない。コードは自分で chdir() / cwd= /
+      # process.chdir() でき、argv 配列の `-C` は cd_target_from_words / git_c_dir_from_words
+      # のどちらにも語として見えない: cwd のリポジトリの要約は別物の要約になりうる。
+      #
+      # 照合対象はコマンド全体なので、`python3 -c "…" && git commit -m "… git push …"` の
+      # ようにコードと無関係な文字列に git push と書いてあっても確認になる (`bash -c` の
+      # 経路と同じ粗さ。確認に倒れる側)。
+      # アダプタ (source する側) のシェルに変数を漏らさない (これも新規の変数)。
+      local ip_head ip_words ip_end ip_names ip_eval ip_stdin ip_src ip_q ip_lit ip_par ip_plus
+      local ip_bc1 ip_bc ip_idc ip_sub ip_sep ip_bare ip_val ip_unit ip_argv
+      # shellcheck disable=SC2016  # 正規表現中のバッククォートはリテラル
+      ip_head='(^|[;&|[:space:](`/])'
+      ip_words='([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+'
+      ip_end="([[:space:]\"'=]|\$)"
+      ip_names='(python[0-9.]*|pypy[0-9.]*|node|nodejs|ruby|perl|php|lua|deno|bun)'
+      ip_eval="${ip_head}((python[0-9.]*|pypy[0-9.]*)${ip_words}-[A-Za-z]*c|(node|nodejs|bun)${ip_words}(-[A-Za-z]*[ep]|--eval|--print)|ruby${ip_words}-[A-Za-z0-9]*e|perl${ip_words}-[A-Za-z0-9]*[eE]|php${ip_words}-[A-Za-z]*r|(lua|osascript)${ip_words}-[A-Za-z]*e|deno[[:space:]]+eval)${ip_end}"
+      ip_stdin="${ip_head}${ip_names}([[:space:]]+[^;&|<[:space:]]+)*[[:space:]]*<<|\\|[[:space:]]*([^[:space:]|]*/)?${ip_names}([[:space:]]|\$)"
+      if printf '%s\n' "$cmd_for_match" | grep -qiE "${ip_eval}|${ip_stdin}"; then
+        # `tr -d '\\'` は bash 3.2 の `${x//\\/}` (一致数に対して超線形) の代わり。
+        # 引数は必ずシングルクォートで `\\` と書く。`"\\"` はシェルが `\` 1 個へ展開して
+        # から tr に渡すので、GNU tr (coreutils 9.x) が「末尾の `\` は移植性がない」と
+        # stderr に警告する。BSD tr は黙っているので macOS では見えず、.codex 側は
+        # stderr をそのままモデルに返す (2>/dev/null を付けない) ため、CI の Linux でだけ
+        # 空であるべき stderr が汚れる。
+        # shellcheck disable=SC1003  # `\\` は tr の「バックスラッシュ 1 個」の綴り。クォートの閉じ忘れではない
+        ip_src=$(printf '%s\n' "$cmd_joined" | tr -d '\\' | grep -v '^[[:space:]]*#')
+        ip_q="[\"']"
+        # 配列の要素の区切り: `,` / `] + [` / Deno.Command の `, {args: [`。直後の `[` は
+        # `spawnSync('git', ['push'])` の入れ子の配列。
+        # 区切りの `+` は、リストの内側で `['git'] + opts + ['push']` のように、リストでは
+        # ない式 (opts) を挟んだ後ろの `+ [` を受ける (`] +` は直前がリストのときだけ)。
+        ip_sep='[[:space:]]*(,([[:space:]]*\{[[:space:]]*args[[:space:]]*:)?|\][[:space:]]*\+|\+)[[:space:]]*\[?[[:space:]]*'
+        # 評価できない裸の式の 1 要素 (`repo` / `*opts` / `os.path.join(a, b)` / `f'{d}/x'` /
+        # `d + '/x'`)。引用符・`,`・`]`・`)` を含まない文字の並びに、括弧の組と引用符のリテラ
+        # ルを混ぜられる。括弧の中は `,` も引用符も許す (2 段まで: `path.join(a, 'b')` /
+        # `os.path.join(os.getcwd(), 'x')` / `str(Path(d) / 'x')`)。
+        #   - 先頭の 1 文字は引用符でも `,` でもない: リテラル単体は裸の式ではない。
+        #     `'stash'` を要素として読むと `['git','stash','push']` が push になる。
+        #   - リテラルを許すのは 2 文字目以降だけ (先頭が接頭辞の `f'{d}/x'` / `rb'/x'`、
+        #     式の `d + '/x'`)。
+        #   - `[` は文字にしない。`] + [` の `[` から始まる語が `['stash'` というリテラル入りの
+        #     「式」になり、`['git'] + ['stash'] + ['push']` が push になる。裸の式の中に `]` は
+        #     置けない (下の文字クラス) ので、`[` だけを許しても検知は何も増えない。
+        #   - 添字 `name[...]` (`sys.argv[1]` / `os.environ['REPO']` / `repos[0]` / `cfg['a']['b']`)
+        #     は、直前が識別子の文字 (`A-Za-z0-9_$@`) か括弧の組のときだけ読む。`+` / 空白 / `}`
+        #     の後ろの `[` はリストリテラルの始まりで、`['git'] + opts + ['stash'] + ['push']`
+        #     の `['stash']` を式の一部にしてはいけない。
+        #   - `(` は 1 文字としても読む (従来どおり): 閉じない `(` を含む語で検知を狭めない。
+        ip_lit="${ip_q}[^\"']*${ip_q}"
+        ip_par='\(([^()]|\([^()]*\))*\)'
+        ip_bc1="[^][\"',)[:space:]]"
+        ip_bc="[^][\"',)]"
+        ip_idc='[A-Za-z0-9_$@]'
+        ip_sub='\[[^][]*\]'
+        ip_bare="(${ip_bc1}|${ip_par}(${ip_sub})*|${ip_idc}(${ip_sub})+)(${ip_bc}|${ip_par}(${ip_sub})*|${ip_lit}|${ip_idc}(${ip_sub})+)*"
+        # 値を取るオプションの値: リテラルか裸の式を、`+` で何個でもつなげる (`'/tmp/' + d`)。
+        ip_plus='[[:space:]]*\+[[:space:]]*'
+        ip_val="(${ip_lit}|${ip_bare})(${ip_plus}(${ip_lit}|${ip_bare}))*"
+        ip_unit="(${ip_q}(${git_valued_opts})${ip_q}${ip_sep}${ip_val}|${ip_q}-[^\"']*${ip_q}|${ip_bare})"
+        ip_argv="${ip_q}([^\"']*/)?git${ip_q}(${ip_sep}${ip_unit})*${ip_sep}${ip_q}push${ip_q}"
+        if printf '%s\n' "$ip_src" | tr '\n' ' ' | grep -qiE "$ip_argv" ||
+          printf '%s\n' "$ip_src" | tr "\"'[]{},+" '        ' |
+          grep -qiE "${push_head}(${git_opt_unit})*${push_tail}"; then
+          indirect_push="the push runs inside interpreter code (python -c, node -e, ruby -e, perl -e, deno eval, bun -e, a here-document ...), where it may chdir() or pass -C in a form this hook cannot follow"
+        else
+          return 1
+        fi
+      else
+        return 1
+      fi
     fi
   fi
 

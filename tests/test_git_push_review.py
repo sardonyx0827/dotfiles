@@ -714,6 +714,813 @@ def test_detection_parity(shell_env, git_repo, variant, hook, command, should_de
         _assert_push_not_detected(res, variant, command)
 
 
+# --- Pushes launched from an interpreter's code ------------------------
+# git-push-review.sh must see a push that is launched FROM an interpreter's code.
+#
+# Audit A8: `python3 -c "subprocess.run(['git','push'])"` was not detected. The push is not
+# a shell word sequence at all -- `git` and `push` are two quoted tokens of a Python list,
+# so the quote scan that discards "just a message" discards them too, and the interpreter
+# check only knew shells (`sh -c`, `eval`, ...). Seven spellings of a shell push already
+# asked; this closes the interpreter ones.
+#
+# What is pinned here, for BOTH variants (.claude JSON-ask and .codex exit-2):
+#
+#   * the argv-list spelling   ['git','push'] / ["git", "-C", d, "push"] / ('git','push')
+#     and the string spelling   os.system("git push") / execSync('git push') / `git push`
+#     in python -c, node -e / --eval / -p, ruby -e, perl -e / -E, deno eval, bun -e, plus
+#     the code fed over stdin (a here-document, a here-string, a pipe);
+#   * that an interpreter merely MENTIONED, or a list that is not a push (`['git','stash',
+#     'push']`, `.push(1)`, `perl -e 'push @a'`), stays quiet;
+#   * that the confirmation never claims a repository: the push runs wherever the code
+#     chdir()s, which this hook cannot follow, so the summary says so instead of showing
+#     the hook's cwd repository.
+
+# (command, should_detect). Every command contains the literal `push`, so each one gets
+# past the adapter's cheap "no push in the command" guard and reaches the detection: a
+# negative that never got that far would prove nothing.
+INTERPRETER_PUSH_CASES = [
+    # --- the audit's repro, verbatim
+    ("python3 -c \"subprocess.run(['git','push'])\"", True),
+    # --- python: argv lists
+    ("python3 -c \"import subprocess; subprocess.run(['git','push'])\"", True),
+    (
+        "python3 -c 'import subprocess; "
+        'subprocess.run(["git", "push", "origin", "main"])\'',
+        True,
+    ),
+    ("python -c \"import subprocess; subprocess.run(('git','push'))\"", True),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.check_call(['git', '-C', '/tmp/r', 'push'])\"",
+        True,
+    ),
+    # a variable as the -C value, and a quoted -C value that holds a space
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '-C', repo, 'push'])\"",
+        True,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '-C', '/tmp/my repo', 'push'])\"",
+        True,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '--no-pager', 'push', '--force'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['/usr/bin/git','push'])\"",
+        True,
+    ),
+    ("python3 -c \"import subprocess; subprocess.run(['git'] + ['push'])\"", True),
+    # --- python: the -C value is an expression, not a name or a literal. The value
+    # frame used to be a bare token or ONE quoted literal, so each of these slipped
+    # past the argv-list match and ran with no confirmation at all.
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '-C', os.path.join(a, b), 'push'])\"",
+        True,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git','-C',os.path.join(a,b),'push'])\"",
+        True,
+    ),
+    # a call nested in a call
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '-C', os.path.join(os.getcwd(), 'sub'), 'push'])\"",
+        True,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '-C', str(Path(d) / 'x'), 'push'])\"",
+        True,
+    ),
+    # a prefixed string literal (f / r / b / rb) as the value
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '-C', f'{d}/x', 'push'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '-C', r'/tmp/a b', 'push'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '-C', rb'/x', 'push'])\"",
+        True,
+    ),
+    # a concatenation, either side a literal
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '-C', d + '/x', 'push'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '-C', '/tmp/' + d, 'push'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '-C', 'a' + '/b', 'push'])\"",
+        True,
+    ),
+    # the same expression shapes on an option that is itself one literal / carries =
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', f'--git-dir={d}', 'push'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '--git-dir=' + d, 'push'])\"",
+        True,
+    ),
+    # a subscript: an argv / environment / config lookup is the commonest -C value of all
+    (
+        'python3 -c "import sys, subprocess; '
+        "subprocess.run(['git', '-C', sys.argv[1], 'push'])\" x",
+        True,
+    ),
+    (
+        'python3 -c "import os, subprocess; '
+        "subprocess.run(['git', '-C', os.environ['REPO'], 'push'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', '-C', repos[0], 'push'])\"",
+        True,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '-C', cfg['a']['b'], 'push'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git', sys.argv[1], 'push'])\"",
+        True,
+    ),
+    # lists joined with `+` around an expression that is not itself a list literal
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git'] + opts + ['push'])\"",
+        True,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git'] + shlex.split(o) + ['push', '--force'])\"",
+        True,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git'] + ['-C', d] + ['push'])\"",
+        True,
+    ),
+    # --- ...while a quoted subcommand between `git` and `push` still means it is not a
+    # push, however elaborate the option values around it are
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '-C', os.path.join(a, b), 'stash', 'push'])\"",
+        False,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '-C', f'{d}/x', 'log', '--grep', 'push'])\"",
+        False,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '--git-dir=' + d, 'stash', 'push'])\"",
+        False,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git'] + ['stash'] + ['push'])\"",
+        False,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git', '-C', sys.argv[1], 'stash', 'push'])\"",
+        False,
+    ),
+    # a list literal after `+ ` is not a subscript: only `name[...]`, with no space, is
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git'] + opts + ['stash'] + ['push'])\"",
+        False,
+    ),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git'] + opts + ['stash', 'push'])\"",
+        False,
+    ),
+    # the argv list split over lines
+    (
+        "python3 -c \"import subprocess\nsubprocess.run([\n  'git',\n  'push',\n])\"",
+        True,
+    ),
+    # --- python: the push as one string
+    ("python3 -c 'import os; os.system(\"git push\")'", True),
+    ("python3 -c \"import os; os.system('git push origin main')\"", True),
+    (
+        "python3 -c \"import subprocess; subprocess.run('git push', shell=True)\"",
+        True,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run('git push origin main'.split())\"",
+        True,
+    ),
+    ("python3 -c \"import os; r='origin'; os.system(f'git push {r}')\"", True),
+    ("python3 -c \"import os; os.popen('git -C /tmp/r push').read()\"", True),
+    # --- python: how the interpreter is spelled / reached
+    ("python3 -I -c \"import subprocess; subprocess.run(['git','push'])\"", True),
+    (
+        "python3 -u -W ignore -c \"import subprocess; subprocess.run(['git','push'])\"",
+        True,
+    ),
+    ("python3 -Ic \"import subprocess; subprocess.run(['git','push'])\"", True),
+    ("/usr/bin/python3 -c \"import subprocess; subprocess.run(['git','push'])\"", True),
+    ("python3.12 -c \"import subprocess; subprocess.run(['git','push'])\"", True),
+    (
+        "/usr/bin/env python3 -c \"import subprocess; subprocess.run(['git','push'])\"",
+        True,
+    ),
+    ("uv run python -c \"import subprocess; subprocess.run(['git','push'])\"", True),
+    ("PYTHON3 -c \"import subprocess; subprocess.run(['git','push'])\"", True),
+    (
+        "cd /tmp/repo && python3 -c \"import subprocess; subprocess.run(['git','push'])\"",
+        True,
+    ),
+    ("python3${IFS}-c \"import subprocess; subprocess.run(['git','push'])\"", True),
+    # --- a shell that runs an interpreter that runs the push
+    (
+        "bash -c \"python3 -c 'import subprocess; "
+        'subprocess.run([\\"git\\",\\"push\\"])\'"',
+        True,
+    ),
+    # --- node / bun / deno
+    ("node -e \"require('child_process').execSync('git push')\"", True),
+    (
+        "node -e \"require('child_process').execSync('git push', {stdio:'inherit'})\"",
+        True,
+    ),
+    ("node --eval \"require('child_process').spawnSync('git', ['push'])\"", True),
+    (
+        "node -p \"require('child_process').execFileSync('git',['push']).toString()\"",
+        True,
+    ),
+    ("node -pe \"require('child_process').execSync('git push')\"", True),
+    (
+        "node --input-type=module -e \"import {execSync} from 'child_process'; execSync('git push')\"",
+        True,
+    ),
+    ("node -e \"require('child_process').spawn('git', ['-C', d, 'push'])\"", True),
+    (
+        "node -e \"require('child_process').spawnSync('git', ['-C', path.join(a, b), 'push'])\"",
+        True,
+    ),
+    (
+        "node -e \"require('child_process').execFileSync('git',['-C',path.join(a,b),'push'])\"",
+        True,
+    ),
+    (
+        "node -e \"require('child_process').execFileSync('git', ['-C', d + '/x', 'push'])\"",
+        True,
+    ),
+    (
+        "node -e \"require('child_process').execFileSync('git', ['-C', path.join(a, b), 'stash', 'push'])\"",
+        False,
+    ),
+    (
+        "node -e \"require('child_process').spawnSync('git', ['-C', process.argv[1], 'push'])\" x",
+        True,
+    ),
+    (
+        "node -e \"require('child_process').spawnSync('git', ['-C', process.env['REPO'], 'push'])\"",
+        True,
+    ),
+    ("node --eval=\"require('child_process').execSync('git push')\"", True),
+    ('bun -e \'Bun.spawnSync(["git","push"])\'', True),
+    ('bun --eval \'Bun.spawnSync(["git","push"])\'', True),
+    ('deno eval \'new Deno.Command("git", {args: ["push"]}).outputSync()\'', True),
+    ('deno eval \'Deno.run({cmd: ["git", "push"]})\'', True),
+    # --- ruby
+    ('ruby -e \'system("git", "push")\'', True),
+    ("ruby -e 'system \"git push\"'", True),
+    ("ruby -e 'puts `git push`'", True),
+    ("ruby -e 'system(*%w[git push])'", True),
+    ("ruby -e '%x{git push}'", True),
+    ('ruby -rjson -e \'system("git", "push")\'', True),
+    ('ruby -e \'system("git", "-C", File.join(a, b), "push")\'', True),
+    ('ruby -e \'system("git", "-C", File.join(a,"b"), "push")\'', True),
+    ('ruby -e \'system("git", "-C", File.join(a, b), "stash", "push")\'', False),
+    ('ruby -e \'system("git", "-C", ENV["REPO"], "push")\'', True),
+    ('perl -e \'system("git", "-C", $ARGV[0], "push")\' x', True),
+    ("ruby -ne 'system(\"git push\")'", True),
+    # --- perl
+    ('perl -e \'system("git", "push")\'', True),
+    ("perl -e 'system(qw(git push))'", True),
+    ("perl -e 'exec \"git push\"'", True),
+    ("perl -e 'qx{git push}'", True),
+    ("perl -E 'say `git push`'", True),
+    ('perl -Mstrict -wle \'system("git", "push")\'', True),
+    # --- php / lua / osascript (same shape, same gate)
+    ("php -r 'system(\"git push\");'", True),
+    ("lua -e 'os.execute(\"git push\")'", True),
+    ("osascript -e 'do shell script \"git push\"'", True),
+    # --- code on stdin: a here-document, a here-string, a pipe
+    (
+        "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['git','push'])\nEOF",
+        True,
+    ),
+    ("python3 <<EOF\nimport os\nos.system('git push')\nEOF", True),
+    (
+        "node <<'EOF'\nrequire('child_process').execSync('git push')\nEOF",
+        True,
+    ),
+    ("python3 <<< \"import os; os.system('git push')\"", True),
+    ("echo \"import os; os.system('git push')\" | python3", True),
+    ("cat <<'EOF' | python3 -\nimport os; os.system('git push')\nEOF", True),
+    # --- must stay quiet: the word `push` and an interpreter, but no git push
+    ("python3 -c \"print('push')\"", False),
+    (
+        "python3 -c \"import subprocess; subprocess.run(['git','pull']); print('push')\"",
+        False,
+    ),
+    ('node -e "arr.push(1)"', False),
+    ('node -e "console.log([1].push(2))"', False),
+    ("ruby -e 'a = []; a.push(1)'", False),
+    ("perl -e 'push @a, 1'", False),
+    ("deno eval 'const a = []; a.push(1)'", False),
+    ("bun -e 'const a = []; a.push(1)'", False),
+    ("php -r '$a = []; array_push($a, 1);'", False),
+    # `git stash push` / `git log --grep push` are not a push, in an argv list either
+    ("python3 -c \"import subprocess; subprocess.run(['git','stash','push'])\"", False),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git','log','--grep','push'])\"",
+        False,
+    ),
+    (
+        'python3 -c "import subprocess; '
+        "subprocess.run(['git','--no-pager','log','--grep','push'])\"",
+        False,
+    ),
+    ("node -e \"require('child_process').execSync('git stash push')\"", False),
+    # an interpreter on a script, or only named in a message, is not interpreter code
+    ('python3 scripts/x.py && git commit -m "no git push yet"', False),
+    ('git commit -m "fix python -c git push detection"', False),
+    ("git commit -m \"python3 -c subprocess.run(['git','push'])\"", False),
+    ("echo \"python3 -c 'git push'\"", False),
+    ("python3 push_tool.py --dry-run", False),
+    # a comment line is not code. (A here-document body is scanned as text by the
+    # shell-level check that predates this one, so prose in it that reads `git push`
+    # asks regardless; only the argv-list / string spellings below are this change's.)
+    ("python3 -c \"print('push')\"\n# git push when this is done", False),
+    ("python3 - <<'EOF'\n# subprocess.run(['git','push'])\nprint('push')\nEOF", False),
+]
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("command,should_detect", INTERPRETER_PUSH_CASES)
+def test_interpreter_push_detection(
+    shell_env, git_repo, variant, hook, command, should_detect
+):
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    if should_detect:
+        _assert_push_detected(res, variant, command)
+    else:
+        _assert_push_not_detected(res, variant, command)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_interpreter_push_says_it_cannot_name_the_repository(
+    shell_env, tmp_path, git_repo, variant, hook
+):
+    """The code may chdir() or pass -C inside an argv list: never summarise the cwd repo."""
+    target = make_target_repo(tmp_path)
+    command = (
+        'python3 -c "import subprocess; '
+        f"subprocess.run(['git', '-C', '{target}', 'push'])\""
+    )
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_detected(res, variant, command)
+    reason = _summary_text(res, variant)
+    assert "target repository could not be determined" in reason, reason
+    assert "interpreter" in reason, reason
+    # Neither the hook's cwd repository nor the -C target is described as the target.
+    assert "branch: main" not in reason, reason
+    assert "initial commit" not in reason, reason
+    assert "target repo commit" not in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_interpreter_push_audit_repro_reason_text(
+    shell_env, tmp_path, git_repo, variant, hook
+):
+    """Pin the audit repro's whole confirmation text (the part after the header).
+
+    No `push target:` line: there is no `git ... push` word sequence to read one from."""
+    outside = tmp_path / "not-a-repo"
+    outside.mkdir()
+    command = "python3 -c \"subprocess.run(['git','push'])\""
+    res = shell_env.run(hook, stdin=payload(command), cwd=outside)
+    _assert_push_detected(res, variant, command)
+    body = _summary_text(res, variant).split("\n", 1)[1]
+    assert body == (
+        "note: push arguments could not be parsed reliably (the push is not a plain "
+        "`git ... push` word sequence -- e.g. it is inside eval, sh -c, watch, --exec "
+        "or foreach -- or its quoting is not followable) -- review the command itself\n"
+        "(target repository could not be determined: the push runs inside interpreter "
+        "code (python -c, node -e, ruby -e, perl -e, deno eval, bun -e, a here-document "
+        "...), where it may chdir() or pass -C in a form this hook cannot follow -- "
+        "review the target manually before approving)"
+        + ("\n" if variant == "codex" else "")
+    )
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_interpreter_gate_does_not_take_over_a_plain_shell_push(
+    shell_env, git_repo, variant, hook
+):
+    """A shell push chained after an interpreter keeps its normal, resolved summary.
+
+    This pins the ORDER, not the interpreter branch: a plain `git push` is matched by the
+    first `if` of hook_push_review_run, before the branch that the interpreter opens, so
+    the command never enters it (a plain shell push cannot). The commands that do enter it
+    are in test_interpreter_gate_leaves_a_shell_subcommand_that_is_not_a_push_alone.
+    """
+    command = "python3 -c \"print('push')\" && git push origin main"
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_detected(res, variant, command)
+    reason = _summary_text(res, variant)
+    assert "branch: main" in reason, reason
+    assert "interpreter" not in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_large_interpreter_command_stays_cheap(shell_env, git_repo, variant, hook):
+    """The new branch runs for any command with `push` in it: keep it linear."""
+    pad = "x" * 20_000
+    quiet = "python3 -c \"print('push'); " + pad + '"'
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin=payload(quiet), cwd=git_repo)
+    quiet_elapsed = time.monotonic() - started
+    _assert_push_not_detected(res, variant, quiet)
+
+    loud = "python3 -c \"import os; os.system('git push'); " + pad + '"'
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin=payload(loud), cwd=git_repo)
+    loud_elapsed = time.monotonic() - started
+    _assert_push_detected(res, variant, loud)
+
+    assert quiet_elapsed < _QUADRATIC_BUDGET_SECONDS, quiet_elapsed
+    assert loud_elapsed < _QUADRATIC_BUDGET_SECONDS, loud_elapsed
+
+
+# GNU tr (coreutils 9.x, the CI's ubuntu-latest) warns on stderr when a SET ends in a single
+# backslash: "tr: warning: an unescaped backslash at end of string is not portable". BSD tr
+# (macOS) is silent, so this never showed locally. The interpreter branch strips backslashes
+# with `tr -d '\\'`; written as `tr -d "\\"` the shell hands tr ONE backslash and GNU tr
+# warns, on 74 of the 239 commands of the detection tables. The .codex copy returns the
+# hook's stderr to the model and the tests above require it to be empty for a command that
+# is not a push, so the warning turns a quiet pass into noise (and fails CI on Linux only).
+#
+# This puts a `tr` that warns the way GNU tr does in front of the real one, so the
+# regression shows on any host: it fails here for `tr -d "\\"` and passes for `tr -d '\\'`.
+_GNU_TR_WARNING = "tr: warning: an unescaped backslash at end of string is not portable"
+
+
+def _install_strict_tr(shell_env):
+    real_tr = shutil.which("tr")
+    assert real_tr, "no tr on PATH"
+    shell_env.stub(
+        "tr",
+        body=(
+            'for a in "$@"; do\n'
+            "  if [[ $a =~ (^|[^\\\\])(\\\\\\\\)*\\\\$ ]]; then\n"
+            f'    echo "{_GNU_TR_WARNING}" >&2\n'
+            "  fi\n"
+            "done\n"
+            f'exec "{real_tr}" "$@"'
+        ),
+    )
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 -c \"print('push')\"",
+        "python3 -c \"print('push')\"\n# git push when this is done",
+        "python3 - <<'EOF'\n# subprocess.run(['git','push'])\nprint('push')\nEOF",
+        "python3 -c \"import subprocess; subprocess.run(['git','stash','push'])\"",
+    ],
+    ids=["print", "comment-line", "heredoc-comment", "stash-push"],
+)
+def test_interpreter_branch_is_silent_under_a_tr_that_warns_like_gnu_tr(
+    shell_env, git_repo, variant, hook, command
+):
+    _install_strict_tr(shell_env)
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_not_detected(res, variant, command)
+    assert res.stderr == "", res.stderr
+    assert _GNU_TR_WARNING not in res.stderr
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_the_strict_tr_stand_in_really_warns(shell_env, variant, hook):
+    """Guards the test above: a stand-in that never warns would pass it vacuously."""
+    _install_strict_tr(shell_env)
+    stub = shell_env.stub_bin / "tr"
+    res = subprocess.run(
+        [str(stub), "-d", "\\"],
+        input="a\\b\n",
+        capture_output=True,
+        text=True,
+        env=shell_env.env,
+    )
+    assert res.stdout == "ab\n"
+    # `in`, not `==`: on a host whose real tr is GNU tr it adds the same warning itself.
+    assert _GNU_TR_WARNING in res.stderr
+    quiet = subprocess.run(
+        [str(stub), "-d", "\\\\"],
+        input="a\\b\n",
+        capture_output=True,
+        text=True,
+        env=shell_env.env,
+    )
+    assert quiet.stdout == "ab\n"
+    assert quiet.stderr == ""
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "command,should_detect",
+    [
+        # Each of these has a shell-level `git ... push` LOOKALIKE that is not a push, so
+        # the plain-shell check (the first `if` of hook_push_review_run) does not fire and
+        # the command falls through to the interpreter branch -- which `python3 -c` opens.
+        # A plain shell `git push` can never get that far: it is caught first, so the
+        # chained-after-an-interpreter test above never enters the new branch at all.
+        # These do, and the branch must not read a shell subcommand as a push.
+        ("python3 -c \"print('push')\" && git stash push", False),
+        ("python3 -c \"print('push')\" && git -C /tmp/x stash push", False),
+        ("python3 -c \"print('push')\" && git log --grep push", False),
+        ("python3 -c \"print('push')\" && git --no-pager log --grep push", False),
+        # ...and when the interpreter really does push, the shell part beside it does not
+        # change what is said: the interpreter wording (only that branch emits it).
+        ("python3 -c \"import os; os.system('git push')\" && git stash push", True),
+    ],
+)
+def test_interpreter_gate_leaves_a_shell_subcommand_that_is_not_a_push_alone(
+    shell_env, git_repo, variant, hook, command, should_detect
+):
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    if not should_detect:
+        _assert_push_not_detected(res, variant, command)
+        return
+    _assert_push_detected(res, variant, command)
+    reason = _summary_text(res, variant)
+    assert "target repository could not be determined" in reason, reason
+    assert "interpreter" in reason, reason
+    assert "branch: main" not in reason, reason
+
+
+# A heredoc body is searched as text by the shell-level check, and a heredoc that feeds an
+# interpreter (`python3 <<EOF`) is a real way to push, so the body cannot be left out of the
+# interpreter check. The price: prose in a heredoc that quotes interpreter push code asks,
+# where it was silent before the interpreter branch existed -- a commit message written
+# through `git commit -m "$(cat <<'EOF' ...)"` / `git commit -F - <<'EOF'`, or a file written
+# with `cat > notes.md <<'EOF'`. Accepted, in the safe direction (an extra ask, never a
+# missed push), and pinned here so that neither the over-ask nor its boundary drifts.
+_QUOTED_INTERPRETER_PUSH = "python3 -c \"subprocess.run(['git','push'])\""
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "command",
+    [
+        # a commit message through command substitution
+        "git commit -m \"$(cat <<'EOF'\n"
+        f'fix: detect {_QUOTED_INTERPRETER_PUSH} in hooks\n\nbody\nEOF\n)"',
+        # a commit message read from stdin
+        f"git commit -F - <<'EOF'\nfix: detect {_QUOTED_INTERPRETER_PUSH} in hooks\nEOF",
+        # a note written to a file
+        f"cat > notes.md <<'EOF'\nnotes: {_QUOTED_INTERPRETER_PUSH}\nEOF",
+    ],
+    ids=["commit-m-substitution", "commit-F-stdin", "cat-to-file"],
+)
+def test_a_heredoc_that_quotes_interpreter_push_code_is_an_accepted_over_ask(
+    shell_env, git_repo, variant, hook, command
+):
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_detected(res, variant, command)
+    reason = _summary_text(res, variant)
+    assert "interpreter" in reason, reason
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize(
+    "command",
+    [
+        # the same three carriers, with prose that names `python3 -c` but pushes nothing
+        "git commit -m \"$(cat <<'EOF'\nfix: python3 -c \"print('push')\" in docs\nEOF\n)\"",
+        "git commit -F - <<'EOF'\nfix: python3 -c \"print('push')\" in docs\nEOF",
+        "cat > notes.md <<'EOF'\nrun python3 -c \"print('push')\" first\nEOF",
+    ],
+    ids=["commit-m-substitution", "commit-F-stdin", "cat-to-file"],
+)
+def test_a_heredoc_that_names_an_interpreter_but_pushes_nothing_stays_quiet(
+    shell_env, git_repo, variant, hook, command
+):
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_not_detected(res, variant, command)
+
+
+# KNOWN GAP, pinned on purpose -- not a behaviour to rely on. The interpreter check drops
+# every line whose first non-blank character is `#` before it looks for a push (a comment
+# line is not code). Inside a multi-line string that line is data, not a comment, so one
+# that starts with `#` and then closes the string and carries on with a push hides the push:
+#
+#     s = '''
+#     # '''; subprocess.run(['git','push'])
+#
+# Only a LINE-LEADING `#` is dropped (` #` mid-line is kept, because it can sit inside a
+# string literal), which keeps the gap this narrow. If the check ever learns to tell a
+# comment from a string line, flip these to "detected" and update the README's known gaps.
+_HASH_LINE_GAP = [
+    # argv list, code on stdin
+    "python3 - <<'EOF'\ns = '''\n# '''; import subprocess; subprocess.run(['git','push'])\nEOF",
+    # argv list, code in -c
+    "python3 -c \"s = '''\n# '''; import subprocess; subprocess.run(['git','push'])\n\"",
+    # string spelling, code in -c
+    "python3 -c \"s = '''\n# '''; import os; os.system('git push')\n\"",
+]
+# The same code with the first character of that line changed: it is seen and asks, which is
+# what shows that the `#` is what hides it.
+_HASH_LINE_GAP_CONTROL = [c.replace("\n# '''", "\nx '''") for c in _HASH_LINE_GAP]
+
+
+_INTERPRETER_BRANCH_VARIABLES = (
+    "git_valued_opts ip_head ip_words ip_end ip_names ip_eval ip_stdin ip_src ip_q "
+    "ip_lit ip_par ip_plus ip_bc1 ip_bc ip_idc ip_sub ip_sep ip_bare ip_val ip_unit "
+    "ip_argv"
+).split()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 -c \"import os; os.system('git push')\"",  # detected: reaches the end
+        "python3 -c \"print('push')\"",  # not a push: returns from the middle
+        "git push origin main",  # never reaches the interpreter branch
+    ],
+    ids=["interpreter-push", "interpreter-no-push", "shell-push"],
+)
+def test_the_new_variables_do_not_leak_into_the_shell_that_sources_the_library(
+    git_repo, command
+):
+    """The adapters source the library and call hook_push_review_run in their own shell.
+
+    The function says its new variables are `local` (the older ones are deliberately global),
+    and the git global-option list the argv match reads is one of them: it used to be
+    assigned without a declaration and stayed set in the adapter after every call.
+    """
+    script = (
+        '. "$1" || exit 99\n'
+        'hook_push_review_run "$2" "$3" >/dev/null 2>&1\n'
+        'for v in "${@:4}"; do declare -p "$v" >/dev/null 2>&1 && echo "$v"; done\n'
+        "exit 0\n"
+    )
+    res = subprocess.run(
+        [
+            "bash",
+            "-c",
+            script,
+            "bash",
+            str(REPO_ROOT / ".claude/hooks/_push_review_common.sh"),
+            payload(command),
+            command,
+            *_INTERPRETER_BRANCH_VARIABLES,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=git_repo,
+    )
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.split() == [], f"left set in the caller's shell: {res.stdout}"
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("command", _HASH_LINE_GAP)
+def test_known_gap_a_hash_line_inside_a_multiline_string_hides_an_interpreter_push(
+    shell_env, git_repo, variant, hook, command
+):
+    """KNOWN GAP, pinned on purpose: these pushes are NOT detected and run unconfirmed.
+
+    A line that starts with `#` inside a triple-quoted string is data, but the interpreter
+    check drops it as a comment, and the push on it goes with it. Nothing here is a
+    behaviour to rely on: when the check can tell a comment from a string line, flip this
+    to `_assert_push_detected` and update the README's known gaps.
+    """
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_not_detected(res, variant, command)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("command", _HASH_LINE_GAP_CONTROL)
+def test_the_hash_line_gap_needs_the_hash_the_same_code_without_it_asks(
+    shell_env, git_repo, variant, hook, command
+):
+    """Control for the known gap above: the same code with `x` for the `#` is detected."""
+    res = shell_env.run(hook, stdin=payload(command), cwd=git_repo)
+    _assert_push_detected(res, variant, command)
+
+
+# The interpreter branch reads the whole command with extended regexes that carry nested
+# repetitions: the commands it sees are not bounded by the 4000-character cap that guards
+# the quote scan. `test_large_interpreter_command_stays_cheap` pads with one long word, which
+# runs none of those repetitions. These are the shapes that do: many words before `-c`
+# (the interpreter gate), and one long argv list whose elements are bare expressions, calls,
+# `-C` options with expression values, or a `+` chain (the argv match). Each one is built so
+# the match fails only at the very end (a quiet command) or succeeds only there (a loud one),
+# so a pattern that backtracks pays for every element.
+#
+# The bound is loose on purpose (a shared CI runner is noisy; this asserts an algorithmic
+# class): the commands are ~60-100KB, a linear run takes tens of milliseconds, and a
+# pattern that goes quadratic or worse takes tens of seconds.
+_INTERPRETER_BUDGET_SECONDS = 5.0
+_INTERPRETER_UNITS = 4000
+
+
+def _argv_command(unit, closer, lead=""):
+    """`['git'` + lead + unit x N + closer + `])`: N elements, then the one that decides."""
+    head = "python3 -c \"print('push'); subprocess.run(['git'"
+    return head + lead + unit * _INTERPRETER_UNITS + closer + '])"'
+
+
+_INTERPRETER_SHAPES = {
+    "comma-run": (
+        _argv_command(", a", ", 'stash'"),
+        _argv_command(", a", ", 'push'"),
+    ),
+    "spaced-run": (
+        _argv_command(" , a + b ", ", 'stash'"),
+        _argv_command(" , a + b ", ", 'push'"),
+    ),
+    "subscript-run": (
+        _argv_command(", cfg['a'][0]['b']", ", 'stash'"),
+        _argv_command(", cfg['a'][0]['b']", ", 'push'"),
+    ),
+    "nested-call-run": (
+        _argv_command(", f(g(a), h(b))", ", 'stash'"),
+        _argv_command(", f(g(a), h(b))", ", 'push'"),
+    ),
+    "dash-C-expression-run": (
+        _argv_command(", '-C', os.path.join(a, 'b') + 'c'", ", 'stash'"),
+        _argv_command(", '-C', os.path.join(a, 'b') + 'c'", ", 'push'"),
+    ),
+    "one-long-C-value": (
+        _argv_command("a+", "b, 'stash'", lead=", '-C', "),
+        _argv_command("a+", "b, 'push'", lead=", '-C', "),
+    ),
+    "plus-chain": (
+        "python3 -c \"print('push'); subprocess.run(['git']"
+        + " + a" * _INTERPRETER_UNITS
+        + " + ['stash'])\"",
+        "python3 -c \"print('push'); subprocess.run(['git']"
+        + " + a" * _INTERPRETER_UNITS
+        + " + ['push'])\"",
+    ),
+    "words-before-the-code-flag": (
+        "python3 " + "a " * _INTERPRETER_UNITS + "-c \"print('push')\"",
+        "python3 "
+        + "a " * _INTERPRETER_UNITS
+        # an argv list, not `os.system('git push')`: past the 4000-character cap the quote
+        # scan is replaced by one that keeps quoted text, and the shell-level check would
+        # find that string before the interpreter branch ever ran.
+        + "-c \"import subprocess; subprocess.run(['git','push'])\"",
+    ),
+}
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("shape", sorted(_INTERPRETER_SHAPES))
+def test_a_long_interpreter_argv_list_stays_cheap(
+    shell_env, git_repo, variant, hook, shape
+):
+    quiet, loud = _INTERPRETER_SHAPES[shape]
+
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin=payload(quiet), cwd=git_repo)
+    quiet_elapsed = time.monotonic() - started
+    _assert_push_not_detected(res, variant, shape)
+
+    started = time.monotonic()
+    res = shell_env.run(hook, stdin=payload(loud), cwd=git_repo)
+    loud_elapsed = time.monotonic() - started
+    _assert_push_detected(res, variant, shape)
+
+    assert quiet_elapsed < _INTERPRETER_BUDGET_SECONDS, (shape, quiet_elapsed)
+    assert loud_elapsed < _INTERPRETER_BUDGET_SECONDS, (shape, loud_elapsed)
+
+
 # Detection parity above says both variants decide the SAME. It says nothing about what
 # deciding COSTS. Two guards keep it cheap in both copies: an early "no `push` substring
 # => exit 0" short-circuit, and a fast path that skips the character-at-a-time
