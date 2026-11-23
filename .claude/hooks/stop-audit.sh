@@ -1,6 +1,12 @@
 #!/bin/bash
 # Claude Code Stop hook: 変更ファイルにデバッグ文が残っていないか最終監査する。
 # 残留があれば decision:block で Claude に修正を促す。
+#
+# 見るのは「作業ツリーが HEAD に対して追加した行」だけ (hook_git_added_lines,
+# _hook_common.sh)。未追跡・新規ファイルは全行が追加なので全体を見る。ファイル全体を
+# 見ると、コミット済みの正当な console.log (CLI の出力、ロガー) があるだけで、その
+# ファイルが dirty の間は毎ターン block してしまう。対象は .js/.jsx/.ts/.tsx に加えて
+# .mjs/.cjs/.mts/.cts/.vue と、Python の .py。
 # stop_hook_active が true の場合(block からの継続)は無限ループ防止のため即終了。
 #
 # 意図的に `set -e` は使わない: このフックは fail-open 設計であり、監査自体が
@@ -19,7 +25,8 @@ input=$(cat)
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_hook_common.sh
 . "$HOOK_DIR/_hook_common.sh"
-if ! declare -F hook_git_changed_files >/dev/null 2>&1; then
+if ! declare -F hook_git_changed_files >/dev/null 2>&1 ||
+  ! declare -F hook_git_added_lines >/dev/null 2>&1; then
   echo "stop-audit: could not load _hook_common.sh from ${HOOK_DIR:-<unresolved>}; debug-statement audit skipped" >&2
   exit 0
 fi
@@ -94,7 +101,7 @@ while IFS= read -r -d '' f; do
   path="$repo_root/$f"
   [ -f "$path" ] || continue
   case "$f" in
-  *.js | *.jsx | *.ts | *.tsx)
+  *.js | *.jsx | *.ts | *.tsx | *.mjs | *.cjs | *.mts | *.cts | *.vue)
     # 直前除外は識別子文字 (英数字) のみとし `.` は含めない: `window.console.log(`
     # は window.console === console (ブラウザのグローバル) を指す実行可能な
     # デバッグ文なので検出対象にする。`myconsole.log(` のように console が
@@ -113,10 +120,10 @@ while IFS= read -r -d '' f; do
     # ロケールでは非 ASCII の文字が [:alnum:] に入らないので、`日本語console.log(` の
     # ように非 ASCII の文字が密着した形も境界ありとして拾う (過検出の方向だけ。JS では
     # 別の識別子だが、実在のコードではまれなので許容する)。
-    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
+    hits=$(hook_git_added_lines "$repo_root" "$f" | LC_ALL=C grep -E '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' 2>/dev/null | head -5 | cut_hit)
     ;;
   *.py)
-    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
+    hits=$(hook_git_added_lines "$repo_root" "$f" | LC_ALL=C grep -E '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' 2>/dev/null | head -5 | cut_hit)
     ;;
   *)
     hits=""

@@ -33,11 +33,14 @@ cat >"$payload"
 # 終了コードは `|| rc=$?` で受ける。`if ! cmd; then echo $?` の `$?` は否定した
 # 結果 (常に 0) で、本当の終了コードが報告されない。
 format_rc=0
-bash "$HOOK_DIR/auto-format.sh" <"$payload" || format_rc=$?
+# 中の 2 つも /bin/bash -p で起動する。settings.json の -p は外側の bash にしか効かず、
+# BASH_ENV と BASH_FUNC_*%% は環境に残るので、-p の無い bash はそれを読む。PATH の
+# bash (/opt/homebrew/bin はユーザーが書ける) も使わない。
+/bin/bash -p "$HOOK_DIR/auto-format.sh" <"$payload" || format_rc=$?
 if [ "$format_rc" -ne 0 ]; then
   echo "format-then-lint.sh: auto-format.sh exited $format_rc (continuing to lint)" >&2
 fi
 
 # 最後に実行されるコマンドなので、lint.sh の終了コード (0 か 2) が
 # そのままこのフックの終了コードになる。ゲートの判定を握り潰さない。
-bash "$HOOK_DIR/lint.sh" <"$payload"
+/bin/bash -p "$HOOK_DIR/lint.sh" <"$payload"

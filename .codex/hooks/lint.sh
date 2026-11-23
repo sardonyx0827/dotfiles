@@ -82,6 +82,8 @@ ALL_ERRORS=""
 FAILED_COUNT=0
 PASSED_COUNT=0
 LAST_BASENAME=""
+LAST_PASSED_BASENAME=""
+RAN_THIS=0
 
 # パッチ内のパスは cwd 相対で入ってくるため絶対パスに直す。
 # 対象リストは NUL 区切りで受け渡す(改行を含むファイル名でも壊れないように)。
@@ -178,6 +180,9 @@ lint_file() {
   local file_errors="" base nl=$'\n'
   base=$(basename "$target")
   if hook_lint_file "$target" file_errors "$LOG_FILE" before-format; then
+    # 何も走らなかった (対象外拡張子・未導入・notice) 場合は RAN_THIS=0 を残し、
+    # 呼び出し元が「Lint Passed」に数えないようにする。
+    RAN_THIS="${HOOK_LINT_RAN:-0}"
     return 0
   fi
   ALL_ERRORS="${ALL_ERRORS}Lint errors found in ${base}:${nl}---${nl}${file_errors}---${nl}"
@@ -209,8 +214,12 @@ while IFS= read -r -d '' target; do
   fi
 
   LAST_BASENAME=$(basename "$target")
+  RAN_THIS=0
   if lint_file "$target"; then
-    PASSED_COUNT=$((PASSED_COUNT + 1))
+    if [ "$RAN_THIS" -gt 0 ]; then
+      PASSED_COUNT=$((PASSED_COUNT + 1))
+      LAST_PASSED_BASENAME="$LAST_BASENAME"
+    fi
   else
     FAILED_COUNT=$((FAILED_COUNT + 1))
   fi
@@ -230,17 +239,24 @@ if [ -n "$ALL_ERRORS" ]; then
   echo "" >&2
   # 実改行で積んだ文字列をそのまま書き出す (エスケープの解釈も置換もしない:
   # linter が引用したソース中の `\n` / `\c` を壊さない。_lint_common.sh の出力箇所の
-  # 注記を参照)。
-  printf '%s' "$ALL_ERRORS" >&2
+  # 注記を参照)。1 ファイルごとの上限 (hook_lint_file) とは別に、複数ファイル分の
+  # 合計にも上限を掛ける: 1 回の apply_patch で最大 50 ファイル、各 16KB が積み上がる。
+  # 上限が数でなければ、この合計の既定 (400 行 / 32KB) に戻す。hook_cap_output は
+  # 数でない引数を自分の既定 (200 行 / 16KB) に戻すので、それに任せると合計の上限が
+  # 1 ファイル分の上限まで縮む。
+  ALL_ERRORS=$(printf '%s' "$ALL_ERRORS" | hook_cap_output \
+    "$(hook_positive_int_or "${HOOK_LINT_TOTAL_MAX_LINES:-}" 400)" \
+    "$(hook_positive_int_or "${HOOK_LINT_TOTAL_MAX_BYTES:-}" 32768)")
+  printf '%s\n' "$ALL_ERRORS" >&2
   echo "Please fix the above issues." >&2
   exit 2 # Codexが内容を読んで自動修正を試みる
 fi
 
-# 処理対象が 1 件も無い (全対象が削除済み等で PASSED_COUNT=0) 場合のみ通知しない。
-# 対象外拡張子のファイルは hook_lint_file が pass(0) を返すため PASSED_COUNT に
-# 数えられ、linter は走っていなくても「Lint Passed」通知が出る点に注意。
+# linter が実際に走って指摘が無かったファイルだけを「Lint Passed」に数える。対象外
+# 拡張子・未導入・起動失敗 (notice) のファイルは hook_lint_file が 0 を返すが何も
+# 検査していないので、PASSED_COUNT に入れない (HOOK_LINT_RAN が 0)。
 if [ "$PASSED_COUNT" -eq 1 ]; then
-  hook_notify "Lint Passed" "$LAST_BASENAME のチェックが完了しました" 5
+  hook_notify "Lint Passed" "$LAST_PASSED_BASENAME のチェックが完了しました" 5
 elif [ "$PASSED_COUNT" -gt 1 ]; then
   hook_notify "Lint Passed" "$PASSED_COUNT 件のチェックが完了しました" 5
 fi

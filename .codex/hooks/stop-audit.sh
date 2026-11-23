@@ -1,6 +1,8 @@
 #!/bin/bash
 # Codex Stop hook: 変更ファイルにデバッグ文が残っていないか最終監査する。
 # 残留があれば exit 2 + stderr でエージェントに修正を促す(ブロック)。
+# 監査するのは HEAD に対する追加行だけ (未追跡・新規は全体)。理由と対象拡張子は
+# .claude/hooks/stop-audit.sh を参照。
 # stop_hook_active が true の場合(block からの継続)は無限ループ防止のため即終了。
 #
 # 意図的に `set -e` は使わない: このフックは fail-open 設計であり、監査自体が
@@ -17,7 +19,8 @@ input=$(cat)
 SHARED_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../.claude/hooks" 2>/dev/null && pwd)"
 # shellcheck source=../../.claude/hooks/_hook_common.sh
 . "$SHARED_DIR/_hook_common.sh"
-if ! declare -F hook_git_changed_files >/dev/null 2>&1; then
+if ! declare -F hook_git_changed_files >/dev/null 2>&1 ||
+  ! declare -F hook_git_added_lines >/dev/null 2>&1; then
   echo "stop-audit: could not load _hook_common.sh from ${SHARED_DIR:-<unresolved>}; debug-statement audit skipped" >&2
   exit 0
 fi
@@ -62,12 +65,12 @@ while IFS= read -r -d '' f; do
   path="$repo_root/$f"
   [ -f "$path" ] || continue
   case "$f" in
-  *.js | *.jsx | *.ts | *.tsx)
+  *.js | *.jsx | *.ts | *.tsx | *.mjs | *.cjs | *.mts | *.cts | *.vue)
     # console.log / debugger の境界条件と LC_ALL=C の理由は .claude/hooks/stop-audit.sh を参照。
-    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' "$path" 2>/dev/null | head -5 | cut_hit)
+    hits=$(hook_git_added_lines "$repo_root" "$f" | LC_ALL=C grep -E '(^|[^[:alnum:]])console\.log\(|(^|[^[:alnum:]_$])debugger([^[:alnum:]_$]|$)' 2>/dev/null | head -5 | cut_hit)
     ;;
   *.py)
-    hits=$(LC_ALL=C grep -nE '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' "$path" 2>/dev/null | head -5 | cut_hit)
+    hits=$(hook_git_added_lines "$repo_root" "$f" | LC_ALL=C grep -E '(^|[^[:alnum:]])breakpoint\(\)|pdb\.set_trace\(\)' 2>/dev/null | head -5 | cut_hit)
     ;;
   *)
     hits=""

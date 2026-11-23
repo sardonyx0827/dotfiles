@@ -178,3 +178,32 @@ class TestModelName:
             shell_env, base_input(shell_env, model={"display_name": "claude-opus-4-7"})
         )
         assert "Opus 4 7" in out
+
+
+class TestCostIsDataNotCode:
+    """The cost reaches awk as data; it must never be parsed as awk source."""
+
+    def test_a_hostile_cost_value_is_not_executed(self, shell_env, tmp_path):
+        # Well-formed awk once the value is pasted into the program text:
+        #   BEGIN {printf "$%.4f", 0}; BEGIN{system("touch ...")}
+        # so the old interpolation really would run it on every render.
+        marker = tmp_path / "pwned"
+        data = base_input(shell_env)
+        data["cost"] = {"total_cost_usd": f'0}}; BEGIN{{system("touch {marker}")'}
+        res = shell_env.run(SCRIPT, stdin=json.dumps(data))
+        assert res.returncode == 0
+        assert not marker.exists(), "the cost string was run as awk code"
+        assert "$0.0000" in ANSI.sub("", res.stdout)
+
+    def test_a_non_numeric_cost_renders_as_zero(self, shell_env):
+        data = base_input(shell_env)
+        data["cost"] = {"total_cost_usd": "not-a-number"}
+        out = render(shell_env, data)
+        assert "$0.0000" in out
+
+    def test_an_ordinary_cost_is_unchanged(self, shell_env):
+        data = base_input(shell_env)
+        data["cost"] = {"total_cost_usd": 0.12345}
+        assert "$0.1235" in render(shell_env, data) or "$0.1234" in render(
+            shell_env, data
+        )

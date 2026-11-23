@@ -561,3 +561,184 @@ def test_unloadable_helper_stands_the_audit_down_instead_of_failing(
     assert res.returncode == 0, (res.returncode, res.stderr)
     assert res.stdout == ""
     assert "could not load" in res.stderr, res.stderr
+
+
+# --- only lines the working tree ADDED are audited -----------------------
+# Auditing whole files made a tracked file with one legitimate console.log
+# (a CLI's output, a logger shim) block every turn it was dirty -- including
+# turns that never touched that line. The audit is about what *this* work left
+# behind, so it reads the added side of the diff against HEAD.
+
+
+def _blocked(variant, res):
+    if variant == "claude":
+        assert res.returncode == 0, res.stderr
+        return (
+            bool(res.stdout.strip()) and json.loads(res.stdout)["decision"] == "block"
+        )
+    assert res.returncode in (0, 2), res.stderr
+    return res.returncode == 2
+
+
+def _report(variant, res):
+    return json.loads(res.stdout)["reason"] if variant == "claude" else res.stderr
+
+
+def _commit_file(repo, name, text):
+    from conftest import run_git
+
+    (repo / name).write_text(text, encoding="utf-8")
+    run_git(repo, "add", name)
+    run_git(repo, "commit", "-q", "-m", f"add {name}")
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+class TestOnlyAddedLinesAreAudited:
+    def test_a_legitimate_console_log_that_was_already_there_does_not_block(
+        self, shell_env, git_repo, variant, hook
+    ):
+        _commit_file(git_repo, "cli.ts", 'console.log("usage: cli")\nconst a = 1\n')
+        (git_repo / "cli.ts").write_text(
+            'console.log("usage: cli")\nconst a = 2\n', encoding="utf-8"
+        )
+        res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+        assert not _blocked(variant, res), _report(variant, res)
+
+    def test_an_added_console_log_blocks_and_names_its_line(
+        self, shell_env, git_repo, variant, hook
+    ):
+        _commit_file(git_repo, "cli.ts", 'console.log("usage: cli")\nconst a = 1\n')
+        (git_repo / "cli.ts").write_text(
+            'console.log("usage: cli")\nconst a = 1\nconsole.log("debug")\n',
+            encoding="utf-8",
+        )
+        res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+        assert _blocked(variant, res)
+        report = _report(variant, res)
+        assert 'console.log("debug")' in report
+        assert "3:" in report, "the real line number in the file is reported"
+        assert "usage: cli" not in report, "the pre-existing line must not be quoted"
+
+    def test_a_staged_addition_still_counts_after_a_further_unstaged_edit(
+        self, shell_env, git_repo, variant, hook
+    ):
+        from conftest import run_git
+
+        _commit_file(git_repo, "cli.ts", "const a = 1\n")
+        (git_repo / "cli.ts").write_text(
+            "const a = 1\nconsole.log(1)\n", encoding="utf-8"
+        )
+        run_git(git_repo, "add", "cli.ts")
+        (git_repo / "cli.ts").write_text(
+            "const a = 2\nconsole.log(1)\n", encoding="utf-8"
+        )
+        res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+        assert _blocked(variant, res)
+
+    def test_removing_a_debug_statement_is_not_a_finding(
+        self, shell_env, git_repo, variant, hook
+    ):
+        _commit_file(git_repo, "cli.ts", "const a = 1\nconsole.log(1)\n")
+        (git_repo / "cli.ts").write_text("const a = 1\n", encoding="utf-8")
+        res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+        assert not _blocked(variant, res)
+
+    def test_a_new_file_is_still_audited_whole(
+        self, shell_env, git_repo, variant, hook
+    ):
+        (git_repo / "fresh.ts").write_text(
+            "const a = 1\nconsole.log(1)\n", encoding="utf-8"
+        )
+        res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+        assert _blocked(variant, res)
+        assert "2:" in _report(variant, res)
+
+    def test_a_colour_always_git_config_does_not_hide_the_addition(
+        self, shell_env, git_repo, variant, hook
+    ):
+        from conftest import run_git
+
+        _commit_file(git_repo, "cli.ts", "const a = 1\n")
+        run_git(git_repo, "config", "color.diff", "always")
+        run_git(git_repo, "config", "color.ui", "always")
+        (git_repo / "cli.ts").write_text(
+            "const a = 1\nconsole.log(1)\n", encoding="utf-8"
+        )
+        res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+        assert _blocked(variant, res)
+
+    def test_a_staged_rename_does_not_make_the_old_console_log_new(
+        self, shell_env, git_repo, variant, hook
+    ):
+        # `git mv` leaves the new path absent from HEAD; without rename
+        # detection every line of it reads as added.
+        from conftest import run_git
+
+        _commit_file(git_repo, "cli.ts", 'console.log("usage: cli")\nconst a = 1\n')
+        run_git(git_repo, "mv", "cli.ts", "main.ts")
+        res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+        assert not _blocked(variant, res), _report(variant, res)
+
+    def test_a_staged_rename_still_reports_what_was_added_after_it(
+        self, shell_env, git_repo, variant, hook
+    ):
+        from conftest import run_git
+
+        _commit_file(git_repo, "cli.ts", 'console.log("usage: cli")\nconst a = 1\n')
+        run_git(git_repo, "mv", "cli.ts", "main.ts")
+        (git_repo / "main.ts").write_text(
+            'console.log("usage: cli")\nconst a = 1\nconsole.log("debug")\n',
+            encoding="utf-8",
+        )
+        res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+        assert _blocked(variant, res)
+        report = _report(variant, res)
+        assert 'console.log("debug")' in report
+        assert "3:" in report
+        assert "usage: cli" not in report, report
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+@pytest.mark.parametrize("ext", ["mjs", "cjs", "mts", "cts", "vue"])
+def test_module_and_sfc_extensions_are_audited(shell_env, git_repo, variant, hook, ext):
+    (git_repo / f"app.{ext}").write_text(
+        "const a = 1\nconsole.log(a)\n", encoding="utf-8"
+    )
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    assert _blocked(variant, res), ext
+    assert f"app.{ext}" in _report(variant, res)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_a_tracked_vue_file_is_audited_on_its_added_lines_only(
+    shell_env, git_repo, variant, hook
+):
+    _commit_file(
+        git_repo, "App.vue", "<script>\nconsole.log('boot')\n</script>\n<div/>\n"
+    )
+    (git_repo / "App.vue").write_text(
+        "<script>\nconsole.log('boot')\n</script>\n<div>x</div>\n", encoding="utf-8"
+    )
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    assert not _blocked(variant, res)
+
+
+@pytest.mark.parametrize("variant,hook", VARIANTS, ids=[v[0] for v in VARIANTS])
+def test_a_tracked_file_named_like_a_glob_does_not_borrow_its_siblings_lines(
+    shell_env, git_repo, variant, hook
+):
+    # `[id].ts` (a Next.js dynamic route) read as a pathspec glob also matches
+    # `i.ts` and `d.ts`: auditing the clean `[id].ts` would be handed the
+    # sibling's added debug line and blame the wrong file.
+    (git_repo / "app").mkdir()
+    _commit_file(git_repo, "app/[id].ts", "const a = 1\n")
+    _commit_file(git_repo, "app/i.ts", "const b = 1\n")
+    (git_repo / "app" / "[id].ts").write_text("const a = 2\n", encoding="utf-8")
+    (git_repo / "app" / "i.ts").write_text(
+        "const b = 1\nconsole.log(b)\n", encoding="utf-8"
+    )
+    res = shell_env.run(hook, stdin="{}", cwd=git_repo)
+    assert _blocked(variant, res)
+    report = _report(variant, res)
+    assert "app/i.ts:" in report
+    assert "[id].ts:" not in report, report

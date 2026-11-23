@@ -48,7 +48,12 @@ BASENAME=$(basename "$FILE_PATH")
 lint_errors=""
 
 if hook_lint_file "$FILE_PATH" lint_errors "$LOG_FILE"; then
-  hook_notify "Lint Passed" "$BASENAME のチェックが完了しました" 5
+  # 指摘が無いことと「検査した」ことは別: 対象外の拡張子・linter 未導入・起動失敗
+  # (notice) のときは何も走っていないので、緑と告げない (HOOK_LINT_RAN は
+  # hook_lint_file が実際に走った linter の数を残す大域変数)。
+  if [ "${HOOK_LINT_RAN:-0}" -gt 0 ]; then
+    hook_notify "Lint Passed" "$BASENAME のチェックが完了しました" 5
+  fi
   exit 0
 fi
 

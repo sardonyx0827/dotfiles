@@ -8,7 +8,7 @@
 #   {
 #     "statusLine": {
 #       "type": "command",
-#       "command": "bash ~/.claude/statusline-command.sh"
+#       "command": "/bin/bash -p ~/.claude/statusline-command.sh"
 #     }
 #   }
 # =============================================================================
@@ -109,7 +109,11 @@ fi
 
 # --- コスト (JSON から直接取得) ---
 cost_raw=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
-cost_str=$(awk "BEGIN {printf \"\$%.4f\", $cost_raw}")
+# 値は ENVIRON 経由で awk に渡す。awk のソースに文字列を埋め込むと、JSON の値が
+# `0); system("...")` のような文字列だったときに、statusline の描画のたびに任意の
+# コマンドが走る (-v も `\n` 等のエスケープを解釈するので ENVIRON を使う)。数値で
+# なければ awk が 0 として扱う。
+cost_str=$(COST_RAW="$cost_raw" awk 'BEGIN { printf "$%.4f", ENVIRON["COST_RAW"] + 0 }')
 
 # --- レート制限 (5時間ウィンドウ) ---
 # キー名: five_hour / resets_at: Unix タイムスタンプ (整数)

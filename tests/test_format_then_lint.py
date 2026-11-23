@@ -134,3 +134,39 @@ def test_missing_file_is_let_through(shell_env, tmp_path):
     """Fail-open: an edit to something neither hook handles must not block."""
     res = shell_env.run(WRAPPER, stdin=_payload(tmp_path / "gone.py"))
     assert res.returncode == 0, res.stderr
+
+
+def test_the_inner_hooks_read_no_bash_env_and_import_no_function(
+    shell_env, py_target, tmp_path
+):
+    """settings.json starts this wrapper with /bin/bash -p, but -p leaves BASH_ENV
+    and BASH_FUNC_* in the environment; an inner `bash` started without -p would
+    read them. The two hooks are started with /bin/bash -p too.
+
+    The exported function is named after a command both hooks run *before* they
+    source their helpers (`dirname`, for the hook's own directory). A helper such
+    as `hook_log` would not do: sourcing _hook_common.sh defines it again, which
+    overwrites whatever an inner bash had imported, so the check would pass
+    whether or not -p was there. Only BASH_ENV and a name used earlier than the
+    sourcing can tell the two apart.
+    """
+    import subprocess
+
+    rc = tmp_path / "bash_env.sh"
+    rc.write_text("echo MARK-BASH_ENV >&2\n", encoding="utf-8")
+    env = {
+        **shell_env.env,
+        "BASH_ENV": str(rc),
+        "BASH_FUNC_dirname%%": "() { echo HIJACKED >&2; }",
+    }
+    res = subprocess.run(  # noqa: S603
+        ["/bin/bash", "-p", str(WRAPPER)],
+        input=_payload(py_target),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    assert res.returncode == 0, res.stderr
+    assert "MARK-BASH_ENV" not in res.stderr and "HIJACKED" not in res.stderr
+    assert any(c.startswith("ruff format ") for c in shell_env.calls)

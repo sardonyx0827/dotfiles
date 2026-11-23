@@ -23,10 +23,92 @@
 # この関数は「整形が実際に走って成功したか」だけを終了コードで返し、
 # それを通知に使うかどうかは wrapper が決める。
 
+# ■ プロジェクトの設定を尊重する (他人のリポジトリを既定スタイルで書き換えない)
+#
+# このフックは自分のリポジトリだけでなく、作業中のあらゆるリポジトリで走る。設定の
+# 無いリポジトリで既定スタイルの整形を掛けると、編集と無関係な差分がファイル全体に
+# 出て、他人のコードを汚す。そのため:
+#   - prettier   : 編集ファイルから git root まで遡って設定が見つかったときだけ走る
+#                  (.prettierrc* / prettier.config.* / package.json の "prettier" キー)
+#   - clang-format: .clang-format / _clang-format が見つかったときだけ走る
+#   - shfmt      : .editorconfig がインデントを決めているときはスタイルフラグを渡さない
+#                  (shfmt は `-i` 等が無いときだけ .editorconfig を読み、渡すと無視する)。
+#                  無いときは従来どおり `-i 2`
+# 設定が無くて走らなかった理由は SKIP_NOTE として DONE のログに残す。
+#
+# symlink の対象は整形しない: shfmt は symlink を通常ファイルに置き換えることを拒否し、
+# prettier も "is a symbolic link" で拒否する。拒否されて失敗するだけでなく、ログが
+# 「未導入」と誤記されるので、先に「symlink のため skipped」と明示して抜ける。
+# symlink 先を整形する案は採らない: 先が別のリポジトリや編集と無関係な場所にあると、
+# そこの設定も確認せずに書き換えることになる。
+
+# _format_prettier_config_exists <start_dir> <root_dir>
+#
+# <start_dir> から <root_dir> まで遡って prettier の設定があれば 0。package.json は
+# "prettier" キーを持つ場合だけ設定とみなす: devDependencies に prettier があるだけ
+# (ほぼ全ての prettier 導入済みプロジェクト) では設定ではなく、そこで探索も止めない
+# (monorepo は親に設定がある)。package.json は厳密な JSON なので jq で見る。
+_format_prettier_config_exists() {
+  local dir root name
+  dir=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+  root=$(cd "$2" 2>/dev/null && pwd -P) || return 1
+  while [ -n "$dir" ]; do
+    for name in .prettierrc .prettierrc.json .prettierrc.yaml .prettierrc.yml .prettierrc.json5 \
+      .prettierrc.js .prettierrc.cjs .prettierrc.mjs .prettierrc.ts .prettierrc.cts .prettierrc.mts \
+      .prettierrc.toml prettier.config.js prettier.config.cjs prettier.config.mjs \
+      prettier.config.ts prettier.config.cts prettier.config.mts; do
+      [ -f "$dir/$name" ] && return 0
+    done
+    if [ -f "$dir/package.json" ] && command -v jq >/dev/null 2>&1 &&
+      jq -e 'has("prettier")' "$dir/package.json" >/dev/null 2>&1; then
+      return 0
+    fi
+    [ "$dir" = "$root" ] && return 1
+    [ "$dir" = "/" ] && return 1
+    dir=$(dirname "$dir")
+  done
+  return 1
+}
+
+# _format_editorconfig_sets_indent <file>
+#
+# <file> から上へ、.editorconfig が (root = true で止まるまで) シェルスクリプトの
+# インデントを決めているとき 0。`[*]` / `[**]` か、sh / bash を含む節にある
+# indent_style / indent_size / tab_width だけを数える: 別言語の節 (`[*.py]`) や、
+# インデントを決めない .editorconfig (charset だけ等) を理由にスタイルフラグを外すと、
+# shfmt は既定のタブ整形に落ちて、ファイル全体を書き換えてしまう。
+_format_editorconfig_sets_indent() {
+  local dir ec
+  dir=$(cd "$(dirname "$1")" 2>/dev/null && pwd -P) || return 1
+  while [ -n "$dir" ]; do
+    ec="$dir/.editorconfig"
+    if [ -f "$ec" ]; then
+      if awk '
+        /^[[:space:]]*\[/ {
+          sect = $0
+          sub(/^[[:space:]]*\[/, "", sect)
+          sub(/\][[:space:]]*$/, "", sect)
+          ok = (sect == "*" || sect == "**" || sect ~ /(^|[^[:alnum:]])(sh|bash)([^[:alnum:]]|$)/)
+          next
+        }
+        ok && /^[[:space:]]*(indent_style|indent_size|tab_width)[[:space:]]*[=:]/ { found = 1 }
+        END { exit(found ? 0 : 1) }
+      ' "$ec" 2>/dev/null; then
+        return 0
+      fi
+      grep -qiE '^[[:space:]]*root[[:space:]]*=[[:space:]]*true' "$ec" 2>/dev/null && return 1
+    fi
+    [ "$dir" = "/" ] && return 1
+    dir=$(dirname "$dir")
+  done
+  return 1
+}
+
 # hook_format_file <file> <log_file>
 #
 # 1 ファイルを整形する。フォーマッターが実行され成功したら 0、未導入・対象外
-# 拡張子・失敗なら 1 を返す(いずれも「フックとしては正常」であることに注意)。
+# 拡張子・設定が無い・symlink・失敗なら 1 を返す(いずれも「フックとしては正常」で
+# あることに注意)。
 
 hook_format_file() {
   local FILE_PATH="$1"
@@ -37,9 +119,18 @@ hook_format_file() {
   local FORMATTED=false # フォーマッターが実際に実行され、かつ成功したか
   local err
   local PRETTIER_BIN PROJECT_ROOT
+  local SKIP_NOTE="" shfmt_args=()
 
   hook_log "$hook_log_file" "--- format start: $FILE_PATH ---"
   echo "Auto-formatting: $BASENAME"
+
+  # symlink は整形しない (理由は上の「プロジェクトの設定を尊重する」節)。ここで抜けないと、
+  # 下の DONE が「未導入か対象外拡張子」と書いて、診断を誤らせる。
+  if [ -L "$FILE_PATH" ]; then
+    echo "  Skipped (symlink): formatters refuse to replace a symlink"
+    hook_log "$hook_log_file" "DONE: $BASENAME (skipped (symlink): not formatted; the target of the link is not touched)"
+    return 1
+  fi
 
   case "$EXTENSION" in
   # JavaScript/TypeScript/JSON/CSS/HTML/Markdown
@@ -60,13 +151,18 @@ hook_format_file() {
       PRETTIER_BIN="prettier"
     fi
     if [ -n "$PRETTIER_BIN" ]; then
-      echo "  Running Prettier ($PRETTIER_BIN)..."
-      if err=$("$PRETTIER_BIN" --write "$FILE_PATH" 2>&1); then
-        echo "  Prettier completed"
-        FORMATTED=true
+      if _format_prettier_config_exists "$(dirname "$FILE_PATH")" "$PROJECT_ROOT"; then
+        echo "  Running Prettier ($PRETTIER_BIN)..."
+        if err=$("$PRETTIER_BIN" --write "$FILE_PATH" 2>&1); then
+          echo "  Prettier completed"
+          FORMATTED=true
+        else
+          echo "  Prettier failed" >&2
+          [ -n "$err" ] && echo "$err" >&2
+        fi
       else
-        echo "  Prettier failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
+        echo "  Prettier skipped: no prettier config found up to $PROJECT_ROOT"
+        SKIP_NOTE="skipped: no prettier config (.prettierrc*, prettier.config.*, package.json \"prettier\") up to $PROJECT_ROOT"
       fi
     else
       echo "  Prettier not found, skipping JS/TS formatting"
@@ -186,13 +282,20 @@ hook_format_file() {
   # C/C++
   c | cpp | cc | cxx | h | hpp)
     if command -v clang-format >/dev/null 2>&1; then
-      echo "  Running clang-format..."
-      if err=$(clang-format -i "$FILE_PATH" 2>&1); then
-        echo "  clang-format completed"
-        FORMATTED=true
+      PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
+      [ -z "$PROJECT_ROOT" ] && PROJECT_ROOT=$(dirname "$FILE_PATH")
+      if [ -n "$(hook_find_nearest_file "$(dirname "$FILE_PATH")" "$PROJECT_ROOT" .clang-format _clang-format)" ]; then
+        echo "  Running clang-format..."
+        if err=$(clang-format -i "$FILE_PATH" 2>&1); then
+          echo "  clang-format completed"
+          FORMATTED=true
+        else
+          echo "  clang-format failed" >&2
+          [ -n "$err" ] && echo "$err" >&2
+        fi
       else
-        echo "  clang-format failed" >&2
-        [ -n "$err" ] && echo "$err" >&2
+        echo "  clang-format skipped: no .clang-format / _clang-format found up to $PROJECT_ROOT"
+        SKIP_NOTE="skipped: no .clang-format / _clang-format up to $PROJECT_ROOT"
       fi
     else
       echo "  clang-format not found"
@@ -234,8 +337,15 @@ hook_format_file() {
   # Shell scripts
   sh | bash)
     if command -v shfmt >/dev/null 2>&1; then
+      # .editorconfig がインデントを決めているときは、スタイルフラグを渡さず shfmt に
+      # 読ませる (`-i 2` を渡すと .editorconfig は無視される)。無いときは従来どおり 2。
+      shfmt_args=(-i 2)
+      if _format_editorconfig_sets_indent "$FILE_PATH"; then
+        shfmt_args=()
+        echo "  .editorconfig sets the indent; shfmt reads it"
+      fi
       echo "  Running shfmt..."
-      if err=$(shfmt -i 2 -w "$FILE_PATH" 2>&1); then
+      if err=$(shfmt "${shfmt_args[@]}" -w "$FILE_PATH" 2>&1); then
         echo "  shfmt completed"
         FORMATTED=true
       else
@@ -257,6 +367,8 @@ hook_format_file() {
   # (でないと「DONE なのに整形されていない」が診断不能になる)。
   if $FORMATTED; then
     hook_log "$hook_log_file" "DONE: $BASENAME (formatted)"
+  elif [ -n "$SKIP_NOTE" ]; then
+    hook_log "$hook_log_file" "DONE: $BASENAME ($SKIP_NOTE)"
   else
     hook_log "$hook_log_file" "DONE: $BASENAME (フォーマッター未実行: 未導入か対象外拡張子)"
   fi

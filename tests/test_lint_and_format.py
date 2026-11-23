@@ -218,10 +218,14 @@ class TestLint:
     def test_notify_uses_env_indirection_not_interpolation(
         self, LINT, shell_env, tmp_path
     ):
+        # The file has to be one a linter actually runs on: a file nothing
+        # checked is no longer announced as "Lint Passed" (TestLintPassedOnlyWhenSomethingRan
+        # in test_lint_hardening.py), so a `.xyz` name would never reach notify().
         (shell_env.stub_bin / "terminal-notifier").unlink()
+        shell_env.stub("shellcheck")
         env = _env_without_real_terminal_notifier(shell_env)
-        target = tmp_path / 'evil".xyz'
-        target.write_text("whatever\n", encoding="utf-8")
+        target = tmp_path / 'evil".sh'
+        target.write_text("echo hi\n", encoding="utf-8")
         res = _run_with_env(LINT, payload(target), env)
         assert res.returncode == 0
         osascript_calls = [c for c in shell_env.calls if c.startswith("osascript ")]
@@ -804,7 +808,14 @@ echo "$out"
         # the borrow checker, which plain `cargo check` already rejects. It
         # pins the compile-failure path only -- the lints clippy exists to find
         # are the sibling test below.
-        shell_env.stub("cargo", body='echo "error: borrow of moved value"', exit_code=0)
+        # Diagnostics arrive as `--message-format=short` lines, one per
+        # finding, and only those about the edited file count (see
+        # TestClippyIsScopedToTheEditedFile in test_lint_hardening.py).
+        shell_env.stub(
+            "cargo",
+            body='echo "x.rs:1:1: error[E0505]: borrow of moved value"',
+            exit_code=0,
+        )
         (git_repo / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
         target = git_repo / "x.rs"
         target.write_text("fn main() {}\n", encoding="utf-8")
@@ -819,7 +830,7 @@ echo "$out"
         # clippy lint is waved through while the hook reports success.
         shell_env.stub(
             "cargo",
-            body='echo "warning: this expression creates a reference which is'
+            body='echo "x.rs:1:1: warning: this expression creates a reference which is'
             ' immediately dereferenced by the compiler"',
             exit_code=0,
         )
@@ -1373,6 +1384,22 @@ FORMATTERS = [
 ]
 
 
+def _with_project_config(tool: str, directory: Path) -> None:
+    """Give `directory` the config a formatter needs before it will run.
+
+    prettier and clang-format only run where the project configured them (see
+    TestPrettierNeedsAProjectConfig / TestClangFormatNeedsAProjectConfig in
+    test_lint_hardening.py); the dispatch tests here are about WHICH tool an
+    extension reaches, so they start from a configured project.
+    """
+    if tool == "prettier":
+        (directory / ".prettierrc").write_text("{}\n", encoding="utf-8")
+    elif tool == "clang-format":
+        (directory / ".clang-format").write_text(
+            "BasedOnStyle: LLVM\n", encoding="utf-8"
+        )
+
+
 @pytest.mark.parametrize("FORMAT", [CLAUDE_FORMAT], ids=["claude"])
 class TestAutoFormatMatrix:
     """Characterization of auto-format.sh's per-language dispatch table.
@@ -1388,6 +1415,7 @@ class TestAutoFormatMatrix:
         self, FORMAT, shell_env, tmp_path, ext, tool, argv_prefix
     ):
         shell_env.stub(tool)
+        _with_project_config(tool, tmp_path)
         target = tmp_path / f"x.{ext}"
         target.write_text("content\n", encoding="utf-8")
         res = shell_env.run(FORMAT, stdin=payload(target))
@@ -1405,6 +1433,7 @@ class TestAutoFormatMatrix:
         # auto-format is fail-open by design: a formatter blowing up must not
         # take the hook -- or the user's edit -- down with it.
         shell_env.stub(tool, body='echo "boom" >&2', exit_code=1)
+        _with_project_config(tool, tmp_path)
         target = tmp_path / f"x.{ext}"
         target.write_text("content\n", encoding="utf-8")
         res = shell_env.run(FORMAT, stdin=payload(target))
@@ -1484,6 +1513,7 @@ class TestAutoFormat:
         unformatted -- silent fail-open, not merely the wrong version.
         """
         shell_env.hide("prettier")
+        _with_project_config("prettier", git_repo)
         local_bin = git_repo / "node_modules" / ".bin"
         local_bin.mkdir(parents=True)
         local_prettier = local_bin / "prettier"
@@ -1507,6 +1537,7 @@ class TestAutoFormat:
         # A project-local prettier must win over one merely on PATH, so the
         # file is formatted with the project's pinned version/plugins.
         shell_env.stub("prettier", body='echo "from PATH"', exit_code=0)
+        _with_project_config("prettier", git_repo)
         local_bin = git_repo / "node_modules" / ".bin"
         local_bin.mkdir(parents=True)
         local_prettier = local_bin / "prettier"
@@ -1530,6 +1561,7 @@ class TestAutoFormat:
         # Mirror of the ESLint monorepo case: prettier lives only in the
         # package, no root node_modules and nothing on PATH.
         shell_env.hide("prettier")
+        _with_project_config("prettier", git_repo)
         pkg = git_repo / "packages" / "web"
         pkg.mkdir(parents=True)
         local_bin = pkg / "node_modules" / ".bin"
@@ -1554,6 +1586,7 @@ class TestAutoFormat:
     ):
         # Mirror of test_nearest_eslint_wins_over_root_eslint: with a local
         # prettier at both the package and the git root, the nearer wins.
+        _with_project_config("prettier", git_repo)
         pkg = git_repo / "packages" / "web"
         pkg.mkdir(parents=True)
 
@@ -1593,6 +1626,7 @@ class TestAutoFormat:
         # only the edited file's own directory is checked locally before
         # falling back to PATH.
         shell_env.hide("prettier")
+        _with_project_config("prettier", tmp_path)
         local_bin = tmp_path / "node_modules" / ".bin"
         local_bin.mkdir(parents=True)
         local_prettier = local_bin / "prettier"
@@ -1732,6 +1766,7 @@ class TestCodexAutoFormat:
         # gitignored so the stub binary itself is never swept up as a format
         # target.
         shell_env.hide("prettier")
+        _with_project_config("prettier", git_repo)
         (git_repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
         local_bin = git_repo / "node_modules" / ".bin"
         local_bin.mkdir(parents=True)
@@ -1865,6 +1900,13 @@ class TestLintHelperOutputVarGuard:
             "tsc_sep",
             "tsc_path",
             "nl",
+            # Added with the launcher / timeout / Docker work: the `_l_` family
+            # is matched by prefix, the two HOOK_LINT_* globals by name.
+            "_l_status",
+            "_l_cfg",
+            "_l_args",
+            "HOOK_LINT_RAN",
+            "HOOK_LINT_LAST_RC",
         ],
     )
     def test_a_colliding_output_variable_is_rejected(self, shell_env, tmp_path, name):

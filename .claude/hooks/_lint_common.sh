@@ -39,6 +39,12 @@
 # スタブはツールの実出力から起こすこと。error 形状の出力しかスタブしないと、
 # コードが既に正しく扱えるケースだけを固定することになり、カバレッジは
 # 何の防波堤にもならない。
+#
+# Dockerfile / Containerfile (hadolint) と compose ファイル (`docker compose config`)
+# も扱う。どちらもファイル名で振り分けるので、拡張子の分岐より前に basename で決める。
+# tests/test_lint_hardening.py が、起動できない linter の扱い、tsc の tsconfig 解決、
+# mypy / clippy の編集ファイルへの絞り込み、時間切れ、出力の上限、フォーマッタの設定の
+# 尊重、symlink のスキップ、Docker の各契約を固定している。
 
 # _go_dir_has_analyzable_package <dir>
 #
@@ -83,11 +89,332 @@ _go_dir_has_analyzable_package() {
   esac
 }
 
+# ■ 「起動できなかった」と「指摘があった」を分ける (_lint_exec)
+#
+# 全ての linter 呼び出しは _lint_exec を通り、結果は 4 つに分かれる:
+#   0  成功                 (終了コード 0)
+#   1  指摘あり             (終了コード非 0。呼び出し側が出力を指摘として積む)
+#   10 起動できなかった      (126 / 127、または pyenv / rustup 等ランチャーの定型文)
+#   11 時間切れ             (hook_run_timeout が 124 を返した)
+# 10 / 11 は「notice」としてログに残すだけで、指摘にはしない。pyenv shim の
+# `command not found` や rustup の「toolchain 未選択」を exit 2 でエージェントに返すと、
+# 受け取った側には直せない内容 (環境の問題) で編集がブロックされる。
+#
+# 起動失敗の判定は意図的に狭い: 終了コード 126/127 と、行頭から始まるランチャーの
+# 定型文だけ。それ以外の非 0 (checkstyle の「設定が読めない」255 など) は従来どおり
+# 指摘として扱う — 判定を広げると「ツールが動かなかった = 緑」で、このファイル冒頭が
+# 戒めている壊れ方になる (test_grep_linter_invocation_failure_blocks /
+# test_tsc_launch_failure_is_not_a_pass がそれを固定している)。定型文を行頭に限るのは、
+# linter が引用したソース中の文言に誤反応しないため。
+#
+# hook_lint_file は呼び出しごとに、実際に走った linter の数を HOOK_LINT_RAN に、最後
+# に走ったコマンドの終了コードを HOOK_LINT_LAST_RC に残す (どちらも大域変数)。
+# 呼び出し元は HOOK_LINT_RAN が 0 のとき (対象外拡張子・未導入・notice だけ) に
+# 「Lint Passed」を通知してはならない: 何も検査していないのに緑と告げることになる。
+
+# _lint_tool_unavailable <exit_status> <output>
+#
+# ツールが「起動できなかった」ことを示すとき 0 を返す。判定の狭さの理由は上記。
+_lint_tool_unavailable() {
+  local rc="$1" out="$2"
+  case "$rc" in
+  126 | 127) return 0 ;;
+  esac
+  printf '%s\n' "$out" | grep -qE \
+    -e '^(pyenv|rbenv|nodenv|jenv|goenv|phpenv): .*(command not found|is not installed)' \
+    -e '^(asdf: No (preset )?version|No version is set for command |mise .*No version is set)' \
+    -e '^error: (rustup could not choose a version|no override and no default toolchain|no such command: .clippy)' \
+    -e "^error: .*is not installed for the toolchain" \
+    -e '^(The operation couldn.t be completed\. )?Unable to locate a Java Runtime' \
+    -e '^xcrun: error: invalid active developer path' \
+    -e "^docker: .*is not a docker command"
+}
+
+# _lint_timeout <NAME> <default_seconds>
+#
+# HOOK_LINT_TIMEOUT_<NAME> が 0 より大きい数 (_hook_positive_number) ならそれを、
+# 無い・数でない (`00` `.` `1.2.3` `abc` `0` `0.0`) なら既定の秒数を標準出力に書く。
+# 不正な値を timeout に渡すと 125 が返って指摘になり、純 bash のフォールバックでは
+# ツールが開始直後に殺される。かといって打ち切りなしで走らせると、止まらないツールが
+# 編集のたびにフックを待たせる。だから「そのツールの既定の秒数」に戻す。
+# `0` は「制限なし」にはならない (_lint_exec の第 1 引数の 0 は呼び出し側が直接
+# 書くもので、環境変数からは来ない)。
+_lint_timeout() {
+  local var="HOOK_LINT_TIMEOUT_$1"
+  if _hook_positive_number "${!var:-}"; then
+    printf '%s' "${!var}"
+  else
+    printf '%s' "$2"
+  fi
+}
+
+# _lint_exec <timeout_secs|0> <tool> <log_file> <out_var> <cwd|.> <command> [args...]
+#
+# <command> を (必要なら <cwd> へ移って、<timeout_secs> 秒で打ち切って) 実行し、
+# stdout+stderr を <out_var> に入れる。戻り値は上の 0 / 1 / 10 / 11。10 / 11 は
+# ここでログに notice を残す。<out_var> は呼び出し元のローカル (OUTPUT) を指すこと:
+# printf -v は動的スコープで最も内側の同名変数に書くので、この関数は _l_ 接頭辞の
+# ローカルしか持たない。
+#
+# cwd の変更は呼び出し元のシェルを動かさないよう、サブシェル (または timeout 下の
+# bash -c) の中で行う。_lint_exec 自体は `$(...)` の中で呼ばないこと: HOOK_LINT_RAN
+# の更新が親シェルに届かなくなる。
+_lint_exec() {
+  local _l_secs="$1" _l_tool="$2" _l_log="$3" _l_var="$4" _l_cwd="$5" _l_out _l_rc _l_head
+  shift 5
+  if [ "$_l_cwd" = "." ]; then
+    if [ "$_l_secs" != 0 ]; then
+      _l_out=$(hook_run_timeout "$_l_secs" "$@" 2>&1)
+    else
+      _l_out=$("$@" 2>&1)
+    fi
+  else
+    if [ "$_l_secs" != 0 ]; then
+      # /bin/bash -p: PATH の bash を使わず、BASH_ENV と環境の関数を読まない
+      # (format-then-lint.sh の中の起動と同じ理由)。
+      # shellcheck disable=SC2016 # $1 / $@ are for the inner bash, not this shell
+      _l_out=$(hook_run_timeout "$_l_secs" /bin/bash -p -c 'cd "$1" || exit 127; shift; exec "$@"' _lint_cd "$_l_cwd" "$@" 2>&1)
+    else
+      _l_out=$(
+        cd "$_l_cwd" 2>/dev/null || exit 127
+        "$@" 2>&1
+      )
+    fi
+  fi
+  _l_rc=$?
+  printf -v "$_l_var" '%s' "$_l_out"
+  HOOK_LINT_LAST_RC="$_l_rc"
+  if [ "$_l_secs" != 0 ] && [ "$_l_rc" -eq 124 ]; then
+    hook_log "$_l_log" "NOTICE: $_l_tool timed out after ${_l_secs}s; skipped"
+    return 11
+  fi
+  if [ "$_l_rc" -ne 0 ] && _lint_tool_unavailable "$_l_rc" "$_l_out"; then
+    _l_head=$(printf '%s\n' "$_l_out" | head -n 1 | cut -c1-120)
+    hook_log "$_l_log" "NOTICE: $_l_tool unavailable (could not start, exit $_l_rc): $_l_head; skipped"
+    return 10
+  fi
+  HOOK_LINT_RAN=$((HOOK_LINT_RAN + 1))
+  [ "$_l_rc" -eq 0 ] && return 0
+  return 1
+}
+
+# _lint_lines_for_file <file> <cwd>
+#
+# 標準入力の各行のうち、先頭の `パス:` が <file> と同じファイルを指すものだけを
+# 標準出力に書く。mypy (`path:line: error:`) と cargo clippy --message-format=short
+# (`path:line:col: warning:`) の出力を編集ファイル分に絞るために使う。
+# 比較は綴りではなく -ef (device + inode): ツールが相対パスや symlink 経由の見かけの
+# パスで報告しても、同じファイルなら一致する。綴りの比較にすると診断が黙って消え、
+# 「見つけたのに通す」になる (tsc の同名ファイル照合と同じ理由)。相対パスは <cwd> 基準。
+_lint_lines_for_file() {
+  local _l_f="$1" _l_dir="$2" _l_line _l_p
+  while IFS= read -r _l_line; do
+    _l_p="${_l_line%%:*}"
+    [ "$_l_p" != "$_l_line" ] || continue
+    case "$_l_p" in
+    /*) ;;
+    *) _l_p="$_l_dir/$_l_p" ;;
+    esac
+    if [ -f "$_l_p" ] && [ "$_l_p" -ef "$_l_f" ]; then
+      printf '%s\n' "$_l_line"
+    fi
+  done
+  return 0
+}
+
+# --- tsconfig の解決 (tsc) ---------------------------------------------------
+#
+# tsconfig.json は JSONC (コメント・末尾カンマ可) なので jq では読めない。必要な
+# 3 つの事実 (solution-style か / references の path / include・exclude・files) だけを
+# 1 行に潰したテキストから取り出す。厳密な JSON パーサではなく best effort: 判定が
+# 付かなければ呼び出し側が notice にして、pass / fail のどちらも黙って出さない。
+
+# _lint_json_array <flattened_json> <key>
+#
+# "<key>": [ "a", "b" ] の文字列要素を 1 行ずつ書く。入れ子の配列は扱わない。
+_lint_json_array() {
+  printf '%s' "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' |
+    grep -oE '"[^"]*"' | sed -e 's/^"//' -e 's/"$//'
+}
+
+# _lint_normalize_path <path>
+#
+# `/./` と `x/../` を畳む (ファイルが存在しなくても使えるよう、cd -P ではなく文字列で)。
+_lint_normalize_path() {
+  local p q n=0
+  p=$(printf '%s' "$1" | sed -e 's#/\./#/#g' -e 's#/\.$##')
+  while [ "$n" -lt 20 ]; do
+    q=$(printf '%s' "$p" | sed 's#/[^/][^/]*/\.\./#/#')
+    [ "$q" = "$p" ] && break
+    p="$q"
+    n=$((n + 1))
+  done
+  printf '%s' "$p"
+}
+
+# _lint_tsconfig_is_solution <tsconfig>
+#
+# solution-style (`files: []` か `include: []` と `references` だけを持ち、それ自体は
+# 何も検査しない) なら 0。Vite の既定の tsconfig.json がこの形で、ルートに対する
+# `tsc --noEmit` は何も検査せず常に緑になる。
+_lint_tsconfig_is_solution() {
+  local flat
+  flat=$(tr '\n' ' ' <"$1" 2>/dev/null) || return 1
+  case "$flat" in
+  *'"references"'*) ;;
+  *) return 1 ;;
+  esac
+  printf '%s' "$flat" | grep -qE '"(files|include)"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]'
+}
+
+# _lint_tsconfig_references <tsconfig>
+#
+# references の各 path を、実在する tsconfig の絶対パスにして 1 行ずつ書く。
+# path はファイルでもディレクトリ (= その下の tsconfig.json) でもよい。
+_lint_tsconfig_references() {
+  local cfg="$1" dir flat refs ref p
+  dir=$(cd "$(dirname "$cfg")" 2>/dev/null && pwd -P) || return 0
+  flat=$(tr '\n' ' ' <"$cfg" 2>/dev/null) || return 0
+  refs=$(printf '%s' "$flat" |
+    sed -n 's/.*"references"[[:space:]]*:[[:space:]]*\[\(.*\)\].*/\1/p' |
+    grep -oE '"path"[[:space:]]*:[[:space:]]*"[^"]*"' |
+    sed -E 's/^"path"[[:space:]]*:[[:space:]]*"//; s/"$//')
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    case "$ref" in
+    /*) p="$ref" ;;
+    *) p="$dir/$ref" ;;
+    esac
+    [ -d "$p" ] && p="$p/tsconfig.json"
+    [ -f "$p" ] && printf '%s\n' "$(_lint_normalize_path "$p")"
+  done <<<"$refs"
+  return 0
+}
+
+# _lint_glob_matches <absolute_glob> <absolute_file>
+#
+# tsconfig の include / exclude の glob (`*` は `/` を越えない、`**/` は 0 個以上の
+# ディレクトリ、`?` は 1 文字) をファイルの絶対パスに当てる。末尾にパスが続いても
+# よい: tsc はディレクトリを指す include (`"src"`) を `src/**/*` として扱う。
+_lint_glob_matches() {
+  local re
+  # 文字クラスの `[` は末尾に置く: `[][.` と書くと `[.` が照合要素の開始と読まれ、BSD sed
+  # が "unbalanced brackets" で失敗する (GNU sed では通るので Linux の CI では見つからない)。
+  re=$(printf '%s' "$1" | sed -E \
+    -e 's/[].+(){}|^$\\[]/\\&/g' \
+    -e 's#\*\*/#@DSL@#g' -e 's#\*\*#@DS@#g' -e 's#\*#[^/]*#g' -e 's#\?#[^/]#g' \
+    -e 's#@DSL@#(.*/)?#g' -e 's#@DS@#.*#g')
+  # 正規表現を作れなかったときは「一致しない」。空の正規表現は何にでも一致する。
+  [ -n "$re" ] || return 1
+  printf '%s\n' "$2" | grep -qE "^${re}(/.*)?\$"
+}
+
+# _lint_tsconfig_includes <tsconfig> <file>
+#
+# <tsconfig> のプロジェクトに <file> が含まれるとき 0。`files` の完全一致、`include`
+# (無指定なら `**/*`) に当たり、かつ `exclude` と node_modules に当たらないこと。
+# `extends` 経由の include は辿らない (best effort)。
+_lint_tsconfig_includes() {
+  local cfg="$1" file="$2" dir flat abs_file files include exclude pat abs matched=false
+  dir=$(cd "$(dirname "$cfg")" 2>/dev/null && pwd -P) || return 1
+  abs_file=$(cd "$(dirname "$file")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$file")") || return 1
+  flat=$(tr '\n' ' ' <"$cfg" 2>/dev/null) || return 1
+  files=$(_lint_json_array "$flat" files)
+  include=$(_lint_json_array "$flat" include)
+  exclude=$(_lint_json_array "$flat" exclude)
+
+  while IFS= read -r pat; do
+    [ -n "$pat" ] || continue
+    abs=$(_lint_normalize_path "$dir/$pat")
+    [ "$abs" = "$abs_file" ] && return 0
+  done <<<"$files"
+
+  case "$abs_file" in
+  */node_modules/*) return 1 ;;
+  esac
+  if [ -z "$include" ] && [ -z "$files" ]; then
+    include='**/*'
+  fi
+  while IFS= read -r pat; do
+    [ -n "$pat" ] || continue
+    abs=$(_lint_normalize_path "$dir/$pat")
+    if _lint_glob_matches "$abs" "$abs_file"; then
+      matched=true
+      break
+    fi
+  done <<<"$include"
+  $matched || return 1
+  while IFS= read -r pat; do
+    [ -n "$pat" ] || continue
+    abs=$(_lint_normalize_path "$dir/$pat")
+    _lint_glob_matches "$abs" "$abs_file" && return 1
+  done <<<"$exclude"
+  return 0
+}
+
+# _lint_pick_tsconfig_project <solution_tsconfig> <file>
+#
+# solution-style の references のうち、<file> を含む最初のプロジェクトの tsconfig を
+# 標準出力に書いて 0 を返す。どれも含まなければ何も書かず 1 を返す。
+_lint_pick_tsconfig_project() {
+  local ref
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    if _lint_tsconfig_includes "$ref" "$2"; then
+      printf '%s' "$ref"
+      return 0
+    fi
+  done < <(_lint_tsconfig_references "$1")
+  return 1
+}
+
+# --- compose の判定 ----------------------------------------------------------
+
+# _lint_compose_environment_error <output>
+#
+# `docker compose config` の失敗が「compose ファイルの指摘」ではなく環境の問題
+# (env_file が無い・daemon に繋がらない・プラグイン未導入・認証ヘルパー・コンテキスト)
+# のとき 0。これらはエージェントが編集で直せないので notice にする。
+_lint_compose_environment_error() {
+  printf '%s\n' "$1" | grep -qiE \
+    -e 'env file .* not found' \
+    -e 'no such file or directory' \
+    -e 'cannot connect to the docker daemon' \
+    -e 'error during connect' \
+    -e 'permission denied' \
+    -e 'is the docker daemon running' \
+    -e 'is not a docker command' \
+    -e 'unknown (shorthand )?flag' \
+    -e 'error getting credentials' \
+    -e 'context .* (not found|does not exist)' \
+    -e 'executable file not found'
+}
+
+# _lint_compose_partial_error <output>
+#
+# override / 環境別ファイル (compose.override.yml, compose.prod.yml) は base と合成して
+# 使う前提の断片で、単体で `config` に掛けると「image も build も無い」「未定義の
+# サービスに依存」と言われる。それは編集の指摘ではない。
+_lint_compose_partial_error() {
+  printf '%s\n' "$1" | grep -qiE \
+    -e 'neither an image nor a build context' \
+    -e 'depends on undefined service' \
+    -e 'refers to undefined (service|volume|network|secret|config)' \
+    -e 'undefined (service|volume|network|secret|config)'
+}
+
 # hook_lint_file <file> <errors_var_name> <log_file> [before-format]
 #
 # 1 ファイルを解析する。問題があれば errors_var_name で指定された変数に生の
 # エラー文字列を入れて 1 を返す。無ければ空文字を入れて 0 を返す。
 # 表示用の整形(ファイル名の見出しや区切り線)は呼び出し元の責務。
+#
+# 指摘が多すぎるときは hook_cap_output (_hook_common.sh) で先頭の 200 行 / 16KB に
+# 切ってから返す (ログにも同じ切った内容が残る)。
+#
+# 戻り値 0 は「指摘なし」であって「検査した」ではない。何かが実際に走ったかは
+# HOOK_LINT_RAN (大域) を見ること。上の「起動できなかった」と「指摘があった」を分ける
+# 節を参照。
 #
 # 4 番目に before-format を渡すと、auto-format がまだ走っていないファイルとして
 # 扱い、フォーマッターが直す類の指摘 (rubocop の Layout、ruff の import 整列) を
@@ -97,7 +424,7 @@ _go_dir_has_analyzable_package() {
 #
 # 注意: bash は動的スコープなので、errors_var_name にこの関数内の local と同じ
 # 名前(LINT_ERRORS 等)を渡すと local 側に書き込まれ、呼び出し元には何も届かない。
-# 静かに壊れるため下でガードしている。
+# 静かに壊れるため下でガードしている。_l_ 接頭辞のローカルは全てガードの対象。
 
 hook_lint_file() {
   local FILE_PATH="$1"
@@ -113,6 +440,8 @@ hook_lint_file() {
   local PROJECT_ROOT HAS_ESLINT_CONFIG ESLINT_BIN TSC_BIN CONFIG OUTPUT HAS_MYPY_CONFIG RELATED cfg
   local GO_PKG_DIR eslint_dir eslint_root eslint_cwd tsc_line tsc_sep tsc_path
   local ruff_args=() rubocop_args=()
+  # _l_ 接頭辞: この関数が追加したローカル。ガードは接頭辞でまとめて弾く。
+  local _l_kind _l_cfg _l_sol _l_cwd _l_file _l_root _l_status _l_filtered _l_args=()
 
   # 出力変数名がこの関数の local と衝突すると、printf -v は local を書き換えて
   # しまい呼び出し元には何も返らない。黙って通るより落とす。
@@ -120,17 +449,107 @@ hook_lint_file() {
   FILE_PATH | EXTENSION | BASENAME | LINT_ERRORS | PROJECT_ROOT | OUTPUT | \
     HAS_ESLINT_CONFIG | ESLINT_BIN | TSC_BIN | CONFIG | HAS_MYPY_CONFIG | RELATED | cfg | \
     GO_PKG_DIR | eslint_dir | eslint_root | eslint_cwd | tsc_line | tsc_sep | tsc_path | \
-    ruff_args | rubocop_args | \
+    ruff_args | rubocop_args | _l_* | HOOK_LINT_RAN | HOOK_LINT_LAST_RC | \
     hook_out_var | hook_log_file | hook_phase | nl)
     echo "hook_lint_file: output variable '$hook_out_var' collides with an internal local" >&2
     return 2
     ;;
   esac
 
+  HOOK_LINT_RAN=0
+  HOOK_LINT_LAST_RC=0
+
   hook_log "$hook_log_file" "--- lint start: $FILE_PATH ---"
   echo "Linting: $BASENAME"
 
+  # Dockerfile / compose はファイル名で決まり、拡張子では決まらない (`Dockerfile` に
+  # 拡張子は無く、`compose.yaml` の yaml は拡張子で見る意味が無い) ので、拡張子の
+  # 分岐より前に basename で振り分ける。`Dockerfile.dockerignore` は BuildKit の
+  # ファイルごとの無視リストで Dockerfile ではない。
+  _l_kind=""
+  case "$BASENAME" in
+  *.dockerignore) ;;
+  Dockerfile | Dockerfile.* | *.Dockerfile | Containerfile) _l_kind=dockerfile ;;
+  compose.yml | compose.yaml | compose.*.yml | compose.*.yaml | \
+    docker-compose.yml | docker-compose.yaml | docker-compose.*.yml | docker-compose.*.yaml)
+    _l_kind=compose
+    ;;
+  esac
+  [ -n "$_l_kind" ] && EXTENSION="@$_l_kind"
+
   case "$EXTENSION" in
+
+  # Dockerfile / Containerfile
+  @dockerfile)
+    if command -v hadolint >/dev/null 2>&1; then
+      echo "  Running hadolint..."
+      # hadolint が読む設定は「cwd の .hadolint.yaml」と各ユーザ設定だけで、検査対象の
+      # ファイルの場所は見ない (README)。cwd が git root でない・サブディレクトリの
+      # Dockerfile では、チームが設定した ignore / failure-threshold が黙って無視される。
+      # 編集ファイルから git root まで遡って最も近い設定を探し、--config で明示する。
+      PROJECT_ROOT=$(git -C "$(dirname "$FILE_PATH")" rev-parse --show-toplevel 2>/dev/null)
+      _l_root="$PROJECT_ROOT"
+      [ -z "$_l_root" ] && _l_root=$(dirname "$FILE_PATH")
+      _l_cfg=$(hook_find_nearest_file "$(dirname "$FILE_PATH")" "$_l_root" .hadolint.yaml .hadolint.yml)
+      _l_args=(--no-color)
+      [ -n "$_l_cfg" ] && _l_args+=(--config "$_l_cfg")
+      _lint_exec "$(_lint_timeout HADOLINT 20)" hadolint "$hook_log_file" OUTPUT . \
+        hadolint "${_l_args[@]}" "$FILE_PATH"
+      case "$?" in
+      0) echo "  hadolint passed" ;;
+      1) LINT_ERRORS="${LINT_ERRORS}[hadolint]${nl}${OUTPUT}${nl}" ;;
+      esac
+    else
+      echo "  hadolint not found"
+    fi
+    ;;
+
+  # compose ファイル
+  @compose)
+    if command -v docker >/dev/null 2>&1; then
+      echo "  Running docker compose config..."
+      # --no-interpolate: 環境変数が未設定でも失敗させない (変数の値はこの編集の
+      # 責任ではない)。-q: 検証だけで展開結果は出さない。-f は絶対パスで渡す
+      # (cwd をファイルのディレクトリへ移すため)。
+      _l_file="$FILE_PATH"
+      case "$_l_file" in
+      /*) ;;
+      *) _l_file="$PWD/$_l_file" ;;
+      esac
+      _lint_exec "$(_lint_timeout COMPOSE 15)" "docker compose" "$hook_log_file" OUTPUT \
+        "$(dirname "$_l_file")" docker compose -f "$_l_file" config -q --no-interpolate
+      _l_status=$?
+      case "$_l_status" in
+      0) echo "  docker compose config passed" ;;
+      1)
+        # 環境の問題 (env_file が無い・daemon に繋がらない等) は指摘ではない。
+        # override / 環境別ファイルは単体では不完全と言われるのが普通なので、base
+        # (compose.yaml / docker-compose.yml) 以外ではその種のエラーも指摘にしない。
+        if _lint_compose_environment_error "$OUTPUT"; then
+          # 検証は行われていないので「走った」に数えない (Lint Passed を出さない)。
+          HOOK_LINT_RAN=$((HOOK_LINT_RAN - 1))
+          hook_log "$hook_log_file" "NOTICE: docker compose config failed for an environment reason (not a finding): $(printf '%s\n' "$OUTPUT" | head -n 1 | cut -c1-120)"
+        else
+          case "$BASENAME" in
+          compose.yml | compose.yaml | docker-compose.yml | docker-compose.yaml)
+            LINT_ERRORS="${LINT_ERRORS}[docker compose]${nl}${OUTPUT}${nl}"
+            ;;
+          *)
+            if _lint_compose_partial_error "$OUTPUT"; then
+              HOOK_LINT_RAN=$((HOOK_LINT_RAN - 1))
+              hook_log "$hook_log_file" "NOTICE: $BASENAME is a partial compose file (merged with a base); not judged on its own"
+            else
+              LINT_ERRORS="${LINT_ERRORS}[docker compose]${nl}${OUTPUT}${nl}"
+            fi
+            ;;
+          esac
+        fi
+        ;;
+      esac
+    else
+      echo "  docker not found"
+    fi
+    ;;
 
   # JavaScript / TypeScript
   js | jsx | ts | tsx)
@@ -179,30 +598,47 @@ hook_lint_file() {
       # の探索に効くので、従来どおり動かさない。
       # 移動する前に対象を絶対パスにする (下の TSC_BIN と同じ理由): 相対パスの
       # まま渡すと移動先基準で読み直され、存在しないファイルとして eslint が
-      # 失敗し、問題の無い編集をブロックする。$(...) 内の f は外に漏れない。
+      # 失敗し、問題の無い編集をブロックする。
       # $(...) の中で case を使わないこと: macOS の bash 3.2 はパターンの `)`
       # をコマンド置換の終わりと誤読し、このファイルの読み込みごと失敗する
       # (shellcheck は通るので CI の静的検査では見つからない)。
       eslint_cwd="$PWD"
       case "$cfg" in eslint.config.*) eslint_cwd="$eslint_dir" ;; esac
-      if ! OUTPUT=$(
-        f="$FILE_PATH"
-        [ "${f#/}" != "$f" ] || f="$PWD/$f"
-        cd "$eslint_cwd" && "$ESLINT_BIN" "$f" 2>&1
-      ); then
-        LINT_ERRORS="${LINT_ERRORS}[ESLint]${nl}${OUTPUT}${nl}"
-      else
-        echo "  ESLint passed"
-      fi
+      _l_file="$FILE_PATH"
+      [ "${_l_file#/}" != "$_l_file" ] || _l_file="$PWD/$_l_file"
+      _lint_exec 0 ESLint "$hook_log_file" OUTPUT "$eslint_cwd" "$ESLINT_BIN" "$_l_file"
+      case "$?" in
+      0) echo "  ESLint passed" ;;
+      1) LINT_ERRORS="${LINT_ERRORS}[ESLint]${nl}${OUTPUT}${nl}" ;;
+      esac
     elif ! $HAS_ESLINT_CONFIG; then
       echo "  ESLint config not found, skipping"
     else
       echo "  ESLint not found"
     fi
 
-    # TypeScriptの型チェック（tsconfig.jsonが存在する場合のみ）
+    # TypeScriptの型チェック。
+    #
+    # 対象は「編集ファイルから git root へ遡って最初に見つかる tsconfig.json」。
+    # git root の tsconfig.json しか見ないと (a) monorepo の packages/<pkg>/tsconfig.json
+    # を無視し、(b) Vite の既定のような solution-style (`files: []` + `references`) では
+    # ルートに対する `tsc --noEmit` が何も検査せず、型エラーがあっても緑になる。
+    # solution-style のときは references のうち編集ファイルを含むプロジェクトを選ぶ。
+    # `tsc -b` は使わない (ビルド成果物をホストのプロジェクトに書き出す)。決められなけ
+    # れば notice にして、pass / fail のどちらも黙って出さない。
     if [[ "$EXTENSION" == "ts" || "$EXTENSION" == "tsx" ]]; then
-      if [ -n "$PROJECT_ROOT" ] && [ -f "$PROJECT_ROOT/tsconfig.json" ]; then
+      _l_cfg=""
+      if [ -n "$PROJECT_ROOT" ]; then
+        _l_cfg=$(hook_find_nearest_file "$(dirname "$FILE_PATH")" "$PROJECT_ROOT" tsconfig.json)
+      fi
+      if [ -n "$_l_cfg" ] && _lint_tsconfig_is_solution "$_l_cfg"; then
+        _l_sol="$_l_cfg"
+        _l_cfg=$(_lint_pick_tsconfig_project "$_l_sol" "$FILE_PATH")
+        if [ -z "$_l_cfg" ]; then
+          hook_log "$hook_log_file" "NOTICE: tsc skipped: $BASENAME is not included by any project referenced from $_l_sol; type check not run"
+        fi
+      fi
+      if [ -n "$_l_cfg" ]; then
         # typescript は devDependency に入れるのが標準なので、tsc は PATH に
         # 載らない。`command -v tsc` だけで探すと、tsconfig.json のある普通の
         # npm プロジェクトで型チェックが丸ごと消え、型エラーのあるファイルに
@@ -210,18 +646,21 @@ hook_lint_file() {
         # 「そもそも見に行かない」版の、このファイル冒頭が戒めている壊れ方。
         # 上の ESLint と同じく node_modules/.bin を先に見る。PATH 側は
         # グローバル導入しかないプロジェクトのためのフォールバックとして残す。
-        TSC_BIN=""
-        if [ -x "$PROJECT_ROOT/node_modules/.bin/tsc" ]; then
-          TSC_BIN="$PROJECT_ROOT/node_modules/.bin/tsc"
-        elif command -v tsc >/dev/null 2>&1; then
+        TSC_BIN=$(hook_find_nearest_bin "$(dirname "$FILE_PATH")" "$PROJECT_ROOT" tsc)
+        if [ -z "$TSC_BIN" ] && command -v tsc >/dev/null 2>&1; then
           TSC_BIN="tsc"
         fi
-        # ローカル解決した側は $PROJECT_ROOT 由来の絶対パスなので、下の
-        # `cd "$PROJECT_ROOT"` を挟んでも解決先は変わらない。相対パスで持つと
-        # cd 先によって見つからなくなり、静かに型チェックが消える。
+        # ローカル解決した側は絶対パスなので、cwd を tsconfig のディレクトリへ移しても
+        # 解決先は変わらない。tsc は診断を cwd 相対で書くので、下の照合は同じ
+        # ディレクトリ (_l_cwd) を基準にする。git root を基準にすると、
+        # packages/<pkg>/ の tsconfig では全ての -ef が外れ、黙って緑になる。
         if [ -n "$TSC_BIN" ]; then
-          echo "  Running tsc (type check: $TSC_BIN)..."
-          if ! OUTPUT=$(cd "$PROJECT_ROOT" && "$TSC_BIN" --noEmit 2>&1); then
+          echo "  Running tsc (type check: $TSC_BIN -p $_l_cfg)..."
+          _l_cwd=$(dirname "$_l_cfg")
+          _lint_exec "$(_lint_timeout TSC 45)" tsc "$hook_log_file" OUTPUT "$_l_cwd" \
+            "$TSC_BIN" --noEmit -p "$_l_cfg"
+          _l_status=$?
+          if [ "$_l_status" -eq 1 ]; then
             # 色付き出力 (tsconfig の "pretty": true) は色コードを落としてから
             # 扱う。残すとパスが `ESC[96msrc/a.ts ESC[0m:` と割れ、下の照合も
             # 起動失敗の判定 (`.ts:` の有無) も外れて、他ファイルだけのエラーで
@@ -267,7 +706,7 @@ hook_lint_file() {
                 [ "$tsc_path" != "$tsc_line" ] || continue
                 case "$tsc_path" in "" | */) ;; *) continue ;; esac
                 tsc_path="$tsc_path$BASENAME"
-                case "$tsc_path" in /*) ;; *) tsc_path="$PROJECT_ROOT/$tsc_path" ;; esac
+                case "$tsc_path" in /*) ;; *) tsc_path="$_l_cwd/$tsc_path" ;; esac
                 if [ "$tsc_path" -ef "$FILE_PATH" ]; then
                   RELATED="${RELATED}${tsc_line}"$'\n'
                   break
@@ -286,7 +725,7 @@ hook_lint_file() {
             if [ -n "$RELATED" ]; then
               LINT_ERRORS="${LINT_ERRORS}[TypeScript]${nl}${RELATED}${nl}"
             fi
-          else
+          elif [ "$_l_status" -eq 0 ]; then
             echo "  tsc passed"
           fi
         fi
@@ -310,11 +749,11 @@ hook_lint_file() {
       # 除外されたファイルは ruff が何も解析せず終了コード 0 で返すので、ここでは
       # 「やることが無かった = 通過」として下の passed 分岐に落ちる (エラー扱いに
       # しない)。実 ruff での確認は tests の TestRuffForceExcludeRealRuff。
-      if ! OUTPUT=$(ruff check "${ruff_args[@]}" --force-exclude "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[ruff]${nl}${OUTPUT}${nl}"
-      else
-        echo "  ruff passed"
-      fi
+      _lint_exec 0 ruff "$hook_log_file" OUTPUT . ruff check "${ruff_args[@]}" --force-exclude "$FILE_PATH"
+      case "$?" in
+      0) echo "  ruff passed" ;;
+      1) LINT_ERRORS="${LINT_ERRORS}[ruff]${nl}${OUTPUT}${nl}" ;;
+      esac
     else
       echo "  ruff not found"
     fi
@@ -323,11 +762,11 @@ hook_lint_file() {
     if command -v bandit >/dev/null 2>&1; then
       echo "  Running bandit (security)..."
       # -ll: 中程度以上の重大度のみ報告
-      if ! OUTPUT=$(bandit -ll -q "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[bandit - security]${nl}${OUTPUT}${nl}"
-      else
-        echo "  bandit passed"
-      fi
+      _lint_exec 0 bandit "$hook_log_file" OUTPUT . bandit -ll -q "$FILE_PATH"
+      case "$?" in
+      0) echo "  bandit passed" ;;
+      1) LINT_ERRORS="${LINT_ERRORS}[bandit - security]${nl}${OUTPUT}${nl}" ;;
+      esac
     else
       echo "  bandit not found"
     fi
@@ -341,10 +780,29 @@ hook_lint_file() {
     fi
     if $HAS_MYPY_CONFIG && command -v mypy >/dev/null 2>&1; then
       echo "  Running mypy (type check)..."
-      if ! OUTPUT=$(mypy "$FILE_PATH" --ignore-missing-imports 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[mypy]${nl}${OUTPUT}${nl}"
-      else
+      # mypy は import 先のモジュールも検査し、その既存の型エラーを同じ出力に混ぜる。
+      # 全量を指摘にすると、無関係な既存エラーのせいで問題の無いファイルの編集が
+      # ブロックされる。編集ファイルについての行だけに絞る。設定 (mypy.ini /
+      # pyproject.toml) は cwd から探されるので、上で「設定がある」と判断した
+      # プロジェクトルートで実行する。
+      # 終了コード 2 は致命的エラー: 構文エラーのようにファイル自身の診断を伴う場合は
+      # 指摘になり、どのファイルも名指ししない (設定が読めない・内部エラー) 場合は
+      # 起動できなかったのと同じで notice にする。
+      _lint_exec "$(_lint_timeout MYPY 30)" mypy "$hook_log_file" OUTPUT "$PROJECT_ROOT" \
+        mypy "$FILE_PATH" --ignore-missing-imports
+      _l_status=$?
+      if [ "$_l_status" -eq 0 ]; then
         echo "  mypy passed"
+      elif [ "$_l_status" -eq 1 ]; then
+        _l_filtered=$(printf '%s\n' "$OUTPUT" | _lint_lines_for_file "$FILE_PATH" "$PROJECT_ROOT")
+        if [ -n "$_l_filtered" ]; then
+          LINT_ERRORS="${LINT_ERRORS}[mypy]${nl}${_l_filtered}${nl}"
+        elif [ "$HOOK_LINT_LAST_RC" -ge 2 ]; then
+          HOOK_LINT_RAN=$((HOOK_LINT_RAN - 1))
+          hook_log "$hook_log_file" "NOTICE: mypy failed without naming $BASENAME (exit $HOOK_LINT_LAST_RC): $(printf '%s\n' "$OUTPUT" | head -n 1 | cut -c1-120)"
+        else
+          echo "  mypy: errors only in other files (ignored)"
+        fi
       fi
     fi
     ;;
@@ -356,15 +814,31 @@ hook_lint_file() {
     if [ -n "$PROJECT_ROOT" ] && [ -f "$PROJECT_ROOT/Cargo.toml" ]; then
       if command -v cargo >/dev/null 2>&1; then
         echo "  Running cargo clippy..."
-        OUTPUT=$(cd "$PROJECT_ROOT" && cargo clippy --quiet 2>&1)
+        # --message-format=short は診断を 1 行 `path:line:col: warning: ...` にする。
+        # clippy は未編集ファイルの warning も全て出すので、編集ファイルについての
+        # 行だけに絞る (パスは cargo の cwd = プロジェクトルート相対)。
         # clippy の lint は既定で warn レベルで、指摘があっても終了コードは 0。
-        # "^error" だけでは拾えるのが rustc のコンパイルエラー(cargo check でも
-        # 落ちる)だけになり、clippy を走らせる当の目的である lint が 1 件も
-        # 引っかからない。cppcheck 側と同じく警告レベルも失敗として扱う。
-        if echo "$OUTPUT" | grep -qE "^(error|warning)"; then
-          LINT_ERRORS="${LINT_ERRORS}[clippy]${nl}${OUTPUT}${nl}"
-        else
-          echo "  cargo clippy passed"
+        # 終了コードではなく出力を見る点は cppcheck 側と同じで、コンパイルエラー
+        # (101) の出力も同じ経路で読む。
+        # 終了コードが非 0 なのに `path:line:col:` の診断が出力のどこにも無いときは、
+        # clippy はこのファイルを見ていない (manifest が読めない・registry に届かない
+        # 等)。他ファイルの診断が見えている場合 (= プロジェクトは解析された) とは
+        # 別物で、緑にも、実行した数にも入れない。mypy の「どのファイルも名指ししない
+        # 失敗」と同じ扱い。診断の形は --message-format=short で自分で固定している。
+        _lint_exec "$(_lint_timeout CLIPPY 45)" clippy "$hook_log_file" OUTPUT "$PROJECT_ROOT" \
+          cargo clippy --quiet --message-format=short
+        _l_status=$?
+        if [ "$_l_status" -eq 0 ] || [ "$_l_status" -eq 1 ]; then
+          _l_filtered=$(printf '%s\n' "$OUTPUT" | _lint_lines_for_file "$FILE_PATH" "$PROJECT_ROOT")
+          if [ -n "$_l_filtered" ]; then
+            LINT_ERRORS="${LINT_ERRORS}[clippy]${nl}${_l_filtered}${nl}"
+          elif [ "$_l_status" -eq 1 ] && ! printf '%s\n' "$OUTPUT" | grep -qE '^[^:]+:[0-9]+:[0-9]+:'; then
+            HOOK_LINT_RAN=$((HOOK_LINT_RAN - 1))
+            hook_log "$hook_log_file" "NOTICE: cargo clippy did not complete (exit $HOOK_LINT_LAST_RC, no diagnostics at all): $(printf '%s\n' "$OUTPUT" | grep -m1 '[^[:space:]]' | cut -c1-120); skipped"
+          else
+            [ "$_l_status" -eq 1 ] && hook_log "$hook_log_file" "NOTICE: cargo clippy exited $HOOK_LINT_LAST_RC with no diagnostics for $BASENAME (diagnostics elsewhere ignored)"
+            echo "  cargo clippy passed"
+          fi
         fi
       fi
     else
@@ -401,26 +875,30 @@ hook_lint_file() {
     else
       echo "  Running go vet..."
       # -C はツール自身に chdir させるので、このフックの cwd を汚さない。
-      if ! OUTPUT=$(go vet -C "$GO_PKG_DIR" . 2>&1); then
+      _lint_exec 0 "go vet" "$hook_log_file" OUTPUT . go vet -C "$GO_PKG_DIR" .
+      case "$?" in
+      0) echo "  go vet passed" ;;
+      1)
         # -C 配下の出力はパッケージ相対 (main.go:6:14) になるため、
         # 受け取ったエージェントがファイルへ辿れるようディレクトリを添える。
         LINT_ERRORS="${LINT_ERRORS}[go vet] (in ${GO_PKG_DIR})${nl}${OUTPUT}${nl}"
-      else
-        echo "  go vet passed"
-      fi
+        ;;
+      esac
 
       # staticcheck: go vet より高度な解析
-      # staticcheck に -C は無いのでサブシェルで cd する (親シェルの cwd は不変)。
-      # -P は判定側と揃えるため必須: 論理 cd だと symlink 経由のディレクトリで
+      # staticcheck に -C は無いので cwd を移して実行する (親シェルの cwd は不変)。
+      # 物理パスへ移るのは判定側と揃えるため必須: 論理 cd だと symlink 経由のディレクトリで
       # staticcheck が `warning: "." matched no packages` を出して rc=0 で返り、
       # 何も解析していないのに緑になる。
       if command -v staticcheck >/dev/null 2>&1; then
         echo "  Running staticcheck..."
-        if ! OUTPUT=$(cd -P "$GO_PKG_DIR" && staticcheck . 2>&1); then
-          LINT_ERRORS="${LINT_ERRORS}[staticcheck] (in ${GO_PKG_DIR})${nl}${OUTPUT}${nl}"
-        else
-          echo "  staticcheck passed"
-        fi
+        _l_cwd=$(cd -P "$GO_PKG_DIR" 2>/dev/null && pwd -P)
+        [ -n "$_l_cwd" ] || _l_cwd="$GO_PKG_DIR"
+        _lint_exec 0 staticcheck "$hook_log_file" OUTPUT "$_l_cwd" staticcheck .
+        case "$?" in
+        0) echo "  staticcheck passed" ;;
+        1) LINT_ERRORS="${LINT_ERRORS}[staticcheck] (in ${GO_PKG_DIR})${nl}${OUTPUT}${nl}" ;;
+        esac
       else
         echo "  staticcheck not found (optional)"
       fi
@@ -443,16 +921,21 @@ hook_lint_file() {
       # 終了コード非 0 は「起動できなかった」(設定が読めない・不正な引数)。
       # その旨のメッセージに [ERROR]/[WARN] は乗らないので、下の grep だけでは
       # 指摘ゼロと区別が付かず緑を返してしまう。ゲートが黙って無効化される
-      # 経路なので、出力を見る前に潰す。
-      if ! OUTPUT=$(checkstyle -c "$CONFIG" "$FILE_PATH" 2>&1); then
+      # 経路なので、出力を見る前に潰す。ただし 126/127 と pyenv 等の定型文は
+      # 環境の問題 (ツールが無い) なので _lint_exec が notice にする。
+      _lint_exec 0 checkstyle "$hook_log_file" OUTPUT . checkstyle -c "$CONFIG" "$FILE_PATH"
+      _l_status=$?
+      if [ "$_l_status" -eq 1 ]; then
         LINT_ERRORS="${LINT_ERRORS}[checkstyle]${nl}${OUTPUT}${nl}"
-      # 既定の google_checks.xml は severity=warning なので、指摘は [WARN] で
-      # 出力され [ERROR] は現れない。[ERROR] だけを見ると、既定設定で拾えた
-      # 指摘を 1 件残らず素通しすることになる。[INFO] は指摘ではないので除く。
-      elif echo "$OUTPUT" | grep -qE "\[ERROR\]|\[WARN\]"; then
-        LINT_ERRORS="${LINT_ERRORS}[checkstyle]${nl}${OUTPUT}${nl}"
-      else
-        echo "  checkstyle passed"
+      elif [ "$_l_status" -eq 0 ]; then
+        # 既定の google_checks.xml は severity=warning なので、指摘は [WARN] で
+        # 出力され [ERROR] は現れない。[ERROR] だけを見ると、既定設定で拾えた
+        # 指摘を 1 件残らず素通しすることになる。[INFO] は指摘ではないので除く。
+        if echo "$OUTPUT" | grep -qE "\[ERROR\]|\[WARN\]"; then
+          LINT_ERRORS="${LINT_ERRORS}[checkstyle]${nl}${OUTPUT}${nl}"
+        else
+          echo "  checkstyle passed"
+        fi
       fi
     else
       echo "  checkstyle not found"
@@ -478,19 +961,23 @@ hook_lint_file() {
       # そのメッセージ (`cppcheck: error: unrecognized command line option ...`)
       # は下の grep にかからないため、潰さないと「起動失敗 = 緑」になる。
       # 上の --template を打ち間違えた瞬間にゲートが黙って死ぬ経路でもある。
-      if ! OUTPUT=$(cppcheck --enable=warning,style,performance,portability \
+      _lint_exec 0 cppcheck "$hook_log_file" OUTPUT . cppcheck --enable=warning,style,performance,portability \
         --suppress=missingInclude \
         --template='{file}:{line}:{column}: ({severity}) {message} [{id}]' \
         --template-location='{file}:{line}:{column}: note: {info}' \
-        "$FILE_PATH" 2>&1); then
+        "$FILE_PATH"
+      _l_status=$?
+      if [ "$_l_status" -eq 1 ]; then
         LINT_ERRORS="${LINT_ERRORS}[cppcheck]${nl}${OUTPUT}${nl}"
-      # --enable で有効化した 4 カテゴリと error を漏れなく拾う。note 行は上の
-      # --template-location 側の綴りで出るため、ここには掛からない
-      # (指摘本体だけが判定に効く)。
-      elif echo "$OUTPUT" | grep -qE "\((error|warning|style|performance|portability)\)"; then
-        LINT_ERRORS="${LINT_ERRORS}[cppcheck]${nl}${OUTPUT}${nl}"
-      else
-        echo "  cppcheck passed"
+      elif [ "$_l_status" -eq 0 ]; then
+        # --enable で有効化した 4 カテゴリと error を漏れなく拾う。note 行は上の
+        # --template-location 側の綴りで出るため、ここには掛からない
+        # (指摘本体だけが判定に効く)。
+        if echo "$OUTPUT" | grep -qE "\((error|warning|style|performance|portability)\)"; then
+          LINT_ERRORS="${LINT_ERRORS}[cppcheck]${nl}${OUTPUT}${nl}"
+        else
+          echo "  cppcheck passed"
+        fi
       fi
     else
       echo "  cppcheck not found"
@@ -506,11 +993,11 @@ hook_lint_file() {
     if command -v rubocop >/dev/null 2>&1; then
       echo "  Running rubocop (lint only)..."
       [ "$hook_phase" = "before-format" ] && rubocop_args=(--except Layout)
-      if ! OUTPUT=$(rubocop --no-color "${rubocop_args[@]}" "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[rubocop]${nl}${OUTPUT}${nl}"
-      else
-        echo "  rubocop passed"
-      fi
+      _lint_exec 0 rubocop "$hook_log_file" OUTPUT . rubocop --no-color "${rubocop_args[@]}" "$FILE_PATH"
+      case "$?" in
+      0) echo "  rubocop passed" ;;
+      1) LINT_ERRORS="${LINT_ERRORS}[rubocop]${nl}${OUTPUT}${nl}" ;;
+      esac
     else
       echo "  rubocop not found"
     fi
@@ -521,19 +1008,19 @@ hook_lint_file() {
     # phpstan: 型推論ベースの高精度静的解析
     if command -v phpstan >/dev/null 2>&1; then
       echo "  Running phpstan..."
-      if ! OUTPUT=$(phpstan analyse "$FILE_PATH" --no-progress 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[phpstan]${nl}${OUTPUT}${nl}"
-      else
-        echo "  phpstan passed"
-      fi
+      _lint_exec 0 phpstan "$hook_log_file" OUTPUT . phpstan analyse "$FILE_PATH" --no-progress
+      case "$?" in
+      0) echo "  phpstan passed" ;;
+      1) LINT_ERRORS="${LINT_ERRORS}[phpstan]${nl}${OUTPUT}${nl}" ;;
+      esac
     # php -l: 構文チェックのみ（フォールバック）
     elif command -v php >/dev/null 2>&1; then
       echo "  Running php -l (syntax check)..."
-      if ! OUTPUT=$(php -l "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[php syntax]${nl}${OUTPUT}${nl}"
-      else
-        echo "  php syntax OK"
-      fi
+      _lint_exec 0 php "$hook_log_file" OUTPUT . php -l "$FILE_PATH"
+      case "$?" in
+      0) echo "  php syntax OK" ;;
+      1) LINT_ERRORS="${LINT_ERRORS}[php syntax]${nl}${OUTPUT}${nl}" ;;
+      esac
     else
       echo "  phpstan / php not found"
     fi
@@ -543,11 +1030,11 @@ hook_lint_file() {
   sh | bash)
     if command -v shellcheck >/dev/null 2>&1; then
       echo "  Running shellcheck..."
-      if ! OUTPUT=$(shellcheck -x -P SCRIPTDIR "$FILE_PATH" 2>&1); then
-        LINT_ERRORS="${LINT_ERRORS}[shellcheck]${nl}${OUTPUT}${nl}"
-      else
-        echo "  shellcheck passed"
-      fi
+      _lint_exec 0 shellcheck "$hook_log_file" OUTPUT . shellcheck -x -P SCRIPTDIR "$FILE_PATH"
+      case "$?" in
+      0) echo "  shellcheck passed" ;;
+      1) LINT_ERRORS="${LINT_ERRORS}[shellcheck]${nl}${OUTPUT}${nl}" ;;
+      esac
     else
       echo "  shellcheck not found"
     fi
@@ -559,6 +1046,11 @@ hook_lint_file() {
   esac
 
   if [ -n "$LINT_ERRORS" ]; then
+    # 全量をそのまま返すと大きなプロジェクトでは数百 KB になり、1 回の編集のたびに
+    # モデルのコンテキストを食う。先頭の 200 行 / 16KB に切る (hook_cap_output)。
+    # $(...) は末尾の改行を落とすので、1 つだけ付け直す (出力は常に改行で終わる)。
+    LINT_ERRORS=$(printf '%s' "$LINT_ERRORS" | hook_cap_output)
+    LINT_ERRORS="${LINT_ERRORS}${nl}"
     hook_log "$hook_log_file" "FAILED: $BASENAME"
     # 指摘は最初から実改行 ($nl) で積み、そのまま書き出す。区切りをリテラルの `\n` で
     # 積んで最後に一括で改行へ戻す形は、linter が引用したソース中の `\n`
@@ -570,7 +1062,11 @@ hook_lint_file() {
   fi
 
   hook_log "$hook_log_file" "PASSED: $BASENAME"
-  echo "All lint checks passed for $BASENAME"
+  if [ "$HOOK_LINT_RAN" -gt 0 ]; then
+    echo "All lint checks passed for $BASENAME"
+  else
+    echo "No lint check ran for $BASENAME"
+  fi
   printf -v "$hook_out_var" '%s' ""
   return 0
 }
