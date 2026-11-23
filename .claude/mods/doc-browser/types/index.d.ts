@@ -60,6 +60,8 @@ declare module "claude-code" {
       view: DocView;
       context: DocContext | null;
       status: DocStatus | null;
+      // 一覧が一部しか作れなかった理由 (git が時間内に終わらないなど)。なければ null
+      notice: string | null;
       // ペインを置けない場所で本文に返した id の並び (/doc-browser open N 用)
       lastListing: string[];
     };

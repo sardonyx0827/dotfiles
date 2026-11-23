@@ -1,0 +1,6 @@
+{
+  "name": "containers",
+  "version": "0.1.0",
+  "description": "csb サンドボックスとローカルの Docker コンテナの状態をペインで表示する /containers コマンド (読み取り専用ではない: 変更系のコマンドは走らせないが、実行のたびと、開いている間は 10 秒ごとに csb status を呼び、csb が期限切れの net on の窓を切断する)",
+  "types": "./types/index.d.ts"
+}

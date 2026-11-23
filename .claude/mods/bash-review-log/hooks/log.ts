@@ -16,6 +16,9 @@ export type DecisionCounts = {
 // 詳細ログ (コマンドごと 1 ファイル) の Tool Input から引いたもの。
 export type Detail = { command: string; description?: string };
 
+// サマリーとの照合に使う、詳細ログのファイルの更新時刻 (ms) とファイル名つき。
+export type TimedDetail = Detail & { mtimeMs: number; name?: string };
+
 export const TYPES: readonly BashReviewLogType[] = [
   "ALLOW",
   "ASK",
@@ -59,8 +62,8 @@ function markNewlines(text: string): string {
 // 使えるので一緒に置き換える。書式文字 (Cf: ゼロ幅、BOM、ソフトハイフン、タグ文字)
 // と既定で無視される文字も置き換える: ペインの無い /bash-review-log ではこの文字列が
 // モデルの読む本文になり、不可視の文で指示を埋め込めるため (doc-browser の
-// catalog.ts と同じ文字クラス。bidi 制御は Cf に含まれる)。u フラグでタグ文字などの
-// astral 文字も 1 字として置き換える。
+// catalog.ts の UNSAFE_CHARS と、タブと改行を残す点だけが違う文字クラス。bidi 制御は
+// Cf に含まれる)。u フラグでタグ文字などの astral 文字も 1 字として置き換える。
 const UNSAFE =
   /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 export const COMPACT_MAX = 500;
@@ -75,6 +78,11 @@ const ELLIPSIS = "...";
 
 const REVIEWER_ERROR = /\b(?:gemini|codex)=ERROR\b/;
 
+// フックが詳細ログを書けた実行で reason の末尾に添える、その詳細ログのファイル名
+// (bash-review.py の detail_ref)。末尾に固定する: 理由文の途中にはコマンド由来の語が
+// 入りうるので、そこにある detail= は名前に数えない。
+const DETAIL_REF = / detail=(bash_cmd_\d+_\d+\.log)$/;
+
 const TOOL_INPUT = "Tool Input: ";
 
 export function parseLog(text: string): BashReviewLogEntry[] {
@@ -85,10 +93,13 @@ export function parseLog(text: string): BashReviewLogEntry[] {
   const flush = () => {
     if (head === undefined) return;
     const cut = body.lastIndexOf(SEPARATOR);
+    const reason = cut < 0 ? "" : body.slice(cut + SEPARATOR.length);
+    const ref = DETAIL_REF.exec(reason);
     entries.push({
       ...head,
       command: cut < 0 ? body : body.slice(0, cut),
-      reason: cut < 0 ? "" : body.slice(cut + SEPARATOR.length),
+      reason: ref === null ? reason : reason.slice(0, ref.index),
+      ...(ref?.[1] === undefined ? {} : { detailLog: ref[1] }),
     });
   };
 
@@ -213,6 +224,12 @@ export function toOneLine(command: string): string {
 
 // C0 は制御記号 (U+2400〜, ESC なら ␛)、DEL は ␡、それ以外は U+FFFD にし、
 // max 字 (コードポイント) を超えたら切って残りの字数を添える。
+//
+// doc-browser・containers の catalog.ts にも displayText があるが、あちらは制御文字を
+// 区別せず U+FFFD にし (タブと改行も置き換える)、切ったら … だけを付ける別の仕様。
+// 共有できないので、意図して別々に持っている: CLI は mod の外への import を拒み
+// (`cannot import "..": it is outside the plugin's folder`)、`claude plugin validate` も
+// 通らない。UNSAFE の文字クラスを変えるときは、あちらの UNSAFE_CHARS も揃えること。
 export function displayText(text: string, max: number): string {
   const safe = text.replace(UNSAFE, (char) => {
     const code = char.charCodeAt(0);
@@ -305,34 +322,114 @@ function detailKey(detail: Detail): string {
     : `all:${chars.join("")}`;
 }
 
-// details は古い順。サマリー (末尾 500 行) と詳細ログ (末尾 1000 件、/tmp なので
-// 再起動で消える) は保持範囲が違っても、どちらも「今」で終わる。そこで同じキーの
-// 中で新しい方から 1 対 1 に対応づけ、詳細ログが足りない古いエントリはそのままにする。
+// サマリーの at (time.strftime のローカル時刻、秒の切り捨て) を epoch ms にする。
+// 読めなければ NaN。
+function atMs(at: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(at);
+  if (match === null) return Number.NaN;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+
+  return new Date(
+    year ?? 0,
+    (month ?? 1) - 1,
+    day ?? 1,
+    hour,
+    minute,
+    second,
+  ).getTime();
+}
+
+// 詳細ログの mtime が、サマリーの at から見てこの範囲にあれば同じ判定のもの。
+// フックは write_detail_log の直後に log_summary を呼ぶので、mtime は書いた時刻 S の
+// 数 ms 前で、at は S の秒を切り捨てたもの。つまり mtime は at の少し前から at + 1 秒の
+// 手前までに入る。前側は、書き込みの競合待ちやファイルシステムの時刻の粗さの分だけ余らせる。
+const MATCH_BEFORE_MS = 2000;
+const MATCH_AFTER_MS = 1000;
+
 // 全文は切られたエントリにだけ、description は対応がついたすべてに付ける。
+function withDetail(
+  entry: BashReviewLogEntry,
+  detail: TimedDetail,
+): BashReviewLogEntry {
+  return {
+    ...entry,
+    ...(isTruncated(entry) ? { fullCommand: detail.command } : {}),
+    ...(detail.description === undefined
+      ? {}
+      : { description: detail.description }),
+  };
+}
+
+// 詳細ログ (details) をサマリーのエントリに対応づける。
+//
+// reason の末尾に detail=<ファイル名> があるエントリ (detailLog) は、その名前の詳細ログ
+// だけに対応づける。コマンドの照合キーが食い違えば付けない。その詳細ログが読めなければ
+// 付けず、時刻での推定にも回さない。名前で引かれる詳細ログは、下の推定の候補からも外す。
+//
+// 名前の無い旧い行は、時刻とコマンドで推定する: コマンドの照合キーが同じで、詳細ログの
+// mtime がサマリーの時刻と合うもの。順序だけで対応づけると、片方のログに欠けがあるとき
+// (秘密検出で伏せた分、書きかけのまま読めなかった分、止まっていた間の分) に 1 つずつ
+// ずれて、別のコマンドの全文が付く。全文を取り違えて見せるのは、見せないよりも悪いので、
+// 決め手が無いときは付けない:
+// - 候補の全文・description が食い違うとき (並列に走った同じ先頭の別コマンド)
+// - 1 本の詳細ログを取り合うエントリが、候補の本数より多いとき (どれかの詳細ログが欠けている)
 export function attachDetails(
   entries: readonly BashReviewLogEntry[],
-  details: readonly Detail[],
+  details: readonly TimedDetail[],
 ): BashReviewLogEntry[] {
-  const byKey = new Map<string, Detail[]>();
+  const byName = new Map<string, TimedDetail>();
   for (const detail of details) {
+    if (detail.name !== undefined) byName.set(detail.name, detail);
+  }
+  const claimed = new Set(
+    entries.flatMap((entry) =>
+      entry.detailLog === undefined ? [] : [entry.detailLog],
+    ),
+  );
+  const byKey = new Map<string, TimedDetail[]>();
+  for (const detail of details) {
+    if (detail.name !== undefined && claimed.has(detail.name)) continue;
     const key = detailKey(detail);
     byKey.set(key, [...(byKey.get(key) ?? []), detail]);
   }
 
-  const attached = [...entries];
-  for (let i = attached.length - 1; i >= 0; i -= 1) {
-    const entry = attached[i];
-    const detail =
-      entry === undefined ? undefined : byKey.get(entryKey(entry))?.pop();
-    if (entry === undefined || detail === undefined) continue;
-    attached[i] = {
-      ...entry,
-      ...(isTruncated(entry) ? { fullCommand: detail.command } : {}),
-      ...(detail.description === undefined
-        ? {}
-        : { description: detail.description }),
-    };
+  const candidates = entries.map((entry) => {
+    if (entry.detailLog !== undefined) return [];
+    const at = atMs(entry.at);
+
+    return (byKey.get(entryKey(entry)) ?? []).filter((detail) => {
+      const diff = detail.mtimeMs - at;
+
+      return diff >= -MATCH_BEFORE_MS && diff <= MATCH_AFTER_MS;
+    });
+  });
+  const rivals = new Map<TimedDetail, number>();
+  for (const list of candidates) {
+    for (const detail of list)
+      rivals.set(detail, (rivals.get(detail) ?? 0) + 1);
   }
 
-  return attached;
+  return entries.map((entry, index) => {
+    if (entry.detailLog !== undefined) {
+      const detail = byName.get(entry.detailLog);
+
+      return detail !== undefined && detailKey(detail) === entryKey(entry)
+        ? withDetail(entry, detail)
+        : entry;
+    }
+    const list = candidates[index] ?? [];
+    const [first] = list;
+    if (first === undefined) return entry;
+    const isSame = list.every(
+      (detail) =>
+        detail.command === first.command &&
+        detail.description === first.description,
+    );
+    const contenders = Math.max(
+      ...list.map((detail) => rivals.get(detail) ?? 1),
+    );
+    if (!isSame || list.length < contenders) return entry;
+
+    return withDetail(entry, first);
+  });
 }

@@ -21,6 +21,39 @@ const LONG_FULL = `${LONG} | head -50`;
 const LONG_KEY = Array.from(LONG_FULL).slice(0, 80).join("");
 
 describe("parseLog", () => {
+  test("reason 末尾の detail= は detailLog に移し、reason からは外す", () => {
+    const text =
+      "[2026-11-21 10:00:00] ALLOW | pre      | ls | safe command detail=bash_cmd_17_42.log\n";
+
+    expect(parseLog(text)).toEqual([
+      {
+        at: "2026-11-21 10:00:00",
+        decision: "ALLOW",
+        stage: "pre",
+        command: "ls",
+        reason: "safe command",
+        detailLog: "bash_cmd_17_42.log",
+      },
+    ]);
+  });
+
+  test("reason の途中や形の違う detail= は名前として扱わない", () => {
+    const text = [
+      "[2026-11-21 10:00:00] ASK   | pre      | x | flag detail=bash_cmd_1_1.log in text",
+      "[2026-11-21 10:00:01] ASK   | pre      | x | flag detail=../bash_cmd_1_1.log",
+      "[2026-11-21 10:00:02] ASK   | pre      | x | flagdetail=bash_cmd_1_1.log",
+    ].join("\n");
+
+    const entries = parseLog(text);
+
+    expect(entries.map((e) => e.detailLog)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(entries[0]?.reason).toBe("flag detail=bash_cmd_1_1.log in text");
+  });
+
   test('コマンド中の " | " は残し、最後の " | " で reason を切り出す', () => {
     const text =
       "[2026-10-04 20:24:39] ALLOW | pre      | ls | grep foo | head | safe command\n";
@@ -303,6 +336,80 @@ describe("parseDetail", () => {
 describe("attachDetails", () => {
   const truncated = (at: string) =>
     `[2026-10-04 ${at}] ALLOW | gemini   | ${LONG_KEY}... | approved by Gemini, took=0.8s`;
+  // サマリーの at はローカル時刻 (time.strftime) で、詳細ログの mtime は write_detail_log の
+  // 直後 (数 ms 前) にある。テストの時刻もローカル時刻で組み、タイムゾーンに依らせない。
+  const mtime = (clock: string) => new Date(`2026-10-04T${clock}`).getTime();
+  const named = (at: string, name: string) => `${truncated(at)} detail=${name}`;
+
+  test("detail= のある行は、その名前の詳細ログに対応づける (時刻が離れていても)", () => {
+    const entries = parseLog(named("20:00:00", "bash_cmd_2_2.log"));
+
+    const attached = attachDetails(entries, [
+      {
+        command: `${LONG_FULL} # close in time`,
+        mtimeMs: mtime("20:00:00.3"),
+        name: "bash_cmd_1_1.log",
+      },
+      {
+        command: `${LONG_FULL} # named`,
+        description: "名前で引いた",
+        mtimeMs: mtime("23:00:00.0"),
+        name: "bash_cmd_2_2.log",
+      },
+    ]);
+
+    expect(attached[0]?.fullCommand).toBe(`${LONG_FULL} # named`);
+    expect(attached[0]?.description).toBe("名前で引いた");
+  });
+
+  test("名前の詳細ログが読めなければ、時刻の合う別の詳細ログも付けない", () => {
+    const entries = parseLog(named("20:00:00", "bash_cmd_9_9.log"));
+
+    const attached = attachDetails(entries, [
+      {
+        command: `${LONG_FULL} # someone else`,
+        mtimeMs: mtime("20:00:00.3"),
+        name: "bash_cmd_1_1.log",
+      },
+    ]);
+
+    expect(attached[0]?.fullCommand).toBeUndefined();
+  });
+
+  test("名前で引かれる詳細ログは、名前の無い旧い行に時刻で付けない", () => {
+    const entries = parseLog(
+      [truncated("20:00:00"), named("20:00:00", "bash_cmd_1_1.log")].join("\n"),
+    );
+
+    const attached = attachDetails(entries, [
+      {
+        command: `${LONG_FULL} # new`,
+        mtimeMs: mtime("20:00:00.3"),
+        name: "bash_cmd_1_1.log",
+      },
+    ]);
+
+    expect(attached.map((e) => e.fullCommand)).toEqual([
+      undefined,
+      `${LONG_FULL} # new`,
+    ]);
+  });
+
+  test("名前が合っても、コマンドの先頭が食い違う詳細ログは付けない", () => {
+    const entries = parseLog(named("20:00:00", "bash_cmd_1_1.log"));
+
+    const attached = attachDetails(entries, [
+      {
+        command: "rm -rf build",
+        description: "別のコマンド",
+        mtimeMs: mtime("20:00:00.3"),
+        name: "bash_cmd_1_1.log",
+      },
+    ]);
+
+    expect(attached[0]?.fullCommand).toBeUndefined();
+    expect(attached[0]?.description).toBeUndefined();
+  });
 
   test("80 字で切られたエントリに、詳細ログの全文と description を付ける", () => {
     const entries = parseLog(
@@ -313,8 +420,12 @@ describe("attachDetails", () => {
     );
 
     const attached = attachDetails(entries, [
-      { command: LONG_FULL, description: "履歴を見る" },
-      { command: "ls" },
+      {
+        command: LONG_FULL,
+        description: "履歴を見る",
+        mtimeMs: mtime("20:00:00.3"),
+      },
+      { command: "ls", mtimeMs: mtime("20:00:01.3") },
     ]);
 
     expect(attached[0]?.fullCommand).toBe(LONG_FULL);
@@ -328,7 +439,7 @@ describe("attachDetails", () => {
     );
 
     const attached = attachDetails(entries, [
-      { command: "ls", description: "一覧" },
+      { command: "ls", description: "一覧", mtimeMs: mtime("20:00:01.3") },
     ]);
 
     expect(attached[0]?.fullCommand).toBeUndefined();
@@ -342,23 +453,34 @@ describe("attachDetails", () => {
     );
 
     const attached = attachDetails(entries, [
-      { command: exact, description: "ちょうど 80 字" },
-      { command: LONG_FULL, description: "長い方" },
+      {
+        command: exact,
+        description: "ちょうど 80 字",
+        mtimeMs: mtime("20:00:01.3"),
+      },
+      {
+        command: LONG_FULL,
+        description: "長い方",
+        mtimeMs: mtime("20:00:01.3"),
+      },
     ]);
 
     expect(attached[0]?.description).toBe("ちょうど 80 字");
   });
 
-  test("同じ先頭 80 字が並ぶときは新しい方から 1 対 1 で対応づける", () => {
+  test("同じ先頭 80 字が並ぶときは、書かれた時刻の合う詳細ログを対応づける", () => {
     // 詳細ログ (直近 1000 件) はサマリー (直近 500 行) より古くまで残る。
     const entries = parseLog(
       [truncated("20:00:00"), truncated("20:00:05")].join("\n"),
     );
 
     const attached = attachDetails(entries, [
-      { command: `${LONG_FULL} # older than the summary` },
-      { command: `${LONG_FULL} # first` },
-      { command: `${LONG_FULL} # second` },
+      {
+        command: `${LONG_FULL} # older than the summary`,
+        mtimeMs: mtime("19:00:00.3"),
+      },
+      { command: `${LONG_FULL} # first`, mtimeMs: mtime("20:00:00.3") },
+      { command: `${LONG_FULL} # second`, mtimeMs: mtime("20:00:05.3") },
     ]);
 
     expect(attached.map((e) => e.fullCommand)).toEqual([
@@ -373,13 +495,89 @@ describe("attachDetails", () => {
     );
 
     const attached = attachDetails(entries, [
-      { command: `${LONG_FULL} # only one` },
+      { command: `${LONG_FULL} # only one`, mtimeMs: mtime("20:00:05.3") },
     ]);
 
     expect(attached.map((e) => e.fullCommand)).toEqual([
       undefined,
       `${LONG_FULL} # only one`,
     ]);
+  });
+
+  test("新しい方の詳細ログが欠けても、古い方の全文を新しいエントリに付けない", () => {
+    // 順序だけで新しい方から 1 対 1 に対応づけると、B の詳細ログが無いとき
+    // B の行に A の全文が付いてしまう。
+    const entries = parseLog(
+      [truncated("20:00:00"), truncated("20:00:10")].join("\n"),
+    );
+
+    const attached = attachDetails(entries, [
+      { command: `${LONG_FULL} # a`, mtimeMs: mtime("20:00:00.3") },
+    ]);
+
+    expect(attached.map((e) => e.fullCommand)).toEqual([
+      `${LONG_FULL} # a`,
+      undefined,
+    ]);
+  });
+
+  test("書かれた時刻が合わない詳細ログは、キーが同じでも使わない", () => {
+    const entries = parseLog(truncated("20:00:00"));
+
+    const attached = attachDetails(entries, [
+      { command: `${LONG_FULL} # an hour ago`, mtimeMs: mtime("19:00:00.3") },
+    ]);
+
+    expect(attached[0]?.fullCommand).toBeUndefined();
+  });
+
+  test("同じ秒に同じ先頭 80 字の別コマンドが重なるときは、どちらにも付けない", () => {
+    // 並列に走った 2 本は、秒単位のサマリーからは順序でしか区別できない。
+    const entries = parseLog(
+      [truncated("20:00:00"), truncated("20:00:00")].join("\n"),
+    );
+
+    const attached = attachDetails(entries, [
+      {
+        command: `${LONG_FULL} # x`,
+        description: "x",
+        mtimeMs: mtime("20:00:00.1"),
+      },
+      {
+        command: `${LONG_FULL} # y`,
+        description: "y",
+        mtimeMs: mtime("20:00:00.2"),
+      },
+    ]);
+
+    expect(attached.map((e) => e.fullCommand)).toEqual([undefined, undefined]);
+    expect(attached.map((e) => e.description)).toEqual([undefined, undefined]);
+  });
+
+  test("同じ秒に全文が同じ詳細ログだけが重なるなら、取り違えようがないので付ける", () => {
+    const entries = parseLog(
+      [truncated("20:00:00"), truncated("20:00:00")].join("\n"),
+    );
+
+    const attached = attachDetails(entries, [
+      { command: LONG_FULL, mtimeMs: mtime("20:00:00.1") },
+      { command: LONG_FULL, mtimeMs: mtime("20:00:00.2") },
+    ]);
+
+    expect(attached.map((e) => e.fullCommand)).toEqual([LONG_FULL, LONG_FULL]);
+  });
+
+  test("詳細ログが 1 本しかないのに同じ秒のエントリが 2 本あるときは付けない", () => {
+    // もう 1 本は欠けていて、どちらの全文かは決められない。
+    const entries = parseLog(
+      [truncated("20:00:00"), truncated("20:00:00")].join("\n"),
+    );
+
+    const attached = attachDetails(entries, [
+      { command: `${LONG_FULL} # only`, mtimeMs: mtime("20:00:00.1") },
+    ]);
+
+    expect(attached.map((e) => e.fullCommand)).toEqual([undefined, undefined]);
   });
 
   // サマリーは改行を ⏎ に置き換えて書かれ、詳細ログは実改行のまま残る。
@@ -392,7 +590,11 @@ describe("attachDetails", () => {
     );
 
     const attached = attachDetails(entries, [
-      { command: SCRIPT, description: "YAML を読む" },
+      {
+        command: SCRIPT,
+        description: "YAML を読む",
+        mtimeMs: new Date("2026-11-11T10:00:00.3").getTime(),
+      },
     ]);
 
     expect(attached[0]?.description).toBe("YAML を読む");
@@ -408,7 +610,12 @@ describe("attachDetails", () => {
       `[2026-11-11 10:00:00] ALLOW | gemini   | ${logged}... | approved by Gemini, took=0.8s`,
     );
 
-    const attached = attachDetails(entries, [{ command: LONG_SCRIPT }]);
+    const attached = attachDetails(entries, [
+      {
+        command: LONG_SCRIPT,
+        mtimeMs: new Date("2026-11-11T10:00:00.3").getTime(),
+      },
+    ]);
 
     expect(attached[0]?.fullCommand).toBe(LONG_SCRIPT);
   });
@@ -423,7 +630,11 @@ describe("attachDetails", () => {
     );
 
     const attached = attachDetails(entries, [
-      { command: SCRIPT, description: "YAML を読む" },
+      {
+        command: SCRIPT,
+        description: "YAML を読む",
+        mtimeMs: mtime("20:00:00.3"),
+      },
     ]);
 
     expect(attached[0]?.description).toBe("YAML を読む");

@@ -29,6 +29,7 @@ import {
   openArgv,
   openerFor,
   previewDir,
+  projectKey,
   renderArgv,
 } from "./paths";
 
@@ -51,6 +52,9 @@ const GIT_TIMEOUT_MS = 10_000;
 const RENDER_TIMEOUT_MS = 60_000;
 const OPEN_TIMEOUT_MS = 10_000;
 const PRIMARY = { variant: "primary" } as const;
+const GIT_NOTICE =
+  "リポジトリの文書を一覧できませんでした（git が失敗したか、時間内に終わりませんでした）";
+const RELOAD_FAILED = "一覧を読み直せませんでした（詳細はデバッグログ）";
 
 const itemsAtom = atom(
   { plugin: "doc-browser", key: "items" } as const,
@@ -67,6 +71,11 @@ const contextAtom = atom(
 const statusAtom = atom(
   { plugin: "doc-browser", key: "status" } as const,
   null as DocStatus | null,
+);
+// 一覧が一部しか作れなかった理由 (レポートなど、作れた分は出している)。
+const noticeAtom = atom(
+  { plugin: "doc-browser", key: "notice" } as const,
+  null as string | null,
 );
 const listingAtom = atom(
   { plugin: "doc-browser", key: "lastListing" } as const,
@@ -93,13 +102,17 @@ async function realPathOf(
   }
 }
 
-async function resolveContext($: EngineInterface): Promise<DocContext> {
+// notice は、git が時間内に答えず、リポジトリかどうかを確かめられなかったとき。
+async function resolveContext(
+  $: EngineInterface,
+): Promise<{ ctx: DocContext; notice: string | null }> {
   const home = await $.env.get("HOME");
   if (home === undefined || home === "") throw new Error("HOME is not set");
   const configDir = (await $.env.get("CLAUDE_CONFIG_DIR")) || `${home}/.claude`;
   const cacheDir = (await $.env.get("XDG_CACHE_HOME")) || `${home}/.cache`;
   const sessionRoot = await $.session.root();
   let repoRoot: string | null = null;
+  let notice: string | null = null;
   try {
     const rev = await $.process.run(
       [
@@ -115,51 +128,70 @@ async function resolveContext($: EngineInterface): Promise<DocContext> {
     );
     const top = rev.exitCode === 0 ? rev.stdout.trim() : "";
     repoRoot = top === "" ? null : ((await realPathOf($, top)) ?? null);
-  } catch {
+  } catch (error) {
+    // 時間内に終わらなかった・起動できなかった。リポジトリの外とは区別して知らせる。
+    $.ui.log(`doc-browser: git rev-parse failed: ${String(error)}`, {
+      to: "debug",
+    });
     repoRoot = null;
+    notice = GIT_NOTICE;
   }
 
   return {
-    repoRoot,
-    project: repoRoot === null ? "no-repo" : baseName(repoRoot),
-    reportsRoot: `${configDir}/reports`,
-    previewRoot: `${cacheDir}/claude-doc-browser`,
-    renderer: `${configDir}/skills/session-report/render_report.py`,
+    ctx: {
+      repoRoot,
+      project: repoRoot === null ? "no-repo" : baseName(repoRoot),
+      reportsRoot: `${configDir}/reports`,
+      previewRoot: `${cacheDir}/claude-doc-browser`,
+      renderer: `${configDir}/skills/session-report/render_report.py`,
+    },
+    notice,
   };
 }
 
+// 時間切れ・起動失敗・git の失敗では、リポジトリの文書だけを諦めて理由を返す
+// (レポートまで巻き添えにして一覧全体を失敗させない)。
 async function listDocs(
   $: EngineInterface,
   ctx: DocContext,
-): Promise<DocItem[]> {
-  if (ctx.repoRoot === null) return [];
-  // fsmonitor は .git/config から任意のコマンドを起動できるので切る。
-  // -z で改行や引用符を含む名前も崩さず受け取る。
-  const ls = await $.process.run(
-    [
-      "git",
-      "-c",
-      "core.fsmonitor=false",
-      "-C",
-      ctx.repoRoot,
-      "ls-files",
-      "-z",
-      "--cached",
-      "--others",
-      "--exclude-standard",
-      "--",
-      "*.md",
-    ],
-    { timeoutMs: GIT_TIMEOUT_MS },
-  );
+): Promise<{ items: DocItem[]; notice: string | null }> {
+  if (ctx.repoRoot === null) return { items: [], notice: null };
+  let ls;
+  try {
+    // fsmonitor は .git/config から任意のコマンドを起動できるので切る。
+    // -z で改行や引用符を含む名前も崩さず受け取る。
+    ls = await $.process.run(
+      [
+        "git",
+        "-c",
+        "core.fsmonitor=false",
+        "-C",
+        ctx.repoRoot,
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "*.md",
+      ],
+      { timeoutMs: GIT_TIMEOUT_MS },
+    );
+  } catch (error) {
+    $.ui.log(`doc-browser: git ls-files failed: ${String(error)}`, {
+      to: "debug",
+    });
 
-  if (ls.exitCode !== 0) return [];
+    return { items: [], notice: GIT_NOTICE };
+  }
+
+  if (ls.exitCode !== 0) return { items: [], notice: GIT_NOTICE };
   // 出力が上限で切れたら、最後の NUL より後ろは途中で切れた名前なので捨てる。
   const stdout = ls.isStdoutTruncated
     ? ls.stdout.slice(0, ls.stdout.lastIndexOf("\0") + 1)
     : ls.stdout;
 
-  return docItems(parseLsFiles(stdout));
+  return { items: docItems(parseLsFiles(stdout)), notice: null };
 }
 
 async function listDir($: EngineInterface, path: string): Promise<Listed[]> {
@@ -204,16 +236,42 @@ async function listReports(
   return items.sort(newestFirst);
 }
 
-async function reload($: EngineInterface, view: DocView): Promise<DocItem[]> {
-  const ctx = await resolveContext($);
+async function reload(
+  $: EngineInterface,
+  view: DocView,
+): Promise<{ items: DocItem[]; notice: string | null }> {
+  const { ctx, notice: contextNotice } = await resolveContext($);
+  const docs = await listDocs($, ctx);
   const items = [
-    ...(await listDocs($, ctx)),
+    ...docs.items,
     ...(await listReports($, ctx, view.allProjects)),
   ];
+  const notice = contextNotice ?? docs.notice;
   await update($, contextAtom, () => ctx);
   await update($, itemsAtom, () => items);
+  await update($, noticeAtom, () => notice);
 
-  return items;
+  return { items, notice };
+}
+
+// ボタンからの読み直し。失敗しても例外にせず、理由をペインの最下行に出す。
+// 読み直せたら true。
+async function refresh($: EngineInterface, view: DocView): Promise<boolean> {
+  try {
+    await reload($, view);
+    await update($, statusAtom, () => null);
+
+    return true;
+  } catch (error) {
+    // 詳細 (パスを含みうる) はデバッグログへ。ペインには固定の文言だけ。
+    $.ui.log(`doc-browser: reload failed: ${String(error)}`, { to: "debug" });
+    await update($, statusAtom, () => ({
+      kind: "error",
+      text: RELOAD_FAILED,
+    }));
+
+    return false;
+  }
 }
 
 async function openerName($: EngineInterface): Promise<"open" | "xdg-open"> {
@@ -356,7 +414,11 @@ async function openItem($: EngineInterface, item: DocItem): Promise<Outcome> {
   }
   const outDir =
     item.root === "repo"
-      ? previewDir(ctx.previewRoot, ctx.project, item.rel)
+      ? previewDir(
+          ctx.previewRoot,
+          projectKey(ctx.project, ctx.repoRoot),
+          item.rel,
+        )
       : joinPath(
           joinPath(ctx.previewRoot, "_reports"),
           item.rel.slice(0, item.rel.lastIndexOf("/")),
@@ -415,10 +477,14 @@ async function openAndReport(
 
 async function turnPage($: EngineInterface, delta: number): Promise<void> {
   const items = await read($, itemsAtom);
-  await update($, viewAtom, (view) => ({
-    ...view,
-    page: paginate(visible(items, view), view.page + delta).page,
-  }));
+  await update($, viewAtom, (view) => {
+    const matched = visible(items, view);
+    // 保存してあるページは、再読込で件数が減ると範囲の外に出る。描画は範囲に寄せて
+    // 見せているので、動かすのも見えているページを起点にする。
+    const { page: shown } = paginate(matched, view.page);
+
+    return { ...view, page: paginate(matched, shown + delta).page };
+  });
 }
 
 async function runCommand(
@@ -438,8 +504,9 @@ async function runCommand(
   }
 
   let items: DocItem[];
+  let notice: string | null;
   try {
-    items = await reload($, parsed.view);
+    ({ items, notice } = await reload($, parsed.view));
   } catch (error) {
     $.ui.log(`doc-browser: listing failed: ${String(error)}`, { to: "debug" });
     return {
@@ -449,7 +516,10 @@ async function runCommand(
   await update($, viewAtom, () => parsed.view);
   await update($, statusAtom, () => null);
   const ctx = await read($, contextAtom);
-  const heading = displayText(summarize(items, ctx?.project ?? "no-repo"), 200);
+  const heading = [
+    displayText(summarize(items, ctx?.project ?? "no-repo"), 200),
+    ...(notice === null ? [] : [notice]),
+  ].join("\n");
   const opened = await $.ui.open({
     id: PANE,
     title: TITLE,
@@ -511,6 +581,7 @@ export const register: Register = (on) => {
     const view = await read($, viewAtom);
     const ctx = await read($, contextAtom);
     const status = await read($, statusAtom);
+    const notice = await read($, noticeAtom);
     const matched = visible(items, view);
     const { page, pages, slice } = paginate(matched, view.page);
     const scope =
@@ -547,15 +618,14 @@ export const register: Register = (on) => {
                 page: 0,
                 allProjects: !view.allProjects,
               };
-              await reload($, next);
-              await update($, viewAtom, () => next);
+              if (await refresh($, next)) await update($, viewAtom, () => next);
             }}
           />
           <Button
             key="reload"
             hotkey="r"
             label="再読込"
-            onPress={() => reload($, view)}
+            onPress={() => refresh($, view)}
           />
           <Button
             key="close"
@@ -567,6 +637,9 @@ export const register: Register = (on) => {
         <Text dimColor>
           {`${TAB_LABEL[view.tab]}${scope} · ${page + 1}/${pages} ページ · ${matched.length} 件${displayText(filter, 200)}`}
         </Text>
+        {notice !== null && (
+          <Text color="yellow">{displayText(notice, 400)}</Text>
+        )}
         {slice.length === 0 && <Text dimColor>該当する文書はありません</Text>}
         {slice.map((item, index) => (
           <Button

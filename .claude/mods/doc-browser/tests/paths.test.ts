@@ -9,6 +9,7 @@ import {
   openArgv,
   openerFor,
   previewDir,
+  projectKey,
   renderArgv,
 } from "../hooks/paths";
 
@@ -55,6 +56,20 @@ describe("previewDir", () => {
     expect(
       previewDir("/c/doc-browser", "dotfiles", ".claude/agents/README.md"),
     ).toBe("/c/doc-browser/dotfiles/.claude/agents");
+  });
+});
+
+describe("projectKey", () => {
+  test("リポジトリの根のパスから決まる接尾辞を付け、同名のリポジトリを区別する", () => {
+    expect(projectKey("repo", "/work/repo")).toBe("repo-0945b2e0");
+    expect(projectKey("repo", "/other/repo")).toBe("repo-05be75e1");
+    expect(projectKey("repo", "/work/repo")).toBe(
+      projectKey("repo", "/work/repo"),
+    );
+  });
+
+  test("リポジトリの外 (根が無い) なら project のまま", () => {
+    expect(projectKey("no-repo", null)).toBe("no-repo");
   });
 });
 

@@ -5,11 +5,14 @@ export type BashReviewLogEntry = {
   at: string;
   // ALLOW / ASK / DENY (未知の値もそのまま保持する)
   decision: string;
-  // pre / secret / highrisk / gemini / codex / fallback
+  // pre / size / sandbox / secret / highrisk / gemini / codex / fallback
   stage: string;
   // サマリーログのまま (80 字を超えると先頭 80 字 + "...")
   command: string;
+  // reason の末尾の ` detail=<名前>` を外したもの
   reason: string;
+  // その ` detail=<名前>` が指す、同じ実行の詳細ログのファイル名 (無い行は旧い形式)
+  detailLog?: string;
   // 詳細ログから引いた切られる前の全文と、Bash ツールの description
   fullCommand?: string;
   description?: string;
@@ -33,6 +36,8 @@ declare module "claude-code" {
       entries: BashReviewLogEntry[];
       view: BashReviewLogView;
       error: string | null;
+      // 全文を引けなかった理由 (ログ自体は読めている)。なければ null
+      notice: string | null;
     };
   }
 }

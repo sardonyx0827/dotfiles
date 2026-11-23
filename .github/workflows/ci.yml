@@ -28,7 +28,13 @@ jobs:
     # 追加で得られる実カバレッジは小さく CI コスト/保守負荷に見合わないため採用せず、
     # macOS 実機での確認は手元の実行に委ねる。
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # bash-review のゲート強化でテストが約 1.2 万件に増え、手元 (macOS) でも
+    # カバレッジ付きの全体が約 15 分かかる。1 件の最長は 10 秒未満で、時間は
+    # 件数に比例して広く分散している (特定のテストの遅さではない)。並列化
+    # (pytest-xdist) は依存の追加と並列安全性の確認が要るので見送り、上限だけ
+    # 余裕を持たせる (ubuntu の単コアで手元の 1.5〜2.5 倍と見て 60 分)。
+    # 下の --durations の実測が出たら詰めること。
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -93,6 +99,7 @@ jobs:
       - name: Run pytest (with coverage gate)
         run: >-
           python -m pytest -q
+          --durations=25
           --cov=.claude/hooks
           --cov=.claude/mcp-servers
           --cov=.claude/skills
@@ -246,3 +253,78 @@ jobs:
         run: |
           luacheck --version
           luacheck --codes --config .config/nvim/.luacheckrc .config/nvim
+
+  # Claude Code の mod (.claude/mods/*) を、CLI 自身の検査 (claude plugin test /
+  # validate) で確かめる。mod は pytest の対象外 (TypeScript) で、test_config_wiring.py
+  # が見るのは配線の静的な検査だけなので、テストの実行とマニフェスト・フックの検査は
+  # このジョブが唯一の自動検査になる。
+  #
+  # CLI の版をピン留めする理由: mod が使う API (`claude-code` のモジュールとテスト
+  # キット) は版ごとに動く早期アクセスの面で、validate の指摘も版で変わる。新版が出た
+  # 瞬間に無関係な理由で main が止まらないよう、mod を開発・検証した版に固定する
+  # (手元の `claude --version`)。上げるときは CLAUDE_CODE_VERSION を更新し、
+  # .claude/mods/ の全 mod の test / validate が通ることを手元で確かめること。
+  #
+  # 認証もシークレットも要らない: test はモデルを呼ばず、validate も静的な検査なので、
+  # 空の HOME と CLAUDE_CONFIG_DIR で通る (手元の設定や ~/.claude の mod に左右されない
+  # ようにあえて空にしている)。--strict は付けない。型検査 (tsc) も CI では行わない:
+  # 型宣言は CLI が mod を読み込むたびに .claude-plugin/types/ へ書き出す生成物で、
+  # .gitignore の対象 (リポジトリには無い) ため。
+  mods:
+    name: claude plugin test + validate (mods)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLAUDE_CODE_VERSION: "2.1.330"
+      # ピン留めした版が勝手に更新されないようにする
+      DISABLE_AUTOUPDATER: "1"
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # claude-code 2.1.330 は Node.js 22 以上を要求する (package の engines)
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install Claude Code CLI (pinned)
+        run: |
+          set -euo pipefail
+          # ネイティブバイナリは postinstall がプラットフォーム別の optional 依存から
+          # 配置する。失敗したときに理由が CI ログへ出るよう、前面で実行する。
+          npm install --global --foreground-scripts "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          # 版が合っていなければここで落とす (他の版で test / validate を通さない)
+          test "$(claude --version)" = "${CLAUDE_CODE_VERSION} (Claude Code)"
+      - name: claude plugin test + validate (every mod)
+        run: |
+          set -euo pipefail
+          HOME="$(mktemp -d)"
+          CLAUDE_CONFIG_DIR="$(mktemp -d)"
+          export HOME CLAUDE_CONFIG_DIR
+          # mod の一覧は名前で並べず、マニフェスト (plugin.json) のある .claude/mods/*/ を
+          # 数える。tests/test_config_wiring.py の test_every_shipped_mod_is_loaded と同じ条件
+          # (glob の "*/.claude-plugin/plugin.json"。pathlib と同じくドットで始まる名前も数える)
+          # なので、足した mod がここでの検査から漏れない。0 件なら、数え損ねなので失敗にする。
+          shopt -s nullglob dotglob
+          manifests=(.claude/mods/*/.claude-plugin/plugin.json)
+          if [ "${#manifests[@]}" -eq 0 ]; then
+            echo "::error::no mod found: .claude/mods/*/.claude-plugin/plugin.json"
+            exit 1
+          fi
+          # 最初の失敗で止めず、全 mod を流してから、失敗した mod の名前を並べて落とす。
+          failed=()
+          for manifest in "${manifests[@]}"; do
+            dir="${manifest%/.claude-plugin/plugin.json}"
+            mod="${dir##*/}"
+            ok=true
+            echo "::group::${mod}"
+            claude plugin test "${dir}" || ok=false
+            claude plugin validate "${dir}" || ok=false
+            echo "::endgroup::"
+            if [ "${ok}" = false ]; then
+              echo "::error::${mod}: claude plugin test or validate failed"
+              failed+=("${mod}")
+            fi
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::failed mods: ${failed[*]}"
+            exit 1
+          fi
+          echo "all ${#manifests[@]} mods passed"

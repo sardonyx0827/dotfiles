@@ -44,6 +44,11 @@ const SURVEY_SLUG = /^survey-[0-9A-Za-z-]+$/;
 const UNSAFE_CHARS =
   /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029]/gu;
 
+// containers の catalog.ts の displayText と UNSAFE_CHARS は、これと同じものの写し
+// (bash-review-log の log.ts のものは、制御文字を記号にして残り字数を出す別の仕様)。
+// 共有できないので、意図して写している: CLI は mod の外への import を拒み
+// (`cannot import "..": it is outside the plugin's folder`)、`claude plugin validate` も
+// 通らない。文字クラスを変えるときは、containers のものと log.ts の UNSAFE も揃えること。
 export function displayText(text: string, max: number): string {
   const clean = text.replace(UNSAFE_CHARS, "\uFFFD");
   const chars = Array.from(clean);
@@ -184,7 +189,11 @@ export function paginate<T>(
   page: number,
 ): { page: number; pages: number; slice: T[] } {
   const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const current = Math.min(Math.max(0, page), pages - 1);
+  // NaN など数でない page は先頭に倒す (Math.min / max は NaN をそのまま返す)。
+  const current = Math.min(
+    Math.max(0, Number.isFinite(page) ? page : 0),
+    pages - 1,
+  );
 
   return {
     page: current,

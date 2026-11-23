@@ -25,8 +25,23 @@ export function joinPath(root: string, rel: string): string {
   return `${root.replace(/\/+$/, "")}/${rel}`;
 }
 
-// プレビューの出力先。リポジトリの構造を写すので、別の場所にある同名の
-// README.md どうしはぶつからない。
+// プレビュー置き場の直下に使う、リポジトリごとの名前。別の場所にある同名のリポジトリ
+// (~/a/app と ~/b/app) が、同じ置き場に書いて互いのプレビューを上書きしないよう、
+// 根のパスから決まる接尾辞 (FNV-1a の 32 ビット) を付ける。根が無ければ project のまま。
+// 暗号学的な強さは要らない: 分けたいだけで、衝突しても同名の別リポジトリが 2 つ
+// 並ぶ場合の上書きに戻るだけ。
+export function projectKey(project: string, repoRoot: string | null): string {
+  if (repoRoot === null) return project;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < repoRoot.length; i += 1) {
+    hash = Math.imul(hash ^ repoRoot.charCodeAt(i), 0x01000193) >>> 0;
+  }
+
+  return `${project}-${hash.toString(16).padStart(8, "0")}`;
+}
+
+// プレビューの出力先。リポジトリの構造を写すので、同じリポジトリの中の同名の
+// README.md どうしはぶつからない (別のリポジトリとは projectKey で分ける)。
 export function previewDir(
   previewRoot: string,
   project: string,

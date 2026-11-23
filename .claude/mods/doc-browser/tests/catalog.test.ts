@@ -207,6 +207,8 @@ describe("visible / paginate", () => {
     });
     expect(paginate(many, 99).page).toBe(2);
     expect(paginate([], 3)).toEqual({ page: 0, pages: 1, slice: [] });
+    // 数でない page (状態が壊れていても) は先頭ページに倒す
+    expect(paginate(many, Number.NaN).page).toBe(0);
   });
 });
 

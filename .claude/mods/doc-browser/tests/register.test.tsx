@@ -8,6 +8,8 @@ const HOME = "/home/tester";
 const ROOT = "/work/repo";
 const REPORTS = `${HOME}/.claude/reports`;
 const PREVIEW = `${HOME}/.cache/claude-doc-browser`;
+// リポジトリのプレビューは、根のパスから決まる接尾辞つきの置き場に描く (同名のリポジトリを分ける)。
+const ROOT_KEY = "repo-0945b2e0";
 const RENDERER = `${HOME}/.claude/skills/session-report/render_report.py`;
 
 const PANE_PROPS = {
@@ -25,10 +27,20 @@ const PAGE = /ページ · \d+ 件/;
 
 type Stat = { kind: "file" | "dir" | "other"; realPath?: string };
 
+const GIT_TIMEOUT_NOTICE =
+  "リポジトリの文書を一覧できませんでした（git が失敗したか、時間内に終わりませんでした）";
+const RELOAD_FAILED = "一覧を読み直せませんでした（詳細はデバッグログ）";
+
 // テストの on は mod の下 (エンジンの位置) に座るので、mod が $ で呼ぶものに答える。
 function world(
   on: On,
   options: {
+    // リポジトリの根 (既定は ROOT)
+    root?: string;
+    // git ls-files が終わらない (timeout で reject される)
+    lsTimeout?: boolean;
+    // session.root が答えない (一覧の組み立てが丸ごと失敗する)
+    rootDeny?: boolean;
     isRepo?: boolean;
     isPlaced?: boolean;
     lsFiles?: string;
@@ -49,8 +61,11 @@ function world(
   const runs: string[][] = [];
   const opened: { id: string; focus?: boolean }[] = [];
 
-  on("session.root", () => ({ value: ROOT }));
-  on("session.cwd", () => ({ value: ROOT }));
+  const root = () => options.root ?? ROOT;
+  on("session.root", () =>
+    options.rootDeny === true ? { deny: "no session" } : { value: root() },
+  );
+  on("session.cwd", () => ({ value: root() }));
   on("process.run", ($, e) => {
     const argv = [...e.argv];
     runs.push(argv);
@@ -75,9 +90,11 @@ function world(
               isStderrTruncated: false,
             },
           }
-        : ok(`${ROOT}\n`);
+        : ok(`${root()}\n`);
     }
     if (argv.includes("ls-files")) {
+      if (options.lsTimeout === true)
+        return { deny: "timed out after 10000 ms" };
       const stdout =
         options.lsFiles ??
         "README.md\0docs/guide.md\0.claude/skills/x/SKILL.md\0";
@@ -279,14 +296,16 @@ describe("ペイン", () => {
         RENDERER,
         "--no-open",
         "--out",
-        `${PREVIEW}/repo/docs`,
+        `${PREVIEW}/${ROOT_KEY}/docs`,
         "--base-dir",
         `${ROOT}/docs`,
         "--",
         `${ROOT}/docs/guide.md`,
       ],
     ]);
-    expect(w.openRuns()).toEqual([["open", `${PREVIEW}/repo/docs/guide.html`]]);
+    expect(w.openRuns()).toEqual([
+      ["open", `${PREVIEW}/${ROOT_KEY}/docs/guide.html`],
+    ]);
     expect((await ui.find({ type: "Text", text: STATUS }))?.text).toBe(
       "開きました: guide.md",
     );
@@ -445,7 +464,9 @@ describe("セキュリティレビューの指摘", () => {
 
     await ui.press({ key: "item:doc:README.md" });
 
-    expect(w.openRuns()).toEqual([["open", `${PREVIEW}/repo/README.html`]]);
+    expect(w.openRuns()).toEqual([
+      ["open", `${PREVIEW}/${ROOT_KEY}/README.html`],
+    ]);
     await ui.unmount();
   });
 });
@@ -613,5 +634,151 @@ describe("セキュリティ再確認の指摘", () => {
 
     expect(result.text).toMatch(/^doc-browser:/);
     expect(result.text).not.toContain("/Users/someone");
+  });
+});
+
+describe("git ls-files が終わらないとき", () => {
+  test("リポジトリの文書だけを諦め、レポートは出して、理由を本文に添える", async ($, on) => {
+    world(on, { lsTimeout: true });
+
+    const result = await run($);
+
+    expect(result.text).toBe(
+      `repo  ドキュメント 0 · 設定系 0 · レポート 2\n${GIT_TIMEOUT_NOTICE}`,
+    );
+  });
+
+  test("ペインにも理由を出し、レポートのタブは使える", async ($, on) => {
+    world(on, { lsTimeout: true });
+    await run($);
+
+    const ui = await mountPane($);
+
+    expect(
+      (
+        await ui.find({
+          type: "Text",
+          text: /^リポジトリの文書を一覧できませんでした/,
+        })
+      )?.text,
+    ).toBe(GIT_TIMEOUT_NOTICE);
+    await ui.press({ key: "tab-reports" });
+    expect((await ui.find({ type: "Text", text: PAGE }))?.text).toBe(
+      "レポート · 1/1 ページ · 2 件",
+    );
+    await ui.unmount();
+  });
+
+  test("ペインを置けない場所でも、番号付きの一覧 (レポート) に理由を添える", async ($, on) => {
+    world(on, { lsTimeout: true, isPlaced: false });
+
+    const result = await run($, "reports");
+
+    expect(result.text?.split("\n")).toEqual([
+      "repo  ドキュメント 0 · 設定系 0 · レポート 2",
+      GIT_TIMEOUT_NOTICE,
+      "1. dossier-d0a13a87 — 2026-11-04 11:00 · 詳細記録",
+      "2. fix-login — 2026-11-04 10:30 · レポート",
+    ]);
+  });
+});
+
+describe("再読込・全プロジェクトのボタン", () => {
+  test("再読込で git ls-files が終わらなくても、押した結果をペインに出し、例外にしない", async ($, on) => {
+    const options = { lsTimeout: false };
+    world(on, options);
+    await run($);
+    const ui = await mountPane($);
+    options.lsTimeout = true;
+
+    await ui.press({ key: "reload" });
+
+    expect(
+      (await ui.find({ type: "Text", text: /^リポジトリの文書/ }))?.text,
+    ).toBe(GIT_TIMEOUT_NOTICE);
+    await ui.unmount();
+  });
+
+  test("再読込が丸ごと失敗しても、例外にせず理由をペインに出す", async ($, on) => {
+    const options = { rootDeny: false };
+    world(on, options);
+    await run($);
+    const ui = await mountPane($);
+    options.rootDeny = true;
+
+    await ui.press({ key: "reload" });
+
+    expect(
+      (await ui.find({ type: "Text", text: /^一覧を読み直せませんでした/ }))
+        ?.text,
+    ).toBe(RELOAD_FAILED);
+    await ui.unmount();
+  });
+
+  test("全プロジェクトの切り替えが失敗しても、例外にせず、表示は前のまま", async ($, on) => {
+    const options = { rootDeny: false };
+    world(on, options);
+    await run($, "reports");
+    const ui = await mountPane($);
+    options.rootDeny = true;
+
+    await ui.press({ key: "all-projects" });
+
+    expect(
+      (await ui.find({ type: "Text", text: /^一覧を読み直せませんでした/ }))
+        ?.text,
+    ).toBe(RELOAD_FAILED);
+    expect((await ui.find({ type: "Text", text: PAGE }))?.text).toBe(
+      "レポート · 1/1 ページ · 2 件",
+    );
+    await ui.unmount();
+  });
+});
+
+describe("ページ送り", () => {
+  const docs = (count: number) =>
+    Array.from(
+      { length: count },
+      (_, i) => `docs/d${String(i).padStart(2, "0")}.md`,
+    ).join("\0");
+
+  test("再読込で件数が減ったあとも、前へは今見ているページの 1 つ前に戻る", async ($, on) => {
+    const options = { lsFiles: docs(25) };
+    world(on, options);
+    await run($);
+    const ui = await mountPane($);
+    await ui.press({ key: "next" });
+    await ui.press({ key: "next" });
+    expect((await ui.find({ type: "Text", text: PAGE }))?.text).toBe(
+      "ドキュメント · 3/3 ページ · 25 件",
+    );
+    options.lsFiles = docs(12);
+    await ui.press({ key: "reload" });
+    // 保存してあるページ (3) は範囲の外に出たので、描画は最後のページ (2/2) に寄せる
+    expect((await ui.find({ type: "Text", text: PAGE }))?.text).toBe(
+      "ドキュメント · 2/2 ページ · 12 件",
+    );
+
+    await ui.press({ key: "prev" });
+
+    expect((await ui.find({ type: "Text", text: PAGE }))?.text).toBe(
+      "ドキュメント · 1/2 ページ · 12 件",
+    );
+    await ui.unmount();
+  });
+});
+
+describe("同名のリポジトリ", () => {
+  test("別の場所にある同名のリポジトリは、プレビューを別の置き場に描く", async ($, on) => {
+    const w = world(on, { root: "/other/repo" });
+    await run($);
+    const ui = await mountPane($);
+
+    await ui.press({ key: "item:doc:docs/guide.md" });
+
+    expect(
+      w.renderRuns().map((argv) => argv[argv.indexOf("--out") + 1]),
+    ).toEqual([`${PREVIEW}/repo-05be75e1/docs`]);
+    await ui.unmount();
   });
 });
