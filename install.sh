@@ -8,9 +8,8 @@
 # fails if ANY stage fails, not just the last one -- without it, a failed
 # curl in front of `sudo tee`/`sudo dd` would go unnoticed.
 # (-u is intentionally omitted: several env vars are read without a
-# default elsewhere in this script, e.g. $USER in install_docker, so
-# enabling it would turn those reads into aborts, and auditing every
-# use is out of scope.)
+# default elsewhere in this script, so enabling it would turn those
+# reads into aborts, and auditing every use is out of scope.)
 set -eo pipefail
 
 RED='\033[0;31m'
@@ -61,23 +60,24 @@ esac
 # boundary is deliberate -- it is the bootstrap script itself that is verified,
 # not the tree it goes on to install.
 #
-# The remaining fetches go through vendor redirectors (astral.sh/uv, pyenv.run,
-# get.docker.com, deb.nodesource.com) that expose no immutable ref, so they
-# stay unpinned; pinning them would require a content hash re-pinned on every
-# upstream release.
+# The remaining fetched installers go through vendor redirectors (astral.sh/uv,
+# pyenv.run) that expose no immutable ref, so they stay unpinned; pinning them
+# would require a content hash re-pinned on every upstream release. Both run as
+# the invoking user.
 #
-# The asymmetry this leaves runs opposite to what the pinned set suggests: the
-# only two fetched scripts *executed* as root are get.docker.com (`sudo sh`)
-# and deb.nodesource.com (`sudo -E bash`), and those are exactly the two that
-# cannot be pinned. The highest-privilege step carries the weakest integrity
-# check; the pinned set does not cover the root-execution risk. That is
-# accepted rather than solved here.
+# No fetched script is executed as root. Docker Engine and Node.js on
+# Ubuntu/Debian used to come from get.docker.com (`sudo sh`) and NodeSource's
+# setup_lts.x (`sudo -E bash`) -- the highest-privilege step with the weakest
+# integrity check. They now come from the vendors' signed apt repositories,
+# whose keyring must hold exactly the pinned key below (_add_signed_apt_repo),
+# and fetch_and_run refuses a sudo interpreter outright.
 #
-# "Only two" counts fetched scripts that are executed. Other places pipe a
-# download into a root process to *store* bytes, not run them (`curl | sudo gpg
-# --dearmor` and `curl | sudo dd` for apt keyrings), and `sudo apt-get install`
-# runs vendor dpkg maintainer scripts as root -- separate trust paths that
-# pinning a raw.githubusercontent.com ref would not address either way.
+# Other places pipe a download into a root process to *store* bytes, not run
+# them (the apt keyrings: `curl | sudo gpg --dearmor`, `curl | sudo tee`,
+# `curl | sudo dd`), and `sudo apt-get install` runs vendor dpkg maintainer
+# scripts as root -- separate trust paths that pinning a raw.githubusercontent
+# ref would not address either way. Only the Docker and NodeSource keyrings are
+# checked against a pinned fingerprint; gh's and WezTerm's are not (yet).
 #
 # To refresh a pin (do this deliberately, and review the diff):
 #   git ls-remote https://github.com/Homebrew/install HEAD
@@ -91,6 +91,45 @@ HOMEBREW_INSTALL_REF="99e13e96cbbdc1ac1ac09c0a40b450bf219ef3aa"
 LAZYDOCKER_INSTALL_REF="7e7aadc2071d58031bf2daafca1fbd4093efc23f"
 OHMYZSH_INSTALL_REF="98fe9b81a62ed75baf25cf23aa41e338a83bec6d"
 VIM_PLUG_REF="88e31471818e9a29a8a20a0ee61360cfd7bdc1cd"
+
+# --- Pinned MCP servers, tools and apt signing keys --------------------------
+# Claude Code starts the MCP servers below at the start of every session, so an
+# unpinned spec (`uvx --from git+...` on HEAD, `npx -y <pkg>` on latest) runs
+# whatever upstream published last, with no signal to us. Each is pinned to an
+# exact commit / version instead. register_claude_mcp_servers re-registers a
+# server whose registered command no longer matches, so bumping a pin here and
+# re-running ./install.sh is the whole upgrade.
+#
+# To bump (deliberately, after reading the upstream changelog / diff):
+#   git ls-remote https://github.com/oraios/serena HEAD    -> SERENA_REF
+#   npm view @upstash/context7-mcp version                  -> CONTEXT7_MCP_VERSION
+#   python3 -m pip index versions mcp                       -> MCP_PY_VERSION
+#     Stay on 1.x: mcp 2.x no longer ships mcp.server.fastmcp, which
+#     .claude/mcp-servers/gemini-consultant/server.py imports.
+SERENA_REF="7f7d6245bf96b60fdf4e752a779917372fd1ee6e"
+CONTEXT7_MCP_VERSION="4.7.3"
+MCP_PY_VERSION="1.30.0"
+
+# hadolint (Dockerfile linter) on Ubuntu/Debian: a release binary, installed
+# only when its sha256 matches. The digests are the release's own
+# checksums.sha256, cross-checked against the GitHub asset digests:
+#   gh release view --repo hadolint/hadolint                  (latest tag)
+#   gh release download vX.Y.Z --repo hadolint/hadolint --pattern checksums.sha256
+HADOLINT_VERSION="2.15.1"
+HADOLINT_SHA256_X86_64="c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"
+HADOLINT_SHA256_ARM64="f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d"
+
+# Primary-key fingerprints the Docker and NodeSource apt keyrings must carry
+# (_add_signed_apt_repo). Docker's is the one its install docs have long
+# published; NodeSource publishes none, so its value is the key its keyring URL
+# served when this was pinned (trust on first use). A rotated key fails the
+# check loudly rather than being trusted silently. To re-check a key:
+#   curl -fsSL <key url> | gpg --show-keys --with-colons    (the `fpr` after `pub`)
+DOCKER_APT_KEY_FPR="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+NODESOURCE_APT_KEY_FPR="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+# The Node.js major the NodeSource repository is set up for (an LTS line; the
+# old setup_lts.x picked whichever LTS was current on the day it ran).
+NODESOURCE_NODE_MAJOR="24"
 
 print_info() {
   echo -e "${BLUE}[INFO]${NC} $1"
@@ -174,8 +213,9 @@ Options:
   -h, --help      Show this help and exit.
 
 With no options install.sh symlinks the dotfiles into $HOME (backing up any
-real files it replaces), installs packages for the detected OS
-(macOS / Ubuntu / WSL), and switches the default shell to zsh.
+real files it replaces, and recording where any replaced symlink pointed),
+installs packages for the detected OS (macOS / Ubuntu / WSL) -- Docker and
+hadolint included -- and switches the default shell to zsh.
 
 An install step that fails prints a warning and the run carries on. The failed
 steps are listed at the end instead of "Installation completed!"; fix the cause
@@ -227,8 +267,12 @@ command_exists() {
 # being silently swallowed.
 # Usage: fetch_and_run <url> <interpreter> [interpreter-args...] [-- script-args...]
 #   fetch_and_run https://astral.sh/uv/install.sh sh
-#   fetch_and_run https://get.docker.com sudo sh
 #   fetch_and_run https://.../ohmyzsh/install.sh sh -- --unattended
+# The interpreter is never sudo: the download sits in a temp file the invoking
+# user can rewrite, so handing it to root would let anything running as that
+# user swap what root executes (and no fetched script here warrants root).
+# Packages that need root come from signed apt repositories instead (see
+# _add_signed_apt_repo).
 # Everything before an optional `--` is the interpreter and its own flags (they
 # run BEFORE the downloaded script path); everything after `--` is handed to the
 # script as positional args (AFTER the path), i.e. `sh <tmp> --unattended`. This
@@ -257,6 +301,12 @@ fetch_and_run() {
       interp+=("$arg")
     fi
   done
+  case "${interp[0]:-}" in
+  sudo | */sudo)
+    print_warning "Refusing to run $url as root: fetch_and_run executes downloaded scripts as the invoking user only"
+    return 1
+    ;;
+  esac
   local tmp status
   tmp="$(mktemp)"
   if ! curl -fsSL "$url" -o "$tmp"; then
@@ -265,7 +315,7 @@ fetch_and_run() {
     return 1
   fi
   # A blank body can slip past `curl -f` (e.g. an empty 200 response); never
-  # hand an empty script to a (possibly root) shell.
+  # hand an empty script to a shell.
   if [ ! -s "$tmp" ]; then
     print_warning "Downloaded empty script from $url"
     rm -f "$tmp"
@@ -323,6 +373,8 @@ install_apt_packages() {
     tmux \
     curl \
     wget \
+    gnupg \
+    ca-certificates \
     build-essential \
     xsel \
     fzf \
@@ -644,30 +696,335 @@ install_lazydocker() {
   fi
 }
 
-# Install Docker — used by .zshrc's Docker Desktop CLI completions (fpath).
-install_docker() {
+# --- Signed third-party apt repositories --------------------------------------
+# Print the primary-key fingerprint of every key in keyring/key file $1, one per
+# line (the `fpr` record right after each `pub`; a subkey's `fpr` follows a
+# `sub` and is skipped). gpg runs in a throwaway GNUPGHOME so the check never
+# creates or touches ~/.gnupg. Returns non-zero when gpg cannot read the file.
+_keyring_primary_fprs() {
+  local home rc=0
+  home="$(mktemp -d)" || return 1
+  GNUPGHOME="$home" gpg --batch --quiet --show-keys --with-colons "$1" 2>/dev/null |
+    awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }' ||
+    rc=1
+  rm -rf "$home"
+  return "$rc"
+}
+
+# Add an apt repository that is trusted only through a keyring holding exactly
+# one pinned key:
+#   _add_signed_apt_repo <label> <key-url> <keyring> <fingerprint> <list-name> <sources-line>
+# The key is written by root to <keyring>.new beside the keyring (`*.asc`
+# stored as served, anything else dearmored), and THAT root-owned file is what
+# gets checked -- never a user-owned temp copy that could be swapped between
+# the check and root's read. It is made 0644 first (the check runs as the
+# invoking user, and a strict umask leaves root's file unreadable to it), and
+# must then hold one primary key whose fingerprint is <fingerprint>; only then
+# does root rename it over <keyring> and write the sources entry. Any other
+# content (another key, an extra key, no key), a key gpg cannot read, or a
+# failed download, removes the .new file and leaves an existing keyring as it
+# was. gpg itself must be installed (install_apt_packages puts gnupg there);
+# without it nothing is fetched. The keyring and list names match what the
+# vendors' own setup scripts
+# used, so a rerun on a machine set up by get.docker.com / setup_lts.x
+# replaces their files rather than adding a second Signed-By for the same URI
+# (which apt rejects).
+# Returns 0 once the repository is configured; otherwise warns and returns 1,
+# and the CALLER records the failure under its own label, so a repository that
+# could not be added and the install that is then skipped read as one step.
+_add_signed_apt_repo() {
+  local label="$1" key_url="$2" keyring="$3" want_fpr="$4" list="$5" line="$6"
+  local staged="$keyring.new" fetched=0 fprs
+  # The fingerprint check below needs gpg. The vendor scripts this replaced
+  # (get.docker.com, setup_lts.x) installed gnupg themselves; install_apt_packages
+  # does now, so this only trips when that step failed or was skipped, and then
+  # it says so instead of failing later as "got: none".
+  if ! command_exists gpg; then
+    print_error "gpg is not installed (apt-get install gnupg); the $label signing key cannot be checked, so no repository was added"
+    return 1
+  fi
+  if ! sudo install -d -m 0755 "$(dirname "$keyring")"; then
+    print_warning "Could not create $(dirname "$keyring")"
+    return 1
+  fi
+  case "$keyring" in
+  *.asc) curl -fsSL "$key_url" | sudo tee "$staged" >/dev/null && fetched=1 ;;
+  *) curl -fsSL "$key_url" | sudo gpg --batch --yes --dearmor -o "$staged" && fetched=1 ;;
+  esac
+  if [ "$fetched" -ne 1 ]; then
+    print_warning "Failed to fetch the $label signing key ($key_url)"
+    sudo rm -f "$staged" || true
+    return 1
+  fi
+  # World-readable BEFORE the check: root wrote the file, and the check below
+  # runs as the invoking user, whose gpg cannot read a 0600 file (a strict
+  # umask makes root's files so). Safe to do first -- the file is root-owned
+  # in a root-owned directory, so nobody else can swap it. apt reads keyrings as
+  # the unprivileged _apt user, so it needs this mode in the end anyway.
+  if ! sudo chmod 0644 "$staged"; then
+    print_warning "Could not make the $label signing key readable ($staged)"
+    sudo rm -f "$staged" || true
+    return 1
+  fi
+  # A key gpg cannot read at all and a key with the wrong fingerprint are
+  # different problems: say which one this is.
+  if ! fprs="$(_keyring_primary_fprs "$staged")"; then
+    print_error "Could not read the $label signing key with gpg ($staged); discarded it and added no repository"
+    sudo rm -f "$staged" || true
+    return 1
+  fi
+  if [ "$fprs" != "$want_fpr" ]; then
+    print_error "The $label signing key fingerprint does not match the pinned one (got: $(printf '%s' "${fprs:-none}" | tr '\n' ' '); want: $want_fpr); discarded it and added no repository"
+    sudo rm -f "$staged" || true
+    return 1
+  fi
+  if ! sudo mv -f "$staged" "$keyring"; then
+    print_warning "Could not put the $label signing key in place at $keyring"
+    sudo rm -f "$staged" || true
+    return 1
+  fi
+  if ! printf '%s\n' "$line" | sudo tee "/etc/apt/sources.list.d/$list" >/dev/null; then
+    print_warning "Failed to add the $label apt repository"
+    return 1
+  fi
+  sudo apt-get update || print_warning "apt-get update failed"
+  return 0
+}
+
+# Print "<distro> <codename>" for download.docker.com (ubuntu / debian), from
+# os-release; nothing when the release cannot be told. detect_os calls every
+# Debian-family system "ubuntu", so Debian itself (and a derivative such as
+# Mint, via ID_LIKE + UBUNTU_CODENAME) must be told apart here: Docker's
+# repositories are per distribution. OS_RELEASE_FILE is the test hook, like
+# DEBIAN_VERSION_FILE in detect_os.
+_docker_apt_distro() {
+  local file="${OS_RELEASE_FILE:-/etc/os-release}"
+  [ -r "$file" ] || return 0
+  (
+    # shellcheck disable=SC1090
+    . "$file"
+    case "${ID:-}" in
+    ubuntu) printf 'ubuntu %s\n' "${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}" ;;
+    debian) printf 'debian %s\n' "${VERSION_CODENAME:-}" ;;
+    *)
+      case " ${ID_LIKE:-} " in
+      *" ubuntu "*) printf 'ubuntu %s\n' "${UBUNTU_CODENAME:-}" ;;
+      *" debian "*) printf 'debian %s\n' "${VERSION_CODENAME:-}" ;;
+      esac
+      ;;
+    esac
+  )
+}
+
+# Set up Docker's apt repository (returns 1 when it could not be configured).
+_add_docker_apt_repo() {
+  local distro="" codename="" arch
+  read -r distro codename <<<"$(_docker_apt_distro || true)" || true
+  if [ -z "$distro" ] || [ -z "$codename" ]; then
+    print_warning "Could not tell the Debian/Ubuntu release from ${OS_RELEASE_FILE:-/etc/os-release}; Docker publishes repositories per distribution"
+    return 1
+  fi
+  if ! arch="$(dpkg --print-architecture)"; then
+    print_warning "dpkg --print-architecture failed"
+    return 1
+  fi
+  _add_signed_apt_repo Docker "https://download.docker.com/linux/$distro/gpg" \
+    /etc/apt/keyrings/docker.asc "$DOCKER_APT_KEY_FPR" docker.list \
+    "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$distro $codename stable"
+}
+
+# Docker Desktop is the cask (`docker-desktop`; `docker` is its old name) or
+# the app dragged into /Applications by hand. The CLI is NOT a signal: it stays
+# off PATH until the app has been launched once. DOCKER_DESKTOP_APP is the
+# test hook for the app path.
+_docker_desktop_installed() {
+  brew list --cask docker-desktop &>/dev/null ||
+    brew list --cask docker &>/dev/null ||
+    [ -d "${DOCKER_DESKTOP_APP:-/Applications/Docker.app}" ]
+}
+
+_install_docker_desktop_macos() {
+  if _docker_desktop_installed; then
+    print_success "Docker Desktop already installed"
+  elif command_exists docker; then
+    # OrbStack, Colima, Rancher Desktop, ... bring their own engine and CLI.
+    print_info "docker CLI found at $(command -v docker) without Docker Desktop (OrbStack / Colima / ...?); not installing Docker Desktop"
+    return 0
+  else
+    print_info "Installing Docker Desktop..."
+    try_install "Docker Desktop" brew install --cask docker-desktop
+    # A failure is recorded by try_install; nothing below applies then.
+    _docker_desktop_installed || return 0
+    print_success "Docker Desktop installed"
+  fi
+  if ! command_exists docker; then
+    print_info "Launch Docker Desktop once (open -a Docker): that puts the docker CLI on PATH and starts the engine."
+  fi
+}
+
+# Add the invoking user to the docker group, so docker runs without sudo.
+# Called whenever an engine is present -- on a rerun too, so a membership that
+# was never added (or was removed) is put back. The user comes from `id -un`,
+# not $USER, which the environment can carry over from someone else (sudo -E,
+# su without -l, a container). `id -nG <user>` reads the group database, so a
+# membership added earlier counts even before a relogin.
+_ensure_docker_group() {
+  local user groups
+  if ! user="$(id -un)" || [ -z "$user" ]; then
+    print_warning "Could not tell the current user (id -un); not changing docker group membership"
+    return 0
+  fi
+  if ! getent group docker >/dev/null 2>&1; then
+    print_info "No docker group on this system (rootless Docker, or Docker Desktop's WSL integration); skipping group membership"
+    return 0
+  fi
+  groups="$(id -nG "$user" 2>/dev/null || true)"
+  case " $groups " in
+  *" docker "*)
+    print_info "$user is already in the docker group"
+    return 0
+    ;;
+  esac
+  if sudo usermod -aG docker "$user"; then
+    print_success "Added $user to the docker group. Log out and back in (or run 'newgrp docker') for it to take effect."
+  else
+    record_failure "docker group"
+    print_warning "Could not add $user to the docker group; run: sudo usermod -aG docker $user"
+  fi
+}
+
+_install_docker_engine_ubuntu() {
   if command_exists docker; then
     print_success "Docker already installed"
-    return
-  fi
-  print_info "Installing Docker..."
-  if [[ "$OS" == "macos" ]]; then
-    try_install "Docker Desktop" brew install --cask docker
-    print_info "Launch Docker Desktop once to put the docker CLI on PATH."
-    # `--cask docker` leaves the CLI off PATH until Docker Desktop is launched
-    # once, so the trailing check below legitimately finds nothing on the
-    # happy path. Keep it an `if` (no else returns 0), not `&&`, so `set -e`
-    # never aborts the installer.
-  elif [[ "$OS" == "ubuntu" ]]; then
-    fetch_and_run https://get.docker.com sudo sh || {
+  else
+    print_info "Installing Docker Engine from Docker's signed apt repository..."
+    if _add_docker_apt_repo; then
+      try_install "Docker engine" sudo apt-get install -y \
+        docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    else
       record_failure "Docker engine"
-      print_warning "Failed to install Docker engine"
-    }
-    sudo usermod -aG docker "$USER" 2>/dev/null || true
-    print_info "Log out/in (or 'newgrp docker') for group membership to take effect."
-  fi
-  if command_exists docker; then
+      print_warning "Failed to install Docker engine (the repository could not be set up)"
+    fi
+    # Only an engine that is actually there gets a group membership.
+    command_exists docker || return 0
     print_success "Docker installed"
+  fi
+  _ensure_docker_group
+}
+
+# Non-fatal reachability check, run after the install step. A daemon that is
+# not up yet is the normal state right after an install (Docker Desktop never
+# launched, a login session older than the docker group), so it is a warning
+# and never a recorded failure: recording it would make every first run exit 1.
+_check_docker_daemon() {
+  command_exists docker || return 0
+  if docker info >/dev/null 2>&1; then
+    print_success "Docker daemon is reachable (docker info)"
+    return 0
+  fi
+  local hint
+  if [[ "$OS" == "macos" ]]; then
+    hint="launch Docker Desktop (open -a Docker), or start your OrbStack / Colima VM"
+  else
+    hint="start it with 'sudo systemctl start docker'; if it is running, log out and back in (or 'newgrp docker') so the docker group applies"
+  fi
+  print_warning "docker info failed: the Docker daemon is not reachable yet ($hint). Not counted as a failed step."
+}
+
+# Install Docker -- the engine (Ubuntu/Debian) or Docker Desktop (macOS) -- then
+# check that the daemon answers. Used by .zshrc's Docker CLI completions
+# (fpath), lazydocker and the csb container sandbox CLI.
+install_docker() {
+  if [[ "$OS" == "macos" ]]; then
+    _install_docker_desktop_macos
+  elif [[ "$OS" == "ubuntu" ]]; then
+    _install_docker_engine_ubuntu
+  elif command_exists docker; then
+    print_success "Docker already installed"
+  else
+    print_warning "No Docker install path for OS=$OS; install Docker by hand"
+  fi
+  _check_docker_daemon
+}
+
+# Print the sha256 of file $1 (sha256sum on Linux, shasum on macOS), or nothing.
+_sha256_of() {
+  if command_exists sha256sum; then
+    sha256sum "$1" | awk '{ print $1 }'
+  elif command_exists shasum; then
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
+# Download the pinned hadolint release binary into a private temp dir, check
+# its sha256, and install it as the user into ~/.local/bin. Nothing here runs
+# as root, so no more privileged process ever reads the user-writable download.
+# Returns 1 on a failure (after saying why), 2 when there is no release binary
+# for this machine (a skip, not a failure).
+_install_hadolint_release() {
+  local machine asset want dir got
+  machine="$(uname -m)"
+  case "$machine" in
+  x86_64 | amd64)
+    asset="hadolint-linux-x86_64"
+    want="$HADOLINT_SHA256_X86_64"
+    ;;
+  aarch64 | arm64)
+    asset="hadolint-linux-arm64"
+    want="$HADOLINT_SHA256_ARM64"
+    ;;
+  *)
+    print_warning "No hadolint release binary for $machine; install it by hand (Dockerfile linting is skipped until then)"
+    return 2
+    ;;
+  esac
+  dir="$(mktemp -d)" || return 1
+  if ! curl -fsSL "https://github.com/hadolint/hadolint/releases/download/v$HADOLINT_VERSION/$asset" -o "$dir/hadolint"; then
+    print_warning "Failed to download hadolint $HADOLINT_VERSION ($asset)"
+    rm -rf "$dir"
+    return 1
+  fi
+  got="$(_sha256_of "$dir/hadolint" || true)"
+  if [ "$got" != "$want" ]; then
+    print_error "hadolint $HADOLINT_VERSION checksum mismatch (got: ${got:-none}; want: $want); not installed"
+    rm -rf "$dir"
+    return 1
+  fi
+  if ! ensure_dir "$HOME/.local" || ! ensure_dir "$HOME/.local/bin" ||
+    ! install -m 0755 "$dir/hadolint" "$HOME/.local/bin/hadolint"; then
+    print_warning "Could not install hadolint into $HOME/.local/bin"
+    rm -rf "$dir"
+    return 1
+  fi
+  rm -rf "$dir"
+  export PATH="$HOME/.local/bin:$PATH"
+  return 0
+}
+
+# Install hadolint -- the Dockerfile linter.
+install_hadolint() {
+  # ~/.local/bin is where _install_hadolint_release puts it, and a shell that
+  # does not have that directory on PATH (the install.sh run itself, before
+  # .zshrc is sourced) would otherwise download and verify it again every time.
+  if command_exists hadolint || [ -x "$HOME/.local/bin/hadolint" ]; then
+    print_success "hadolint already installed"
+    return 0
+  fi
+  print_info "Installing hadolint..."
+  if [[ "$OS" == "macos" ]]; then
+    try_install hadolint brew install hadolint
+  elif [[ "$OS" == "ubuntu" ]]; then
+    local rc=0
+    _install_hadolint_release || rc=$?
+    if [ "$rc" -eq 1 ]; then
+      record_failure "hadolint"
+    fi
+  else
+    print_warning "No hadolint installer for OS=$OS; install it by hand (Dockerfile linting is skipped until then)"
+    return 0
+  fi
+  if command_exists hadolint; then
+    print_success "hadolint installed"
   fi
 }
 
@@ -975,13 +1332,15 @@ try_install() {
 
 # Install Python deps for the bundled MCP server (.claude/mcp-servers/gemini-consultant).
 # server.py imports `mcp.server.fastmcp`, so the `mcp` package must be present.
+# A missing package is installed at MCP_PY_VERSION; one that is already there
+# (at whatever version) is left alone, since the user site may share it.
 install_mcp_server_deps() {
   if command_exists pip3 || command_exists pip; then
     local pip_cmd="pip3"
     command_exists pip3 || pip_cmd="pip"
     if ! $pip_cmd show mcp &>/dev/null; then
-      print_info "Installing Python 'mcp' package for the gemini-consultant MCP server..."
-      pip_install_user "$pip_cmd" mcp
+      print_info "Installing Python 'mcp' $MCP_PY_VERSION for the gemini-consultant MCP server..."
+      pip_install_user "$pip_cmd" "mcp==$MCP_PY_VERSION"
     else
       print_info "Python 'mcp' package already installed"
     fi
@@ -990,10 +1349,113 @@ install_mcp_server_deps() {
   fi
 }
 
-# Register MCP servers with Claude Code (user scope, idempotent).
-# Server connections live in ~/.claude.json, which is NOT under dotfiles
-# management, so re-register them here so a fresh machine matches the
-# servers assumed by the skills and CLAUDE.md.
+# Print the value of the `  <field>: ` line of `claude mcp get` output $1 (the
+# first such line), or nothing. A here-string, not a pipe: awk stops at the
+# first match, and an early-exiting reader would fail the pipeline under
+# pipefail.
+_mcp_field() {
+  awk -v key="  $2: " 'index($0, key) == 1 { print substr($0, length(key) + 1); exit }' <<<"$1"
+}
+
+# Write the `claude mcp get` output $2 to the file $1, owner-only from the
+# start (umask 077, then chmod to be sure): it can hold an --api-key argument
+# or an environment value. Creates the file's directory. Non-zero when any step
+# fails. `&&` rather than `!`, which bash 3.2 can drop when a redirect fails.
+_save_mcp_registration() {
+  mkdir -p "$(dirname "$1")" &&
+    (umask 077 && printf '%s\n' "$2" >"$1") &&
+    chmod 0600 "$1"
+}
+
+# Register one MCP server in user scope, converging on the command given:
+#   _add_mcp <name> -- <command> [args...]
+# Not registered -> add it. Registered with exactly this command and these args
+# -> leave it. Registered with anything else -> save the old registration
+# (`claude mcp get` output, owner-only) to $backup_dir/mcp-<name>.txt, then
+# remove and add it again, so a bumped pin, or an interpreter that has moved
+# since an older run, is fixed by re-running ./install.sh rather than only
+# warned about. The messages name the saved file and never print the old
+# arguments, which can hold a key the user added; a registration that cannot be
+# saved is left as it is (and recorded), and an add that fails after the
+# remove says the server is no longer registered.
+#
+# `claude mcp get` prints `  Command: <cmd>` and `  Args: <args joined by
+# spaces>`; both are compared to the expected values exactly (an argument with
+# a space in it cannot be told apart from two, which only ever errs towards a
+# needless re-registration). Never a substring match: /usr/bin/python3 is
+# not /usr/bin/python3.9.
+#
+# Left alone, with a note: a remote (http / sse) registration, which is the
+# user's own choice of transport. A mismatch registered in another scope
+# (local / project) is a recorded failure: `claude mcp get` shows that entry
+# ahead of the user-scope one, so replacing the user-scope entry would change
+# nothing.
+_add_mcp() {
+  local name="$1"
+  shift
+  # "$@" is `-- <command> <args...>`, exactly as `claude mcp add` takes it.
+  local want_cmd="${2:-}" want_args="${*:3}"
+  local registered have_type have_cmd have_args have_scope
+  if ! registered="$(claude mcp get "$name" 2>/dev/null)"; then
+    print_info "Registering MCP server '$name'..."
+    claude mcp add --scope user "$name" "$@" || {
+      record_failure "MCP server $name"
+      print_warning "Failed to register MCP server '$name'"
+    }
+    return 0
+  fi
+  have_type="$(_mcp_field "$registered" Type)"
+  have_cmd="$(_mcp_field "$registered" Command)"
+  have_args="$(_mcp_field "$registered" Args)"
+  if [ "$have_cmd" = "$want_cmd" ] && [ "$have_args" = "$want_args" ]; then
+    print_info "MCP server '$name' already registered"
+    return 0
+  fi
+  if [ -n "$have_type" ] && [ "$have_type" != "stdio" ]; then
+    print_info "MCP server '$name' is registered as a $have_type server; leaving it as is"
+    return 0
+  fi
+  have_scope="$(_mcp_field "$registered" Scope)"
+  case "$have_scope" in
+  "User config"*) ;;
+  *)
+    # The old arguments stay out of the message (like the re-registration
+    # below): they may carry a key the user added.
+    record_failure "MCP server $name"
+    print_warning "MCP server '$name' is registered in another scope (${have_scope:-unknown}) with a command or arguments other than '$want_cmd $want_args' (see: claude mcp get $name); remove it there (claude mcp remove $name) and re-run ./install.sh"
+    return 0
+    ;;
+  esac
+  # Keep what is about to be replaced: an argument or an environment value the
+  # user added (context7's --api-key, say) is gone after the remove, and a
+  # remove whose add then fails leaves the server unregistered. Nothing is
+  # removed that was not saved first.
+  [ -n "${backup_dir:-}" ] || backup_dir="$HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
+  local saved="$backup_dir/mcp-$name.txt"
+  if ! _save_mcp_registration "$saved" "$registered"; then
+    record_failure "MCP server $name"
+    print_warning "Could not save the current registration of MCP server '$name' to $saved; leaving it as it is (nothing was removed)"
+    return 0
+  fi
+  # The path, not the old arguments: the file is owner-only because they can
+  # hold a secret, and a terminal log is not.
+  print_info "Re-registering MCP server '$name' (the old registration is saved in $saved)"
+  if ! claude mcp remove --scope user "$name" >/dev/null; then
+    record_failure "MCP server $name"
+    print_warning "Failed to remove MCP server '$name' (the old registration is saved in $saved); fix it with: claude mcp remove --scope user $name && ./install.sh"
+  elif ! claude mcp add --scope user "$name" "$@"; then
+    record_failure "MCP server $name"
+    print_warning "MCP server '$name' was removed but could not be added again, so it is NOT registered now; the old registration is saved in $saved. Re-run ./install.sh once the cause is fixed"
+  else
+    print_success "Re-registered MCP server '$name' (the old registration is saved in $saved)"
+  fi
+}
+
+# Register MCP servers with Claude Code (user scope, idempotent and convergent:
+# see _add_mcp). Server connections live in ~/.claude.json, which is NOT under
+# dotfiles management, so re-register them here so a fresh machine matches the
+# servers assumed by the skills and CLAUDE.md. The versions are the pins near
+# the top of this file.
 #
 # Codex is deliberately absent: Codex CLI 0.154 removed its MCP-server mode,
 # so a registration would only fail with CONNECTION_CLOSED on every start.
@@ -1006,22 +1468,10 @@ register_claude_mcp_servers() {
     return
   fi
 
-  add_mcp() {
-    local name="$1"
-    shift
-    if claude mcp get "$name" &>/dev/null; then
-      print_info "MCP server '$name' already registered"
-    else
-      print_info "Registering MCP server '$name'..."
-      claude mcp add --scope user "$name" "$@" || {
-        record_failure "MCP server $name"
-        print_warning "Failed to register MCP server '$name'"
-      }
-    fi
-  }
-
-  add_mcp context7 -- npx -y @upstash/context7-mcp
-  add_mcp serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
+  _add_mcp context7 -- npx -y "@upstash/context7-mcp@$CONTEXT7_MCP_VERSION"
+  # `claude-code` is the context serena renamed `ide-assistant` to (the old
+  # name is still accepted, with a deprecation warning, as an alias of it).
+  _add_mcp serena -- uvx --from "git+https://github.com/oraios/serena@$SERENA_REF" serena start-mcp-server --context claude-code
 
   # Bare `python` does not exist on stock Ubuntu or Homebrew installs
   # (only `python3`); resolve a concrete interpreter instead.
@@ -1045,27 +1495,15 @@ register_claude_mcp_servers() {
     esac
   fi
   if [ -n "$python_cmd" ]; then
-    # add_mcp keeps an existing registration, so one made by an older run with
-    # the pyenv shim (or a since-removed version) stays as it was. Only check
-    # `mcp` on the interpreter the registration will actually use: a working
-    # registration with another interpreter is not this python's problem.
-    local registered check_mcp=1
-    if registered="$(claude mcp get gemini-consultant 2>/dev/null)"; then
-      case "$registered" in
-      *"$python_cmd"*) ;;
-      *)
-        check_mcp=0
-        print_warning "MCP server 'gemini-consultant' is registered with another interpreter than $python_cmd; to re-pin it run: claude mcp remove --scope user gemini-consultant && ./install.sh"
-        ;;
-      esac
-    fi
-    # install_mcp_server_deps resolves pip on its own, so it can have installed
-    # `mcp` for a different interpreter; check the one being registered.
-    if [ "$check_mcp" -eq 1 ] && ! "$python_cmd" -c 'import mcp.server.fastmcp' &>/dev/null; then
-      print_warning "$python_cmd cannot import the 'mcp' package; gemini-consultant will not start until it is installed for that interpreter (e.g. $python_cmd -m pip install --user mcp)"
+    # _add_mcp converges the registration on $python_cmd (an older run's pyenv
+    # shim, or a since-removed version, is re-registered), so this is the
+    # interpreter that has to import `mcp`. install_mcp_server_deps resolves
+    # pip on its own, so it can have installed `mcp` for a different one.
+    if ! "$python_cmd" -c 'import mcp.server.fastmcp' &>/dev/null; then
+      print_warning "$python_cmd cannot import the 'mcp' package; gemini-consultant will not start until it is installed for that interpreter (e.g. $python_cmd -m pip install --user mcp==$MCP_PY_VERSION)"
       record_failure "gemini-consultant (mcp not importable)"
     fi
-    add_mcp gemini-consultant -- "$python_cmd" "$HOME/.claude/mcp-servers/gemini-consultant/server.py"
+    _add_mcp gemini-consultant -- "$python_cmd" "$HOME/.claude/mcp-servers/gemini-consultant/server.py"
   else
     print_warning "python3/python not found; skipping gemini-consultant MCP server registration"
   fi
@@ -1078,10 +1516,14 @@ install_nodejs() {
     if [[ "$OS" == "macos" ]]; then
       try_install "Node.js" brew install node
     elif [[ "$OS" == "ubuntu" ]]; then
-      # Guarded: NodeSource being down must not abort the run. The `-` (read
-      # from stdin) of the canonical `curl | sudo -E bash -` is dropped because
-      # fetch_and_run passes a file path instead.
-      if fetch_and_run https://deb.nodesource.com/setup_lts.x sudo -E bash; then
+      # NodeSource's signed apt repository, set up the way its setup_lts.x
+      # did (same keyring and list names) but without running that script as
+      # root: the keyring must hold NODESOURCE_APT_KEY_FPR. Guarded, so
+      # NodeSource being down must not abort the run.
+      if _add_signed_apt_repo NodeSource \
+        https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        /etc/apt/keyrings/nodesource.gpg "$NODESOURCE_APT_KEY_FPR" nodesource.list \
+        "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODESOURCE_NODE_MAJOR.x nodistro main"; then
         try_install "Node.js" sudo apt-get install -y nodejs
       else
         record_failure "Node.js"
@@ -1327,32 +1769,58 @@ install_vim_plug() {
 # assigns before invoking any step; it is deliberately global (not `local`)
 # for exactly that reason.
 
-# Helper: backup a path if it exists as a real file/dir (not a symlink)
-backup_if_real() {
-  local target="$1"
-  # A symlink (even a broken one) is ours to replace, never worth backing up.
-  if [ -L "$target" ]; then
-    if [ "$DRY_RUN" -eq 1 ]; then
-      print_info "[DRY-RUN] would replace existing symlink $target"
-      return 0
-    fi
-    rm -f "$target"
-    return 0
-  fi
-  # Nothing there: return success (a bare `return` would propagate the failed
-  # test's exit status and abort the caller under `set -e`).
-  [ -e "$target" ] || return 0
-  # Preserve the path structure under $backup_dir. A flat, basename-only
-  # backup silently overwrites files that share a basename across different
-  # destinations (settings.json / keybindings.json live under Code/ and
-  # .claude/), so all but the last one moved would be lost.
-  local rel dest_parent
+# Print the directory under $backup_dir that holds the backup of $1. The path
+# structure is preserved: a flat, basename-only backup silently overwrites files
+# that share a basename across different destinations (settings.json /
+# keybindings.json live under Code/ and .claude/), so all but the last one
+# moved would be lost.
+_backup_parent_dir() {
+  local target="$1" rel
   case "$target" in
   "$HOME"/*) rel="${target#"$HOME"/}" ;;
   /*) rel="${target#/}" ;;
   *) rel="$target" ;;
   esac
-  dest_parent="$backup_dir/$(dirname "$rel")"
+  printf '%s\n' "$backup_dir/$(dirname "$rel")"
+}
+
+# Helper: clear the way for a link at $1. A real file/dir is moved into
+# $backup_dir; a symlink is removed once its old target is recorded.
+# Returns 0 when $1 is gone (or never existed), 1 when it could not be cleared
+# -- the path is then left exactly as it was, and the caller must not link.
+backup_if_real() {
+  local target="$1"
+  # A symlink (even a broken one) is ours to replace and has no content worth
+  # moving, but where it pointed is worth keeping: a stow tree, an older
+  # checkout, a hand-made redirect. One line per replaced link goes into
+  # $backup_dir/symlinks.txt (`<path> -> <old target>`) before it is removed,
+  # so the user can put it back.
+  if [ -L "$target" ]; then
+    local old
+    # `|| true`: a message and a record, not a decision.
+    old="$(readlink "$target" || true)"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would replace existing symlink $target (was -> $old)"
+      return 0
+    fi
+    # mkdir: create_symlinks removes an empty backup dir, and
+    # link_oh_my_zsh_theme runs after that. Tested with `&&` rather than `!`,
+    # which bash 3.2 can drop when a redirect fails (see
+    # _render_git_local_config).
+    if mkdir -p "$backup_dir" &&
+      printf '%s -> %s\n' "$target" "$old" >>"$backup_dir/symlinks.txt" &&
+      rm -f "$target"; then
+      print_warning "Replacing symlink $target (was -> $old; recorded in $backup_dir/symlinks.txt)"
+      return 0
+    fi
+    print_error "Could not record or remove the symlink $target (-> $old); leaving it in place"
+    return 1
+  fi
+  # Nothing there: return success (a bare `return` would propagate the failed
+  # test's exit status and abort the caller under `set -e`).
+  [ -e "$target" ] || return 0
+  local dest_parent
+  dest_parent="$(_backup_parent_dir "$target")"
   if [ "$DRY_RUN" -eq 1 ]; then
     print_info "[DRY-RUN] would back up $target -> $dest_parent/"
     return 0
@@ -1362,8 +1830,58 @@ backup_if_real() {
   # can be the sole step that moves anything -- the user must still be told
   # where their file went.
   print_warning "Backing up existing $(basename "$target") -> $dest_parent/"
-  mkdir -p "$dest_parent"
-  mv "$target" "$dest_parent/"
+  # Checked, not bare: under `set -e` a failed mkdir/mv (a read-only HOME, a
+  # backup dir on a full disk) used to end the run with no failure summary.
+  if mkdir -p "$dest_parent" && mv "$target" "$dest_parent/"; then
+    return 0
+  fi
+  print_error "Could not back up $target to $dest_parent/; leaving it in place"
+  return 1
+}
+
+# Helper: back up $1 for a caller that replaces it with ONE `mv -f NEW $1`.
+# backup_if_real moves the old file away first, so a mv that then fails leaves
+# nothing at the path; here the old file is COPIED (cp -p) and stays put until
+# the rename overwrites it atomically. A symlink is recorded in
+# $backup_dir/symlinks.txt, as backup_if_real does, but not removed (rename(2)
+# replaces the link itself). A directory, or a link to one, is handled exactly
+# as backup_if_real does: `mv -f` would drop NEW into it, so it has to be moved
+# aside. Returns 0 when $1 is ready to be overwritten (or is not there), 1 when
+# it could not be backed up -- the path is then untouched, and the caller must
+# not replace it.
+backup_copy_if_real() {
+  local target="$1"
+  if [ -d "$target" ] || { [ ! -L "$target" ] && [ ! -f "$target" ]; }; then
+    backup_if_real "$target"
+    return
+  fi
+  local dest_parent
+  dest_parent="$(_backup_parent_dir "$target")"
+  if [ -L "$target" ]; then
+    local old
+    old="$(readlink "$target" || true)"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would replace existing symlink $target (was -> $old)"
+      return 0
+    fi
+    if mkdir -p "$backup_dir" &&
+      printf '%s -> %s\n' "$target" "$old" >>"$backup_dir/symlinks.txt"; then
+      print_warning "Replacing symlink $target (was -> $old; recorded in $backup_dir/symlinks.txt)"
+      return 0
+    fi
+    print_error "Could not record the symlink $target (-> $old); leaving it in place"
+    return 1
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_info "[DRY-RUN] would back up $target -> $dest_parent/"
+    return 0
+  fi
+  print_warning "Backing up existing $(basename "$target") -> $dest_parent/"
+  if mkdir -p "$dest_parent" && cp -p "$target" "$dest_parent/"; then
+    return 0
+  fi
+  print_error "Could not back up $target to $dest_parent/; leaving it in place"
+  return 1
 }
 
 # Helper: create a destination directory, replacing a dangling symlink first.
@@ -1375,16 +1893,26 @@ backup_if_real() {
 # registration or chsh, with no [ERROR] line. backup_if_real already treats a
 # symlink -- even a broken one -- as ours to replace; a symlink that resolves
 # to a real directory elsewhere is the user's redirect and is kept.
+#
+# The dry run touches nothing but still announces that replacement, so the
+# preview of a machine with a dangling ~/.gemini (or ~/.claude, ...) says what
+# the real run will do to it.
 ensure_dir() {
-  [ "$DRY_RUN" -eq 1 ] && return 0
   if [ -L "$1" ] && [ ! -e "$1" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] would replace dangling symlink $1 with a real directory"
+      return 0
+    fi
     print_warning "Replacing dangling symlink $1 with a real directory"
     rm -f "$1"
   fi
+  [ "$DRY_RUN" -eq 1 ] && return 0
   mkdir -p "$1"
 }
 
-# Helper: symlink a repo entry into a destination directory, backing up reals
+# Helper: symlink a repo entry into a destination directory, backing up reals.
+# A source missing from the checkout is skipped (see link_path for a link whose
+# target may legitimately not exist yet).
 link_entry() {
   local src="$1"
   local dest="$2"
@@ -1392,6 +1920,21 @@ link_entry() {
     print_warning "Skipping missing source: $src"
     return
   fi
+  link_path "$src" "$dest"
+}
+
+# Helper: make $2 a symlink to $1, whether or not $1 exists yet.
+#
+# A link that already points at $1 (the same readlink text) is left alone --
+# not removed and re-created on every run, which left a window with no link at
+# all and churned its mtime. Anything else in the way goes through
+# backup_if_real first: a real file is moved to the backup dir, another link
+# has its old target recorded there. A failure to clear the way or to create
+# the link is a recorded failure, never a bare abort under `set -e` (which used
+# to end the run with no failed-step summary).
+link_path() {
+  local src="$1"
+  local dest="$2"
   # Refuse to write through a parent that already resolves INTO the checkout
   # (`ln -s ~/dotfiles/.claude ~/.claude` is a common pre-existing layout).
   # ensure_dir / mkdir -p no-op on such a symlink, so dest resolves back onto
@@ -1406,21 +1949,38 @@ link_entry() {
   # case-insensitive filesystem (the macOS default) a link to `.../Dotfiles`
   # and an installer run from `.../dotfiles` are two strings for one
   # directory. The parents are compared rather than dest itself: an existing
-  # dest link to src (every re-run) must still be refreshed, and `-ef` on dest
-  # would follow it and match. A missing dest parent makes `-ef` false, which
-  # is correct -- nothing resolves there.
+  # dest link to src (every re-run) must reach the already-linked check below,
+  # and `-ef` on dest would follow it and match. A missing dest parent makes
+  # `-ef` false, which is correct -- nothing resolves there.
   if [ "$(dirname "$dest")" -ef "$(dirname "$src")" ] &&
     [ "$(basename "$dest")" = "$(basename "$src")" ]; then
     print_warning "Skipping $dest: it already resolves into the checkout ($src)"
     return 0
   fi
-  backup_if_real "$dest"
+  if [ -L "$dest" ] && [ "$(readlink "$dest" || true)" = "$src" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      print_info "[DRY-RUN] already linked $dest -> $src"
+    else
+      print_info "Already linked $(basename "$dest")"
+    fi
+    return 0
+  fi
+  if ! backup_if_real "$dest"; then
+    record_failure "link $dest"
+    return 0
+  fi
   if [ "$DRY_RUN" -eq 1 ]; then
     print_info "[DRY-RUN] would link $dest -> $src"
-    return
+    return 0
   fi
-  ln -sf "$src" "$dest"
-  print_success "Linked $(basename "$dest")"
+  # -n: never descend into an existing link to a directory. backup_if_real has
+  # just cleared dest, so this only matters if something reappeared there.
+  if ln -sfn "$src" "$dest"; then
+    print_success "Linked $(basename "$dest")"
+  else
+    print_error "Could not link $dest -> $src"
+    record_failure "link $dest"
+  fi
 }
 
 _link_top_level_dotfiles() {
@@ -1698,7 +2258,11 @@ _link_editor_configs() {
   else
     vscode_user_dir="$HOME/.config/Code/User"
   fi
-  ensure_dir "$vscode_user_dir"
+  if ! ensure_dir "$vscode_user_dir"; then
+    print_error "Could not create $vscode_user_dir: the VS Code links are skipped until it is fixed"
+    record_failure "VS Code config links"
+    return 0
+  fi
 
   local editor_config_files=(
     "settings.json"
@@ -1741,7 +2305,13 @@ _render_codex_hooks_json() {
 _link_claude_config() {
   # Claude Code config: symlink individual entries so CLI runtime data
   # (projects/, sessions/, history.jsonl, backups/, etc.) stays out of the repo.
-  ensure_dir "$HOME/.claude"
+  # Recorded, not fatal: a ~/.claude that cannot be a directory (a file in its
+  # place, a read-only parent) used to end the whole run here under `set -e`.
+  if ! ensure_dir "$HOME/.claude"; then
+    print_error "Could not create $HOME/.claude: the Claude Code links are skipped until it is fixed"
+    record_failure "Claude config links"
+    return 0
+  fi
   local claude_entries=(
     "CLAUDE.md"
     "settings.json"
@@ -1790,7 +2360,11 @@ _link_codex_config() {
   # hand-written skill stops being live in Codex until it is moved back into
   # .codex/skills here. That is the cost of linking the directory rather than
   # its entries.
-  ensure_dir "$HOME/.codex"
+  if ! ensure_dir "$HOME/.codex"; then
+    print_error "Could not create $HOME/.codex: the Codex links are skipped until it is fixed"
+    record_failure "Codex config links"
+    return 0
+  fi
 
   local codex_link_entries=(
     "AGENTS.md"
@@ -1885,15 +2459,29 @@ _link_codex_config() {
       rm -f "$dry_rendered_tmp"
     else
       local rendered_tmp
-      rendered_tmp="$(mktemp)"
+      # Beside the destination, not in $TMPDIR: the rename below is only atomic
+      # within one filesystem (/tmp is often a tmpfs).
+      if ! rendered_tmp="$(mktemp "$HOME/.codex/.hooks.json.XXXXXX")"; then
+        print_error "Could not create a temporary file in $HOME/.codex: Codex runs without these hooks until it is fixed"
+        record_failure "Codex hooks.json"
+        return 0
+      fi
       _render_codex_hooks_json >"$rendered_tmp"
       # Only replace (and back up) when the rendered result actually changed, so
       # re-runs don't move an identical hooks.json into a fresh backup dir.
       if [ ! -f "$HOME/.codex/hooks.json" ] ||
         ! cmp -s "$rendered_tmp" "$HOME/.codex/hooks.json"; then
-        backup_if_real "$HOME/.codex/hooks.json"
-        mv "$rendered_tmp" "$HOME/.codex/hooks.json"
-        print_success "Rendered hooks.json"
+        # Checked like link_path: a failed backup or move is recorded rather
+        # than ending the run bare under `set -e`. The old file is copied, not
+        # moved, so a failed rename leaves it where it was.
+        if backup_copy_if_real "$HOME/.codex/hooks.json" &&
+          mv -f "$rendered_tmp" "$HOME/.codex/hooks.json"; then
+          print_success "Rendered hooks.json"
+        else
+          rm -f "$rendered_tmp"
+          print_error "Could not write $HOME/.codex/hooks.json: Codex runs without these hooks until it is fixed"
+          record_failure "Codex hooks.json"
+        fi
       else
         rm -f "$rendered_tmp"
       fi
@@ -1902,7 +2490,11 @@ _link_codex_config() {
 }
 
 _link_gemini_config() {
-  ensure_dir "$HOME/.gemini"
+  if ! ensure_dir "$HOME/.gemini"; then
+    print_error "Could not create $HOME/.gemini: the Gemini link and settings.json are skipped until it is fixed"
+    record_failure "Gemini config links"
+    return 0
+  fi
   # `[ -e ] && link_entry` ではなく if/fi な理由は _link_claude_config を参照。
   if [ -e "$DOTFILES_DIR/.gemini/GEMINI.md" ]; then
     link_entry "$DOTFILES_DIR/.gemini/GEMINI.md" "$HOME/.gemini/GEMINI.md"
@@ -1942,7 +2534,10 @@ _seed_gemini_settings() {
   # A ~/.gemini the user redirected elsewhere is not chmodded through the link
   # (that would change a directory this installer does not own); say so, since
   # nothing else then keeps Gemini's 0644 rewrites away from other users.
-  if [ -L "$gemini_dir" ]; then
+  # A DANGLING link is not such a redirect: ensure_dir replaces it with a real
+  # directory (in the dry run it only says so), which is then restricted below
+  # -- so it must not read as "not restricting" in the preview.
+  if [ -L "$gemini_dir" ] && [ -e "$gemini_dir" ]; then
     local dry_prefix=""
     if [ "$DRY_RUN" -eq 1 ]; then
       dry_prefix="[DRY-RUN] "
@@ -2040,9 +2635,143 @@ _restrict_gemini_backups() {
 
 _link_tmux_helper() {
   # tmux helper script: .tmux.conf `bind S` invokes ~/.tmux/tmux_send_to_all_except_nvim.sh
-  ensure_dir "$HOME/.tmux"
+  if ! ensure_dir "$HOME/.tmux"; then
+    print_error "Could not create $HOME/.tmux: the tmux helper link is skipped until it is fixed"
+    record_failure "tmux helper link"
+    return 0
+  fi
   link_entry "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" "$HOME/.tmux/tmux_send_to_all_except_nvim.sh"
   [ "$DRY_RUN" -eq 1 ] || chmod +x "$DOTFILES_DIR/scripts/tmux_send_to_all_except_nvim.sh" 2>/dev/null || true
+}
+
+# csb: the container sandbox CLI on PATH, as ~/.local/bin/csb. It is a fixed
+# three-line /bin/sh wrapper, not a symlink:
+#   unset DEVELOPER_DIR TOOLCHAINS SDKROOT __PYVENV_LAUNCHER__ ... PYTHONPATH
+#   exec '<python>' -I -S '<HOME>/.claude/hooks/claude_sandbox.py' "$@"
+# A symlink let `cp x ~/.local/bin/` write through it into claude_sandbox.py, and
+# bash-review statically allows a canonical csb call only when this file matches
+# the template (_sandbox_gate.csb_wrapper_text) byte for byte -- so the text is
+# generated by that function, never spelled here. <python> is the interpreter the
+# bash-review launchers start the hook on (_hook_python_pick: the root-owned
+# system python3), since the hook trusts only a wrapper naming that very path; it
+# is never PATH's python3, a pyenv shim or anything a .python-version picks. It
+# goes through the ~/.claude/hooks link rather than straight into the checkout,
+# so it follows that link wherever a later run points it. An older symlink or a
+# file of someone else's in the way is backed up by backup_copy_if_real (copied,
+# not moved: it stays until the rename replaces it). .zshrc puts ~/.local/bin on
+# PATH.
+#
+# It runs from main() AFTER the package steps, not from create_symlinks: the
+# system python3 of a new macOS is a stub until the Command Line Tools (which the
+# Homebrew step installs) are in, and starting it opens the installer dialog.
+# Without the Tools _link_sandbox_cli runs no python at all, dry-run included,
+# and says to re-run once they are installed.
+
+# Run "$@" in $HOME the way the bash-review launchers start the hook: sourcing a
+# launcher (in this subshell only) unsets the launch variables
+# (_sandbox_gate.LAUNCH_ENV_DROP) and defines its trusted-python functions; it does
+# not run the launcher's main.
+_as_hook_python() {
+  (. "$DOTFILES_DIR/.claude/hooks/bash-review-launcher.sh" && cd "$HOME" && "$@")
+}
+
+# The interpreter the hooks run on: the launchers' _trusted_python over their fixed
+# candidates (the first root-owned, unwritable system python3 >= 3.9). Not PATH's
+# python3 and not pyenv's: bash-review trusts only a wrapper naming the very
+# interpreter it runs on itself (the hook's csb_is_ours). Call inside _as_hook_python.
+_hook_python_pick() {
+  # The array is set right above, in the same (sub)shell this runs in.
+  # shellcheck disable=SC2031
+  _trusted_python_candidates && _trusted_python 0 / "${_TRUSTED_CANDIDATES[@]}"
+}
+
+# Does $2 hold the csb wrapper bash-review will trust for interpreter $1? The same
+# test as the hook's csb_is_ours: a regular file (not a symlink), mode 0755, byte
+# for byte _sandbox_gate.csb_wrapper_text for this interpreter and $HOME.
+_csb_wrapper_verified() {
+  _as_hook_python "$1" -I -S -B -c 'import os, stat, sys; sys.path.insert(0, sys.argv[1]); import _sandbox_gate as g; st = os.lstat(sys.argv[2]); ok = stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) == 0o755 and g.parse_csb_wrapper(open(sys.argv[2], "rb").read(), sys.argv[3]) == sys.argv[4]; sys.exit(0 if ok else 1)' \
+    "$DOTFILES_DIR/.claude/hooks" "$2" "$HOME" "$1" 2>/dev/null
+}
+
+_link_sandbox_cli() {
+  local dest="$HOME/.local/bin/csb" py tmp
+  # A new macOS has no real /usr/bin/python3 until the Command Line Tools are
+  # installed: it is a stub that, when started, opens the installer dialog. The
+  # interpreter search below would start it (and a --dry-run would too), so
+  # without the Tools nothing is run. Not a failure: the Homebrew step installs
+  # them, and this runs after it, so on a real run this only trips when that did
+  # not work -- a rerun then finishes csb. (Xcode.app also satisfies it.)
+  if [[ "$OS" == "macos" ]] && ! xcode-select -p &>/dev/null; then
+    print_warning "The Command Line Tools are not installed, so csb (which runs on the system python3 they provide) is not set up yet; install them with: xcode-select --install, then re-run ./install.sh"
+    return 0
+  fi
+  if ! ensure_dir "$HOME/.local" || ! ensure_dir "$HOME/.local/bin"; then
+    print_error "Could not create $HOME/.local/bin: csb is not installed until it is fixed"
+    record_failure "csb wrapper"
+    return 0
+  fi
+  py="$(_as_hook_python _hook_python_pick </dev/null 2>/dev/null || true)"
+  case "$py" in
+  /*) ;;
+  *) py="" ;;
+  esac
+  if [ -z "$py" ]; then
+    print_error "No trusted system python3 (root-owned, not group/other-writable, 3.9 or later; on macOS: xcode-select --install): csb is not installed"
+    record_failure "csb wrapper"
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_info "[DRY-RUN] would write $dest (runs $HOME/.claude/hooks/claude_sandbox.py with $py)"
+    return 0
+  fi
+  if ! tmp="$(mktemp "$HOME/.local/bin/.csb.XXXXXX")"; then
+    print_error "Could not create a temporary file in $HOME/.local/bin: csb is not installed"
+    record_failure "csb wrapper"
+    return 0
+  fi
+  # -I: the template is read from the checkout, never from the cwd. -S: no site.
+  # -B: importing it writes no __pycache__ into the checkout (-I ignores
+  # PYTHONDONTWRITEBYTECODE).
+  if ! _as_hook_python "$py" -I -S -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _sandbox_gate as g; sys.stdout.write(g.csb_wrapper_text(sys.argv[2], sys.argv[3]))' \
+    "$DOTFILES_DIR/.claude/hooks" "$py" "$HOME" >"$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    print_error "Could not write the csb wrapper for $py (an unusual interpreter or home path?): csb is not installed"
+    record_failure "csb wrapper"
+    return 0
+  fi
+  # Same bytes is not enough: a wrapper the hook rejects (a group-writable mode,
+  # say) is backed up and rewritten rather than reported as installed.
+  if [ -f "$dest" ] && [ ! -L "$dest" ] && cmp -s "$tmp" "$dest" &&
+    _csb_wrapper_verified "$py" "$dest"; then
+    rm -f "$tmp"
+    print_info "Already installed csb"
+    return 0
+  fi
+  # Copied aside, not moved: the old wrapper stays at the path until the rename
+  # below replaces it, so a failed mv leaves csb as it was.
+  if ! backup_copy_if_real "$dest"; then
+    rm -f "$tmp"
+    record_failure "csb wrapper"
+    return 0
+  fi
+  # mv onto the path replaces whatever is there (a symlink is replaced, not
+  # followed); chmod first so the file never appears without its mode.
+  if ! { chmod 0755 "$tmp" && mv -f "$tmp" "$dest"; }; then
+    rm -f "$tmp"
+    print_error "Could not install $dest"
+    record_failure "csb wrapper"
+    return 0
+  fi
+  # Check what ended up at the path, not what was written: something rewriting the
+  # temporary file before the move (or the path right after it) must not leave a
+  # wrapper bash-review would then trust (_csb_wrapper_verified).
+  if _csb_wrapper_verified "$py" "$dest"; then
+    print_success "Installed csb (~/.local/bin/csb -> $HOME/.claude/hooks/claude_sandbox.py)"
+  else
+    rm -f "$dest"
+    print_error "$dest changed while it was being installed: removed it, csb is not installed"
+    record_failure "csb wrapper"
+  fi
 }
 
 create_symlinks() {
@@ -2084,6 +2813,10 @@ create_symlinks() {
   # from main() only after install_oh_my_zsh.
 
   _link_tmux_helper
+
+  # csb (_link_sandbox_cli) is NOT written here: it needs the system python3,
+  # which a new macOS only has once the Command Line Tools are in -- so main()
+  # runs it after the package steps.
 
   # Backup-dir bookkeeping. Guard the whole open+close as one unit: in dry-run
   # the dir was never created, so running `ls -A`/`rmdir` on it would fail under
@@ -2134,23 +2867,45 @@ install_ai_tools() {
   echo
   if [[ $REPLY =~ ^[Yy]$ ]]; then
     print_info "Installing AI development tools..."
-
-    # Claude Code (official npm distribution)
-    if ! command_exists claude; then
-      try_install "Claude Code" npm install -g @anthropic-ai/claude-code
-    else
-      print_info "Claude Code already installed"
-    fi
-
-    try_install Codex npm install -g @openai/codex
-    try_install "Gemini CLI" npm install -g @google/gemini-cli
-
-    # GitHub Copilot CLI (standalone `copilot` command; used by
-    # update_ai_tools.sh and the `cop` alias in .zshrc).
-    try_install "Copilot CLI" npm install -g @github/copilot
-
+    _install_ai_cli_tools
     print_success "AI tools installation attempted (check warnings above)"
   fi
+}
+
+# Install one global npm CLI unless its command is already on PATH. Updating
+# an installed one is ./scripts/update_ai_tools.sh's job, not a rerun's: an
+# unconditional `npm install -g` reinstalled all of them on every run.
+_npm_global_tool() {
+  local cmd="$1" label="$2" pkg="$3"
+  if command_exists "$cmd"; then
+    print_info "$label already installed (update with ./scripts/update_ai_tools.sh)"
+    return 0
+  fi
+  try_install "$label" npm install -g "$pkg"
+}
+
+_install_ai_cli_tools() {
+  # Claude Code (official npm distribution)
+  _npm_global_tool claude "Claude Code" @anthropic-ai/claude-code
+  _npm_global_tool codex Codex @openai/codex
+  _npm_global_tool gemini "Gemini CLI" @google/gemini-cli
+  # GitHub Copilot CLI (standalone `copilot` command; used by
+  # update_ai_tools.sh and the `cop` alias in .zshrc).
+  _npm_global_tool copilot "Copilot CLI" @github/copilot
+}
+
+# Prepend the user-scheme scripts dir of the interpreter behind pip command $1
+# (pip3 -> python3, pip -> python) to PATH: ~/Library/Python/X.Y/bin on macOS,
+# ~/.local/bin elsewhere. Silent no-op when it cannot be read.
+_export_pip_user_bin() {
+  local py="python3" base
+  [ "$1" = "pip" ] && py="python"
+  command_exists "$py" || return 0
+  base="$("$py" -m site --user-base 2>/dev/null || true)"
+  case "$base" in
+  /*) export PATH="$base/bin:$PATH" ;;
+  esac
+  return 0
 }
 
 # rubocop (gem) and phpstan (composer) install the same way on macOS and
@@ -2208,12 +2963,18 @@ install_linters_formatters() {
       autopep8 # Python formatter (fallback)
       isort    # Python import sorter
     )
+    # On macOS pip --user puts scripts in ~/Library/Python/X.Y/bin, which is on
+    # no PATH while this script runs (.zshrc adds it for interactive shells
+    # only), so command_exists alone missed every one of these and each rerun
+    # reinstalled all five. Put that dir on PATH for the rest of the run, and
+    # also take pip's own word that the package is installed.
+    _export_pip_user_bin "$pip_cmd"
     for tool in "${pip_tools[@]}"; do
-      if ! command_exists "$tool"; then
+      if command_exists "$tool" || "$pip_cmd" show "$tool" &>/dev/null; then
+        print_info "$tool already installed"
+      else
         print_info "Installing $tool via pip..."
         pip_install_user "$pip_cmd" "$tool"
-      else
-        print_info "$tool already installed"
       fi
     done
   else
@@ -2483,8 +3244,9 @@ main() {
   if [ "$DRY_RUN" -eq 1 ]; then
     print_info "[DRY-RUN] Skipping package and tool installation (not simulated)."
     print_info "[DRY-RUN]   Would install: OS packages (Homebrew / APT), WezTerm, fonts,"
-    print_info "[DRY-RUN]   Node.js, gh, pyenv, uv, glow, Docker, lazydocker, tree-sitter,"
-    print_info "[DRY-RUN]   MCP deps, linters/formatters, Oh My Zsh, vim-plug, tmux plugins;"
+    print_info "[DRY-RUN]   Node.js, gh, pyenv, uv, glow, Docker (+ docker info check),"
+    print_info "[DRY-RUN]   hadolint, lazydocker, tree-sitter, MCP deps, linters/formatters,"
+    print_info "[DRY-RUN]   Oh My Zsh, vim-plug, tmux plugins;"
     print_info "[DRY-RUN]   set up Neovim; install AI tools; register Claude MCP servers."
   else
     install_os_packages
@@ -2498,6 +3260,7 @@ main() {
     install_uv
     install_glow
     install_docker
+    install_hadolint
     install_lazydocker
     install_tree_sitter_cli
     install_mcp_server_deps
@@ -2516,6 +3279,13 @@ main() {
     # Register MCP servers with Claude Code (after symlinks + AI tools)
     register_claude_mcp_servers
   fi
+
+  # csb, the container sandbox CLI. After the package steps, not with the other
+  # links: its wrapper runs on the system python3, which on a new macOS is a
+  # stub until the Command Line Tools (installed with Homebrew above) are in.
+  # In dry-run it still runs, for the preview of what it would write; it starts
+  # no python without the Tools (see _link_sandbox_cli).
+  _link_sandbox_cli
 
   # Oh My Zsh theme symlink (dry-run aware; see link_oh_my_zsh_theme). Must
   # run after install_oh_my_zsh above (real run) so a true first install
@@ -2547,7 +3317,12 @@ main() {
   echo "  2. Open Neovim to complete lazy.nvim setup: nvim"
   echo "  3. In tmux, press prefix + I to install plugins (tpm)"
   echo "  4. Install AI tools if needed (see README.md)"
-  echo "  5. Customize configurations as needed"
+  echo "  5. Docker: check that the engine answers with: docker info"
+  echo "     macOS: launch Docker Desktop once (open -a Docker); it puts the docker CLI on PATH."
+  echo "     Linux: log out and back in (or run 'newgrp docker') so the docker group applies."
+  echo "     csb (~/.local/bin/csb) then copies a repository snapshot into a disposable"
+  echo "     container, runs commands there and brings the result back as a patch."
+  echo "  6. Customize configurations as needed"
   echo
   print_info "Secrets / credentials still required (cannot be installed):"
   echo "  Put the exports in ~/.zsh_secrets (sourced by .zshrc, outside the checkout)."

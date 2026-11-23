@@ -354,7 +354,16 @@ def request_generate(
             with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec: B310
                 return json.loads(resp.read().decode("utf-8", errors="replace"))
         except urllib.error.HTTPError as exc:
-            detail = _error_detail(exc.read().decode("utf-8", errors="replace"))
+            # Reading the error body is a second network read and can fail on
+            # its own (IncompleteRead, a timeout, a reset). Raised here it
+            # would skip the transport arm below and leave the retry loop, so
+            # a 503 with a dropped body was never retried. Fall back to the
+            # bare status, as the MCP server's _upstream_error does.
+            try:
+                raw = exc.read().decode("utf-8", errors="replace")
+            except (OSError, http.client.HTTPException):
+                raw = ""
+            detail = _error_detail(raw)
             last = f"HTTP {exc.code}: {detail}" if detail else f"HTTP {exc.code}"
             # A 4xx that is not in RETRYABLE_STATUS will fail the same way three
             # times; report it now so the reader sees the real cause instead of

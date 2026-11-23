@@ -14,6 +14,7 @@ The suite pins behaviour; these tests pin prose, which otherwise drifts silently
 These are string-level checks on purpose: the invariant IS the text.
 """
 
+import os
 import re
 import subprocess
 
@@ -71,12 +72,12 @@ def _install_sh_sources() -> set[str]:
     return sources
 
 
-# ln -sf ~/dotfiles/<path> ~/... — a single, fully spelled-out source.
-_DOC_LITERAL_LINK = re.compile(r"ln -sf ~/dotfiles/(?P<path>\S+)")
-# for e in A B C; do ... ln -sf ~/dotfiles/<prefix>/$e — the loop form.
+# ln -sf[n] ~/dotfiles/<path> ~/... — a single, fully spelled-out source.
+_DOC_LITERAL_LINK = re.compile(r"ln -sfn? ~/dotfiles/(?P<path>\S+)")
+# for e in A B C; do ... ln -sf[n] ~/dotfiles/<prefix>/$e — the loop form.
 _DOC_FOR_LOOP = re.compile(
     r"for (?P<var>\w+) in (?P<entries>[^;]+); do\s*\n"
-    r"\s*ln -sf ~/dotfiles/(?P<prefix>\S+?)/\$(?P=var)\b"
+    r"\s*ln -sfn? ~/dotfiles/(?P<prefix>\S+?)/\$(?P=var)\b"
 )
 
 
@@ -109,6 +110,329 @@ def test_manual_setup_covers_every_install_sh_link():
         "install.sh links these repo paths but docs/setup.md's manual recipe "
         f"never mentions them: {missing}"
     )
+
+
+# link_path "$HOME/<target>" "$HOME/<link>" — a link whose target lives under
+# $HOME rather than in the checkout, and its manual-recipe spelling
+# `ln -sfn ~/<target> ~/<link>`. There is none today: csb used to be one
+# (~/.local/bin/csb -> ~/.claude/hooks/claude_sandbox.py) and is now a written
+# wrapper (see the csb tests below).
+_HOME_LINK = re.compile(r'link_path "\$HOME/(?P<src>[^"$]+)" "\$HOME/(?P<dest>[^"$]+)"')
+_DOC_HOME_LINK = re.compile(r"ln -sfn? ~/(?!dotfiles/)(?P<src>\S+) ~/(?P<dest>\S+)")
+# Every call site, however its arguments are spelled: the parser above must not
+# be able to miss one silently.
+_ANY_LINK_PATH_CALL = re.compile(r'\s*link_path "')
+# Call sites inside link_entry pass variables through ("$src" "$dest"); they are
+# the generic path, already covered by the source-set comparison above.
+_GENERIC_LINK_PATH_CALLS = {'link_path "$src" "$dest"'}
+EXPECTED_HOME_LINKS: set[tuple[str, str]] = set()
+
+
+def test_every_link_path_call_is_parsed():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    calls = [
+        line.strip() for line in text.splitlines() if _ANY_LINK_PATH_CALL.match(line)
+    ]
+    assert calls, "failed to find link_path's own call sites in install.sh"
+    literal = [c for c in calls if c not in _GENERIC_LINK_PATH_CALLS]
+    assert len(literal) == len(_HOME_LINK.findall(text)), (
+        f"a link_path call the $HOME-relative parser does not read: {literal}"
+    )
+
+
+def test_manual_setup_covers_every_home_relative_link():
+    """The source-set comparison above only sees links into the checkout.
+
+    Both directions, and the expected set is pinned: today install.sh makes no
+    $HOME-relative link, so the recipe must not make one either (it used to tell
+    the reader to symlink csb, which bash-review now refuses to trust).
+    """
+    install = set(_HOME_LINK.findall(INSTALL_SH.read_text(encoding="utf-8")))
+    documented = set(_DOC_HOME_LINK.findall(SETUP_DOC.read_text(encoding="utf-8")))
+    assert install == EXPECTED_HOME_LINKS, (
+        "install.sh's $HOME-relative links changed; update EXPECTED_HOME_LINKS "
+        f"and docs/setup.md: {sorted(install)}"
+    )
+    assert documented == install, (
+        f"docs/setup.md links {sorted(documented - install)} that install.sh does "
+        f"not, and misses {sorted(install - documented)}"
+    )
+
+
+# csb: install.sh writes ~/.local/bin/csb from _sandbox_gate.csb_wrapper_text, and
+# bash-review trusts a csb call only when the file is that template byte for byte.
+# The manual recipe must produce the same file, so it must call the same function.
+_CSB_TEMPLATE_CALL = "csb_wrapper_text("
+
+
+def _doc_csb_recipe() -> str:
+    """The recipe's csb lines: from its `mkdir -p ~/.local/bin` to the final mv."""
+    lines = SETUP_DOC.read_text(encoding="utf-8").splitlines()
+    start = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("mkdir -p ~/.local/bin")
+        and any(_CSB_TEMPLATE_CALL in ln for ln in lines[i : i + 6])
+    )
+    end = next(
+        i
+        for i in range(start, len(lines))
+        if lines[i].rstrip().endswith("~/.local/bin/csb")
+    )
+    return "\n".join(lines[start : end + 1]) + "\n"
+
+
+def test_install_sh_and_the_recipe_share_the_csb_template():
+    install = INSTALL_SH.read_text(encoding="utf-8")
+    assert install.count(_CSB_TEMPLATE_CALL) == 1
+    recipe = _doc_csb_recipe()
+    assert recipe.count(_CSB_TEMPLATE_CALL) == 1
+    # the interpreter is the launchers' pick, as in install.sh (bash-review
+    # trusts only a wrapper naming the interpreter it runs on itself): the
+    # launcher is sourced for its _trusted_python, and PATH's python3 is not asked
+    pick = '_trusted_python 0 / "${_TRUSTED_CANDIDATES[@]}"'
+    assert pick in recipe and pick in install
+    launcher = ".claude/hooks/bash-review-launcher.sh"
+    assert (
+        f". ~/dotfiles/{launcher}" in recipe
+        and f'. "$DOTFILES_DIR/{launcher}"' in install
+    )
+    assert "python3 -c" not in recipe
+    assert "cd ~ &&" in recipe and 'cd "$HOME" &&' in install
+    assert " -I -S -B -c " in recipe and " -I -S -B -c " in install
+    # zsh would source the launcher's bash with 1-based arrays
+    assert recipe.splitlines()[1].startswith("/bin/bash -c ")
+    assert "claude_sandbox.py ~/.local/bin/csb" not in SETUP_DOC.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_recipe_writes_the_wrapper_bash_review_trusts(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(REPO_ROOT / ".claude" / "hooks"))
+    import _sandbox_gate as gate
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "dotfiles").symlink_to(REPO_ROOT)
+    (home / ".local" / "bin").mkdir(parents=True)
+    (home / ".local" / "bin" / "csb").symlink_to(
+        home / ".claude" / "hooks" / "claude_sandbox.py"
+    )  # an old symlinked csb is replaced, not written through
+    trusted = gate.trusted_python()
+    if trusted is None:
+        pytest.skip("no trusted system python3 on this machine")
+    # PATH's python3 (a pyenv shim, say) must not be what the recipe asks
+    marker = tmp_path / "path-python3-ran"
+    stub = tmp_path / "stub-bin"
+    stub.mkdir()
+    (stub / "python3").write_text(f'#!/bin/sh\ntouch "{marker}"\nexit 1\n')
+    (stub / "python3").chmod(0o755)
+    path = os.pathsep.join([str(stub), os.environ.get("PATH", "")])
+    res = subprocess.run(
+        ["bash", "-c", _doc_csb_recipe()],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(home), "PATH": path},
+        cwd=tmp_path,
+        timeout=60,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr
+    csb = home / ".local" / "bin" / "csb"
+    assert csb.is_file() and not csb.is_symlink()
+    assert (csb.stat().st_mode & 0o777) == 0o755
+    assert gate.parse_csb_wrapper(csb.read_bytes(), str(home)) == trusted
+    assert csb.read_text() == gate.csb_wrapper_text(trusted, str(home))
+    assert not marker.exists()
+
+
+def test_manual_setup_links_directories_with_n():
+    """`ln -sf SRC DEST` onto an existing link to a directory follows it and
+    plants the new link INSIDE that directory (inside the checkout, on a
+    rerun of the recipe). Every directory source needs `-n`."""
+    text = SETUP_DOC.read_text(encoding="utf-8")
+    offenders = []
+    for m in re.finditer(r"ln -sf ~/dotfiles/(?P<path>\S+)", text):
+        if "$" not in m.group("path") and (REPO_ROOT / m.group("path")).is_dir():
+            offenders.append(m.group("path"))
+    for m in _DOC_FOR_LOOP.finditer(text):
+        if "ln -sfn " in m.group(0):
+            continue
+        dirs = [
+            e
+            for e in m.group("entries").split()
+            if (REPO_ROOT / m.group("prefix") / e).is_dir()
+        ]
+        if dirs:
+            offenders.append(f"{m.group('prefix')}/{{{','.join(dirs)}}}")
+    assert not offenders, f"docs/setup.md links directories without -n: {offenders}"
+
+
+_DOCS_WITH_NPM_PREFIX = ["docs/setup.md", "INSTALL_PLATFORM.md"]
+
+
+@pytest.mark.parametrize("rel", _DOCS_WITH_NPM_PREFIX)
+def test_npm_prefix_is_not_a_quoted_tilde(rel):
+    """`npm config set prefix '~/.npm-global'` keeps the tilde literal: npm
+    then installs into a directory named `~` under the current directory."""
+    text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    assert not re.search(r"npm config set prefix ['\"]~", text), rel
+
+
+INSTALL_PLATFORM = REPO_ROOT / "INSTALL_PLATFORM.md"
+
+
+# NodeSource: install.sh adds its apt repository only when the keyring holds
+# exactly the pinned primary key (_add_signed_apt_repo / _keyring_primary_fprs).
+# The manual recipe must apply the same test -- an awk that stops at the first
+# `fpr` record, say, passes a keyring with a second, unpinned key behind it.
+def _install_sh_pin(var: str) -> str:
+    m = re.search(rf'^{var}="([^"]*)"', INSTALL_SH.read_text(encoding="utf-8"), re.M)
+    assert m, f"{var} is not defined in install.sh"
+    return m.group(1)
+
+
+def _doc_nodesource_recipe_lines() -> list:
+    return [
+        ln
+        for ln in SETUP_DOC.read_text(encoding="utf-8").splitlines()
+        if "nodesource" in ln.lower() and not ln.lstrip().startswith("#")
+    ]
+
+
+def _doc_nodesource_check() -> str:
+    """The recipe's check: from its `want=` line to the `fi` closing the if."""
+    lines = SETUP_DOC.read_text(encoding="utf-8").splitlines()
+    start = next(
+        i
+        for i, ln in enumerate(lines)
+        if ln.startswith('want="$(sed -n') and "NODESOURCE_APT_KEY_FPR" in ln
+    )
+    end = next(i for i in range(start, len(lines)) if lines[i] == "fi")
+    return "\n".join(lines[start : end + 1]) + "\n"
+
+
+def test_the_nodesource_recipe_dearmors_without_a_prompt_on_a_rerun():
+    dearmor = [ln for ln in _doc_nodesource_recipe_lines() if "--dearmor" in ln]
+    assert len(dearmor) == 1, dearmor
+    # without --batch --yes a rerun stops at "File ... exists. Overwrite? (y/N)"
+    assert "gpg --batch --yes --dearmor" in dearmor[0]
+
+
+def test_the_nodesource_recipe_reads_primary_fingerprints_like_install_sh():
+    install = INSTALL_SH.read_text(encoding="utf-8")
+    m = re.search(
+        r"awk -F: ('[^']*')", install[install.index("_keyring_primary_fprs()") :]
+    )
+    assert m, "failed to find the awk in _keyring_primary_fprs"
+    assert m.group(1) in _doc_nodesource_check()
+
+
+def _run_nodesource_check(tmp_path, shown):
+    """Run the recipe's check with sudo/gpg/apt-get stubbed: `shown` are the
+    fingerprints of the primary keys the stub gpg lists (each with a subkey)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "dotfiles").symlink_to(REPO_ROOT)
+    stub = tmp_path / "stub-bin"
+    stub.mkdir()
+    calls = tmp_path / "calls.log"
+    rows = []
+    for fpr in shown:
+        rows += [
+            f"pub:-:4096:1:{fpr[-16:]}:1487788586:::-:::scESC::::::23::0:",
+            f"fpr:::::::::{fpr}:",
+            "sub:-:4096:1:7EA0A9C3F273FCD8:1487788586::::::s::::::23:",
+            "fpr:::::::::D3306A018370199E527AE7997EA0A9C3F273FCD8:",
+        ]
+    listing = "".join(f"{r}\\n" for r in rows)
+    for name, body in (
+        ("gpg", f"printf '{listing}'"),
+        ("sudo", 'case "$1" in tee) cat >/dev/null ;; esac'),
+        ("apt-get", ""),
+    ):
+        path = stub / name
+        path.write_text(f'#!/bin/sh\necho "{name} $*" >>"{calls}"\n{body}\n')
+        path.chmod(0o755)
+    res = subprocess.run(
+        ["bash", "-c", _doc_nodesource_check()],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(home), "PATH": f"{stub}:{os.environ['PATH']}"},
+        cwd=tmp_path,
+        timeout=60,
+        check=False,
+    )
+    log = calls.read_text().splitlines() if calls.exists() else []
+    return res, log
+
+
+def test_the_nodesource_recipe_adds_the_repository_for_the_pinned_key(tmp_path):
+    res, log = _run_nodesource_check(
+        tmp_path, [_install_sh_pin("NODESOURCE_APT_KEY_FPR")]
+    )
+    assert res.returncode == 0, res.stderr
+    assert "sudo tee /etc/apt/sources.list.d/nodesource.list" in log
+    assert "sudo apt-get install -y nodejs" in log
+    assert not [c for c in log if c.startswith("sudo rm")]
+
+
+@pytest.mark.parametrize(
+    "shown",
+    [
+        pytest.param(["0123456789ABCDEF0123456789ABCDEF01234567"], id="another-key"),
+        pytest.param(
+            ["{pin}", "0123456789ABCDEF0123456789ABCDEF01234567"], id="an-extra-key"
+        ),
+        pytest.param([], id="no-key"),
+    ],
+)
+def test_the_nodesource_recipe_discards_any_other_keyring(tmp_path, shown):
+    pin = _install_sh_pin("NODESOURCE_APT_KEY_FPR")
+    res, log = _run_nodesource_check(tmp_path, [s.format(pin=pin) for s in shown])
+    assert "sudo rm -f /etc/apt/keyrings/nodesource.gpg" in log
+    assert "sudo tee /etc/apt/sources.list.d/nodesource.list" not in log
+    assert not [c for c in log if c.startswith(("sudo apt-get", "apt-get"))]
+    assert "got:" in res.stderr and pin in res.stderr
+
+
+def test_install_platform_does_not_list_debian_11_as_supported():
+    """Debian 11's python3 is 3.9, and the `mcp` package the gemini-consultant
+    step installs needs 3.10 or later: that step would fail on every run."""
+    text = INSTALL_PLATFORM.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        # "Debian 11 (Bullseye) 以降" / "Debian 11 以降": a supported range
+        assert not re.search(r"Debian 11( \(Bullseye\))? 以降", line), line
+    assert re.search(r"^- Debian 12 .*以降", text, re.M)
+
+
+def test_install_platform_quotes_the_failure_hint_install_sh_prints():
+    """The sample failure summary must match what the script prints."""
+    m = re.search(
+        r'print_info "(Reasons are printed above as [^"]+)"',
+        INSTALL_SH.read_text(encoding="utf-8"),
+    )
+    assert m, "failed to find the failure hint in install.sh"
+    assert m.group(1) in INSTALL_PLATFORM.read_text(encoding="utf-8")
+
+
+def test_install_platform_states_the_python_needed_by_gen_codex_agents():
+    """gen_codex_agents.py imports tomllib (3.11+), newer than the stock
+    python3 of the oldest Ubuntu release INSTALL_PLATFORM.md lists."""
+    gen = (REPO_ROOT / "scripts/gen_codex_agents.py").read_text(encoding="utf-8")
+    if not re.search(r"^import tomllib", gen, re.M):
+        pytest.skip("the generator no longer needs tomllib")
+    text = INSTALL_PLATFORM.read_text(encoding="utf-8")
+    assert re.search(r"Python 3\.11", text), (
+        "INSTALL_PLATFORM.md must state Python 3.11+"
+    )
+
+
+def test_install_platform_has_a_docker_section():
+    text = INSTALL_PLATFORM.read_text(encoding="utf-8")
+    assert re.search(r"^## Docker", text, re.M)
+    for needle in ("docker info", "hadolint", "csb", "newgrp docker", "docker-desktop"):
+        assert needle in text, needle
 
 
 _VSCODE_USER_DIR = re.compile(r'vscode_user_dir="(?P<dir>[^"]+)"')

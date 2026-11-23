@@ -373,6 +373,53 @@ class TestRequestGenerate:
         assert body == _ok_body("hi")
         assert len(calls) == 2
 
+    @pytest.mark.parametrize(
+        "read_error",
+        [http.client.IncompleteRead(b"{", 400), TimeoutError("timed out")],
+        ids=["incomplete-read", "timeout"],
+    )
+    def test_an_unreadable_5xx_body_is_still_retried(self, monkeypatch, read_error):
+        """Reading the error body can fail too, and must not escape the retry.
+
+        exc.read() inside the HTTPError arm runs outside the arms below it, so
+        an IncompleteRead / timeout raised there used to leave request_generate
+        altogether: a 503 with a dropped body was never retried. The MCP server
+        (_upstream_error) already falls back to the bare status; this aligns.
+        """
+
+        class _UnreadableBody(io.BytesIO):
+            def read(self, *args):
+                raise read_error
+
+        unreadable = urllib.error.HTTPError(
+            "https://example.invalid", 503, "boom", {}, _UnreadableBody(b"")
+        )
+        calls = []
+        body = self.call(monkeypatch, unreadable, _ok_body("hi"), calls=calls)
+        assert body == _ok_body("hi")
+        assert len(calls) == 2
+
+    def test_an_unreadable_body_on_the_last_attempt_reports_the_status(
+        self, monkeypatch
+    ):
+        class _UnreadableBody(io.BytesIO):
+            def read(self, *args):
+                raise http.client.IncompleteRead(b"", 10)
+
+        def unreadable():
+            return urllib.error.HTTPError(
+                "https://example.invalid", 503, "boom", {}, _UnreadableBody(b"")
+            )
+
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            lambda req, timeout=None: (_ for _ in ()).throw(unreadable()),
+        )
+        with pytest.raises(gemini_api.GeminiError, match="HTTP 503"):
+            gemini_api.request_generate(
+                "m", "s", "p", "k", attempts=2, sleep=lambda _s: None
+            )
+
     def test_a_non_json_body_is_not_retried(self, monkeypatch):
         """A broken endpoint answers the same question the same way."""
         calls = []

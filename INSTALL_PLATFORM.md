@@ -51,8 +51,17 @@ tmux設定（`.tmux.conf`）で `pbcopy` と `pbpaste` を使用しています�
 
 ### 対応バージョン
 
-- Ubuntu 20.04 LTS 以降
-- Debian 11 (Bullseye) 以降
+- Ubuntu 22.04 LTS 以降
+- Debian 12 (Bookworm) 以降
+
+> **Debian 11 (Bullseye) は対象外です。** 標準の `python3` が 3.9 で、`gemini-consultant`（MCP サーバー）が使う Python の `mcp` パッケージ（`Requires-Python >=3.10`）を入れられません。
+> そのため `install.sh` の `gemini-consultant` の手順が毎回失敗します。Debian 11 で使うなら、先に 3.10 以降の Python（`pyenv install 3.12` など）を用意してください。
+
+> **`scripts/gen_codex_agents.py` には Python 3.11 以降が必要です。** 標準ライブラリの `tomllib`（3.11 で追加）を使うためです。
+> 標準の `python3` は Ubuntu 22.04 が 3.10 で足りません（Ubuntu 24.04 と Debian 12 は満たします）。
+> `install.sh` 自体はこのスクリプトを実行しないので、Ubuntu 22.04 でもインストールは通ります。
+> 必要になるのは、`.claude/agents/` を編集して `.codex/agents/` を作り直すとき（CI の `--check` と同じ処理）だけです。
+> その場合は `pyenv install 3.12` などで 3.11 以降を用意し、その Python で実行してください。
 
 > **Neovim は 0.12 以降が必要です（CI は v0.12.4 で検証）。** `install.sh` は `apt` から `neovim` を入れますが、
 > 現行の Ubuntu LTS（24.04 を含む）の `apt` 版は古く、この設定の要件を満たしません。
@@ -99,7 +108,7 @@ sudo rm /usr/share/keyrings/wezterm-fury.gpg
 
 #### Neovimのバージョンが古い
 
-この設定は Neovim 0.12 以降を前提にしています（`vim.keymap.set` の `buf` オプションなど 0.12 の API に移行済み。`vim.lsp.config` は 0.11+ の機能。CI は v0.12.4 で検証）。Ubuntu 20.04 に限らず、24.04 を含む現行の Ubuntu LTS の `apt` 版 `neovim` は古く、この要件を満たしません。`nvim --version` で確認し、PPA（または公式リリース）を使用：
+この設定は Neovim 0.12 以降を前提にしています（`vim.keymap.set` の `buf` オプションなど 0.12 の API に移行済み。`vim.lsp.config` は 0.11+ の機能。CI は v0.12.4 で検証）。22.04・24.04 を含む現行の Ubuntu LTS の `apt` 版 `neovim` は古く、この要件を満たしません。`nvim --version` で確認し、PPA（または公式リリース）を使用：
 
 ```bash
 sudo add-apt-repository ppa:neovim-ppa/unstable
@@ -244,6 +253,90 @@ Windows環境ではtmuxの代わりにWindows Terminalのタブ機能を使用�
 
 ---
 
+## Docker
+
+`install.sh` は Docker を導入し、最後に `docker info` でデーモンに届くかを確かめます。
+届かなくても警告を出すだけで、失敗したステップには数えません（終了コードは 1 になりません）。
+導入直後はデーモンにまだ届かないのが普通だからです。Docker Desktop をまだ起動していないことや、
+`docker` グループに入る前からのログインセッションが理由になります。
+
+### macOS（Docker Desktop）
+
+- Homebrew Cask の `docker-desktop` で導入します（旧名 `docker` の Cask も導入済みとして扱います）。
+  Cask を使わず `/Applications/Docker.app` に置いた場合も導入済みとみなし、入れ直しません。
+- 判定は Cask / アプリで行い、`docker` CLI の有無は見ません。CLI は Docker Desktop を**一度起動するまで PATH に載らない**ためです。
+  CLI が見つからない間は、実行のたびに「一度起動する」よう案内します。
+
+  ```bash
+  open -a Docker   # 初回起動で docker CLI が PATH に入り、エンジンが立ち上がる
+  docker info      # 応答すれば準備完了
+  ```
+
+- Docker Desktop が無く `docker` CLI だけがある場合は、別のランタイム（OrbStack / Colima など）が入っているとみなします。
+  そのときは Docker Desktop を入れません。
+
+### Ubuntu / Debian（Docker Engine）
+
+- Docker 公式の**署名付き apt リポジトリ**から `docker-ce`、`docker-ce-cli`、`containerd.io`、`docker-buildx-plugin`、
+  `docker-compose-plugin` を入れます。`get.docker.com` のスクリプトを `sudo sh` で実行することはしません。
+- 鍵は `/etc/apt/keyrings/docker.asc` に置き、ソースは `/etc/apt/sources.list.d/docker.list` に書きます。
+  鍵の主鍵の指紋が `install.sh` 冒頭の `DOCKER_APT_KEY_FPR`（`9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88`）と一致しないとき、
+  `install.sh` は鍵を消し、リポジトリを足さず、失敗として記録します。
+  照合するのは root が書いた鍵ファイルそのものです。
+- 配布元は `/etc/os-release` で選びます。Ubuntu は `linux/ubuntu`、Debian は `linux/debian`、
+  Mint などの派生は `ID_LIKE` と `UBUNTU_CODENAME` で選びます。判定できないときは導入しません。
+- エンジンが入ったら、`id -un` で得たユーザーを `docker` グループに加えます（`$USER` は使いません）。
+  再実行時に加わっていなければ、もう一度加えます。グループ自体が無い環境では何もしません（rootless Docker や、WSL の Docker Desktop 連携など）。
+  反映にはログアウトとログインのし直し、またはそのシェルでの `newgrp docker` が必要です。
+
+  ```bash
+  newgrp docker    # または一度ログアウトしてログインし直す
+  docker info      # 応答しなければ: sudo systemctl start docker
+  ```
+
+Node.js も同じ方式です。NodeSource の署名付きリポジトリ（`/etc/apt/keyrings/nodesource.gpg`、`node_<NODESOURCE_NODE_MAJOR>.x`）から入れます。
+主鍵の指紋は `NODESOURCE_APT_KEY_FPR` と照合します。
+NodeSource は鍵の指紋を公開していないので、この値は固定した時点で配布されていた鍵のものです。
+鍵が差し替わったときは、黙って信用せずに照合で止まります。
+
+### hadolint（Dockerfile の linter）
+
+- macOS は `brew install hadolint` で入れます。
+- Ubuntu / Debian は GitHub のリリースバイナリ（`HADOLINT_VERSION`）を一時ディレクトリへ取得し、
+  `HADOLINT_SHA256_X86_64` / `HADOLINT_SHA256_ARM64` と sha256 が一致したときだけ、自分の権限で `~/.local/bin/hadolint` に置きます。
+  一致しなければ入れずに、失敗として記録します。リリースバイナリの無いアーキテクチャでは警告だけ出します。
+- どちらも、`hadolint` がすでに PATH にあれば何もしません。
+
+### csb（コンテナサンドボックスの CLI）
+
+`csb` は、リポジトリのスナップショットを使い捨てのコンテナへ写して作業し、成果をパッチでホストへ戻すコマンドです。
+
+- `install.sh` は `~/.local/bin/csb` を、symlink ではなく 3 行の `/bin/sh` ラッパー（0755 の通常ファイル）として書きます（`.zshrc` が `~/.local/bin` を PATH に入れます）。
+  - 中身は、起動の環境変数（`DEVELOPER_DIR` / `TOOLCHAINS` / `SDKROOT` / `__PYVENV_LAUNCHER__` / `PYTHONEXECUTABLE` / `PYTHONHOME` / `PYTHONPATH`）の `unset` と、`exec '<python>' -I -S '<HOME>/.claude/hooks/claude_sandbox.py' "$@"`（どちらも絶対パス）です。`_sandbox_gate.csb_wrapper_text` から生成します。
+  - bash-review は、このファイルがテンプレートとバイト列まで一致し、`<python>` がフック自身を動かしているインタプリタと同じパスのときだけ csb を静的に許可します。手で書き換えたものや symlink は信頼しません。
+- `<python>` は、bash-review のランチャーがフックを動かすのと同じ、root 所有のシステムの python3 です。PATH の `python3`・pyenv の shim・`.python-version` は使いません。
+  - 候補はこの順に見ます。macOS は `/Library/Developer/CommandLineTools/usr/bin/python3` → `/usr/bin/python3`、Linux は `/usr/bin/python3` です。
+  - 採るのは、パス・途中の symlink・祖先のディレクトリがすべて root 所有で group / other が書けず、実行できる通常ファイルで、3.9 以上のものです。
+  - 見つからなければ csb は入れず、失敗として記録します。macOS では `xcode-select --install` で Command Line Tools を入れます。
+  - csb は、パッケージとツールの導入が済んだ後（Homebrew の導入の後）で書きます。新しい macOS の `/usr/bin/python3` は Command Line Tools が無いと、起動するとインストールのダイアログを出す代用品だからです。
+  - macOS で Command Line Tools が無いとき（`xcode-select -p` が失敗するとき）は、python を起動せず、警告を出して csb を飛ばします。失敗には数えません。`--dry-run` でも同じです。Tools を入れてから `./install.sh` を再実行してください。
+  - 候補のパス（`.../usr/bin/python3`）は Python の更新で変わらないので、更新の後に書き直す必要はありません。
+
+> **bash-review も同じインタプリタで動きます。** 信頼できるシステムの python3（root 所有で 3.9 以上）が無いと、フックは毎回 fail-closed になります（Claude は ask、Codex はブロック）。対応している Ubuntu 22.04 以降と Debian 12 以降は、標準の `/usr/bin/python3` がこれを満たします。
+
+- チェックアウトを直接は指さず、`~/.claude/hooks` のリンク越しに指します。そのため、チェックアウトを移しても再実行で追従します。
+- 以前の symlink の `csb` や手で置いたファイルは、バックアップしてから置き換えます。実ファイルは移さずにコピーを残し、新しいラッパーを `mv -f` で上書きするので、置き換えに失敗しても元の `csb` はそのまま残ります。symlink は旧リンク先を記録してから置き換えます。`--dry-run` では何を書くかだけを表示します。
+
+### バージョンの固定（ピン）を上げる
+
+固定値はすべて `install.sh` 冒頭にあり、上げ方もそこのコメントに書いてあります。対象は Docker / NodeSource の鍵の指紋、`NODESOURCE_NODE_MAJOR`、hadolint の版と sha256 です。
+MCP サーバーの serena（`SERENA_REF`）、context7（`CONTEXT7_MCP_VERSION`）、Python の `mcp` パッケージ（`MCP_PY_VERSION`）も同じ場所にあります。
+MCP サーバーは、固定値を書き換えて `./install.sh` を再実行すると、登録内容の違うものだけが登録し直されます。
+登録し直す前に、旧登録（`claude mcp get <名前>` の出力）を `~/.dotfiles_backup_<日時>/mcp-<名前>.txt` に 0600 で保存します。`--api-key` のように自分で足した引数や環境変数は、ここに残ります。
+画面には旧引数を出さず、保存先のパスだけを出します。保存できなかったときは、登録を消さずに失敗として記録します。消した後の登録に失敗したときも、保存先を添えて失敗として記録します。
+
+---
+
 ## 共通トラブルシューティング
 
 ### install.sh が終了コード 1 で終わった
@@ -254,14 +347,16 @@ Windows環境ではtmuxの代わりにWindows Terminalのタブ機能を使用�
 [ERROR] Installation finished with 2 failed step(s):
   - uv
   - zsh-autosuggestions
-[INFO] Reasons are printed above as [WARNING]. Fix the cause and re-run ./install.sh (finished steps are skipped).
+[INFO] Reasons are printed above as [WARNING] or [ERROR]. Fix the cause and re-run ./install.sh (finished steps are skipped).
 ```
 
-1. 一覧の各項目について、ログの上の方にある `[WARNING] Failed to install <名前>` などの行と、その直後に字下げして出るインストーラ自身のエラー出力で原因を確認する
+1. 一覧の各項目について、ログの上の方にある `[WARNING] Failed to install <名前>` や `[ERROR] Could not ...` などの行と、その直後に字下げして出るインストーラ自身のエラー出力で原因を確認する
 2. 原因（ネットワーク、`sudo` の権限、パッケージ名の変更など）を直す
-3. `./install.sh` を再実行する。導入済みのステップはスキップされるので、何度実行しても安全
+3. `./install.sh` を再実行する。何度実行しても安全です。導入済みのツールは入れ直しません（PATH に無い pip `--user` の置き場所と、npm の AI CLI も導入済みとして検出します）。正しく張れているリンクにも触りません。MCP サーバーは、登録内容が `install.sh` の固定値と違うときだけ登録し直します
 
-dotfiles のシンボリックリンクは最初のステップで張り終えているため、一覧に出るのはその後のパッケージ・ツール・プラグイン関連の失敗です。`./install.sh --help` で終了コードの意味（`0` 成功 / `1` 失敗したステップあり / `2` 引数の誤り）を確認できます。
+一覧には、パッケージ・ツール・プラグイン関連の失敗に加えて、最初のステップ（dotfiles のリンク作成）で書き込めなかったものも出ます。たとえば `link <パス>`、`Claude config links`、`git config (os.gitconfig)`、`Gemini settings.json` です。リンク作成のステップは、1 か所が書き込めなくても残りのリンクを張り終えてから次へ進みます。`./install.sh --help` で終了コードの意味（`0` 成功 / `1` 失敗したステップあり / `2` 引数の誤り）を確認できます。
+
+置き換えたファイルとリンクの行き先はバックアップに残ります。実ファイルは `~/.dotfiles_backup_<日時>/` へ元のパス構造のまま移します（描画した `~/.codex/hooks.json` と `~/.local/bin/csb` は、置き換えに失敗しても元のファイルが残るよう、移さずにコピーを残して上書きします）。別の場所を指していた symlink（stow のリンクなど）は、旧リンク先を `~/.dotfiles_backup_<日時>/symlinks.txt` に `<パス> -> <旧リンク先>` の形で 1 行ずつ記録してから張り替えます。
 
 ### Zshプラグインが動作しない
 
@@ -293,11 +388,17 @@ lockfile を書き換えてしまった場合は `git -C ~/dotfiles checkout -- 
 ```bash
 # vim-plugの再インストール
 rm ~/.vim/autoload/plug.vim
+# install.sh と同じ commit (install.sh 冒頭の VIM_PLUG_REF) を取る
+ref=$(sed -n 's/^VIM_PLUG_REF="\(.*\)"$/\1/p' ~/dotfiles/install.sh)
 curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
-    https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+    "https://raw.githubusercontent.com/junegunn/vim-plug/$ref/plug.vim"
 
 vim +PlugInstall +qall
 ```
+
+`install.sh` は vim-plug を `master` ではなく commit 固定（`VIM_PLUG_REF`）で取得します。
+`master` から取ると、`install.sh` が検証済みとして扱うものとは別のバイト列が入り得ます。
+上の手順は、`install.sh` と同じ commit を取ります。`./install.sh` を再実行しても同じものが入ります（`plug.vim` が無いときだけ取得します）。
 
 ### Node.js npmパッケージのインストールに失敗
 
@@ -306,8 +407,10 @@ vim +PlugInstall +qall
 npm cache clean --force
 
 # グローバルディレクトリの再設定
+# ('~/.npm-global' とクォートするとチルダが展開されず、`~` という名前のディレクトリが
+#  カレントディレクトリにできてしまう)
 mkdir -p ~/.npm-global
-npm config set prefix '~/.npm-global'
+npm config set prefix "$HOME/.npm-global"
 
 # PATHの確認
 echo $PATH | grep .npm-global

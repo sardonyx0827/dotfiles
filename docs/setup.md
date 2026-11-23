@@ -62,7 +62,8 @@ brew install --cask font-ubuntu-mono font-hack-nerd-font
 **Ubuntu/Debian:**
 
 ```bash
-sudo apt-get install -y git zsh vim neovim tmux curl wget build-essential xsel
+# gnupg と ca-certificates は、以降の鍵の取得と指紋の確認に使う (install.sh も入れる)
+sudo apt-get install -y git zsh vim neovim tmux curl wget gnupg ca-certificates build-essential xsel
 sudo apt-get install -y fzf jq ripgrep bat fd-find universal-ctags
 
 # Debian/Ubuntu では bat / fd が batcat / fdfind という名前で入る。
@@ -96,8 +97,27 @@ brew install node
 **Ubuntu/Debian:**
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-sudo apt-get install -y nodejs
+# NodeSource の署名付き apt リポジトリ (install.sh と同じ手順)。setup_lts.x を
+# root で実行するのではなく、鍵を置き、指紋を確かめてからリポジトリを足す
+sudo install -d -m 0755 /etc/apt/keyrings
+# --batch --yes: 再実行しても上書きの確認で止まらない。apt は _apt ユーザーで鍵を読むので 0644 にする
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg
+sudo chmod 0644 /etc/apt/keyrings/nodesource.gpg
+
+# 鍵に含まれる主鍵の指紋が、install.sh の NODESOURCE_APT_KEY_FPR とちょうど一致することを確かめる
+# (install.sh の _keyring_primary_fprs と同じ考え方。pub の直後の fpr だけを数えるので副鍵は
+# 無視され、別の鍵や余分な鍵が混ざっていれば不一致になる)。一致しなければ鍵を消し、
+# リポジトリは足さない。~/dotfiles は手順 1 でクローンした場所
+want="$(sed -n 's/^NODESOURCE_APT_KEY_FPR="\(.*\)"$/\1/p' ~/dotfiles/install.sh)"
+got="$(gpg --show-keys --with-colons /etc/apt/keyrings/nodesource.gpg | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }')"
+if [ -n "$want" ] && [ "$got" = "$want" ]; then
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
+  sudo apt-get update
+  sudo apt-get install -y nodejs
+else
+  sudo rm -f /etc/apt/keyrings/nodesource.gpg
+  echo "NodeSource の鍵の指紋が NODESOURCE_APT_KEY_FPR と一致しません (got: ${got:-none}; want: ${want:-none})。鍵を消しました。リポジトリは足していません" >&2
+fi
 ```
 
 **共通:**
@@ -105,7 +125,9 @@ sudo apt-get install -y nodejs
 ```bash
 # npm グローバルディレクトリの設定
 mkdir -p ~/.npm-global
-npm config set prefix '~/.npm-global'
+# '~/...' とクォートするとチルダが展開されず、カレントディレクトリに `~` という
+# ディレクトリができる。$HOME で書く
+npm config set prefix "$HOME/.npm-global"
 ```
 
 </details>
@@ -180,8 +202,10 @@ printf '[user]\n\tname = Your Name\n\temail = you@example.com\n' > ~/.config/git
 ln -sf ~/dotfiles/.wezterm.lua ~/.wezterm.lua
 
 # Neovim設定 (リポジトリ上は .config/nvim に格納)
+# ディレクトリへのリンクは -n 付きで張る。-n が無いと、2 回目の実行で既存の
+# リンクを辿り、リンク先 (= リポジトリ内) に nvim というリンクを作ってしまう
 mkdir -p ~/.config
-ln -sf ~/dotfiles/.config/nvim ~/.config/nvim
+ln -sfn ~/dotfiles/.config/nvim ~/.config/nvim
 
 # VS Code設定 (ユーザー設定の置き場所が OS 依存。macOS は ~/.config ではない)
 # User/ ディレクトリごとリンクせず個別ファイルにするのは、VS Code が同じ場所へ
@@ -208,15 +232,16 @@ done
 
 # Claude Code設定 (CLIの実行時データを巻き込まないよう個別にリンク)
 mkdir -p ~/.claude
+# agents/ や hooks/ などディレクトリを含むので -n 付き (上の Neovim と同じ理由)
 for e in CLAUDE.md settings.json statusline-command.sh agents commands hooks mcp-servers mods rules skills; do
-  ln -sf ~/dotfiles/.claude/$e ~/.claude/$e
+  ln -sfn ~/dotfiles/.claude/$e ~/.claude/$e
 done
 
 # Codex設定 (agents/ と skills/ もディレクトリごとリンク。
 #             共有スキルの実体は .codex/skills/ 内の .claude/skills への相対リンク)
 mkdir -p ~/.codex
 for e in AGENTS.md hooks agents skills; do
-  ln -sf ~/dotfiles/.codex/$e ~/.codex/$e
+  ln -sfn ~/dotfiles/.codex/$e ~/.codex/$e
 done
 # hooks.json はテンプレートから生成 (リポジトリに hooks.json 実体は無い)。
 # この sed は $HOME を無加工で埋め込むので、$HOME に ' " \ & | のどれかを
@@ -256,6 +281,26 @@ ln -sf ~/dotfiles/.oh-my-zsh/custom/themes/px-rose-pine.zsh-theme ~/.oh-my-zsh/c
 # tmuxヘルパースクリプト (.tmux.conf の `bind S` が参照)
 mkdir -p ~/.tmux
 ln -sf ~/dotfiles/scripts/tmux_send_to_all_except_nvim.sh ~/.tmux/tmux_send_to_all_except_nvim.sh
+
+# csb (コンテナサンドボックスの CLI)。リポジトリのスナップショットを使い捨ての
+# コンテナへ写して作業し、成果をパッチでホストへ戻す。~/.local/bin/csb は symlink
+# ではなく 3 行の /bin/sh ラッパーで、install.sh と同じテンプレート
+# (_sandbox_gate.csb_wrapper_text) から書く。bash-review は、このファイルがテンプレート
+# とバイト列まで一致し、中のインタプリタがフック自身を動かしているものと同じときだけ
+# csb を静的に許可する。インタプリタは install.sh と同じく、bash-review のランチャーの
+# _trusted_python が選ぶ root 所有のシステムの python3 (macOS は
+# /Library/Developer/CommandLineTools/usr/bin/python3 → /usr/bin/python3 の順、Linux は
+# /usr/bin/python3)。PATH の python3・pyenv の shim・.python-version は使わない。
+# 見つからなければ何も書かずに失敗する (macOS は xcode-select --install で入る)。
+# ランチャーの関数は bash で書いてあるので /bin/bash で実行する (zsh から source しない)。
+# 古い symlink の csb は mv で置き換わる (リンク先は書き換えない)。~/.local/bin は
+# .zshrc が PATH に入れる
+mkdir -p ~/.local/bin
+/bin/bash -c '. ~/dotfiles/.claude/hooks/bash-review-launcher.sh && cd ~ && _trusted_python_candidates &&
+  py="$(_trusted_python 0 / "${_TRUSTED_CANDIDATES[@]}")" &&
+  "$py" -I -S -B -c "import sys; sys.path.insert(0, sys.argv[1]); import _sandbox_gate as g; sys.stdout.write(g.csb_wrapper_text(sys.argv[2], sys.argv[3]))" \
+    ~/dotfiles/.claude/hooks "$py" "$HOME" >~/.local/bin/.csb.tmp' &&
+  chmod 0755 ~/.local/bin/.csb.tmp && mv -f ~/.local/bin/.csb.tmp ~/.local/bin/csb
 ```
 
 </details>

@@ -7,6 +7,8 @@ import shlex
 import shutil
 import stat
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -95,6 +97,73 @@ def _without_commands(env: dict, *names: str) -> dict:
                 break
             env["PATH"] = ":".join(p for p in env["PATH"].split(":") if p != drop)
     return env
+
+
+def _pin(var: str) -> str:
+    """The value install.sh assigns to the top-level pin variable `var`."""
+    m = re.search(rf'^{var}="([^"]*)"', INSTALL.read_text(encoding="utf-8"), re.M)
+    assert m, f"{var} is not defined in install.sh"
+    return m.group(1)
+
+
+def _executable_lines(text: str) -> str:
+    return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+
+
+def _gpg_shows(*fprs: str) -> str:
+    """Stub body: `gpg ... --show-keys` lists one primary key per fingerprint
+    (each with a subkey, whose fingerprint must not be mistaken for it)."""
+    rows = []
+    for fpr in fprs:
+        rows += [
+            f"pub:-:4096:1:{fpr[-16:]}:1487788586:::-:::scESC::::::23::0:",
+            f"fpr:::::::::{fpr}:",
+            "sub:-:4096:1:7EA0A9C3F273FCD8:1487788586::::::s::::::23:",
+            "fpr:::::::::D3306A018370199E527AE7997EA0A9C3F273FCD8:",
+        ]
+    quoted = " ".join(shlex.quote(r) for r in rows)
+    return f'case " $* " in *" --show-keys "*) printf \'%s\\n\' {quoted} ;; esac'
+
+
+# Stub prefix for sudo: record what each `sudo tee FILE` would have written.
+_SUDO_TEE_LOG = (
+    'case "$*" in "tee "*) { echo "## $*"; cat; } >>"$HOME/tee.log" ;; esac\n'
+)
+
+_OTHER_FPR = "0123456789ABCDEF0123456789ABCDEF01234567"
+
+
+def _os_release(*lines: str) -> str:
+    """Snippet prefix pointing OS_RELEASE_FILE at a file with `lines`."""
+    body = "\\n".join(lines)
+    return (
+        f"printf '{body}\\n' >\"$HOME/os-release\"; "
+        'OS_RELEASE_FILE="$HOME/os-release"; '
+    )
+
+
+_UBUNTU_NOBLE = _os_release(
+    "ID=ubuntu", "VERSION_CODENAME=noble", "UBUNTU_CODENAME=noble"
+)
+
+
+_DD_ABSENT = 'DOCKER_DESKTOP_APP="$HOME/no-such-Docker.app"; '
+
+
+def _brew_casks(*installed: str) -> str:
+    """brew stub: `list --cask X` succeeds for `installed` and for any cask a
+    previous `install --cask X` put in place; every other `list` fails."""
+    known = " ".join(installed)
+    return (
+        'state="$HOME/.brew-casks"\n'
+        'case "$1 $2" in\n'
+        '  "list --cask") for c in ' + known + ' $(cat "$state" 2>/dev/null); do\n'
+        '      [ "$c" = "$3" ] && exit 0; done; exit 1 ;;\n'
+        '  "install --cask") echo "$3" >>"$state"; exit 0 ;;\n'
+        "esac\n"
+        '[ "$1" = list ] && exit 1\n'
+        "exit 0"
+    )
 
 
 class TestSourceGuard:
@@ -191,10 +260,11 @@ class TestFetchSiteInventory:
     TestPinnedUpstreamRefs above verifies the pins that exist. It cannot see a
     fetch that was never pinned in the first place, because its regex only
     matches raw.githubusercontent.com. Three `git clone` calls (tpm,
-    zsh-autosuggestions, zsh-syntax-highlighting) and one
-    `uvx --from git+https://` (serena) sit outside both the pin policy and its
-    test, and the policy comment at the top of install.sh recites a fetch
-    inventory that does not mention any of them.
+    zsh-autosuggestions, zsh-syntax-highlighting) sit outside both the pin
+    policy and its test, and the policy comment at the top of install.sh
+    recites a fetch inventory that does not mention any of them. (serena's
+    `uvx --from git+https://` used to be the fourth; it is pinned to a commit
+    with `@$SERENA_REF` now.)
 
     This test inverts the direction of enumeration: it starts from every
     https:// URL appearing in an executable (non-comment) line of install.sh
@@ -225,6 +295,9 @@ class TestFetchSiteInventory:
         "LAZYDOCKER_INSTALL_REF",
         "OHMYZSH_INSTALL_REF",
         "VIM_PLUG_REF",
+        # pip/uv's `git+URL@REF` form: the pin ends the URL instead of being a
+        # path segment, so _is_pinned also accepts a trailing `@$VAR`.
+        "SERENA_REF",
     )
 
     # Fetches deliberately left unpinned, with the reason the "vendor
@@ -234,10 +307,6 @@ class TestFetchSiteInventory:
     UNPINNED_BY_DESIGN = {
         "https://astral.sh/uv/install.sh": "vendor redirector, no immutable ref",
         "https://pyenv.run": "vendor redirector, no immutable ref",
-        "https://get.docker.com": "vendor redirector, no immutable ref (runs via sudo sh)",
-        "https://deb.nodesource.com/setup_lts.x": (
-            "vendor redirector, no immutable ref (runs via sudo -E bash)"
-        ),
         # apt keyring / repository URLs. The "separate trust paths" note in
         # install.sh's fetch-inventory header comment scopes these out: dearmoring
         # a key or adding a sources.list entry is not the same as executing
@@ -248,6 +317,31 @@ class TestFetchSiteInventory:
             "apt keyring, separate trust path"
         ),
         "https://cli.github.com/packages": "apt repository, separate trust path",
+    }
+
+    # Fetches whose bytes are checked against a value pinned in install.sh
+    # before anything trusts them, although the URL itself names no immutable
+    # ref: apt keyrings verified against a pinned primary-key fingerprint
+    # (_add_signed_apt_repo), the repositories those keyrings sign, and a
+    # release binary verified against a pinned sha256 (_install_hadolint_release).
+    # These replaced get.docker.com and NodeSource's setup_lts.x, the two
+    # scripts that used to be fetched and executed as root.
+    VERIFIED_BY_PINNED_DIGEST = {
+        "https://download.docker.com/linux/$distro/gpg": (
+            "apt keyring, primary key must be DOCKER_APT_KEY_FPR"
+        ),
+        "https://download.docker.com/linux/$distro": (
+            "apt repository signed by that keyring"
+        ),
+        "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key": (
+            "apt keyring, primary key must be NODESOURCE_APT_KEY_FPR"
+        ),
+        "https://deb.nodesource.com/node_$NODESOURCE_NODE_MAJOR.x": (
+            "apt repository signed by that keyring"
+        ),
+        "https://github.com/hadolint/hadolint/releases/download/v$HADOLINT_VERSION/$asset": (
+            "release binary, must match HADOLINT_SHA256_X86_64 / HADOLINT_SHA256_ARM64"
+        ),
     }
 
     # Unpinned fetches that are NOT a considered decision -- they were simply
@@ -262,9 +356,6 @@ class TestFetchSiteInventory:
         ),
         "https://github.com/zsh-users/zsh-syntax-highlighting": (
             "git clone of branch HEAD; runs on every interactive shell start"
-        ),
-        "https://github.com/oraios/serena": (
-            "uvx --from git+https of branch HEAD; runs as an MCP server every session"
         ),
     }
 
@@ -281,7 +372,6 @@ class TestFetchSiteInventory:
             "https://github.com/tmux-plugins/tpm",
             "https://github.com/zsh-users/zsh-autosuggestions",
             "https://github.com/zsh-users/zsh-syntax-highlighting",
-            "https://github.com/oraios/serena",
         }
     )
 
@@ -338,7 +428,7 @@ class TestFetchSiteInventory:
         # truncates the fragment this sees, so the pin stops being recognised
         # and the URL starts failing as unclassified -- a confusing way to
         # learn that reformatting broke nothing real.
-        if any(f"${var}/" in url for var in cls.PIN_VARS):
+        if any(f"${var}/" in url or url.endswith(f"@${var}") for var in cls.PIN_VARS):
             return True
         return bool(re.search(r"/[0-9a-f]{40}(/|$)", url))
 
@@ -346,6 +436,7 @@ class TestFetchSiteInventory:
         found = self._urls_in_executable_lines(INSTALL.read_text(encoding="utf-8"))
         known = (
             set(self.UNPINNED_BY_DESIGN)
+            | set(self.VERIFIED_BY_PINNED_DIGEST)
             | set(self.UNPINNED_OPEN_FINDINGS)
             | self.NOT_FETCHED
         )
@@ -370,7 +461,10 @@ class TestFetchSiteInventory:
             "here if you can, and update EXPECTED_OPEN_FINDINGS deliberately if you cannot"
         )
 
-    @pytest.mark.parametrize("bucket", ["UNPINNED_BY_DESIGN", "UNPINNED_OPEN_FINDINGS"])
+    @pytest.mark.parametrize(
+        "bucket",
+        ["UNPINNED_BY_DESIGN", "VERIFIED_BY_PINNED_DIGEST", "UNPINNED_OPEN_FINDINGS"],
+    )
     def test_listed_urls_are_still_present(self, bucket):
         # A bucket entry for a URL install.sh no longer fetches reads as a live
         # exception while covering nothing, and hides that the finding was fixed.
@@ -394,6 +488,22 @@ class TestFetchSiteInventory:
         )
         assert self._is_pinned("https://example.com/" + "a" * 40 + "/install.sh")
         assert not self._is_pinned("https://example.com/master/install.sh")
+        assert self._is_pinned("https://github.com/oraios/serena@$SERENA_REF")
+        assert not self._is_pinned("https://github.com/oraios/serena")
+
+    def test_the_digest_bucket_names_pins_install_sh_defines(self):
+        # Each reason cites the variable that holds the digest; a reason
+        # naming a variable that does not exist is a check that is not made.
+        text = INSTALL.read_text(encoding="utf-8")
+        cited = []
+        for url, reason in self.VERIFIED_BY_PINNED_DIGEST.items():
+            for var in re.findall(
+                r"\b[A-Z][A-Z0-9_]*_(?:FPR|SHA256_[A-Z0-9_]+)\b", reason
+            ):
+                cited.append(var)
+                assert re.search(rf"^{var}=", text, re.M), (url, var)
+        # Not vacuous: both fingerprints and both hadolint digests are named.
+        assert len(cited) == 4, cited
 
 
 class TestDetectOs:
@@ -2202,74 +2312,49 @@ class TestRegisterClaudeMcpServers:
         assert "cannot import" not in res.stdout, res.stdout
         assert failures == [], failures
 
-    def test_a_registration_with_another_interpreter_gets_a_re_pin_hint(
-        self, shell_env
-    ):
-        # add_mcp leaves an existing registration alone, so a machine registered
-        # with the pyenv shim by an older run stays on it; say how to re-pin.
-        shell_env.stub(
-            "claude",
-            body=(
-                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
-                '  [ "$3" = gemini-consultant ] && { echo "  Command: /old/shims/python3"; exit 0; }\n'
-                "  exit 1\n"
-                "fi"
-            ),
-        )
+    def test_a_registration_with_another_interpreter_is_re_pinned(self, shell_env):
+        # An older run registered the pyenv shim; a rerun converges on the
+        # concrete interpreter instead of only printing how to re-pin it.
         real = shell_env.stub("python3.13-real")
         shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
-
-        res = run_sourced("register_claude_mcp_servers", shell_env.env)
-        assert res.returncode == 0, res.stderr
-
-        assert not [c for c in shell_env.calls if "mcp add" in c and "gemini" in c]
-        assert "claude mcp remove --scope user gemini-consultant" in res.stdout, (
-            res.stdout
-        )
-
-    def test_mcp_is_not_checked_on_an_interpreter_the_registration_does_not_use(
-        self, shell_env
-    ):
-        # Registered with another interpreter: only the re-pin hint applies. The
-        # current python lacking mcp says nothing about the registered one.
         shell_env.stub(
             "claude",
-            body=(
-                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
-                '  [ "$3" = gemini-consultant ] && { echo "  Command: /other/python3"; exit 0; }\n'
-                "  exit 1\n"
-                "fi"
+            body=_claude_stub(
+                _registered(
+                    shell_env.home,
+                    str(real),
+                    gemini_consultant={"command": "/old/shims/python3"},
+                )
             ),
         )
-        real = shell_env.stub(
-            "python3.13-real", body='case "$2" in *"import mcp"*) exit 1 ;; esac'
-        )
-        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
 
         res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
         assert res.returncode == 0, res.stderr
 
-        assert "claude mcp remove --scope user gemini-consultant" in res.stdout
-        assert "cannot import" not in res.stdout, res.stdout
+        gemini = [
+            c for c in shell_env.calls if c.startswith("claude mcp") and "gemini" in c
+        ]
+        assert gemini[-2:] == [
+            "claude mcp remove --scope user gemini-consultant",
+            f"claude mcp add --scope user gemini-consultant -- {real} "
+            f"{shell_env.home}/.claude/mcp-servers/gemini-consultant/server.py",
+        ], gemini
         assert failures == [], failures
 
-    def test_a_registration_with_the_same_interpreter_gets_no_hint(self, shell_env):
+    def test_a_registration_with_the_same_interpreter_is_kept(self, shell_env):
         real = shell_env.stub("python3.13-real")
-        shell_env.stub(
-            "claude",
-            body=(
-                'if [ "$1" = mcp ] && [ "$2" = get ]; then\n'
-                f'  [ "$3" = gemini-consultant ] && {{ echo "  Command: {real}"; exit 0; }}\n'
-                "  exit 1\n"
-                "fi"
-            ),
-        )
         shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+        shell_env.stub(
+            "claude", body=_claude_stub(_registered(shell_env.home, str(real)))
+        )
 
         res = run_sourced("register_claude_mcp_servers", shell_env.env)
         assert res.returncode == 0, res.stderr
 
-        assert "claude mcp remove" not in res.stdout, res.stdout
+        assert not [
+            c for c in shell_env.calls if re.match(r"claude mcp (add|remove)", c)
+        ]
+        assert "MCP server 'gemini-consultant' already registered" in res.stdout
 
     def test_codex_is_not_registered_as_an_mcp_server(self, shell_env):
         # Codex CLI 0.154 removed its MCP-server mode: the registration only
@@ -3268,7 +3353,7 @@ class TestFetchAndRun:
 
     def test_interpreter_flags_before_separator_stay_interpreter_side(self, shell_env):
         # Args before `--` are the interpreter's own flags and must land BEFORE
-        # the script path (this is how `sudo -E bash` callers work). `sh -x <tmp>`
+        # the script path. `sh -x <tmp>`
         # runs the script under xtrace -- an sh option -- so the script still runs
         # (marker on stdout) AND the trace on stderr proves `-x` was applied to
         # sh rather than passed to the script.
@@ -3283,7 +3368,7 @@ class TestFetchAndRun:
 
     def test_rejects_empty_download(self, shell_env):
         # A curl that succeeds but writes nothing (empty 200) must be refused,
-        # never handed to a (possibly root) shell.
+        # never handed to a shell.
         shell_env.stub("curl")  # default body leaves the -o target empty
         res = run_sourced(
             "fetch_and_run https://example.test/x.sh bash "
@@ -3601,7 +3686,7 @@ class TestTryInstall:
         assert re.search(r"brew list [^\n]*&>/dev/null", text)
         assert re.search(r"npm list -g[^\n]*&>/dev/null", text)
         assert re.search(r"show mcp &>/dev/null", text)
-        # fetch_and_run bootstraps (uv/pyenv/docker) intentionally keep their
+        # fetch_and_run bootstraps (uv/pyenv/lazydocker) intentionally keep their
         # own error handling -- they stream stderr for supply-chain visibility
         # and must NOT be captured by try_install.
         assert re.search(r"fetch_and_run https://astral\.sh/uv", text)
@@ -3825,32 +3910,60 @@ class TestInstallFailureRecording:
                 id="lazydocker-macos-brew",
             ),
             pytest.param(
-                {"sudo": ""},
-                _absent("docker")
-                + "fetch_and_run() { return 1; }; OS=ubuntu install_docker",
+                # gpg is stubbed so the step reaches the download on every machine:
+                # without gpg the "gpg is not installed" check comes first
+                {
+                    "curl": "exit 22",
+                    "sudo": _DRAIN_TEE,
+                    "dpkg": "echo amd64",
+                    "gpg": _gpg_shows(_pin("DOCKER_APT_KEY_FPR")),
+                },
+                _absent("docker") + _UBUNTU_NOBLE + "OS=ubuntu install_docker",
+                ["Docker engine"],
+                ["Failed to fetch the Docker signing key"],
+                id="docker-engine-ubuntu-key-download",
+            ),
+            pytest.param(
+                {
+                    "curl": "",
+                    "sudo": _DRAIN_TEE + _fails_on(_APT_INSTALL),
+                    "dpkg": "echo amd64",
+                    "gpg": _gpg_shows(_pin("DOCKER_APT_KEY_FPR")),
+                },
+                _absent("docker") + _UBUNTU_NOBLE + "OS=ubuntu install_docker",
                 ["Docker engine"],
                 ["Failed to install Docker engine"],
-                id="docker-engine-ubuntu",
+                id="docker-engine-ubuntu-repo-ok-apt-install-fails-is-one-entry",
             ),
             pytest.param(
                 {"brew": "exit 1"},
-                _absent("docker") + "OS=macos install_docker",
+                _absent("docker") + _DD_ABSENT + "OS=macos install_docker",
                 ["Docker Desktop"],
                 [],
                 id="docker-desktop-macos",
             ),
             pytest.param(
-                {},
-                _absent("node")
-                + "fetch_and_run() { return 1; }; OS=ubuntu install_nodejs",
+                # gpg stubbed for the same reason as the Docker key download above
+                {
+                    "curl": "exit 22",
+                    "sudo": _DRAIN_TEE,
+                    "gpg": _gpg_shows(_pin("NODESOURCE_APT_KEY_FPR")),
+                },
+                _absent("node", "npm") + "OS=ubuntu install_nodejs",
                 ["Node.js"],
-                ["NodeSource setup failed"],
+                [
+                    "Failed to fetch the NodeSource signing key",
+                    "NodeSource setup failed",
+                ],
                 id="nodesource-setup",
             ),
             pytest.param(
-                {"sudo": _fails_on(_APT_INSTALL)},
-                _absent("node") + "fetch_and_run() { return 0; }; "
-                "OS=ubuntu install_nodejs",
+                {
+                    "curl": "",
+                    "sudo": _DRAIN_TEE + _fails_on(_APT_INSTALL),
+                    "gpg": _gpg_shows(_pin("NODESOURCE_APT_KEY_FPR")),
+                },
+                _absent("node", "npm") + "OS=ubuntu install_nodejs",
                 ["Node.js"],
                 [],
                 id="nodesource-ok-apt-install-fails-is-one-entry",
@@ -3870,7 +3983,8 @@ class TestInstallFailureRecording:
             pytest.param(
                 {"pip3": 'case "$1" in show) exit 1 ;; esac\nexit 1'},
                 "install_mcp_server_deps",
-                ["mcp"],
+                # The label is the spec pip was given: the pinned version.
+                [f"mcp=={_pin('MCP_PY_VERSION')}"],
                 ["Failed to install mcp"],
                 id="pip-package-through-pip_install_user",
             ),
@@ -4327,6 +4441,7 @@ _MAIN_STEPS = (
     "install_uv",
     "install_glow",
     "install_docker",
+    "install_hadolint",
     "install_lazydocker",
     "install_tree_sitter_cli",
     "install_mcp_server_deps",
@@ -4338,6 +4453,7 @@ _MAIN_STEPS = (
     "setup_neovim",
     "install_ai_tools",  # reads from a TTY: must never run for real in a test
     "register_claude_mcp_servers",
+    "_link_sandbox_cli",  # after the package steps; see TestSandboxCliWrapper
     "link_oh_my_zsh_theme",
     "change_shell",
 )
@@ -5322,3 +5438,1702 @@ class TestNeovimVersionCheck:
         assert res.returncode == 0, res.stdout + res.stderr
         assert _NVIM_DOC_ANCHOR not in res.stdout
         assert labels == []
+
+
+# =============================================================================
+# Pinned installs, signed apt repositories, idempotent reruns and the Docker steps
+# =============================================================================
+
+
+_USER_SCOPE = "User config (available in all your projects)"
+
+
+def _claude_stub(registered=None, *, remove_exit=0, add_exit=0) -> str:
+    """Body for a `claude` stub.
+
+    `claude mcp get NAME` prints NAME's registration in the shape the real CLI
+    prints it (`  Scope: ...`, `  Type: ...`, `  Command: ...`, `  Args: ...`,
+    space-joined) or exits 1 when NAME is not registered.
+    """
+    lines = ['if [ "$1 $2" = "mcp get" ]; then', '  case "$3" in']
+    for name, reg in (registered or {}).items():
+        out = [
+            f"{name}:",
+            f"  Scope: {reg.get('scope', _USER_SCOPE)}",
+            "  Status: Connected",
+            f"  Type: {reg.get('type', 'stdio')}",
+        ]
+        if "command" in reg:
+            out.append(f"  Command: {reg['command']}")
+        if "args" in reg:
+            out.append(f"  Args: {reg['args']}")
+        out += [
+            "  Environment:",
+            "",
+            f"To remove this server, run: claude mcp remove {name} -s user",
+        ]
+        quoted = " ".join(shlex.quote(x) for x in out)
+        lines.append(f"  {shlex.quote(name)}) printf '%s\\n' {quoted}; exit 0 ;;")
+    lines += [
+        "  esac",
+        "  exit 1",
+        "fi",
+        f'[ "$1 $2" = "mcp remove" ] && exit {remove_exit}',
+        f'[ "$1 $2" = "mcp add" ] && exit {add_exit}',
+        "exit 0",
+    ]
+    return "\n".join(lines)
+
+
+def _expected_mcp(home: Path, python: str) -> dict:
+    """name -> (command, space-joined args) that install.sh registers."""
+    return {
+        "context7": ("npx", f"-y @upstash/context7-mcp@{_pin('CONTEXT7_MCP_VERSION')}"),
+        "serena": (
+            "uvx",
+            f"--from git+https://github.com/oraios/serena@{_pin('SERENA_REF')} "
+            "serena start-mcp-server --context claude-code",
+        ),
+        "gemini-consultant": (
+            python,
+            f"{home}/.claude/mcp-servers/gemini-consultant/server.py",
+        ),
+    }
+
+
+def _registered(home: Path, python: str, **overrides) -> dict:
+    """Every server registered exactly as install.sh would, with `overrides`."""
+    reg = {
+        name: {"command": cmd, "args": args}
+        for name, (cmd, args) in _expected_mcp(home, python).items()
+    }
+    for name, fields in overrides.items():
+        name = name.replace("_", "-")
+        if fields is None:
+            reg.pop(name, None)
+        else:
+            reg[name] = {**reg.get(name, {}), **fields}
+    return reg
+
+
+class TestPinnedMcpServers:
+    """The MCP servers Claude Code starts every session run a pinned build."""
+
+    def test_the_pins_are_exact(self):
+        assert re.fullmatch(r"[0-9a-f]{40}", _pin("SERENA_REF"))
+        assert re.fullmatch(r"\d+\.\d+\.\d+", _pin("CONTEXT7_MCP_VERSION"))
+        # mcp 2.x no longer ships mcp.server.fastmcp, which server.py imports.
+        assert re.fullmatch(r"1\.\d+\.\d+", _pin("MCP_PY_VERSION"))
+
+    def test_a_fresh_registration_uses_the_pins(self, shell_env):
+        shell_env.stub("claude", body=_claude_stub())
+        real = shell_env.stub("python3.13-real")
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+
+        res, failures = run_recording("register_claude_mcp_servers", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+
+        adds = [c for c in shell_env.calls if c.startswith("claude mcp add")]
+        for name, (cmd, args) in _expected_mcp(shell_env.home, str(real)).items():
+            assert f"claude mcp add --scope user {name} -- {cmd} {args}" in adds, adds
+
+    def test_the_mcp_package_is_installed_at_the_pin(self, shell_env):
+        shell_env.stub("pip3", body='[ "$1" = show ] && exit 1\nexit 0')
+        res, failures = run_recording("install_mcp_server_deps", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert f"pip3 install --user mcp=={_pin('MCP_PY_VERSION')}" in shell_env.calls
+        assert failures == []
+
+    def test_no_unpinned_spelling_is_left(self):
+        code = _executable_lines(INSTALL.read_text(encoding="utf-8"))
+        assert not re.search(r"oraios/serena(?!@)", code)
+        assert not re.search(r"@upstash/context7-mcp(?!@)", code)
+        assert not re.search(r"pip_install_user \"\$pip_cmd\" mcp\b(?!=)", code)
+        # The legacy context name serena now only maps to claude-code.
+        assert "ide-assistant" not in code
+
+
+class TestMcpRegistrationConverges:
+    """An existing registration is compared to the expected command and args
+    exactly, and re-registered when it differs; one that cannot be fixed is a
+    recorded failure, never a warning followed by "completed"."""
+
+    def _python(self, shell_env, *, imports_mcp=True):
+        body = "" if imports_mcp else 'case "$2" in *"import mcp"*) exit 1 ;; esac'
+        real = shell_env.stub("python3.13-real", body=body)
+        shell_env.stub("python3", body=f'[ "$1" = "-c" ] && echo "{real}"')
+        return str(real)
+
+    def _run(self, shell_env, registered, prefix="", **stub_kw):
+        shell_env.stub("claude", body=_claude_stub(registered, **stub_kw))
+        res, failures = run_recording(
+            prefix + "register_claude_mcp_servers", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        mutations = [
+            c for c in shell_env.calls if re.match(r"claude mcp (add|remove) ", c)
+        ]
+        return res, failures, mutations
+
+    def test_a_matching_registration_is_left_alone(self, shell_env):
+        real = self._python(shell_env)
+        res, failures, mutations = self._run(
+            shell_env, _registered(shell_env.home, real)
+        )
+        assert mutations == []
+        assert failures == []
+        assert res.stdout.count("already registered") == 3, res.stdout
+
+    def test_a_stale_interpreter_is_re_registered(self, shell_env):
+        # The real machine: `Command: python`, an old pyenv shim.
+        real = self._python(shell_env)
+        res, failures, mutations = self._run(
+            shell_env,
+            _registered(shell_env.home, real, gemini_consultant={"command": "python"}),
+        )
+        server = f"{shell_env.home}/.claude/mcp-servers/gemini-consultant/server.py"
+        assert mutations == [
+            "claude mcp remove --scope user gemini-consultant",
+            f"claude mcp add --scope user gemini-consultant -- {real} {server}",
+        ]
+        assert failures == []
+
+    def test_a_command_that_merely_contains_the_expected_one_is_a_mismatch(
+        self, shell_env
+    ):
+        # `*"$python_cmd"*` used to accept /usr/bin/python3.9 for /usr/bin/python3.
+        real = self._python(shell_env)
+        _, _, mutations = self._run(
+            shell_env,
+            _registered(
+                shell_env.home, real, gemini_consultant={"command": real + ".9"}
+            ),
+        )
+        assert "claude mcp remove --scope user gemini-consultant" in mutations
+
+    def test_an_unpinned_serena_is_re_registered_at_the_pin(self, shell_env):
+        real = self._python(shell_env)
+        old = (
+            "--from git+https://github.com/oraios/serena serena start-mcp-server "
+            "--context ide-assistant"
+        )
+        _, failures, mutations = self._run(
+            shell_env, _registered(shell_env.home, real, serena={"args": old})
+        )
+        cmd, args = _expected_mcp(shell_env.home, real)["serena"]
+        assert mutations == [
+            "claude mcp remove --scope user serena",
+            f"claude mcp add --scope user serena -- {cmd} {args}",
+        ]
+        assert failures == []
+
+    def test_a_re_registration_that_fails_is_recorded(self, shell_env):
+        real = self._python(shell_env)
+        res, failures, _ = self._run(
+            shell_env,
+            _registered(shell_env.home, real, gemini_consultant={"command": "python"}),
+            remove_exit=1,
+        )
+        assert failures == ["MCP server gemini-consultant"]
+        assert "claude mcp remove --scope user gemini-consultant" in res.stdout
+
+    # What a user may have added to a registration: an --api-key argument.
+    SECRET = "sk-SECRET-1234"
+
+    def _with_user_args(self, shell_env, real):
+        return _registered(
+            shell_env.home,
+            real,
+            context7={
+                "args": f"-y @upstash/context7-mcp@0.0.1 --api-key {self.SECRET}"
+            },
+        )
+
+    def test_the_old_registration_is_saved_owner_only_before_it_is_removed(
+        self, shell_env
+    ):
+        real = self._python(shell_env)
+        backup = shell_env.home / "bk"
+        # remove exits 9 unless the saved copy is already in place: a save
+        # that came after the remove would leave nothing to restore from.
+        shell_env.stub(
+            "claude",
+            body=(
+                '[ "$1 $2" = "mcp remove" ] && { [ -s "$HOME/bk/mcp-$5.txt" ] || exit 9; }\n'
+                + _claude_stub(self._with_user_args(shell_env, real))
+            ),
+        )
+        res, failures = run_recording(
+            'backup_dir="$HOME/bk"; register_claude_mcp_servers', shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == [], res.stdout
+        saved = backup / "mcp-context7.txt"
+        text = saved.read_text(encoding="utf-8")
+        assert self.SECRET in text and "Command: npx" in text
+        assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+        # The terminal gets the path, never the old arguments.
+        assert str(saved) in res.stdout
+        assert self.SECRET not in res.stdout + res.stderr
+        assert [c for c in shell_env.calls if c.startswith("claude mcp remove")] == [
+            "claude mcp remove --scope user context7"
+        ]
+
+    def test_without_a_backup_dir_the_save_still_lands_under_home(self, shell_env):
+        # register_claude_mcp_servers is also run on its own, with no
+        # create_symlinks before it: backup_dir is then unset.
+        real = self._python(shell_env)
+        res, failures, _ = self._run(shell_env, self._with_user_args(shell_env, real))
+        assert failures == [], res.stdout
+        (saved,) = shell_env.home.glob(".dotfiles_backup_*/mcp-context7.txt")
+        assert self.SECRET in saved.read_text(encoding="utf-8")
+        assert self.SECRET not in res.stdout + res.stderr
+
+    def test_an_add_that_fails_after_the_remove_names_the_saved_copy(self, shell_env):
+        real = self._python(shell_env)
+        res, failures, mutations = self._run(
+            shell_env,
+            self._with_user_args(shell_env, real),
+            prefix='backup_dir="$HOME/bk"; ',
+            add_exit=1,
+        )
+        assert failures == ["MCP server context7"]
+        assert mutations[0] == "claude mcp remove --scope user context7"
+        assert f"{shell_env.home}/bk/mcp-context7.txt" in res.stdout
+        # The server is gone at this point: say so rather than "re-registered".
+        assert "NOT registered" in res.stdout
+        assert "Re-registered MCP server" not in res.stdout
+        assert self.SECRET not in res.stdout + res.stderr
+
+    def test_a_registration_that_cannot_be_saved_is_not_removed(self, shell_env):
+        real = self._python(shell_env)
+        (shell_env.home / "blocker").write_text("a file, not a directory\n")
+        res, failures, mutations = self._run(
+            shell_env,
+            self._with_user_args(shell_env, real),
+            prefix='backup_dir="$HOME/blocker/bk"; ',
+        )
+        # Nothing was recorded, so nothing may be deleted.
+        assert mutations == []
+        assert failures == ["MCP server context7"]
+        assert "leaving it as it is" in res.stdout
+        assert self.SECRET not in res.stdout + res.stderr
+
+    def test_the_other_scope_warning_does_not_print_the_arguments(self, shell_env):
+        real = self._python(shell_env)
+        reg = _registered(
+            shell_env.home,
+            real,
+            context7={
+                "args": f"-y x --api-key {self.SECRET}",
+                "scope": "Local config (private to you in this project)",
+            },
+        )
+        res, failures, mutations = self._run(shell_env, reg)
+        assert mutations == []
+        assert failures == ["MCP server context7"]
+        assert "Local config" in res.stdout
+        assert self.SECRET not in res.stdout + res.stderr
+
+    def test_a_registration_in_another_scope_is_reported_not_removed(self, shell_env):
+        real = self._python(shell_env)
+        res, failures, mutations = self._run(
+            shell_env,
+            _registered(
+                shell_env.home,
+                real,
+                gemini_consultant={
+                    "command": "python",
+                    "scope": "Local config (private to you in this project)",
+                },
+            ),
+        )
+        assert mutations == []
+        assert failures == ["MCP server gemini-consultant"]
+        assert "Local config" in res.stdout
+
+    def test_a_remote_registration_is_left_alone(self, shell_env):
+        real = self._python(shell_env)
+        reg = _registered(shell_env.home, real)
+        reg["context7"] = {"type": "http"}
+        res, failures, mutations = self._run(shell_env, reg)
+        assert mutations == []
+        assert failures == []
+        assert "context7" in res.stdout and "http" in res.stdout
+
+    def test_mcp_is_checked_on_the_interpreter_now_registered(self, shell_env):
+        # The registration converges on this interpreter, so whether IT can
+        # import mcp is what decides whether the server starts.
+        real = self._python(shell_env, imports_mcp=False)
+        res, failures, _ = self._run(
+            shell_env,
+            _registered(shell_env.home, real, gemini_consultant={"command": "python"}),
+        )
+        assert failures == ["gemini-consultant (mcp not importable)"], res.stdout
+
+
+class TestFetchAndRunNeverRunsAsRoot:
+    """Nothing fetched over the network is executed under sudo."""
+
+    @pytest.mark.parametrize("sudo", ["sudo", "/usr/bin/sudo"])
+    def test_a_sudo_interpreter_is_refused_before_downloading(self, shell_env, sudo):
+        shell_env.stub("curl", body=_CURL_WRITES_SCRIPT)
+        res = run_sourced(
+            f"fetch_and_run https://example.test/x.sh {sudo} sh "
+            '&& echo OK || echo "FAILED rc=$?"',
+            shell_env.env,
+        )
+        assert "FAILED rc=1" in res.stdout, res.stdout
+        assert "Refusing" in res.stdout
+        assert not [c for c in shell_env.calls if c.startswith(("curl", "sudo"))]
+
+    def test_no_call_site_runs_a_fetched_script_as_root(self):
+        code = _executable_lines(INSTALL.read_text(encoding="utf-8"))
+        assert not re.search(r"fetch_and_run\s+\S+\s+(\S*/)?sudo\b", code)
+        assert "sudo -E" not in code
+        assert "get.docker.com" not in code
+        assert "setup_lts" not in code
+
+
+class TestSignedAptRepos:
+    """Docker Engine and Node.js come from their signed apt repositories,
+    each keyring checked against a pinned fingerprint after root wrote it."""
+
+    REPO = (
+        "_add_signed_apt_repo Demo https://example.test/key "
+        "/etc/apt/keyrings/demo.gpg {fpr} demo.list "
+        '"deb [signed-by=/etc/apt/keyrings/demo.gpg] https://example.test stable main"'
+        ' && echo ADDED || echo "NOT_ADDED rc=$?"'
+    )
+
+    def _tee_log(self, shell_env) -> str:
+        log = shell_env.home / "tee.log"
+        return log.read_text(encoding="utf-8") if log.exists() else ""
+
+    def test_a_matching_key_adds_the_repository(self, shell_env):
+        fpr = _pin("DOCKER_APT_KEY_FPR")
+        shell_env.stub("curl")
+        shell_env.stub("sudo", body=_SUDO_TEE_LOG)
+        shell_env.stub("gpg", body=_gpg_shows(fpr))
+        res, failures = run_recording(self.REPO.format(fpr=fpr), shell_env.env)
+        assert "ADDED" in res.stdout and "NOT_ADDED" not in res.stdout, res.stdout
+        assert failures == []
+        log = self._tee_log(shell_env)
+        assert "## tee /etc/apt/sources.list.d/demo.list\n" in log
+        assert (
+            "deb [signed-by=/etc/apt/keyrings/demo.gpg] https://example.test stable main"
+            in log
+        )
+        # The key root wrote (staged beside the keyring) is what gets checked,
+        # not a user-owned copy; only a match is renamed into place.
+        staged = "/etc/apt/keyrings/demo.gpg.new"
+        assert f"sudo gpg --batch --yes --dearmor -o {staged}" in shell_env.calls
+        checks = [
+            i
+            for i, c in enumerate(shell_env.calls)
+            if c.startswith("gpg ") and "--show-keys" in c and c.endswith(f" {staged}")
+        ]
+        assert checks, shell_env.calls
+        moved = shell_env.calls.index(f"sudo mv -f {staged} /etc/apt/keyrings/demo.gpg")
+        assert checks[0] < moved
+        # ... and it is made world-readable BEFORE it is checked: the check runs
+        # as the invoking user, and root's file is 0600 under a strict umask.
+        readable = shell_env.calls.index(f"sudo chmod 0644 {staged}")
+        assert readable < checks[0]
+
+    def _strict_umask_root(self, shell_env):
+        """Root's staged file is unreadable to the user's gpg until it is
+        chmod'ed: the gpg stub fails (exit 2) unless `sudo chmod 0644` ran."""
+        shell_env.stub(
+            "sudo",
+            body=_SUDO_TEE_LOG
+            + 'case "$*" in "chmod 0644 "*) touch "$HOME/staged-readable" ;; esac\n',
+        )
+        return '[ -e "$HOME/staged-readable" ] || exit 2\n' + _gpg_shows(
+            _pin("DOCKER_APT_KEY_FPR")
+        )
+
+    def test_a_key_only_root_could_read_still_gets_checked(self, shell_env):
+        fpr = _pin("DOCKER_APT_KEY_FPR")
+        shell_env.stub("curl")
+        shell_env.stub("gpg", body=self._strict_umask_root(shell_env))
+        res, failures = run_recording(self.REPO.format(fpr=fpr), shell_env.env)
+        assert "ADDED" in res.stdout and "NOT_ADDED" not in res.stdout, res.stdout
+        assert failures == []
+
+    def test_a_key_gpg_cannot_read_is_not_called_a_fingerprint_mismatch(
+        self, shell_env
+    ):
+        shell_env.stub("curl")
+        shell_env.stub("sudo", body=_SUDO_TEE_LOG)
+        shell_env.stub("gpg", exit_code=2)
+        res = run_sourced(self.REPO.format(fpr=_OTHER_FPR), shell_env.env)
+        assert re.search(r"^NOT_ADDED rc=1$", res.stdout, re.M), res.stdout
+        assert "Could not read the Demo signing key" in res.stdout
+        assert "does not match" not in res.stdout
+        assert "got: none" not in res.stdout
+        assert "sudo rm -f /etc/apt/keyrings/demo.gpg.new" in shell_env.calls
+        assert not [c for c in shell_env.calls if c.startswith("sudo mv")]
+        assert "sources.list.d" not in self._tee_log(shell_env)
+
+    def test_a_chmod_that_fails_discards_the_key_and_adds_nothing(self, shell_env):
+        shell_env.stub("curl")
+        shell_env.stub(
+            "sudo", body=_SUDO_TEE_LOG + 'case "$*" in "chmod "*) exit 1 ;; esac\n'
+        )
+        shell_env.stub("gpg", body=_gpg_shows(_pin("DOCKER_APT_KEY_FPR")))
+        res = run_sourced(
+            self.REPO.format(fpr=_pin("DOCKER_APT_KEY_FPR")), shell_env.env
+        )
+        assert re.search(r"^NOT_ADDED rc=1$", res.stdout, re.M), res.stdout
+        assert "sudo rm -f /etc/apt/keyrings/demo.gpg.new" in shell_env.calls
+        assert not [c for c in shell_env.calls if c.startswith("sudo mv")]
+        assert "sources.list.d" not in self._tee_log(shell_env)
+
+    def test_without_gpg_nothing_is_fetched_and_the_cause_is_named(self, shell_env):
+        # A minimal image has no gpg; the get.docker.com / setup_lts.x scripts
+        # used to install their own prerequisites, so this must not surface as
+        # an unrelated "failed to fetch" or "got: none".
+        shell_env.stub("curl")
+        shell_env.stub("sudo", body=_SUDO_TEE_LOG)
+        res = run_sourced(
+            _absent("gpg") + self.REPO.format(fpr=_OTHER_FPR), shell_env.env
+        )
+        assert re.search(r"^NOT_ADDED rc=1$", res.stdout, re.M), res.stdout
+        assert "gpg is not installed" in res.stdout and "gnupg" in res.stdout
+        assert not [c for c in shell_env.calls if c.startswith(("curl", "sudo"))]
+
+    def test_the_apt_package_list_carries_gpg_and_the_ca_bundle(self, shell_env):
+        # Both used to come in with the vendor scripts the signed repositories
+        # replaced; curl -fsSL of an https key needs ca-certificates too.
+        res = run_sourced("OS=ubuntu install_apt_packages", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        (install,) = [
+            c for c in shell_env.calls if c.startswith("sudo apt-get install -y git ")
+        ]
+        assert " gnupg " in f"{install} " and " ca-certificates " in f"{install} "
+
+    @pytest.mark.parametrize(
+        "shown",
+        [(_OTHER_FPR,), ("{fpr}", _OTHER_FPR), ()],
+        ids=["another-key", "an-extra-key", "no-key"],
+    )
+    def test_any_other_keyring_is_removed_and_no_source_is_written(
+        self, shell_env, shown
+    ):
+        fpr = _pin("DOCKER_APT_KEY_FPR")
+        shell_env.stub("curl")
+        shell_env.stub("sudo", body=_SUDO_TEE_LOG)
+        shell_env.stub("gpg", body=_gpg_shows(*(s.format(fpr=fpr) for s in shown)))
+        res = run_sourced(self.REPO.format(fpr=fpr), shell_env.env)
+        assert re.search(r"^NOT_ADDED rc=1$", res.stdout, re.M), res.stdout
+        assert "fingerprint" in res.stdout
+        # The rejected key is discarded; an existing keyring is never touched.
+        assert "sudo rm -f /etc/apt/keyrings/demo.gpg.new" in shell_env.calls
+        assert not [
+            c
+            for c in shell_env.calls
+            if c.endswith(" /etc/apt/keyrings/demo.gpg") and "show-keys" not in c
+        ], shell_env.calls
+        assert "sources.list.d" not in self._tee_log(shell_env)
+        assert not [c for c in shell_env.calls if "apt-get update" in c]
+
+    def test_a_failed_key_download_adds_nothing(self, shell_env):
+        shell_env.stub("curl", exit_code=22)
+        shell_env.stub("sudo", body=_SUDO_TEE_LOG)
+        shell_env.stub("gpg")  # present, so the failure is the download's
+        res = run_sourced(self.REPO.format(fpr=_OTHER_FPR), shell_env.env)
+        assert re.search(r"^NOT_ADDED rc=1$", res.stdout, re.M), res.stdout
+        assert "Failed to fetch the Demo signing key" in res.stdout
+        assert "sources.list.d" not in self._tee_log(shell_env)
+        # A failed download leaves an existing keyring as it was.
+        assert "sudo rm -f /etc/apt/keyrings/demo.gpg.new" in shell_env.calls
+        assert not [c for c in shell_env.calls if c.startswith("sudo mv")]
+
+    def _docker(self, shell_env, os_release, gpg=None):
+        shell_env.stub("curl")
+        shell_env.stub("sudo", body=_SUDO_TEE_LOG)
+        shell_env.stub("dpkg", body="echo amd64")
+        shell_env.stub("gpg", body=gpg or _gpg_shows(_pin("DOCKER_APT_KEY_FPR")))
+        return run_recording(
+            _absent("docker") + os_release + "OS=ubuntu install_docker", shell_env.env
+        )
+
+    @pytest.mark.parametrize(
+        ("os_release", "distro", "codename"),
+        [
+            pytest.param(_UBUNTU_NOBLE, "ubuntu", "noble", id="ubuntu"),
+            pytest.param(
+                _os_release("ID=debian", "VERSION_CODENAME=bookworm"),
+                "debian",
+                "bookworm",
+                id="debian",
+            ),
+            pytest.param(
+                _os_release(
+                    "ID=linuxmint", 'ID_LIKE="ubuntu debian"', "UBUNTU_CODENAME=noble"
+                ),
+                "ubuntu",
+                "noble",
+                id="ubuntu-derivative",
+            ),
+        ],
+    )
+    def test_docker_engine_comes_from_dockers_signed_repo(
+        self, shell_env, os_release, distro, codename
+    ):
+        res, failures = self._docker(shell_env, os_release)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == [], res.stdout
+        log = self._tee_log(shell_env)
+        assert (
+            "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] "
+            f"https://download.docker.com/linux/{distro} {codename} stable"
+        ) in log, log
+        # Stored as served (armored), the way upstream's docker.asc is.
+        assert "## tee /etc/apt/keyrings/docker.asc.new\n" in log
+        assert (
+            "sudo mv -f /etc/apt/keyrings/docker.asc.new /etc/apt/keyrings/docker.asc"
+            in shell_env.calls
+        )
+        assert (
+            f"curl -fsSL https://download.docker.com/linux/{distro}/gpg"
+            in shell_env.calls
+        )
+        assert (
+            "sudo apt-get install -y docker-ce docker-ce-cli containerd.io "
+            "docker-buildx-plugin docker-compose-plugin"
+        ) in shell_env.calls
+
+    def test_an_unknown_release_installs_no_engine(self, shell_env):
+        res, failures = self._docker(shell_env, _os_release("ID=arch"))
+        assert failures == ["Docker engine"], res.stdout
+        assert "Could not tell the Debian/Ubuntu release" in res.stdout
+        assert not [c for c in shell_env.calls if c.startswith("curl")]
+        assert not [c for c in shell_env.calls if "docker-ce" in c]
+
+    def test_a_docker_key_mismatch_installs_no_engine(self, shell_env):
+        res, failures = self._docker(
+            shell_env, _UBUNTU_NOBLE, gpg=_gpg_shows(_OTHER_FPR)
+        )
+        assert failures == ["Docker engine"], res.stdout
+        assert not [c for c in shell_env.calls if "docker-ce" in c]
+        assert not [c for c in shell_env.calls if "usermod" in c]
+
+    def test_nodejs_comes_from_the_signed_nodesource_repo(self, shell_env):
+        shell_env.stub("curl")
+        shell_env.stub("sudo", body=_SUDO_TEE_LOG)
+        shell_env.stub("gpg", body=_gpg_shows(_pin("NODESOURCE_APT_KEY_FPR")))
+        res, failures = run_recording(
+            _absent("node", "npm") + "OS=ubuntu install_nodejs", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == [], res.stdout
+        major = _pin("NODESOURCE_NODE_MAJOR")
+        assert re.fullmatch(r"\d+", major)
+        assert (
+            "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] "
+            f"https://deb.nodesource.com/node_{major}.x nodistro main"
+        ) in self._tee_log(shell_env)
+        assert (
+            "curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+            in shell_env.calls
+        )
+        assert "sudo apt-get install -y nodejs" in shell_env.calls
+        assert not [
+            c for c in shell_env.calls if c.startswith(("sudo -E", "sudo bash"))
+        ]
+
+
+@pytest.fixture(scope="module")
+def real_gpg_keys(tmp_path_factory):
+    """Two real OpenPGP keys (each a primary key plus an encryption subkey),
+    exported armored and dearmored, made in a throwaway GNUPGHOME.
+
+    TestSignedAptRepos stubs gpg with hand-written colon records; this is the
+    one place `_keyring_primary_fprs` meets what gpg really prints.
+    """
+    if shutil.which("gpg") is None:
+        pytest.skip("gpg is not installed")
+
+    def gpg(env, *args):
+        return subprocess.run(
+            ["gpg", "--batch", "--no-tty", "--pinentry-mode", "loopback", *args],
+            capture_output=True,
+            env=env,
+            timeout=120,
+        )
+
+    def fprs_after(env, record):
+        """Fingerprints of the keys whose `fpr` record follows a `record` line."""
+        lines = gpg(env, "--with-colons", "--list-keys").stdout.decode().splitlines()
+        return [
+            ln.split(":")[9]
+            for prev, ln in zip(lines, lines[1:])
+            if prev.startswith(record + ":") and ln.startswith("fpr:")
+        ]
+
+    # gpg-agent's socket lives in GNUPGHOME and a unix socket path is capped at
+    # ~104 bytes: pytest's tmp_path stays under that on Linux, but not always on
+    # macOS, where a short directory is the fallback.
+    tried: list = []
+    env = None
+    reason = b""
+    try:
+        for make_home in (
+            lambda: tmp_path_factory.mktemp("gnupg"),
+            lambda: Path(tempfile.mkdtemp(prefix="gh", dir="/tmp")),  # nosec B108
+        ):
+            home = make_home()
+            tried.append(home)
+            home.chmod(0o700)
+            candidate = {**os.environ, "GNUPGHOME": str(home)}
+            res = gpg(
+                candidate,
+                "--passphrase",
+                "",
+                "--quick-generate-key",
+                "alpha <alpha@example.test>",
+                "ed25519",
+                "sign",
+                "never",
+            )
+            if res.returncode == 0:
+                env = candidate
+                break
+            reason = res.stderr
+        if env is None:
+            pytest.skip(f"gpg cannot make a key here: {reason.decode()[-300:]}")
+
+        res = gpg(
+            env,
+            "--passphrase",
+            "",
+            "--quick-generate-key",
+            "beta <beta@example.test>",
+            "ed25519",
+            "sign",
+            "never",
+        )
+        assert res.returncode == 0, res.stderr.decode()
+        primaries = fprs_after(env, "pub")
+        assert len(primaries) == 2, primaries
+        for fpr in primaries:
+            res = gpg(
+                env,
+                "--passphrase",
+                "",
+                "--quick-add-key",
+                fpr,
+                "cv25519",
+                "encr",
+                "never",
+            )
+            assert res.returncode == 0, res.stderr.decode()
+        subkeys = fprs_after(env, "sub")
+        assert len(subkeys) == 2, subkeys
+        out = tmp_path_factory.mktemp("keys")
+        files = {}
+        for name, fprs, armor in (
+            ("one.asc", primaries[:1], True),
+            ("one.gpg", primaries[:1], False),
+            ("two.asc", primaries, True),
+            ("two.gpg", primaries, False),
+        ):
+            res = gpg(env, *(["--armor"] if armor else []), "--export", *fprs)
+            assert res.returncode == 0 and res.stdout, res.stderr.decode()
+            (out / name).write_bytes(res.stdout)
+            files[name] = out / name
+        yield {"files": files, "primaries": primaries, "subkeys": subkeys}
+    finally:
+        for home in tried:
+            subprocess.run(
+                ["gpgconf", "--kill", "gpg-agent"],
+                env={**os.environ, "GNUPGHOME": str(home)},
+                check=False,
+                capture_output=True,
+            )
+        for home in tried[1:]:  # the pytest-made one is pytest's to remove
+            shutil.rmtree(home, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("gpg") is None, reason="gpg is not installed")
+class TestKeyringPrimaryFprsWithRealGpg:
+    """`_keyring_primary_fprs` on what a real gpg prints for real keys, armored
+    and dearmored: the primary key's fingerprint only, never a subkey's."""
+
+    def _fprs(self, shell_env, path):
+        res = run_sourced(f'_keyring_primary_fprs "{path}"', shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        return res.stdout.split()
+
+    @pytest.mark.parametrize("suffix", ["asc", "gpg"], ids=["armored", "dearmored"])
+    def test_a_key_with_a_subkey_yields_its_primary_fingerprint_alone(
+        self, shell_env, real_gpg_keys, suffix
+    ):
+        path = real_gpg_keys["files"][f"one.{suffix}"]
+        assert self._fprs(shell_env, path) == real_gpg_keys["primaries"][:1]
+
+    @pytest.mark.parametrize("suffix", ["asc", "gpg"], ids=["armored", "dearmored"])
+    def test_two_keys_yield_both_primaries_in_file_order(
+        self, shell_env, real_gpg_keys, suffix
+    ):
+        path = real_gpg_keys["files"][f"two.{suffix}"]
+        assert self._fprs(shell_env, path) == real_gpg_keys["primaries"]
+
+    def test_the_raw_listing_does_contain_the_subkey_fingerprint(
+        self, shell_env, real_gpg_keys
+    ):
+        # Otherwise the two tests above would pass for any awk: the subkey's
+        # `fpr` record really is in gpg's output, and has to be skipped.
+        home = shell_env.home.parent / "raw-gnupg"
+        home.mkdir(mode=0o700)
+        raw = subprocess.run(
+            [
+                "gpg",
+                "--batch",
+                "--show-keys",
+                "--with-colons",
+                str(real_gpg_keys["files"]["one.asc"]),
+            ],
+            capture_output=True,
+            text=True,
+            env={**shell_env.env, "GNUPGHOME": str(home)},
+            timeout=60,
+        )
+        fprs = [ln.split(":")[9] for ln in raw.stdout.splitlines() if ln[:4] == "fpr:"]
+        assert real_gpg_keys["subkeys"][0] in fprs
+        assert real_gpg_keys["primaries"][0] in fprs
+
+    def test_a_file_gpg_cannot_read_fails_instead_of_printing_nothing(
+        self, shell_env, tmp_path
+    ):
+        junk = tmp_path / "not-a-key"
+        junk.write_text("this is not OpenPGP data\n", encoding="utf-8")
+        res = run_sourced(
+            f'_keyring_primary_fprs "{junk}" && echo OK || echo "FAILED rc=$?"',
+            shell_env.env,
+        )
+        assert "FAILED rc=1" in res.stdout, res.stdout + res.stderr
+
+    def test_the_wrapper_accepts_the_real_key_only_with_its_pinned_fingerprint(
+        self, shell_env, real_gpg_keys
+    ):
+        """_add_signed_apt_repo end to end on a real key: sudo is the one stub (it
+        stands in for root and lets the staged key be a real file the real gpg
+        reads); curl hands over the real exported key."""
+        good, other = real_gpg_keys["primaries"]
+        keyfile = real_gpg_keys["files"]["one.asc"]
+        tee_log = shell_env.home / "tee.log"
+
+        def run(want, keyring_name):
+            keyring = shell_env.home / f"{keyring_name}.asc"
+            # `sudo` runs its arguments as the user; the staged file is then a
+            # real file in the user's own directory, as it is for root. The one
+            # write that would land outside HOME (the sources entry, under /etc)
+            # is only logged, never made -- and a failing command's status is
+            # kept (a stub's trailing `exit 0` would hide it).
+            shell_env.stub(
+                "sudo",
+                body=(
+                    'case "$1 $2" in "tee /etc/"*) '
+                    '{ echo "## $*"; cat; } >>"$HOME/tee.log"; exit 0 ;; esac\n'
+                    '"$@"\nexit $?'
+                ),
+            )
+            shell_env.stub("curl", body=f'cat "{keyfile}"')
+            return run_sourced(
+                f'_add_signed_apt_repo Real https://example.test/key "{keyring}" '
+                f'{want} real.list "deb [signed-by={keyring}] https://example.test s m"'
+                ' && echo ADDED || echo "NOT_ADDED rc=$?"',
+                shell_env.env,
+            ), keyring
+
+        res, keyring = run(good, "good")
+        assert "ADDED" in res.stdout and "NOT_ADDED" not in res.stdout, res.stdout
+        assert keyring.is_file() and not Path(f"{keyring}.new").exists()
+        assert stat.S_IMODE(keyring.stat().st_mode) == 0o644
+        # the sources entry was written (to the log) only because the key passed
+        added = tee_log.read_text(encoding="utf-8")
+        assert "## tee /etc/apt/sources.list.d/real.list\n" in added
+        assert f"deb [signed-by={keyring}] https://example.test s m" in added
+
+        res, keyring = run(other, "bad")
+        assert re.search(r"^NOT_ADDED rc=1$", res.stdout, re.M), res.stdout
+        assert "does not match" in res.stdout
+        assert not keyring.exists() and not Path(f"{keyring}.new").exists()
+        assert tee_log.read_text(encoding="utf-8") == added  # nothing more written
+
+
+class TestDockerDesktopOnMacos:
+    """Docker Desktop is detected by its cask (or app), not by the CLI, which
+    stays off PATH until the app has been launched once."""
+
+    def _run(self, shell_env, snippet):
+        res, failures = run_recording(
+            snippet + "OS=macos install_docker", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        installs = [c for c in shell_env.calls if c.startswith("brew install")]
+        return res, failures, installs
+
+    @pytest.mark.parametrize("cask", ["docker-desktop", "docker"])
+    def test_an_installed_cask_is_not_reinstalled(self, shell_env, cask):
+        shell_env.stub("brew", body=_brew_casks(cask))
+        res, failures, installs = self._run(shell_env, _absent("docker") + _DD_ABSENT)
+        assert installs == []
+        assert failures == []
+        assert "Docker Desktop already installed" in res.stdout
+        # Installed but never launched: say what is still missing.
+        assert "Launch Docker Desktop once" in res.stdout
+
+    def test_an_app_installed_outside_brew_is_recognised(self, shell_env, tmp_path):
+        app = tmp_path / "Docker.app"
+        app.mkdir()
+        shell_env.stub("brew", body=_brew_casks())
+        res, failures, installs = self._run(
+            shell_env, _absent("docker") + f'DOCKER_DESKTOP_APP="{app}"; '
+        )
+        assert installs == []
+        assert failures == []
+        assert "Docker Desktop already installed" in res.stdout
+
+    def test_another_docker_runtime_is_left_alone(self, shell_env):
+        # OrbStack / Colima put a docker CLI on PATH without Docker Desktop.
+        shell_env.stub("brew", body=_brew_casks())
+        shell_env.stub("docker")
+        res, failures, installs = self._run(shell_env, _DD_ABSENT)
+        assert installs == []
+        assert failures == []
+        assert "not installing Docker Desktop" in res.stdout
+
+    def test_a_missing_docker_desktop_is_installed_with_the_current_cask(
+        self, shell_env
+    ):
+        shell_env.stub("brew", body=_brew_casks())
+        res, failures, installs = self._run(shell_env, _absent("docker") + _DD_ABSENT)
+        assert installs == ["brew install --cask docker-desktop"]
+        assert failures == []
+        assert "Launch Docker Desktop once" in res.stdout
+
+
+class TestDockerOnUbuntu:
+    """Group membership via `id -un` (never $USER), only once an engine is
+    there, re-added on a rerun when missing; `docker info` is a warning only."""
+
+    def _engine(self, shell_env, *, groups="alice sudo", docker_group=True, info_rc=0):
+        shell_env.stub("docker", body=f'[ "$1" = info ] && exit {info_rc}')
+        shell_env.stub(
+            "id",
+            body=f'case "$1" in -un) echo alice ;; -nG) echo "{groups}" ;; esac',
+        )
+        getent = 'echo "docker:x:999:"; exit 0' if docker_group else "exit 2"
+        shell_env.stub(
+            "getent", body=f'[ "$1 $2" = "group docker" ] && {{ {getent}; }}\nexit 2'
+        )
+
+    def _run(self, shell_env, snippet="OS=ubuntu install_docker"):
+        env = {**shell_env.env, "USER": "mallory"}
+        res, failures = run_recording(snippet, env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        return res, failures, [c for c in shell_env.calls if "usermod" in c]
+
+    def test_a_user_missing_from_the_group_is_added_on_a_rerun(self, shell_env):
+        self._engine(shell_env)
+        res, failures, usermods = self._run(shell_env)
+        assert usermods == ["sudo usermod -aG docker alice"]
+        assert failures == []
+        assert "newgrp docker" in res.stdout
+
+    def test_a_user_already_in_the_group_is_not_re_added(self, shell_env):
+        self._engine(shell_env, groups="alice sudo docker")
+        _, failures, usermods = self._run(shell_env)
+        assert usermods == []
+        assert failures == []
+
+    def test_no_docker_group_means_no_group_change(self, shell_env):
+        self._engine(shell_env, docker_group=False)
+        _, failures, usermods = self._run(shell_env)
+        assert usermods == []
+        assert failures == []
+
+    def test_a_failed_usermod_is_recorded(self, shell_env):
+        self._engine(shell_env)
+        shell_env.stub("sudo", body=_fails_on("*usermod*"))
+        _, failures, _ = self._run(shell_env)
+        assert failures == ["docker group"]
+
+    def test_a_failed_engine_install_changes_no_group(self, shell_env):
+        self._engine(shell_env)
+        shell_env.stub("curl", exit_code=22)
+        _, failures, usermods = self._run(
+            shell_env, _absent("docker") + _UBUNTU_NOBLE + "OS=ubuntu install_docker"
+        )
+        assert failures == ["Docker engine"]
+        assert usermods == []
+
+    @pytest.mark.parametrize("os_name", ["ubuntu", "macos"])
+    def test_an_unreachable_daemon_warns_without_failing(self, shell_env, os_name):
+        self._engine(shell_env, groups="alice docker", info_rc=1)
+        shell_env.stub("brew", body=_brew_casks("docker-desktop"))
+        res, failures, _ = self._run(shell_env, f"OS={os_name} install_docker")
+        assert failures == []
+        assert any(
+            "[WARNING]" in ln and "docker info" in ln for ln in res.stdout.splitlines()
+        ), res.stdout
+
+    def test_a_reachable_daemon_is_reported(self, shell_env):
+        self._engine(shell_env, groups="alice docker")
+        res, failures, _ = self._run(shell_env)
+        assert failures == []
+        assert "Docker daemon is reachable" in res.stdout
+
+
+_HADOLINT_FAKE = b"fake hadolint binary\n"
+# curl stub: write _HADOLINT_FAKE to the `-o` target, like a finished download.
+_CURL_WRITES_HADOLINT = (
+    'out=""; prev=""\n'
+    'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+    '[ -n "$out" ] && printf \'fake hadolint binary\\n\' >"$out"'
+)
+
+
+class TestInstallHadolint:
+    """hadolint: brew on macOS; a pinned release binary verified by sha256 on
+    Ubuntu, installed as the user into ~/.local/bin; skipped when present."""
+
+    def _sha(self):
+        import hashlib
+
+        return hashlib.sha256(_HADOLINT_FAKE).hexdigest()
+
+    def _ubuntu(self, shell_env, machine="x86_64", pins=True, hide_sha256sum=False):
+        shell_env.stub("uname", body=f'[ "$1" = -m ] && echo {machine}')
+        shell_env.stub("curl", body=_CURL_WRITES_HADOLINT)
+        if hide_sha256sum:
+            shell_env.hide("sha256sum")
+        prefix = _absent("hadolint")
+        if pins:
+            prefix += f"HADOLINT_SHA256_X86_64={self._sha()}; HADOLINT_SHA256_ARM64={self._sha()}; "
+        res, failures = run_recording(
+            prefix + "OS=ubuntu install_hadolint", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        return res, failures
+
+    def test_an_installed_hadolint_is_left_alone(self, shell_env):
+        shell_env.stub("hadolint")
+        res, failures = run_recording("OS=ubuntu install_hadolint", shell_env.env)
+        assert "hadolint already installed" in res.stdout
+        assert failures == []
+        assert not [c for c in shell_env.calls if c.startswith(("curl", "brew"))]
+
+    def test_a_binary_in_local_bin_is_found_without_it_being_on_path(self, shell_env):
+        # A rerun from a shell whose PATH lacks ~/.local/bin must not download
+        # (and sha256-check) the release again just because the first run put
+        # it there.
+        binary = shell_env.home / ".local/bin/hadolint"
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(_HADOLINT_FAKE)
+        binary.chmod(0o755)
+        shell_env.stub("curl", body=_CURL_WRITES_HADOLINT)
+        res, failures = run_recording(
+            _absent("hadolint") + "OS=ubuntu install_hadolint", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "hadolint already installed" in res.stdout
+        assert failures == []
+        assert not [c for c in shell_env.calls if c.startswith(("curl", "brew"))]
+
+    def test_a_non_executable_file_in_local_bin_does_not_count(self, shell_env):
+        binary = shell_env.home / ".local/bin/hadolint"
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b"not runnable")
+        binary.chmod(0o644)
+        res, failures = self._ubuntu(shell_env)
+        assert failures == [], res.stdout
+        assert any(c.startswith("curl ") for c in shell_env.calls)
+
+    def test_macos_installs_it_with_brew(self, shell_env):
+        res, failures = run_recording(
+            _absent("hadolint") + "OS=macos install_hadolint", shell_env.env
+        )
+        assert "brew install hadolint" in shell_env.calls
+        assert failures == []
+
+    @pytest.mark.parametrize(
+        ("machine", "asset"),
+        [("x86_64", "hadolint-linux-x86_64"), ("aarch64", "hadolint-linux-arm64")],
+    )
+    @pytest.mark.parametrize(
+        "hide_sha256sum", [False, True], ids=["sha256sum", "shasum"]
+    )
+    def test_ubuntu_installs_the_verified_release_binary(
+        self, shell_env, machine, asset, hide_sha256sum
+    ):
+        res, failures = self._ubuntu(shell_env, machine, hide_sha256sum=hide_sha256sum)
+        assert failures == [], res.stdout
+        url = (
+            "https://github.com/hadolint/hadolint/releases/download/"
+            f"v{_pin('HADOLINT_VERSION')}/{asset}"
+        )
+        assert any(c.startswith(f"curl -fsSL {url} ") for c in shell_env.calls), (
+            shell_env.calls
+        )
+        binary = shell_env.home / ".local/bin/hadolint"
+        assert binary.read_bytes() == _HADOLINT_FAKE
+        assert os.access(binary, os.X_OK)
+
+    def test_a_checksum_mismatch_installs_nothing_and_is_recorded(self, shell_env):
+        res, failures = self._ubuntu(shell_env, pins=False)
+        assert failures == ["hadolint"]
+        assert "checksum" in res.stdout
+        assert not (shell_env.home / ".local/bin/hadolint").exists()
+
+    def test_a_failed_download_is_recorded(self, shell_env):
+        shell_env.stub("uname", body='[ "$1" = -m ] && echo x86_64')
+        shell_env.stub("curl", exit_code=22)
+        res, failures = run_recording(
+            _absent("hadolint") + "OS=ubuntu install_hadolint", shell_env.env
+        )
+        assert failures == ["hadolint"]
+        assert not (shell_env.home / ".local/bin/hadolint").exists()
+
+    def test_an_architecture_without_a_release_is_a_warning(self, shell_env):
+        res, failures = self._ubuntu(shell_env, machine="riscv64")
+        assert failures == []
+        assert "riscv64" in res.stdout
+        assert not [c for c in shell_env.calls if c.startswith("curl")]
+
+    def test_the_pins_are_exact(self):
+        assert re.fullmatch(r"\d+\.\d+\.\d+", _pin("HADOLINT_VERSION"))
+        for var in ("HADOLINT_SHA256_X86_64", "HADOLINT_SHA256_ARM64"):
+            assert re.fullmatch(r"[0-9a-f]{64}", _pin(var)), var
+        for var in ("DOCKER_APT_KEY_FPR", "NODESOURCE_APT_KEY_FPR"):
+            assert re.fullmatch(r"[0-9A-F]{40}", _pin(var)), var
+
+
+class TestLinksAreIdempotent:
+    """A correct link is left in place; a link pointing elsewhere has its
+    old target recorded in the backup dir before it is replaced."""
+
+    def test_a_correct_link_is_not_recreated(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        assert run_sourced("create_symlinks", shell_env.env).returncode == 0
+        before = os.lstat(home / ".zshrc")
+
+        res = run_sourced("create_symlinks", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "Already linked .zshrc" in res.stdout
+        assert "Linked .zshrc" not in res.stdout.replace("Already linked .zshrc", "")
+        after = os.lstat(home / ".zshrc")
+        assert (after.st_ino, after.st_ctime_ns) == (before.st_ino, before.st_ctime_ns)
+
+    def test_dry_run_tells_a_correct_link_from_one_it_would_replace(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        assert run_sourced("create_symlinks", shell_env.env).returncode == 0
+        (home / ".vimrc").unlink()
+        (home / ".vimrc").symlink_to("/opt/stow/vim/.vimrc")
+
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+        assert res.returncode == 0, res.stderr
+        assert (
+            f"[DRY-RUN] already linked {home}/.zshrc -> {REPO_ROOT}/.zshrc"
+            in res.stdout
+        )
+        assert (
+            f"[DRY-RUN] would replace existing symlink {home}/.vimrc "
+            "(was -> /opt/stow/vim/.vimrc)"
+        ) in res.stdout
+        assert os.readlink(home / ".vimrc") == "/opt/stow/vim/.vimrc"
+
+    def test_a_foreign_link_is_recorded_before_it_is_replaced(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".zshrc").symlink_to("/opt/stow/zsh/.zshrc")
+
+        res, failures = run_recording("create_symlinks </dev/null", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+        assert os.readlink(home / ".zshrc") == f"{REPO_ROOT}/.zshrc"
+        backups = list(home.glob(".dotfiles_backup_*"))
+        assert len(backups) == 1, res.stdout
+        record = (backups[0] / "symlinks.txt").read_text(encoding="utf-8")
+        assert f"{home}/.zshrc -> /opt/stow/zsh/.zshrc\n" in record
+
+    def test_a_link_replaced_after_the_backup_dir_was_tidied_is_still_recorded(
+        self, shell_env
+    ):
+        # create_symlinks removes an empty backup dir; link_oh_my_zsh_theme
+        # runs after it and may still replace a link.
+        home = shell_env.home
+        themes = home / ".oh-my-zsh/custom/themes"
+        themes.mkdir(parents=True)
+        (themes / "px-rose-pine.zsh-theme").symlink_to("/opt/elsewhere/theme")
+
+        res, failures = run_recording(
+            'backup_dir="$HOME/.dotfiles_backup_later"; link_oh_my_zsh_theme',
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+        record = home / ".dotfiles_backup_later/symlinks.txt"
+        assert "-> /opt/elsewhere/theme" in record.read_text(encoding="utf-8")
+
+
+class TestLinkStepFailuresAreRecorded:
+    """A write that fails inside create_symlinks is a recorded failure and
+    linking carries on, instead of a bare abort with no failure summary."""
+
+    def test_a_failed_ln_is_recorded_and_linking_continues(self, shell_env):
+        (shell_env.home / ".oh-my-zsh").mkdir()
+        res, failures = run_recording(
+            "ln() { return 1; }; create_symlinks </dev/null", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert f"link {shell_env.home}/.zshrc" in failures, failures
+        # A step after the links still ran.
+        assert (shell_env.home / ".codex/hooks.json").is_file()
+
+    def test_a_failed_backup_is_recorded_and_the_file_kept(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".zshrc").write_text("mine\n", encoding="utf-8")
+        res, failures = run_recording(
+            'mv() { case "$1" in */.zshrc) return 1 ;; esac; command mv "$@"; }; '
+            "create_symlinks </dev/null",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert f"link {home}/.zshrc" in failures, failures
+        assert (home / ".zshrc").read_text(encoding="utf-8") == "mine\n"
+        assert (home / ".vimrc").is_symlink()
+
+    @pytest.mark.parametrize(
+        ("rel", "label", "linked_later"),
+        [
+            (".claude", "Claude config links", ".codex/AGENTS.md"),
+            (".codex", "Codex config links", ".gemini/GEMINI.md"),
+            (".gemini", "Gemini config links", ".tmux/tmux_send_to_all_except_nvim.sh"),
+            # the last link step: nothing after it to check (csb is written by
+            # its own, later step -- see TestSandboxCliWrapper)
+            (".tmux", "tmux helper link", None),
+        ],
+    )
+    def test_an_unusable_config_dir_is_recorded_and_linking_continues(
+        self, shell_env, rel, label, linked_later
+    ):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / rel).write_text("a file where a directory belongs\n", encoding="utf-8")
+        res, failures = run_recording("create_symlinks </dev/null", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert label in failures, failures
+        if linked_later is not None:
+            assert (home / linked_later).is_symlink()
+
+    def test_dry_run_announces_replacing_a_dangling_gemini_dir(self, shell_env):
+        home = shell_env.home
+        (home / ".gemini").symlink_to("/nonexistent/gemini")
+        res = run_sourced("create_symlinks", {**shell_env.env, "DRY_RUN": "1"})
+        assert res.returncode == 0, res.stderr
+        assert (
+            f"[DRY-RUN] would replace dangling symlink {home}/.gemini with a real directory"
+            in res.stdout
+        )
+        # Not the live-redirect warning: the real run does restrict the new dir.
+        assert "Not restricting ~/.gemini" not in res.stdout
+        assert "[DRY-RUN] would restrict ~/.gemini to mode 0700" in res.stdout
+        assert (home / ".gemini").is_symlink()
+
+
+def _mv_fails_onto(dest_glob: str) -> str:
+    """Snippet prefix: `mv` fails when its LAST argument matches `dest_glob`
+    and is the real mv otherwise."""
+    return (
+        f'mv() {{ case "${{!#}}" in {dest_glob}) return 1 ;; esac; '
+        'command mv "$@"; }; '
+    )
+
+
+class TestReplacedFileStaysUntilTheMoveSucceeds:
+    """A file that is replaced by a rename (the rendered hooks.json, the csb
+    wrapper) is COPIED to the backup dir and overwritten by `mv -f`. Moving it
+    away first left nothing at the path when the rename then failed."""
+
+    _failing_mv = staticmethod(_mv_fails_onto)
+
+    def test_a_failed_move_leaves_the_old_hooks_json_in_place(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".codex").mkdir()
+        mine = home / ".codex/hooks.json"
+        mine.write_text('{"mine": 1}\n', encoding="utf-8")
+        res, failures = run_recording(
+            self._failing_mv("*/.codex/hooks.json") + "create_symlinks </dev/null",
+            shell_env.env,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "Codex hooks.json" in failures, failures
+        assert mine.read_text(encoding="utf-8") == '{"mine": 1}\n'
+        # still backed up, and no half-written temporary file is left behind
+        (kept,) = home.glob(".dotfiles_backup_*/.codex/hooks.json")
+        assert kept.read_text(encoding="utf-8") == '{"mine": 1}\n'
+        assert [p.name for p in (home / ".codex").glob(".hooks.json.*")] == []
+
+    def test_a_rerender_backs_up_a_copy_and_renames_over_the_old_file(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".codex").mkdir()
+        (home / ".codex/hooks.json").write_text('{"mine": 1}\n', encoding="utf-8")
+        snippet = (
+            'mv() { printf "%s\\n" "$*" >>"$HOME/mv.log"; command mv "$@"; }; '
+            "create_symlinks </dev/null"
+        )
+        res, failures = run_recording(snippet, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+        rendered = (home / ".codex/hooks.json").read_text(encoding="utf-8")
+        assert str(home) in rendered and "mine" not in rendered
+        (kept,) = home.glob(".dotfiles_backup_*/.codex/hooks.json")
+        assert kept.read_text(encoding="utf-8") == '{"mine": 1}\n'
+        # one rename, from a temporary file in the SAME directory (so it is
+        # atomic), straight over the old path
+        log = (home / "mv.log").read_text(encoding="utf-8")
+        assert re.search(
+            rf"^-f {re.escape(str(home))}/\.codex/\.hooks\.json\.\w+ "
+            rf"{re.escape(str(home))}/\.codex/hooks\.json$",
+            log,
+            re.M,
+        ), log
+
+    def test_a_symlinked_hooks_json_is_recorded_and_replaced(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".codex").mkdir()
+        (home / ".codex/hooks.json").symlink_to("/opt/elsewhere/hooks.json")
+        res, failures = run_recording("create_symlinks </dev/null", shell_env.env)
+        assert failures == [], res.stdout
+        rendered = home / ".codex/hooks.json"
+        assert rendered.is_file() and not rendered.is_symlink()
+        (record,) = home.glob(".dotfiles_backup_*/symlinks.txt")
+        assert f"{rendered} -> /opt/elsewhere/hooks.json" in record.read_text()
+
+    def test_a_failed_move_over_a_symlink_keeps_the_link(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".codex").mkdir()
+        (home / ".codex/hooks.json").symlink_to("/opt/elsewhere/hooks.json")
+        res, failures = run_recording(
+            self._failing_mv("*/.codex/hooks.json") + "create_symlinks </dev/null",
+            shell_env.env,
+        )
+        assert "Codex hooks.json" in failures, failures
+        assert os.readlink(home / ".codex/hooks.json") == "/opt/elsewhere/hooks.json"
+
+    def test_a_directory_in_the_way_is_still_moved_aside(self, shell_env):
+        # `mv -f file dir` would drop the file INTO the directory.
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        (home / ".codex/hooks.json").mkdir(parents=True)
+        (home / ".codex/hooks.json/inner.txt").write_text("x\n")
+        res, failures = run_recording("create_symlinks </dev/null", shell_env.env)
+        assert failures == [], res.stdout
+        assert (home / ".codex/hooks.json").is_file()
+        (kept,) = home.glob(".dotfiles_backup_*/.codex/hooks.json/inner.txt")
+        assert kept.read_text() == "x\n"
+
+
+class TestSandboxCliWrapper:
+    """~/.local/bin/csb is a fixed three-line /bin/sh wrapper (not a symlink) that
+    starts ~/.claude/hooks/claude_sandbox.py with the trusted system python3 (the
+    interpreter the bash-review launchers pick), never PATH's python3.
+
+    The text comes from `_sandbox_gate.csb_wrapper_text`, the template bash-review
+    compares the file against byte for byte before it allows a csb call statically.
+    A symlink let `cp x ~/.local/bin/` write through it into claude_sandbox.py.
+
+    It is written by `_link_sandbox_cli`, which main() runs AFTER the package
+    steps (a new macOS has no usable /usr/bin/python3 until the Command Line
+    Tools are in), not by create_symlinks. `backup_dir` is create_symlinks's
+    global: set here the way it is by the time main() gets to this step.
+    """
+
+    RUN = 'backup_dir="$HOME/.dotfiles_backup_csb"; _link_sandbox_cli </dev/null'
+
+    @staticmethod
+    def _python(shell_env, extra=""):
+        """python3 on PATH (a pyenv shim, say): logs that it ran. It must not."""
+        log = shell_env.home.parent / "python3-cwd.log"
+        shell_env.stub(
+            "python3", body=f'pwd >> "{log}"\n{extra}exec "{sys.executable}" "$@"'
+        )
+        return log
+
+    @staticmethod
+    def _trusted():
+        sys.path.insert(0, str(REPO_ROOT / ".claude" / "hooks"))
+        import _sandbox_gate as gate
+
+        found = gate.trusted_python()
+        if found is None:
+            pytest.skip("no trusted system python3 on this machine")
+        return found
+
+    @classmethod
+    def _expected(cls, home):
+        python = cls._trusted()
+        import _sandbox_gate as gate
+
+        return gate.csb_wrapper_text(python, str(home))
+
+    def test_csb_is_the_fixed_wrapper(self, shell_env):
+        home = shell_env.home
+        log = self._python(shell_env)
+        res, failures = run_recording(self.RUN, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+        csb = home / ".local/bin/csb"
+        assert csb.is_file() and not csb.is_symlink()
+        assert stat.S_IMODE(csb.stat().st_mode) == 0o755
+        assert csb.read_text(encoding="ascii") == self._expected(home)
+        # PATH's python3 (a pyenv shim would follow .python-version) never ran
+        assert not log.exists()
+        assert "Installed csb" in res.stdout
+
+    def test_it_runs_the_sandbox_cli(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        self._python(shell_env)
+        # the order main() runs them in: the ~/.claude/hooks link the wrapper
+        # goes through exists by the time csb is written
+        both = run_sourced("create_symlinks </dev/null\n" + self.RUN, shell_env.env)
+        assert both.returncode == 0, both.stdout + both.stderr
+        res = subprocess.run(
+            [str(home / ".local/bin/csb"), "--help"],
+            capture_output=True,
+            text=True,
+            env=shell_env.env,
+            timeout=60,
+        )
+        assert res.returncode == 0 and "usage: csb" in res.stdout
+
+    def test_dry_run_writes_nothing(self, shell_env):
+        home = shell_env.home
+        self._python(shell_env)
+        res = run_sourced(self.RUN, {**shell_env.env, "DRY_RUN": "1"})
+        assert res.returncode == 0, res.stderr
+        assert f"[DRY-RUN] would write {home}/.local/bin/csb" in res.stdout
+        assert list(home.iterdir()) == []
+
+    def test_a_rerun_leaves_the_wrapper_alone(self, shell_env):
+        home = shell_env.home
+        self._python(shell_env)
+        assert run_sourced(self.RUN, shell_env.env).returncode == 0
+        before = (home / ".local/bin/csb").stat()
+        res = run_sourced(self.RUN, shell_env.env)
+        assert "Already installed csb" in res.stdout
+        after = (home / ".local/bin/csb").stat()
+        assert (before.st_ino, before.st_mtime_ns) == (after.st_ino, after.st_mtime_ns)
+
+    def test_a_rerun_repairs_a_wrapper_the_hook_would_reject(self, shell_env):
+        # Same bytes, but group-writable: bash-review never trusts it, so "Already
+        # installed" would leave csb failing closed for good.
+        home = shell_env.home
+        self._python(shell_env)
+        assert run_sourced(self.RUN, shell_env.env).returncode == 0
+        csb = home / ".local/bin/csb"
+        csb.chmod(0o775)
+        res = run_sourced(self.RUN, shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "Already installed csb" not in res.stdout
+        assert stat.S_IMODE(csb.stat().st_mode) == 0o755
+        assert csb.read_text() == self._expected(home)
+
+    def test_an_old_symlink_is_replaced_and_recorded(self, shell_env):
+        home = shell_env.home
+        self._python(shell_env)
+        (home / ".local/bin").mkdir(parents=True)
+        old = f"{home}/.claude/hooks/claude_sandbox.py"
+        (home / ".local/bin/csb").symlink_to(old)
+        res = run_sourced(self.RUN, shell_env.env)
+        assert res.returncode == 0, res.stderr
+        csb = home / ".local/bin/csb"
+        assert not csb.is_symlink() and csb.read_text() == self._expected(home)
+        (record,) = home.glob(".dotfiles_backup_*/symlinks.txt")
+        assert f"{csb} -> {old}" in record.read_text()
+
+    def test_a_real_file_in_the_way_is_backed_up(self, shell_env):
+        home = shell_env.home
+        self._python(shell_env)
+        (home / ".local/bin").mkdir(parents=True)
+        (home / ".local/bin/csb").write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+        res = run_sourced(self.RUN, shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert (home / ".local/bin/csb").read_text() == self._expected(home)
+        backed = list(home.glob(".dotfiles_backup_*/.local/bin/csb"))
+        assert len(backed) == 1 and "mine" in backed[0].read_text(encoding="utf-8")
+
+    def test_a_failed_move_leaves_the_old_wrapper_in_place(self, shell_env):
+        # backup_if_real MOVED the old file away before the rename; if the
+        # rename then failed, csb was gone altogether.
+        home = shell_env.home
+        self._python(shell_env)
+        (home / ".local/bin").mkdir(parents=True)
+        mine = home / ".local/bin/csb"
+        mine.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+        res, failures = run_recording(
+            _mv_fails_onto("*/.local/bin/csb") + self.RUN, shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "csb wrapper" in failures
+        assert mine.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
+        (kept,) = home.glob(".dotfiles_backup_*/.local/bin/csb")
+        assert "mine" in kept.read_text(encoding="utf-8")
+        assert [p.name for p in (home / ".local/bin").glob(".csb.*")] == []
+
+    def test_create_symlinks_leaves_csb_to_the_later_step(self, shell_env):
+        home = shell_env.home
+        (home / ".oh-my-zsh").mkdir()
+        log = self._python(shell_env)
+        res, failures = run_recording("create_symlinks </dev/null", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+        assert not os.path.lexists(home / ".local/bin/csb")
+        assert "csb" not in res.stdout and not log.exists()
+
+    def test_main_runs_it_after_the_package_steps(self, shell_env):
+        out = run_sourced(_STUB_MAIN_STEPS + "main", shell_env.env).stdout
+        order = [
+            out.index(f"STEP_{s}")
+            for s in (
+                "install_os_packages",
+                "register_claude_mcp_servers",
+                "_link_sandbox_cli",
+                "link_oh_my_zsh_theme",
+            )
+        ]
+        assert order == sorted(order), out
+
+    def test_main_still_previews_it_in_a_dry_run(self, shell_env):
+        out = run_sourced(_STUB_MAIN_STEPS + "main --dry-run", shell_env.env).stdout
+        assert out.index("Skipping package and tool installation") < out.index(
+            "STEP__link_sandbox_cli"
+        )
+        assert "STEP_install_os_packages" not in out
+
+    def _macos(self, shell_env, clt_exit):
+        """OS=macos snippet prefix; the system python3 launcher is replaced by
+        one that leaves a mark, since starting a real /usr/bin/python3 without
+        the Command Line Tools is what pops the installer dialog."""
+        shell_env.stub("xcode-select", exit_code=clt_exit)
+        return 'OS=macos; _as_hook_python() { touch "$HOME/python-ran"; return 1; }; '
+
+    @pytest.mark.parametrize("dry_run", ["", "DRY_RUN=1; "])
+    def test_macos_without_the_command_line_tools_never_starts_python(
+        self, shell_env, dry_run
+    ):
+        home = shell_env.home
+        res, failures = run_recording(
+            self._macos(shell_env, 2) + dry_run + self.RUN, shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert not (home / "python-ran").exists()
+        assert "xcode-select -p" in "\n".join(shell_env.calls)
+        assert "xcode-select --install" in res.stdout
+        assert "re-run ./install.sh" in res.stdout
+        # a "not yet", not a failure: the Tools arrive with the Homebrew step
+        assert failures == []
+        assert not os.path.lexists(home / ".local/bin/csb")
+
+    def test_macos_with_the_command_line_tools_goes_on(self, shell_env):
+        # `xcode-select -p` succeeds: the guard steps aside, the real picker runs
+        shell_env.stub("xcode-select", exit_code=0)
+        res, failures = run_recording("OS=macos; " + self.RUN, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+        assert (shell_env.home / ".local/bin/csb").is_file()
+        assert "Installed csb" in res.stdout
+
+    def test_linux_never_asks_xcode_select(self, shell_env):
+        shell_env.stub("xcode-select", exit_code=2)
+        res, failures = run_recording("OS=ubuntu; " + self.RUN, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+        assert not [c for c in shell_env.calls if c.startswith("xcode-select")]
+        assert (shell_env.home / ".local/bin/csb").is_file()
+
+    @pytest.mark.parametrize(
+        "tamper",
+        [
+            "printf '# appended\\n' >> \"$dest\"",
+            'printf \'#!/bin/sh\\nexec /tmp/evil "$@"\\n\' > "$dest"',
+            'chmod 0777 "$dest"',
+        ],
+    )
+    def test_the_wrapper_is_checked_again_after_it_is_moved(self, shell_env, tamper):
+        # Something rewriting the file between the write and the move (or right after
+        # it) must not leave an untrusted wrapper behind: it is removed and recorded.
+        home = shell_env.home
+        self._python(shell_env)
+        snippet = (
+            'mv() { command mv "$@" || return; local dest="${!#}"; '
+            'case "$dest" in */.local/bin/csb) ' + tamper + " ;; esac; }; " + self.RUN
+        )
+        res, failures = run_recording(snippet, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "csb wrapper" in failures
+        assert not os.path.lexists(home / ".local/bin/csb")
+
+    def test_a_broken_path_python3_does_not_matter(self, shell_env):
+        home = shell_env.home
+        shell_env.stub("python3", exit_code=1)
+        (home / ".python-version").write_text("evil\n")
+        res, failures = run_recording(self.RUN, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert failures == []
+        assert (home / ".local/bin/csb").read_text() == self._expected(home)
+        assert not any(c.startswith("python3") for c in shell_env.calls)
+
+    def test_no_trusted_python3_is_recorded(self, shell_env):
+        home = shell_env.home
+        self._python(shell_env)
+        snippet = "_hook_python_pick() { return 1; }; " + self.RUN
+        res, failures = run_recording(snippet, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "csb wrapper" in failures
+        assert "No trusted system python3" in res.stdout + res.stderr
+        assert not os.path.lexists(home / ".local/bin/csb")
+
+    def test_install_picks_what_the_launchers_pick(self, shell_env):
+        # one rule (the launchers' _trusted_python), so the hook's sys.executable
+        # is the wrapper's interpreter
+        res = run_sourced("_as_hook_python _hook_python_pick", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert res.stdout.strip() == self._trusted()
+
+    def test_the_interpreter_runs_without_the_launch_variables(self, shell_env):
+        self._trusted()
+        import _sandbox_gate as gate
+
+        env = {**shell_env.env, **{k: "/evil" for k in gate.LAUNCH_ENV_DROP}}
+        res = run_sourced(
+            "_as_hook_python env",
+            env,
+        )
+        assert res.returncode == 0, res.stderr
+        names = {line.split("=", 1)[0] for line in res.stdout.splitlines()}
+        assert not names & set(gate.LAUNCH_ENV_DROP)
+
+    def test_an_interpreter_path_the_wrapper_cannot_hold_is_recorded(self, shell_env):
+        home = shell_env.home
+        # A real interpreter at a path with a space: the wrapper single-quotes the
+        # path and does not try to escape anything, so this is refused, not written.
+        odd = shell_env.home.parent / "my python"
+        odd.mkdir()
+        (odd / "python3").symlink_to(self._trusted())
+        snippet = (
+            f"_hook_python_pick() {{ printf '%s\\n' '{odd}/python3'; }}; " + self.RUN
+        )
+        res, failures = run_recording(snippet, shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "csb wrapper" in failures
+        assert not os.path.lexists(home / ".local/bin/csb")
+
+    def test_the_next_steps_describe_what_csb_does(self, shell_env):
+        text = INSTALL.read_text(encoding="utf-8")
+        assert "runs Claude Code in a Docker sandbox" not in text
+
+
+class TestToolsAreNotReinstalledOnARerun:
+    """pip --user tools living outside PATH, and the npm AI CLIs, are
+    detected as installed instead of being reinstalled on every run."""
+
+    PIP_TOOLS = ("ruff", "bandit", "mypy", "autopep8", "isort")
+
+    def _pip_installs(self, shell_env):
+        return [c for c in shell_env.calls if c.startswith("pip3 install")]
+
+    def _hide_pip_tools(self, shell_env):
+        for tool in self.PIP_TOOLS:
+            shell_env.hide(tool)
+
+    def test_tools_in_the_pip_user_bin_are_found(self, shell_env, tmp_path):
+        # macOS: pip --user puts scripts in ~/Library/Python/X.Y/bin, which is
+        # on no PATH while install.sh runs.
+        self._hide_pip_tools(shell_env)
+        base = tmp_path / "Library/Python/3.13"
+        (base / "bin").mkdir(parents=True)
+        for tool in self.PIP_TOOLS:
+            exe = base / "bin" / tool
+            exe.write_text("#!/bin/sh\n", encoding="utf-8")
+            exe.chmod(0o755)
+        shell_env.stub(
+            "python3", body=f'[ "$*" = "-m site --user-base" ] && echo "{base}"'
+        )
+        shell_env.stub("pip3", body='[ "$1" = show ] && exit 1\nexit 0')
+        res, failures = run_recording(
+            "OS=windows install_linters_formatters", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert self._pip_installs(shell_env) == []
+        assert failures == []
+
+    def test_tools_pip_reports_installed_are_not_reinstalled(self, shell_env):
+        self._hide_pip_tools(shell_env)
+        shell_env.stub("python3", body="exit 1")
+        shell_env.stub("pip3", body='[ "$1" = show ] && exit 0\nexit 0')
+        res, _ = run_recording("OS=windows install_linters_formatters", shell_env.env)
+        assert self._pip_installs(shell_env) == []
+
+    def test_missing_tools_are_still_installed(self, shell_env):
+        self._hide_pip_tools(shell_env)
+        shell_env.stub("python3", body="exit 1")
+        shell_env.stub("pip3", body='[ "$1" = show ] && exit 1\nexit 0')
+        res, _ = run_recording("OS=windows install_linters_formatters", shell_env.env)
+        assert self._pip_installs(shell_env) == [
+            f"pip3 install --user {tool}" for tool in self.PIP_TOOLS
+        ]
+
+    AI_CLIS = {
+        "claude": "@anthropic-ai/claude-code",
+        "codex": "@openai/codex",
+        "gemini": "@google/gemini-cli",
+        "copilot": "@github/copilot",
+    }
+
+    def test_installed_ai_clis_are_not_reinstalled(self, shell_env):
+        for cmd in self.AI_CLIS:
+            shell_env.stub(cmd)
+        res, failures = run_recording("_install_ai_cli_tools", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert not [c for c in shell_env.calls if c.startswith("npm install")]
+        assert failures == []
+
+    def test_missing_ai_clis_are_installed(self, shell_env):
+        res, failures = run_recording(
+            _absent(*self.AI_CLIS) + "_install_ai_cli_tools", shell_env.env
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert [c for c in shell_env.calls if c.startswith("npm install")] == [
+            f"npm install -g {pkg}" for pkg in self.AI_CLIS.values()
+        ]
+        assert failures == []
+
+
+class TestDockerGuidanceInMain:
+    def test_next_steps_cover_docker(self, shell_env):
+        res = run_sourced(_STUB_MAIN_STEPS + "main", shell_env.env)
+        assert res.returncode == 0, res.stdout + res.stderr
+        steps = res.stdout[res.stdout.index("Next steps:") :]
+        assert "docker info" in steps
+        assert "Docker Desktop" in steps
+        assert "newgrp docker" in steps
+
+    def test_dry_run_lists_the_new_install_steps(self, shell_env):
+        res = run_sourced("main --dry-run", shell_env.env)
+        assert res.returncode == 0, res.stderr
+        assert "hadolint" in res.stdout

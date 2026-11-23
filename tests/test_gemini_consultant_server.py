@@ -1423,3 +1423,49 @@ class TestCancellation:
         assert len(calls) == 1, f"{len(calls)} requests made; a cancelled call retried"
         assert sleeps == ([] if cancel_during == "request" else [1])
         assert notices == [], "a cancelled call still announced a result"
+
+
+class TestUnusableLogDirectory:
+    """An unusable ~/.claude/logs must cost the log, never the server.
+
+    os.makedirs(..., exist_ok=True) only tolerates an existing DIRECTORY: a
+    dangling symlink (a log dir moved to an unmounted volume) or a regular
+    file in its place raises FileExistsError. That call ran at import, so the
+    server died before FastMCP ever started and every consult failed with a
+    bare connection error. It now starts with logging disabled instead.
+    """
+
+    @staticmethod
+    def _logs(tmp_path):
+        logs = tmp_path / ".claude" / "logs"
+        logs.parent.mkdir(parents=True, exist_ok=True)
+        return logs
+
+    @pytest.mark.parametrize("shape", ["dangling-symlink", "regular-file"])
+    def test_the_server_still_loads_and_answers(
+        self, load_server, tmp_path, monkeypatch, capsys, shape
+    ):
+        logs = self._logs(tmp_path)
+        if shape == "dangling-symlink":
+            logs.symlink_to(tmp_path / "gone" / "logs")
+        else:
+            logs.write_text("not a directory\n", encoding="utf-8")
+
+        server = load_server()
+        assert "logging disabled" in capsys.readouterr().err
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini("the answer"))
+        assert call_tool(server, "consult_gemini", "question") == "the answer"
+        # Nothing was created through the broken path, and no warning is
+        # repeated for every call once logging is off.
+        assert not (tmp_path / "gone").exists()
+        assert "log write failed" not in capsys.readouterr().err
+
+    def test_a_usable_log_directory_still_logs(
+        self, load_server, tmp_path, monkeypatch
+    ):
+        server = load_server()
+        monkeypatch.setattr(urllib.request, "urlopen", fake_gemini("logged answer"))
+        call_tool(server, "consult_gemini", "question")
+        with open(server.log_file, encoding="utf-8") as f:
+            assert "logged answer" in f.read()

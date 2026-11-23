@@ -51,7 +51,23 @@ log_file = os.path.expanduser("~/.claude/logs/gemini-consultant.log")
 _PRIVATE_DIR_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 
-os.makedirs(os.path.dirname(log_file), mode=_PRIVATE_DIR_MODE, exist_ok=True)
+# import 時に失敗させない。exist_ok が許すのは「既存のディレクトリ」だけで、
+# ~/.claude/logs が dangling symlink (移動・未マウントのボリューム) や通常ファイル
+# だと FileExistsError になる。ここで落ちると FastMCP が起動する前にサーバーが
+# 死に、相談は毎回ただの接続エラーになる。ログは副作用でしかないので、その場合は
+# ログを止めて起動する (_log_quietly が以降の書き込みを丸ごと飛ばす)。
+_LOGGING_ENABLED = True
+try:
+    os.makedirs(os.path.dirname(log_file), mode=_PRIVATE_DIR_MODE, exist_ok=True)
+except OSError as _exc:
+    _LOGGING_ENABLED = False
+    # stdout は MCP の JSON-RPC 専用。理由は stderr にだけ残す (閉じていても握る)。
+    with contextlib.suppress(OSError):
+        print(
+            f"gemini-consultant: logging disabled: cannot use "
+            f"{os.path.dirname(log_file)}: {_exc}",
+            file=sys.stderr,
+        )
 
 MAX_LOG_LINES = 500
 
@@ -208,7 +224,13 @@ def _log_quietly(tool: str, status: str, prompt: str, response: str = "") -> Non
 
     ValueError 全体ではなく UnicodeError に絞るのは、ログの整形バグ (書式指定子の
     取り違え等) まで無言で飲み込まないため。
+
+    import 時にログディレクトリを用意できなかったとき (_LOGGING_ENABLED が偽) は
+    何も書かない。理由は起動時に一度だけ stderr へ出してあるので、呼び出しごとに
+    同じ失敗を繰り返して警告を積まない。
     """
+    if not _LOGGING_ENABLED:
+        return
     try:
         log_entry(tool, status, prompt, response)
     except (OSError, UnicodeError) as exc:
