@@ -1,0 +1,92 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index b83836ed8c80558d4e40ea4ac5d69f4405334799..9aa4fbd2c5fa7efac825aa92c66e061c42b3677a 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -1 +1,2 @@
+ on: push
++jobs: {}
+diff --git a/bin.dat b/bin.dat
+index 677273046bce3115f56c248238f3b83f77cfc239..68aa3cf598bb92a3a37e146303aaa3993494169c 100644
+GIT binary patch
+literal 7
+OcmZSJWJ=1+ivR!wJ^`Ho
+
+literal 6
+NcmZQzWJ=1+0{{Yf0X+Z!
+
+diff --git a/del.txt b/del.txt
+deleted file mode 100644
+index abaddc0b9edd523c69166a2c9f3a9e31a4c873e3..0000000000000000000000000000000000000000
+--- a/del.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-del
+diff --git a/link b/link
+new file mode 120000
+index 0000000000000000000000000000000000000000..d09b80733baa4f6b198f2cf2d62bbfc5b6cbf1f0
+--- /dev/null
++++ b/link
+@@ -0,0 +1 @@
++../outside
+\ No newline at end of file
+diff --git a/mod.txt b/mod.txt
+index de980441c3ab03a8c07dda1ad27b8a11f39deb1e..f8f7a32fcd985e6a1547c16e063fa0204bae689b 100644
+--- a/mod.txt
++++ b/mod.txt
+@@ -1,3 +1,4 @@
+ a
+-b
++B
+ c
++d
+\ No newline at end of file
+diff --git a/newfile.txt b/newfile.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..8ba3a16384aacc37d01564b28401755ce8053f51
+--- /dev/null
++++ b/newfile.txt
+@@ -0,0 +1 @@
++n
+diff --git "a/quo\"te.txt" "b/quo\"te.txt"
+new file mode 100644
+index 0000000000000000000000000000000000000000..bca70f35318f31dd1d1d1d2d2e64c19b880899ff
+--- /dev/null
++++ "b/quo\"te.txt"
+@@ -0,0 +1 @@
++q
+diff --git a/ren_old.txt b/ren_new.txt
+similarity index 85%
+rename from ren_old.txt
+rename to ren_new.txt
+index 94e755326d526aa84e14020ddf56ea6be6e0f0f3..021631f892b806e85b37ac073c06190dc4a3bab9 100644
+--- a/ren_old.txt
++++ b/ren_new.txt
+@@ -4,3 +4,4 @@ ren3
+ ren4
+ ren5
+ ren6
++ren7
+diff --git "a/ta\tb.txt" "b/ta\tb.txt"
+new file mode 100644
+index 0000000000000000000000000000000000000000..8cc35a3d55c810ba1f998f398e475feb0e5f6b8a
+--- /dev/null
++++ "b/ta\tb.txt"
+@@ -0,0 +1 @@
++tab
+diff --git a/tomode.sh b/tomode.sh
+old mode 100644
+new mode 100755
+diff --git a/with space.txt b/with space.txt
+index 3367afdbbf91e638efe983616377c60477cc6612..3e757656cf36eca53338e520d134963a44f793f8 100644
+--- a/with space.txt	
++++ b/with space.txt	
+@@ -1 +1 @@
+-old
++new
+diff --git "a/\303\274.txt" "b/\303\274.txt"
+new file mode 100644
+index 0000000000000000000000000000000000000000..4ae8ef021bf6fcfff43a13be5abfa52bb6fb5dbc
+--- /dev/null
++++ "b/\303\274.txt"
+@@ -0,0 +1 @@
++u

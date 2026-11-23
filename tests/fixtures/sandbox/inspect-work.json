@@ -1,0 +1,193 @@
+{
+  "Id": "7d0cc8f9ac6972bbd6dbb3f00aec92c1b247a459d220f750cda28cef5f8da5a8",
+  "Created": "2026-11-21T07:27:14.470289135Z",
+  "Path": "sleep",
+  "Args": [
+    "infinity"
+  ],
+  "State": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 1082,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-21T07:27:14.516308968Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "Image": "sha256:062964a69725bb96611dae2ac911a5a1ab3f8d32fe6f096f267d77f09e55a99c",
+  "ResolvConfPath": "/var/lib/docker/containers/7d0cc8f9ac6972bbd6dbb3f00aec92c1b247a459d220f750cda28cef5f8da5a8/resolv.conf",
+  "HostnamePath": "/var/lib/docker/containers/7d0cc8f9ac6972bbd6dbb3f00aec92c1b247a459d220f750cda28cef5f8da5a8/hostname",
+  "HostsPath": "/var/lib/docker/containers/7d0cc8f9ac6972bbd6dbb3f00aec92c1b247a459d220f750cda28cef5f8da5a8/hosts",
+  "LogPath": "",
+  "Name": "/csb-3f9a1c0b7e42",
+  "RestartCount": 0,
+  "Driver": "overlay2",
+  "Platform": "linux",
+  "MountLabel": "",
+  "ProcessLabel": "",
+  "AppArmorProfile": "",
+  "ExecIDs": null,
+  "HostConfig": {
+    "Binds": null,
+    "ContainerIDFile": "",
+    "LogConfig": {
+      "Type": "local",
+      "Config": {
+        "max-size": "10m"
+      }
+    },
+    "NetworkMode": "csb-net-3f9a1c0b7e42",
+    "PortBindings": {},
+    "RestartPolicy": {
+      "Name": "no",
+      "MaximumRetryCount": 0
+    },
+    "AutoRemove": false,
+    "VolumeDriver": "",
+    "VolumesFrom": null,
+    "ConsoleSize": [
+      0,
+      0
+    ],
+    "CapAdd": null,
+    "CapDrop": [
+      "ALL"
+    ],
+    "CgroupnsMode": "private",
+    "Dns": null,
+    "DnsOptions": [],
+    "DnsSearch": [],
+    "ExtraHosts": null,
+    "GroupAdd": null,
+    "IpcMode": "private",
+    "Cgroup": "",
+    "Links": null,
+    "OomScoreAdj": 0,
+    "PidMode": "",
+    "Privileged": false,
+    "PublishAllPorts": false,
+    "ReadonlyRootfs": false,
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "Tmpfs": {
+      "/tmp": "rw,exec,nosuid,nodev,size=1g"
+    },
+    "UTSMode": "",
+    "UsernsMode": "",
+    "ShmSize": 67108864,
+    "Runtime": "runc",
+    "Isolation": "",
+    "CpuShares": 0,
+    "Memory": 4294967296,
+    "NanoCpus": 2000000000,
+    "CgroupParent": "",
+    "BlkioWeight": 0,
+    "BlkioWeightDevice": [],
+    "BlkioDeviceReadBps": [],
+    "BlkioDeviceWriteBps": [],
+    "BlkioDeviceReadIOps": [],
+    "BlkioDeviceWriteIOps": [],
+    "CpuPeriod": 0,
+    "CpuQuota": 0,
+    "CpuRealtimePeriod": 0,
+    "CpuRealtimeRuntime": 0,
+    "CpusetCpus": "",
+    "CpusetMems": "",
+    "Devices": [],
+    "DeviceCgroupRules": null,
+    "DeviceRequests": null,
+    "MemoryReservation": 0,
+    "MemorySwap": 4294967296,
+    "MemorySwappiness": null,
+    "OomKillDisable": null,
+    "PidsLimit": 2048,
+    "Ulimits": null,
+    "CpuCount": 0,
+    "CpuPercent": 0,
+    "IOMaximumIOps": 0,
+    "IOMaximumBandwidth": 0,
+    "MaskedPaths": [
+      "/proc/acpi",
+      "/proc/asound",
+      "/proc/interrupts",
+      "/proc/kcore",
+      "/proc/keys",
+      "/proc/latency_stats",
+      "/proc/sched_debug",
+      "/proc/scsi",
+      "/proc/timer_list",
+      "/proc/timer_stats",
+      "/sys/devices/virtual/powercap",
+      "/sys/firmware"
+    ],
+    "ReadonlyPaths": [
+      "/proc/bus",
+      "/proc/fs",
+      "/proc/irq",
+      "/proc/sys",
+      "/proc/sysrq-trigger"
+    ],
+    "Init": true
+  },
+  "GraphDriver": {
+    "Data": {
+      "ID": "7d0cc8f9ac6972bbd6dbb3f00aec92c1b247a459d220f750cda28cef5f8da5a8",
+      "LowerDir": "/var/lib/docker/overlay2/c3034b679551c240855a14e38b66551d07619c73298c3b1baaf07bb62fbcec39-init/diff:/var/lib/docker/overlay2/c364b337a3a1079489951566b8546585776c93e3ceeb3b2f96a8a44b196798f9/diff:/var/lib/docker/overlay2/xheko8rf2q0codknluht9t2b2/diff:/var/lib/docker/overlay2/ur6jxw67khnxrcuqzalvr1wub/diff:/var/lib/docker/overlay2/d68w3e2ui2kl6mggf1cj1j3i2/diff:/var/lib/docker/overlay2/n7nzzlnwmfta5w6bx8dh4yzk3/diff:/var/lib/docker/overlay2/rb412gsaj83wwlrxq2k11o17x/diff:/var/lib/docker/overlay2/1da9b36b984b5a5581b8a630b8980397e953f1ff07e80057fc10337139751946/diff",
+      "MergedDir": "/var/lib/docker/overlay2/c3034b679551c240855a14e38b66551d07619c73298c3b1baaf07bb62fbcec39/merged",
+      "UpperDir": "/var/lib/docker/overlay2/c3034b679551c240855a14e38b66551d07619c73298c3b1baaf07bb62fbcec39/diff",
+      "WorkDir": "/var/lib/docker/overlay2/c3034b679551c240855a14e38b66551d07619c73298c3b1baaf07bb62fbcec39/work"
+    },
+    "Name": "overlay2"
+  },
+  "Mounts": [],
+  "Config": {
+    "Hostname": "7d0cc8f9ac69",
+    "Domainname": "",
+    "User": "1000:1000",
+    "AttachStdin": false,
+    "AttachStdout": true,
+    "AttachStderr": true,
+    "Tty": false,
+    "OpenStdin": false,
+    "StdinOnce": false,
+    "Env": [
+      "PATH=/home/sandbox/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "HOME=/home/sandbox",
+      "PIP_BREAK_SYSTEM_PACKAGES=1",
+      "PIP_DISABLE_PIP_VERSION_CHECK=1",
+      "UV_LINK_MODE=copy",
+      "npm_config_update_notifier=false"
+    ],
+    "Cmd": [
+      "infinity"
+    ],
+    "Healthcheck": {
+      "Test": [
+        "NONE"
+      ]
+    },
+    "Image": "sha256:062964a69725bb96611dae2ac911a5a1ab3f8d32fe6f096f267d77f09e55a99c",
+    "Volumes": null,
+    "WorkingDir": "/work",
+    "Entrypoint": [
+      "sleep"
+    ],
+    "Labels": {
+      "dev.claude.sandbox": "1",
+      "dev.claude.sandbox.id": "3f9a1c0b7e42",
+      "dev.claude.sandbox.profile": "2",
+      "dev.claude.sandbox.role": "work"
+    }
+  },
+  "NetworkSettings": {
+    "SandboxID": "fe173007da49cfe2f211d8cc5eafc68293444eaf6f6963325af667b35498fc51",
+    "SandboxKey": "/var/run/docker/netns/fe173007da49",
+    "Ports": {},
+    "Networks": {}
+  }
+}

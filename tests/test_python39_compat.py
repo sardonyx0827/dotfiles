@@ -31,6 +31,8 @@ from conftest import REPO_ROOT
 # bash-review entries import, plus the Gemini helper the editors call.
 FUTURE_REQUIRED = [
     ".claude/hooks/_bash_review_common.py",
+    ".claude/hooks/_sandbox_gate.py",
+    ".claude/hooks/claude_sandbox.py",
     ".claude/hooks/bash-review.py",
     ".codex/hooks/bash-review.py",
     "scripts/secret_scan.py",
